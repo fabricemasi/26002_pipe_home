@@ -12,14 +12,36 @@ Lecture seule pour l'instant.
     pythonw pipeline_browser.py   (pythonw = sans fenetre console ; python = avec)
 """
 
+import json
 import os
 import shutil
 import subprocess
 import sys
+
+if sys.platform == "win32":
+    # Sans cette declaration, Windows ne sait pas que l'appli gere elle-meme
+    # le DPI par moniteur : des qu'une fenetre s'etend sur plusieurs ecrans
+    # d'echelle differente (125% + 100% par ex.), il applique lui-meme un
+    # zoom bitmap sur la portion affichee sur l'ecran le moins dense, d'ou
+    # l'effet de flou/pixelisation - independant de tout ce que l'appli
+    # dessine. Doit etre appele avant la creation de la QApplication.
+    import ctypes
+    try:
+        # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 (Windows 10 1703+) :
+        # rendu natif par moniteur, aucun etirement par l'OS.
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+    except (AttributeError, OSError):
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
+        except (AttributeError, OSError):
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()
+            except (AttributeError, OSError):
+                pass
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QMimeData, QPoint, QRect, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QByteArray, QEvent, QMimeData, QObject, QPoint, QRect, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -57,7 +79,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app_style import C, apply_style, font
+# Qt expose QWIDGETSIZE_MAX en C++ mais pas toujours dans les bindings Python
+# (absent de cette version de PySide6) : c'est la valeur historique (2**24-1)
+# utilisee par setMaximumHeight/Width pour signifier "pas de limite".
+QWIDGETSIZE_MAX = 16777215
+
+from app_style import C, apply_style, font, role_color, role_font, set_role_font
 from settings_window import SettingsWindow, load_settings
 
 # ==========================================================================
@@ -77,6 +104,14 @@ IMAGE_EXTENSIONS = {
     ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".ico",
 }
 
+# Reglable depuis la fenetre de parametres : affiche les fichiers image, dans
+# n'importe quelle colonne classique, avec exactement le meme style de ligne
+# que les vignettes de projet (vignette carree a gauche + nom/metadonnee a
+# droite), plutot que le marqueur habituel. Pas de menu "changer l'image"
+# pour ces lignes : l'image EST le fichier.
+SHOW_FILE_IMAGE_PREVIEWS = True
+FILE_PREVIEW_ROW_HEIGHT = 64   # hauteur de ces lignes-carte (reglable independamment de PROJECT_ROW_HEIGHT)
+
 PREVIEW_MIN_HEIGHT = 104   # hauteur de la vignette sans image (ou image tres petite)
 PREVIEW_MAX_HEIGHT = 800   # jamais plus grand que ca, meme pour une tres grande image
 
@@ -87,6 +122,11 @@ THUMBNAIL_COLUMN_LABELS = {"Projets", "Sous-projet"}
 THUMBNAIL_FILENAME = ".thumbnail.png"
 THUMBNAIL_MAX_DIM = 1024   # taille max (px) a laquelle une vignette perso est enregistree
 PROJECT_ROW_HEIGHT = 64    # hauteur de ligne (vignette carree + texte a droite)
+
+# Libelle (singulier, minuscule) affiche au-dessus de chaque aperçu empile
+# dans la premiere colonne (voir Column.set_preview_stack) pour un titre de
+# colonne a vignettes donne.
+PREVIEW_KIND_LABELS = {"Projets": "projet", "Sous-projet": "sous-projet"}
 
 # Logos de logiciel (colonne "Logiciels") : badge colore genere a la volee
 # (pas de fichier image) par defaut, identifie par le nom du dossier (HOUDINI,
@@ -150,6 +190,31 @@ def _cover_crop_square(pix: QPixmap, size: int) -> QPixmap:
     return scaled.copy(x, y, size, size)
 
 
+_file_image_cache: dict[str, tuple[float, QPixmap]] = {}
+
+
+def file_image_pixmap(path: Path) -> QPixmap | None:
+    """Image brute du fichier `path` lui-meme (pas une vignette perso a
+    choisir : c'est le fichier), mise en cache par date de modification. Le
+    recadrage carre se fait au dessin (voir paint_thumbnail_row), a la
+    taille reelle de la ligne — pas ici, pour rester correct si la hauteur de
+    ligne change (reglage utilisateur). None si le fichier n'est plus
+    lisible ou n'est pas une image valide."""
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    key = str(path)
+    cached = _file_image_cache.get(key)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    pix = QPixmap(str(path))
+    if pix.isNull():
+        return None
+    _file_image_cache[key] = (mtime, pix)
+    return pix
+
+
 def _generate_software_badge(key: str, size: int) -> QPixmap:
     bg, fg, label = SOFTWARE_ICONS[key]
     pix = QPixmap(size, size)
@@ -202,6 +267,7 @@ COLUMN_MIN_WIDTH = 120
 COLUMN_MAX_WIDTH = 640
 COLUMN_RESIZE_MARGIN = 5   # zone (px) autour de la bordure ou le curseur change
 ROW_HEIGHT = 24
+ROW_SPACING = 1            # espace (px) entre les lignes, dans toutes les colonnes
 HEADER_HEIGHT = 26
 TOPBAR_HEIGHT = 40
 STATUS_HEIGHT = 24
@@ -246,6 +312,30 @@ def project_thumbnail_path(directory: Path) -> Path:
     """Emplacement de la vignette perso d'un dossier de projet (fichier
     cache, jamais liste par list_entries puisqu'il commence par un point)."""
     return directory / THUMBNAIL_FILENAME
+
+
+_project_thumbnail_cache: dict[str, tuple[float | None, QPixmap]] = {}
+
+
+def project_thumbnail_pixmap(path: Path) -> QPixmap:
+    """Vignette perso de `path` (voir project_thumbnail_path), ou image par
+    defaut generique si aucune n'a ete choisie. Mise en cache par date de
+    modification (meme logique que ProjectTileDelegate._pixmap_for, mais
+    partagee ici pour l'aperçu empile de la premiere colonne)."""
+    thumb = project_thumbnail_path(path)
+    try:
+        mtime = thumb.stat().st_mtime if thumb.is_file() else None
+    except OSError:
+        mtime = None
+    key = str(path)
+    cached = _project_thumbnail_cache.get(key)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    pix = QPixmap(str(thumb)) if mtime is not None else QPixmap()
+    if pix.isNull():
+        pix = default_thumbnail()
+    _project_thumbnail_cache[key] = (mtime, pix)
+    return pix
 
 
 _default_thumbnail: QPixmap | None = None
@@ -318,23 +408,68 @@ ROLE_META = Qt.UserRole + 2
 
 
 class RowDelegate(QStyledItemDelegate):
-    """Marqueur carre + nom + metadonnee alignee a droite."""
+    """Marqueur carre + nom + metadonnee alignee a droite. Un fichier image
+    (si SHOW_FILE_IMAGE_PREVIEWS) prend a la place exactement le style des
+    cartes de projet : vignette carree du fichier lui-meme + nom/taille."""
 
     def __init__(self, column):
         super().__init__(column)
         self.column = column
-        self.font_dir = font(12, 600, tracking=0.12)
-        self.font_file = font(12, 400, tracking=0.12)
-        self.font_meta = font(11, 400, mono=True)
+        self.refresh_fonts()
+
+    def refresh_fonts(self):
+        """Relit les polices de role courantes (voir role_font) : appele a
+        la creation, et de nouveau si l'utilisateur change les parametres de
+        typographie sans reconstruire la colonne (previsualisation en direct)."""
+        self.font_dir = role_font("folders", 12, 600, tracking=0.12)
+        self.font_file = role_font("files", 12, 400, tracking=0.12)
+        self.font_meta = role_font("info", 11, 400)
+        self.font_image_name = role_font("files", 12, 600, tracking=0.01)
+        self.font_image_sub = role_font("info", 10, 400)
+        self.color_dir = role_color("folders", C["text"])
+        self.color_file = role_color("files", C["text_file"])
+        self.color_meta = role_color("info", C["dim"])
+
+    def _image_pixmap(self, index) -> QPixmap | None:
+        if not SHOW_FILE_IMAGE_PREVIEWS or bool(index.data(ROLE_ISDIR)):
+            return None
+        path_str = index.data(ROLE_PATH)
+        if not path_str or Path(path_str).suffix.lower() not in IMAGE_EXTENSIONS:
+            return None
+        return file_image_pixmap(Path(path_str))
 
     def sizeHint(self, option, index) -> QSize:
-        return QSize(COLUMN_WIDTH, ROW_HEIGHT)
+        # ROW_SPACING est ajoute a la hauteur ici, puis retranche au dessin
+        # (voir paint) : c'est ce reste, non peint, qui forme l'espace exact
+        # entre deux lignes (voir la remarque sur QListView.setSpacing plus
+        # haut dans Column.__init__).
+        if self._image_pixmap(index) is not None:
+            return QSize(self.column.width(), FILE_PREVIEW_ROW_HEIGHT + ROW_SPACING)
+        return QSize(COLUMN_WIDTH, ROW_HEIGHT + ROW_SPACING)
 
     def paint(self, painter: QPainter, option, index):
+        image_pixmap = self._image_pixmap(index)
+        if image_pixmap is not None:
+            painter.save()
+            painter.setRenderHint(QPainter.Antialiasing, False)
+            painter.setRenderHint(QPainter.TextAntialiasing, True)
+            paint_thumbnail_row(
+                painter, option.rect.adjusted(0, 0, 0, -ROW_SPACING), image_pixmap,
+                index.data(Qt.DisplayRole), index.data(ROLE_META) or "",
+                bool(option.state & QStyle.State_Selected),
+                bool(option.state & QStyle.State_MouseOver),
+                self.column.is_active,
+                self.font_image_name, self.font_image_sub,
+                self.color_file, self.color_meta,
+            )
+            painter.restore()
+            return
+
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing, False)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
 
-        rect = option.rect
+        rect = option.rect.adjusted(0, 0, 0, -ROW_SPACING)
         selected = bool(option.state & QStyle.State_Selected)
         hovered = bool(option.state & QStyle.State_MouseOver)
         is_dir = bool(index.data(ROLE_ISDIR))
@@ -355,6 +490,7 @@ class RowDelegate(QStyledItemDelegate):
         icon_key = None
         if is_dir and self.column.column_title == SOFTWARE_COLUMN_LABEL:
             icon_key = software_icon_key(index.data(Qt.DisplayRole) or "")
+
         if icon_key is not None:
             icon_size = SOFTWARE_ICON_SIZE
             icon_y = rect.center().y() - icon_size // 2
@@ -380,7 +516,7 @@ class RowDelegate(QStyledItemDelegate):
         if meta:
             painter.setFont(self.font_meta)
             meta_w = painter.fontMetrics().horizontalAdvance(meta) + 10
-            painter.setPen(QColor(C["accent_text"] if (selected and active) else C["dim"]))
+            painter.setPen(QColor(C["accent_text"] if (selected and active) else self.color_meta))
             painter.drawText(
                 rect.adjusted(0, 0, -10, 0),
                 Qt.AlignRight | Qt.AlignVCenter,
@@ -394,13 +530,60 @@ class RowDelegate(QStyledItemDelegate):
         if selected and active:
             painter.setPen(QColor(C["accent_text"]))
         else:
-            painter.setPen(QColor(C["text"] if is_dir else C["text_file"]))
+            painter.setPen(QColor(self.color_dir if is_dir else self.color_file))
         name = painter.fontMetrics().elidedText(
             index.data(Qt.DisplayRole), Qt.ElideMiddle, text_rect.width()
         )
         painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, name)
 
         painter.restore()
+
+
+def paint_thumbnail_row(
+    painter: QPainter, rect, pixmap: QPixmap, name: str, meta: str,
+    selected: bool, hovered: bool, active: bool, font_name, font_sub,
+    name_color: str = None, sub_color: str = None,
+):
+    """Dessine une ligne « vignette carree a gauche + nom/metadonnee a
+    droite » : le style de reference des cartes de projet, partage avec les
+    lignes de fichier-image (voir RowDelegate) pour un rendu identique."""
+    if selected:
+        bg = C["accent"] if active else C["sel_idle"]
+    elif hovered:
+        bg = C["hover"]
+    else:
+        bg = None
+    if bg:
+        painter.fillRect(rect, QColor(bg))
+
+    # Vignette carree a gauche, recadree en "cover".
+    thumb_rect = rect.adjusted(0, 0, 0, 0)
+    thumb_rect.setWidth(rect.height())
+    scaled = pixmap.scaled(thumb_rect.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+    sx = max(0, (scaled.width() - thumb_rect.width()) // 2)
+    sy = max(0, (scaled.height() - thumb_rect.height()) // 2)
+    cropped = scaled.copy(sx, sy, min(thumb_rect.width(), scaled.width()), min(thumb_rect.height(), scaled.height()))
+    painter.fillRect(thumb_rect, QColor(C["well"]))
+    painter.drawPixmap(thumb_rect.topLeft(), cropped)
+    painter.setPen(QColor(C["border"]))
+    painter.drawLine(thumb_rect.topRight(), thumb_rect.bottomRight())
+
+    # Nom + sous-titre a droite de la vignette.
+    text_x = thumb_rect.right() + 11
+    text_rect = rect.adjusted(text_x - rect.left(), 0, -10, 0)
+    name_rect = text_rect.adjusted(0, 0, 0, -text_rect.height() // 2)
+    sub_rect = text_rect.adjusted(0, text_rect.height() // 2, 0, 0)
+
+    painter.setFont(font_name)
+    painter.setPen(QColor(C["accent_text"] if (selected and active) else (name_color or C["text"])))
+    elided_name = painter.fontMetrics().elidedText(name, Qt.ElideMiddle, name_rect.width())
+    painter.drawText(name_rect, Qt.AlignLeft | Qt.AlignVCenter, elided_name)
+
+    if meta:
+        painter.setFont(font_sub)
+        painter.setPen(QColor(C["accent_text"] if (selected and active) else (sub_color or C["dim"])))
+        sub = painter.fontMetrics().elidedText(meta, Qt.ElideRight, sub_rect.width())
+        painter.drawText(sub_rect, Qt.AlignLeft | Qt.AlignVCenter, sub)
 
 
 class ProjectTileDelegate(QStyledItemDelegate):
@@ -411,12 +594,19 @@ class ProjectTileDelegate(QStyledItemDelegate):
     def __init__(self, column):
         super().__init__(column)
         self.column = column
-        self.font_name = font(12, 600, tracking=0.01)
-        self.font_sub = font(10, 400, mono=True)
+        self.refresh_fonts()
         self._cache: dict[str, tuple[float | None, QPixmap]] = {}
 
+    def refresh_fonts(self):
+        self.font_name = role_font("folders", 12, 600, tracking=0.01)
+        self.font_sub = role_font("info", 10, 400)
+        self.color_name = role_color("folders", C["text"])
+        self.color_sub = role_color("info", C["dim"])
+
     def sizeHint(self, option, index) -> QSize:
-        return QSize(self.column.width(), PROJECT_ROW_HEIGHT)
+        # ROW_SPACING ajoute ici, retranche au dessin (voir paint) : voir la
+        # remarque sur QListView.setSpacing dans Column.__init__.
+        return QSize(self.column.width(), PROJECT_ROW_HEIGHT + ROW_SPACING)
 
     def _pixmap_for(self, path: Path) -> QPixmap:
         thumb = project_thumbnail_path(path)
@@ -437,61 +627,32 @@ class ProjectTileDelegate(QStyledItemDelegate):
     def paint(self, painter: QPainter, option, index):
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing, False)
-
-        rect = option.rect
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
         path = Path(index.data(ROLE_PATH))
-        selected = bool(option.state & QStyle.State_Selected)
-        hovered = bool(option.state & QStyle.State_MouseOver)
-        active = self.column.is_active
-
-        if selected:
-            bg = C["accent"] if active else C["sel_idle"]
-        elif hovered:
-            bg = C["hover"]
-        else:
-            bg = None
-        if bg:
-            painter.fillRect(rect, QColor(bg))
-
-        # Vignette carree a gauche, recadree en "cover".
-        thumb_rect = rect.adjusted(0, 0, 0, 0)
-        thumb_rect.setWidth(rect.height())
-        pix = self._pixmap_for(path)
-        scaled = pix.scaled(thumb_rect.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-        sx = max(0, (scaled.width() - thumb_rect.width()) // 2)
-        sy = max(0, (scaled.height() - thumb_rect.height()) // 2)
-        cropped = scaled.copy(sx, sy, min(thumb_rect.width(), scaled.width()), min(thumb_rect.height(), scaled.height()))
-        painter.fillRect(thumb_rect, QColor(C["well"]))
-        painter.drawPixmap(thumb_rect.topLeft(), cropped)
-        painter.setPen(QColor(C["border"]))
-        painter.drawLine(thumb_rect.topRight(), thumb_rect.bottomRight())
-
-        # Nom + sous-titre a droite de la vignette.
-        text_x = thumb_rect.right() + 11
-        text_rect = rect.adjusted(text_x - rect.left(), 0, -10, 0)
-        name_rect = text_rect.adjusted(0, 0, 0, -text_rect.height() // 2)
-        sub_rect = text_rect.adjusted(0, text_rect.height() // 2, 0, 0)
-
-        painter.setFont(self.font_name)
-        painter.setPen(QColor(C["accent_text"] if (selected and active) else C["text"]))
-        name = painter.fontMetrics().elidedText(path.name, Qt.ElideMiddle, name_rect.width())
-        painter.drawText(name_rect, Qt.AlignLeft | Qt.AlignVCenter, name)
-
-        meta = index.data(ROLE_META) or ""
-        if meta:
-            painter.setFont(self.font_sub)
-            painter.setPen(QColor(C["accent_text"] if (selected and active) else C["dim"]))
-            sub = painter.fontMetrics().elidedText(meta, Qt.ElideRight, sub_rect.width())
-            painter.drawText(sub_rect, Qt.AlignLeft | Qt.AlignVCenter, sub)
-
+        paint_thumbnail_row(
+            painter, option.rect.adjusted(0, 0, 0, -ROW_SPACING), self._pixmap_for(path), path.name,
+            index.data(ROLE_META) or "",
+            bool(option.state & QStyle.State_Selected),
+            bool(option.state & QStyle.State_MouseOver),
+            self.column.is_active,
+            self.font_name, self.font_sub,
+            self.color_name, self.color_sub,
+        )
         painter.restore()
 
 
 class SquareCaptureOverlay(QWidget):
-    """Plein ecran translucide permettant de choisir une zone carree a
-    capturer (deplacable et redimensionnable a la souris), pour en faire une
-    vignette de projet. Emet `captured` (QPixmap deja carree) a la validation,
-    ou `cancelled` si l'utilisateur abandonne (Echap / fermeture)."""
+    """Fenetre plein ecran translucide sur UN SEUL moniteur, permettant de
+    choisir une zone carree a capturer (deplacable et redimensionnable a la
+    souris). Reste volontairement limitee a un seul ecran : une fenetre qui
+    chevauche deux moniteurs d'echelles differentes se fait etirer (bitmap
+    stretch) par Windows lui-meme des que le process n'est pas reconnu
+    "Per-Monitor DPI Aware" par le systeme (ce qui echappe totalement au
+    controle de l'appli) — d'ou le flou/pixelisation observe en tentant de
+    couvrir plusieurs ecrans dans une seule fenetre. Pour capturer sur
+    plusieurs moniteurs, voir MultiScreenCapture qui ouvre une instance de
+    cette classe par ecran. Emet `captured` (QPixmap deja carree) a la
+    validation, ou `cancelled` si l'utilisateur abandonne (Echap / fermeture)."""
 
     captured = Signal(QPixmap)
     cancelled = Signal()
@@ -637,6 +798,54 @@ class SquareCaptureOverlay(QWidget):
         super().closeEvent(event)
 
 
+class MultiScreenCapture(QObject):
+    """Ouvre un SquareCaptureOverlay par ecran physique connecte, pour
+    permettre de capturer sur n'importe lequel sans jamais faire chevaucher
+    une seule fenetre sur deux ecrans d'echelles differentes (voir
+    SquareCaptureOverlay). Valider la selection dans l'un d'eux ferme
+    automatiquement tous les autres ; Echap dans n'importe lequel annule
+    l'ensemble. `captured`/`cancelled` ne sont emis qu'une seule fois."""
+
+    captured = Signal(QPixmap)
+    cancelled = Signal()
+
+    def __init__(self, initial_screen=None, parent=None):
+        super().__init__(parent)
+        self._done = False
+        screens = QApplication.screens()
+        focus_screen = initial_screen or QApplication.screenAt(QCursor.pos()) or screens[0]
+
+        self._overlays = [SquareCaptureOverlay(screen) for screen in screens]
+        for overlay in self._overlays:
+            overlay.captured.connect(self._on_captured)
+            overlay.cancelled.connect(self._on_cancelled)
+            overlay.show()
+        for overlay, screen in zip(self._overlays, screens):
+            if screen is focus_screen:
+                overlay.activateWindow()
+                overlay.setFocus()
+
+    def _on_captured(self, pix: QPixmap):
+        if self._done:
+            return
+        self._done = True
+        self._close_all()
+        self.captured.emit(pix)
+
+    def _on_cancelled(self):
+        if self._done:
+            return
+        self._done = True
+        self._close_all()
+        self.cancelled.emit()
+
+    def _close_all(self):
+        for overlay in self._overlays:
+            if overlay.isVisible():
+                overlay._done = True  # evite un cancelled/capture en double
+                overlay.close()
+
+
 # ==========================================================================
 # Liste avec glisser-deposer de vrais fichiers
 # ==========================================================================
@@ -767,6 +976,71 @@ class FileListWidget(QListWidget):
 
 
 # ==========================================================================
+# Apercu empile (premiere colonne) : quand un projet, puis un sous-projet,
+# est selectionne plus loin dans l'arborescence, la toute premiere colonne
+# affiche sous sa propre liste un aperçu (image carree + titre) par niveau
+# selectionne ayant une vignette, empiles les uns sous les autres.
+# ==========================================================================
+
+class _SquarePreviewImage(QLabel):
+    """Image carree qui suit la largeur disponible (colonne redimensionnable),
+    recadree en « cover » depuis l'image source. Le fichier d'origine sur le
+    disque n'est jamais modifie/degrade : on ne fait que le redimensionner en
+    memoire pour l'affichage, a chaque changement de largeur."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._raw = QPixmap()
+        self.setStyleSheet(f"background: {C['well']}; border: 1px solid {C['border']};")
+
+    def set_source_pixmap(self, pixmap: QPixmap):
+        self._raw = pixmap
+        self._refresh()
+
+    def resizeEvent(self, event):
+        width = self.width()
+        if width > 0 and self.height() != width:
+            self.setFixedHeight(width)
+        self._refresh()
+        super().resizeEvent(event)
+
+    def _refresh(self):
+        side = self.width()
+        if side <= 0 or self._raw.isNull():
+            self.clear()
+            return
+        self.setPixmap(_cover_crop_square(self._raw, side))
+
+
+class _PreviewBlock(QWidget):
+    """Un niveau d'aperçu empile : libelle ("projet" / "sous-projet"), nom,
+    puis image carree."""
+
+    def __init__(self, kind_label: str, title: str, pixmap: QPixmap, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+
+        kind = QLabel(kind_label)
+        kind.setFont(role_font("info", 10, 400))
+        kind.setStyleSheet(f"color: {role_color('info', C['dim'])}; background: transparent;")
+
+        name = QLabel(title)
+        name.setFont(role_font("folders", 13, 700))
+        name.setStyleSheet(f"color: {role_color('folders', C['text'])}; background: transparent;")
+        name.setWordWrap(True)
+
+        self.image = _SquarePreviewImage()
+        self.image.set_source_pixmap(pixmap)
+
+        layout.addWidget(kind)
+        layout.addWidget(name)
+        layout.addSpacing(6)
+        layout.addWidget(self.image)
+
+
+# ==========================================================================
 # Colonne
 # ==========================================================================
 
@@ -783,12 +1057,12 @@ class Column(QWidget):
         self.has_thumbnails = title in THUMBNAIL_COLUMN_LABELS
 
         self.title_label = QLabel(title)
-        self.title_label.setFont(font(10, 600, tracking=0.9, caps=True))
-        self.title_label.setStyleSheet(f"color: {C['header']}; background: transparent;")
+        self.title_label.setFont(role_font("app", 10, 600, tracking=0.9, caps=True))
+        self.title_label.setStyleSheet(f"color: {role_color('app', C['header'])}; background: transparent;")
 
         self.count_label = QLabel("")
-        self.count_label.setFont(font(10, 400, mono=True))
-        self.count_label.setStyleSheet(f"color: {C['count']}; background: transparent;")
+        self.count_label.setFont(role_font("info", 10, 400))
+        self.count_label.setStyleSheet(f"color: {role_color('info', C['count'])}; background: transparent;")
 
         header = QWidget()
         header.setFixedHeight(HEADER_HEIGHT)
@@ -805,7 +1079,16 @@ class Column(QWidget):
         self.list.setFrameShape(QFrame.NoFrame)
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.list.setMouseTracking(True)
-        self.list.setUniformItemSizes(True)
+        # Uniforme seulement pour les colonnes a vignettes (toutes les lignes
+        # font PROJECT_ROW_HEIGHT) : dans les colonnes classiques, un fichier
+        # image peut desormais prendre une hauteur differente des autres
+        # lignes (voir RowDelegate), donc les hauteurs n'y sont plus uniformes.
+        self.list.setUniformItemSizes(self.has_thumbnails)
+        # L'espacement entre lignes est gere a la main dans les delegates
+        # (voir ROW_SPACING) plutot que via QListView.setSpacing(), qui
+        # ajoute la valeur des DEUX cotes de chaque ligne (donc un ecart reel
+        # de 2x la valeur demandee, et jamais de valeur impaire exacte).
+        self.list.setSpacing(0)
         self.list.setItemDelegate(ProjectTileDelegate(self) if self.has_thumbnails else RowDelegate(self))
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list.setViewportMargins(0, 0, 0, 0)
@@ -813,11 +1096,22 @@ class Column(QWidget):
         self.list.itemDoubleClicked.connect(self._on_double_clicked)
         self.list.customContextMenuRequested.connect(self._on_context_menu)
 
+        # Aperçu empile (voir set_preview_stack) : uniquement peuple/visible
+        # pour la toute premiere colonne, par PipelineBrowser. Vide/masque,
+        # il ne prend aucune place et la liste garde son comportement normal
+        # (etiree sur toute la hauteur de la colonne).
+        self.preview_container = QWidget()
+        self.preview_layout = QVBoxLayout(self.preview_container)
+        self.preview_layout.setContentsMargins(14, 16, 14, 16)
+        self.preview_layout.setSpacing(18)
+        self.preview_container.hide()
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 1, 0)
         layout.setSpacing(0)
         layout.addWidget(header)
         layout.addWidget(self.list, 1)
+        layout.addWidget(self.preview_container, 0)
 
         self.setFixedWidth(COLUMN_WIDTH)
         self.setObjectName("Column")
@@ -839,6 +1133,32 @@ class Column(QWidget):
         if self.is_active != active:
             self.is_active = active
             self.list.viewport().update()
+
+    def _list_content_height(self) -> int:
+        total = sum(self.list.sizeHintForRow(i) for i in range(self.list.count()))
+        return total + 2
+
+    def set_preview_stack(self, entries: list[tuple[str, str, QPixmap]]):
+        """Peuple (ou vide) l'aperçu empile sous la liste : `entries` est une
+        liste de (libelle, titre, pixmap), un par niveau selectionne plus
+        loin dans l'arborescence qui possede une vignette (voir
+        PipelineBrowser.update_preview_stack). Quand elle est vide, la liste
+        retrouve son comportement normal (etiree sur toute la colonne)."""
+        while self.preview_layout.count():
+            item = self.preview_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        if not entries:
+            self.preview_container.hide()
+            self.list.setMaximumHeight(QWIDGETSIZE_MAX)
+            return
+
+        for kind_label, title, pixmap in entries:
+            self.preview_layout.addWidget(_PreviewBlock(kind_label, title, pixmap))
+        self.preview_container.show()
+        self.list.setMaximumHeight(self._list_content_height())
 
     def refresh_all(self):
         """Rafraichit toutes les colonnes de la fenetre (utilise apres un
@@ -865,8 +1185,7 @@ class Column(QWidget):
         delta = global_x - self._resize_start_x
         new_width = max(COLUMN_MIN_WIDTH, min(COLUMN_MAX_WIDTH, self._resize_start_width + delta))
         self.setFixedWidth(new_width)
-        if self.has_thumbnails:
-            self.list.doItemsLayout()
+        self.list.doItemsLayout()
 
     def resize_end(self):
         self._resizing = False
@@ -926,15 +1245,14 @@ class Column(QWidget):
         needed = self._content_min_width()
         if needed > self.width():
             self.setFixedWidth(min(COLUMN_MAX_WIDTH, needed))
-            if self.has_thumbnails:
-                self.list.doItemsLayout()
+            self.list.doItemsLayout()
 
     def _content_min_width(self) -> int:
         if self.list.count() == 0:
             return 0
         if self.has_thumbnails:
-            fm_name = QFontMetrics(font(12, 600, tracking=0.01))
-            fm_sub = QFontMetrics(font(10, 400, mono=True))
+            fm_name = QFontMetrics(role_font("folders", 12, 600, tracking=0.01))
+            fm_sub = QFontMetrics(role_font("info", 10, 400))
             max_w = 0
             for i in range(self.list.count()):
                 item = self.list.item(i)
@@ -943,24 +1261,40 @@ class Column(QWidget):
                 max_w = max(max_w, name_w, sub_w)
             return PROJECT_ROW_HEIGHT + 21 + max_w
 
-        fm_name_dir = QFontMetrics(font(12, 600, tracking=0.12))
-        fm_name_file = QFontMetrics(font(12, 400, tracking=0.12))
-        fm_meta = QFontMetrics(font(11, 400, mono=True))
+        fm_name_dir = QFontMetrics(role_font("folders", 12, 600, tracking=0.12))
+        fm_name_file = QFontMetrics(role_font("files", 12, 400, tracking=0.12))
+        fm_meta = QFontMetrics(role_font("info", 11, 400))
+        fm_image_name = QFontMetrics(role_font("files", 12, 600, tracking=0.01))
+        fm_image_sub = QFontMetrics(role_font("info", 10, 400))
         max_w = 0
         for i in range(self.list.count()):
             item = self.list.item(i)
             is_dir = bool(item.data(ROLE_ISDIR))
             name = item.data(Qt.DisplayRole)
-            name_w = (fm_name_dir if is_dir else fm_name_file).horizontalAdvance(name)
             meta = item.data(ROLE_META) or ""
-            meta_w = (fm_meta.horizontalAdvance(meta) + 10) if meta else 0
-            has_icon = (
-                is_dir
-                and self.column_title == SOFTWARE_COLUMN_LABEL
-                and software_icon_key(name) is not None
+            is_image_row = (
+                not is_dir
+                and SHOW_FILE_IMAGE_PREVIEWS
+                and Path(name).suffix.lower() in IMAGE_EXTENSIONS
             )
-            mark_w = SOFTWARE_ICON_SIZE if has_icon else 9
-            max_w = max(max_w, 27 + mark_w + name_w + meta_w)
+            if is_image_row:
+                # Meme formule que les cartes de projet (vignette carree a
+                # gauche, calee sur la hauteur de ligne, + nom/meta a droite).
+                row_w = FILE_PREVIEW_ROW_HEIGHT + 21 + max(
+                    fm_image_name.horizontalAdvance(name),
+                    fm_image_sub.horizontalAdvance(meta),
+                )
+            else:
+                name_w = (fm_name_dir if is_dir else fm_name_file).horizontalAdvance(name)
+                meta_w = (fm_meta.horizontalAdvance(meta) + 10) if meta else 0
+                has_icon = (
+                    is_dir
+                    and self.column_title == SOFTWARE_COLUMN_LABEL
+                    and software_icon_key(name) is not None
+                )
+                mark_w = SOFTWARE_ICON_SIZE if has_icon else 9
+                row_w = 27 + mark_w + name_w + meta_w
+            max_w = max(max_w, row_w)
         return max_w
 
     def current_path(self) -> Path | None:
@@ -1089,7 +1423,7 @@ class Column(QWidget):
         self._save_thumbnail_pixmap(path, pix)
 
     def _capture_thumbnail(self, path: Path):
-        """Ouvre un selecteur de zone carree par-dessus l'ecran courant pour
+        """Ouvre un selecteur de zone carree (un par ecran connecte) pour
         capturer une vignette de projet directement depuis l'affichage."""
         win = self.window()
         was_visible = win.isVisible()
@@ -1098,9 +1432,8 @@ class Column(QWidget):
         QApplication.processEvents()
 
         def start_overlay():
-            screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
-            overlay = SquareCaptureOverlay(screen)
-            self._capture_overlay = overlay  # garde une reference tant que la fenetre est ouverte
+            capture = MultiScreenCapture()
+            self._capture_overlay = capture  # garde une reference tant que les fenetres sont ouvertes
 
             def finish():
                 if was_visible:
@@ -1111,10 +1444,8 @@ class Column(QWidget):
                 finish()
                 self._save_thumbnail_pixmap(path, pix)
 
-            overlay.captured.connect(on_captured)
-            overlay.cancelled.connect(finish)
-            overlay.show()
-            overlay.activateWindow()
+            capture.captured.connect(on_captured)
+            capture.cancelled.connect(finish)
 
         # Laisse le temps a la fenetre principale de disparaitre avant la
         # capture, sinon elle apparait encore dans la vignette.
@@ -1167,9 +1498,8 @@ class Column(QWidget):
         QApplication.processEvents()
 
         def start_overlay():
-            screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
-            overlay = SquareCaptureOverlay(screen)
-            self._capture_overlay = overlay
+            capture = MultiScreenCapture()
+            self._capture_overlay = capture
 
             def finish():
                 if was_visible:
@@ -1180,10 +1510,8 @@ class Column(QWidget):
                 finish()
                 self._save_software_icon_pixmap(key, pix)
 
-            overlay.captured.connect(on_captured)
-            overlay.cancelled.connect(finish)
-            overlay.show()
-            overlay.activateWindow()
+            capture.captured.connect(on_captured)
+            capture.cancelled.connect(finish)
 
         QTimer.singleShot(150, start_overlay)
 
@@ -1309,8 +1637,8 @@ class DetailPanel(QWidget):
         self.setMouseTracking(True)
 
         self.name = QLabel("")
-        self.name.setFont(font(12, 600, tracking=0.12))
-        self.name.setStyleSheet(f"color: {C['text']}; background: transparent;")
+        self.name.setFont(role_font("folders", 12, 600, tracking=0.12))
+        self.name.setStyleSheet(f"color: {role_color('folders', C['text'])}; background: transparent;")
 
         self.well = QFrame()
         self.well.setFixedHeight(PREVIEW_MIN_HEIGHT)
@@ -1330,13 +1658,15 @@ class DetailPanel(QWidget):
         grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(4)
         self.values: dict[str, QLabel] = {}
+        self.key_labels: dict[str, QLabel] = {}
         for row, key in enumerate(self.FIELDS):
             key_label = QLabel(key)
-            key_label.setFont(font(11, 400, mono=True))
-            key_label.setStyleSheet(f"color: {C['dim']}; background: transparent;")
+            key_label.setFont(role_font("info", 11, 400))
+            key_label.setStyleSheet(f"color: {role_color('info', C['dim'])}; background: transparent;")
+            self.key_labels[key] = key_label
             value = QLabel("")
-            value.setFont(font(11, 400, mono=True))
-            value.setStyleSheet("color: #aab1b6; background: transparent;")
+            value.setFont(role_font("info", 11, 400))
+            value.setStyleSheet(f"color: {role_color('info', '#aab1b6')}; background: transparent;")
             value.setWordWrap(True)
             grid.addWidget(key_label, row, 0, Qt.AlignTop)
             grid.addWidget(value, row, 1)
@@ -1398,6 +1728,21 @@ class DetailPanel(QWidget):
         for value in self.values.values():
             value.setText("")
 
+    def refresh_fonts(self, is_dir: bool = True):
+        """Reapplique les polices de role (voir role_font) : necessaire car
+        ce panneau, contrairement aux colonnes, n'est pas reconstruit par
+        PipelineBrowser.reload() apres un changement de reglages."""
+        self.name.setFont(role_font("folders" if is_dir else "files", 12, 600, tracking=0.12))
+        self.name.setStyleSheet(
+            f"color: {role_color('folders' if is_dir else 'files', C['text'])}; background: transparent;"
+        )
+        for key_label in self.key_labels.values():
+            key_label.setFont(role_font("info", 11, 400))
+            key_label.setStyleSheet(f"color: {role_color('info', C['dim'])}; background: transparent;")
+        for value in self.values.values():
+            value.setFont(role_font("info", 11, 400))
+            value.setStyleSheet(f"color: {role_color('info', '#aab1b6')}; background: transparent;")
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._update_preview()
@@ -1427,6 +1772,11 @@ class DetailPanel(QWidget):
 
     def show_path(self, path: Path):
         self.name.setText(path.name)
+        is_dir = path.is_dir()
+        self.name.setFont(role_font("folders" if is_dir else "files", 12, 600, tracking=0.12))
+        self.name.setStyleSheet(
+            f"color: {role_color('folders' if is_dir else 'files', C['text'])}; background: transparent;"
+        )
         self.well.show()
         self._preview_pixmap = None
         if not path.is_dir() and path.suffix.lower() in IMAGE_EXTENSIONS:
@@ -1452,6 +1802,34 @@ class DetailPanel(QWidget):
 
 
 # ==========================================================================
+# Etat de session (position/taille de la fenetre, dernier dossier parcouru) :
+# separe des parametres utilisateur (pipeline_settings.json, gere par
+# settings_window.py) puisque ce n'est pas un reglage mais un etat automatique
+# de l'appli, sauvegarde a la fermeture et restaure au demarrage suivant.
+# ==========================================================================
+
+WINDOW_STATE_PATH = Path(__file__).resolve().parent / "pipeline_window_state.json"
+
+
+def load_window_state() -> dict:
+    try:
+        if WINDOW_STATE_PATH.is_file():
+            data = json.loads(WINDOW_STATE_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+    except (OSError, ValueError):
+        pass
+    return {}
+
+
+def save_window_state(state: dict) -> None:
+    try:
+        WINDOW_STATE_PATH.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
+# ==========================================================================
 # Fenetre principale
 # ==========================================================================
 
@@ -1464,31 +1842,32 @@ class PipelineBrowser(QMainWindow):
         self.columns: list[Column] = []
 
         # --- barre du haut ---
-        root_label = QLabel("Root")
-        root_label.setFont(font(10, 600, tracking=0.8, caps=True))
-        root_label.setStyleSheet(f"color: {C['label']}; background: transparent;")
+        self.root_label = QLabel("Root")
+        self.root_label.setFont(role_font("app", 10, 600, tracking=0.8, caps=True))
+        self.root_label.setStyleSheet(f"color: {role_color('app', C['label'])}; background: transparent;")
 
         self.root_field = QLineEdit(str(root))
-        self.root_field.setFont(font(12, 400, mono=True))
+        self.root_field.setFont(role_font("info", 12, 400))
         self.root_field.setFixedHeight(24)
         self.root_field.returnPressed.connect(self.reload)
 
-        btn_browse = QPushButton("Parcourir")
-        btn_reload = QPushButton("Refresh")
-        btn_settings = QPushButton("⚙")
-        for btn in (btn_browse, btn_reload, btn_settings):
-            btn.setFont(font(11, 500))
+        self.btn_browse = QPushButton("Parcourir")
+        self.btn_reload = QPushButton("Refresh")
+        self.btn_settings = QPushButton("⚙")
+        for btn in (self.btn_browse, self.btn_reload, self.btn_settings):
+            btn.setFont(role_font("buttons", 11, 500))
             btn.setFixedHeight(24)
             btn.setCursor(Qt.ArrowCursor)
-        btn_settings.setFixedWidth(28)
-        btn_settings.setToolTip("Parametres")
-        btn_browse.clicked.connect(self.browse_root)
-        btn_reload.clicked.connect(self.reload)
-        btn_settings.clicked.connect(self.open_settings)
+            btn.setStyleSheet(f"color: {role_color('buttons', '#c4cacf')};")
+        self.btn_settings.setFixedWidth(28)
+        self.btn_settings.setToolTip("Parametres")
+        self.btn_browse.clicked.connect(self.browse_root)
+        self.btn_reload.clicked.connect(self.reload)
+        self.btn_settings.clicked.connect(self.open_settings)
 
         self.synced_label = QLabel("")
-        self.synced_label.setFont(font(10, 400, mono=True))
-        self.synced_label.setStyleSheet(f"color: {C['dim']}; background: transparent;")
+        self.synced_label.setFont(role_font("info", 10, 400))
+        self.synced_label.setStyleSheet(f"color: {role_color('info', C['dim'])}; background: transparent;")
 
         topbar = QWidget()
         topbar.setFixedHeight(TOPBAR_HEIGHT)
@@ -1498,12 +1877,12 @@ class PipelineBrowser(QMainWindow):
         top_layout = QHBoxLayout(topbar)
         top_layout.setContentsMargins(10, 0, 10, 0)
         top_layout.setSpacing(10)
-        top_layout.addWidget(root_label)
+        top_layout.addWidget(self.root_label)
         top_layout.addWidget(self.root_field, 1)
-        top_layout.addWidget(btn_browse)
-        top_layout.addWidget(btn_reload)
+        top_layout.addWidget(self.btn_browse)
+        top_layout.addWidget(self.btn_reload)
         top_layout.addWidget(self.synced_label)
-        top_layout.addWidget(btn_settings)
+        top_layout.addWidget(self.btn_settings)
 
         # --- zone des colonnes ---
         self.columns_layout = QHBoxLayout()
@@ -1527,11 +1906,11 @@ class PipelineBrowser(QMainWindow):
 
         # --- barre de statut ---
         self.path_label = QLabel("")
-        self.path_label.setFont(font(11, 400, mono=True))
-        self.path_label.setStyleSheet(f"color: {C['text_mono']}; background: transparent;")
+        self.path_label.setFont(role_font("info", 11, 400))
+        self.path_label.setStyleSheet(f"color: {role_color('info', C['text_mono'])}; background: transparent;")
         self.status_right = QLabel("read-only")
-        self.status_right.setFont(font(11, 400, mono=True))
-        self.status_right.setStyleSheet(f"color: {C['dim']}; background: transparent;")
+        self.status_right.setFont(role_font("info", 11, 400))
+        self.status_right.setStyleSheet(f"color: {role_color('info', C['dim'])}; background: transparent;")
 
         statusbar = QWidget()
         statusbar.setFixedHeight(STATUS_HEIGHT)
@@ -1558,6 +1937,56 @@ class PipelineBrowser(QMainWindow):
         self.addAction(QAction(self, shortcut="F5", triggered=self.reload))
         self.reload()
 
+        self._restore_window_state()
+
+    def _restore_window_state(self):
+        """Reapplique la position/taille de fenetre et le dossier parcouru
+        au moment de la derniere fermeture (voir closeEvent)."""
+        state = load_window_state()
+        geometry_b64 = state.get("geometry")
+        if geometry_b64:
+            try:
+                self.restoreGeometry(QByteArray.fromBase64(geometry_b64.encode("ascii")))
+            except (ValueError, TypeError):
+                pass
+        last_path = state.get("last_path")
+        if last_path:
+            self._navigate_to(Path(last_path))
+
+    def _navigate_to(self, target: Path):
+        """Deplie les colonnes jusqu'a `target` en simulant les selections
+        successives, sans effet si `target` n'existe plus ou n'est pas sous
+        la racine actuellement affichee."""
+        root = Path(self.root_field.text())
+        try:
+            parts = target.relative_to(root).parts
+        except ValueError:
+            return
+        current = root
+        for part in parts:
+            current = current / part
+            if not self.columns:
+                return
+            column = self.columns[-1]
+            match = None
+            for i in range(column.list.count()):
+                item = column.list.item(i)
+                if Path(item.data(ROLE_PATH)).name == part:
+                    match = item
+                    break
+            if match is None:
+                return
+            column.list.setCurrentItem(match)
+            if not current.is_dir():
+                return
+
+    def closeEvent(self, event):
+        state = load_window_state()
+        state["geometry"] = bytes(self.saveGeometry().toBase64()).decode("ascii")
+        state["last_path"] = str(self.columns[-1].directory) if self.columns else ""
+        save_window_state(state)
+        super().closeEvent(event)
+
     # -- gestion des colonnes ------------------------------------------
 
     def reload(self):
@@ -1571,6 +2000,7 @@ class PipelineBrowser(QMainWindow):
         self.add_column(root, 0)
         self.path_label.setText(str(root))
         self.synced_label.setText(datetime.now().strftime("scan %H:%M:%S"))
+        self.update_preview_stack()
 
     def add_column(self, directory: Path, depth: int):
         title = COLUMN_LABELS[depth] if depth < len(COLUMN_LABELS) else "Contenu"
@@ -1593,8 +2023,20 @@ class PipelineBrowser(QMainWindow):
         self.detail.left_column = self.columns[-1] if self.columns else None
 
     def refresh_all_columns(self):
+        """Reapplique aux colonnes existantes (largeur, delegate, polices)
+        les reglages globaux courants, SANS reconstruire l'arborescence : la
+        navigation en cours (profondeur, selection) reste intacte. Utilise
+        par le glisser-deposer, et par la previsualisation en direct des
+        parametres (voir _apply_settings)."""
         for column in self.columns:
+            column.setFixedWidth(COLUMN_WIDTH)
+            column.list.setUniformItemSizes(column.has_thumbnails)
+            delegate = column.list.itemDelegate()
+            if hasattr(delegate, "refresh_fonts"):
+                delegate.refresh_fonts()
             column.refresh()
+            column.list.doItemsLayout()
+        self.update_preview_stack()
 
     def update_active_column(self):
         last_selected = -1
@@ -1604,18 +2046,38 @@ class PipelineBrowser(QMainWindow):
         for i, column in enumerate(self.columns):
             column.set_active(i == last_selected)
 
+    def update_preview_stack(self):
+        """Recalcule l'aperçu empile de la premiere colonne (voir
+        Column.set_preview_stack) : un bloc (libelle + titre + image) par
+        colonne a vignettes (Projets, Sous-projet) actuellement selectionnee,
+        dans l'ordre de navigation."""
+        if not self.columns:
+            return
+        entries: list[tuple[str, str, QPixmap]] = []
+        for column in self.columns:
+            if not column.has_thumbnails:
+                continue
+            path = column.current_path()
+            if path is None:
+                continue
+            kind_label = PREVIEW_KIND_LABELS.get(column.column_title, column.column_title.lower())
+            entries.append((kind_label, path.name, project_thumbnail_pixmap(path)))
+        self.columns[0].set_preview_stack(entries)
+
     def on_selected(self, column: Column, path: Path | None):
         index = self.columns.index(column)
         self.prune_after(index)
         if path is None:
             self.detail.clear()
             self.update_active_column()
+            self.update_preview_stack()
             return
         self.path_label.setText(str(path))
         self.detail.show_path(path)
         if path.is_dir():
             self.add_column(path, index + 1)
         self.update_active_column()
+        self.update_preview_stack()
 
     def on_activated(self, path: Path):
         open_path(path)
@@ -1629,33 +2091,113 @@ class PipelineBrowser(QMainWindow):
             self.reload()
 
     def open_settings(self):
+        # Deja ouverte : la ramener au premier plan plutot que d'en ouvrir
+        # une seconde (qui ecraserait sa propre previsualisation). La
+        # fenetre precedente est detruite cote C++ des sa fermeture (voir
+        # WA_DeleteOnClose ci-dessous) : la reference Python devient alors
+        # invalide et tout appel dessus (meme isVisible()) leve un
+        # RuntimeError qu'il faut absorber pour pouvoir en rouvrir une neuve.
+        existing = getattr(self, "_settings_dialog", None)
+        if existing is not None:
+            try:
+                still_visible = existing.isVisible()
+            except RuntimeError:
+                still_visible = False
+            if still_visible:
+                existing.raise_()
+                existing.activateWindow()
+                return
         dialog = SettingsWindow(self)
+        dialog.setAttribute(Qt.WA_DeleteOnClose, True)
+        # Non modale : la fenetre principale reste interactive et se
+        # met a jour en direct pendant qu'on ajuste les parametres.
+        dialog.settingsChanged.connect(self._apply_settings)
         dialog.settingsSaved.connect(self._apply_settings)
-        dialog.exec()
+        self._settings_dialog = dialog
+        dialog.show()
 
     def _apply_settings(self, settings: dict):
-        """Applique les reglages sauvegardes : ceux lus au vol (tailles de
-        vignettes/icones) prennent effet immediatement ; largeur de colonne
-        et hauteur de ligne necessitent de reconstruire les colonnes, d'ou le
-        reload() complet ci-dessous."""
-        global COLUMN_WIDTH, PROJECT_ROW_HEIGHT, THUMBNAIL_MAX_DIM, CUSTOM_SOFTWARE_ICON_MAX_DIM
+        """Applique des reglages (live, pendant qu'on les ajuste dans la
+        fenetre de parametres, ou definitifs a l'enregistrement — les deux
+        cas appellent cette meme methode). N'ecrit jamais sur le disque
+        (voir SettingsWindow._on_save pour la persistance).
+
+        Si la racine n'a pas change, les colonnes existantes sont juste
+        rafraichies sur place (refresh_all_columns) : la navigation en cours
+        (profondeur, selection) n'est PAS perdue. Un reload() complet n'a
+        lieu que si la racine elle-meme a change, ce qui invalide de toute
+        facon le chemin courant."""
+        global COLUMN_WIDTH, PROJECT_ROW_HEIGHT, ROW_SPACING, THUMBNAIL_MAX_DIM
+        global CUSTOM_SOFTWARE_ICON_MAX_DIM, SHOW_FILE_IMAGE_PREVIEWS, FILE_PREVIEW_ROW_HEIGHT
         COLUMN_WIDTH = settings["column_width"]
         PROJECT_ROW_HEIGHT = settings["project_row_height"]
+        ROW_SPACING = settings["row_spacing"]
         THUMBNAIL_MAX_DIM = settings["thumbnail_max_dim"]
         CUSTOM_SOFTWARE_ICON_MAX_DIM = settings["software_icon_max_dim"]
+        SHOW_FILE_IMAGE_PREVIEWS = settings["show_file_image_previews"]
+        FILE_PREVIEW_ROW_HEIGHT = settings["file_preview_size"]
+        _apply_font_settings(settings)
         if settings["root_path"] != self.root_field.text():
             self.root_field.setText(settings["root_path"])
-        self.reload()
+            self.reload()
+        else:
+            self.refresh_all_columns()
+        self.refresh_chrome_fonts()
+
+    def refresh_chrome_fonts(self):
+        """Reapplique les polices de role aux widgets permanents de la
+        fenetre (topbar, statut, panneau de detail), qui contrairement aux
+        colonnes ne sont pas recrees par reload()."""
+        self.root_label.setFont(role_font("app", 10, 600, tracking=0.8, caps=True))
+        self.root_label.setStyleSheet(f"color: {role_color('app', C['label'])}; background: transparent;")
+        self.root_field.setFont(role_font("info", 12, 400))
+        for btn in (self.btn_browse, self.btn_reload, self.btn_settings):
+            btn.setFont(role_font("buttons", 11, 500))
+            btn.setStyleSheet(f"color: {role_color('buttons', '#c4cacf')};")
+        self.synced_label.setFont(role_font("info", 10, 400))
+        self.synced_label.setStyleSheet(f"color: {role_color('info', C['dim'])}; background: transparent;")
+        self.path_label.setFont(role_font("info", 11, 400))
+        self.path_label.setStyleSheet(f"color: {role_color('info', C['text_mono'])}; background: transparent;")
+        self.status_right.setFont(role_font("info", 11, 400))
+        self.status_right.setStyleSheet(f"color: {role_color('info', C['dim'])}; background: transparent;")
+        is_dir = True
+        if self.columns:
+            selected = self.columns[-1].current_path()
+            if selected is not None:
+                is_dir = selected.is_dir()
+        self.detail.refresh_fonts(is_dir)
+
+
+def _apply_font_settings(settings: dict):
+    """Enregistre (voir app_style.set_role_font) les surcharges de police
+    pour chacun des 5 roles reglables depuis la fenetre de parametres."""
+    for role, key in (
+        ("files", "font_files"),
+        ("folders", "font_folders"),
+        ("info", "font_info"),
+        ("buttons", "font_buttons"),
+        ("app", "font_app"),
+    ):
+        conf = settings.get(key) or {}
+        set_role_font(
+            role, conf.get("family", ""), conf.get("size", 12), conf.get("bold", False),
+            conf.get("smoothing", "current"), conf.get("color", ""),
+        )
 
 
 def main():
-    global COLUMN_WIDTH, PROJECT_ROW_HEIGHT, THUMBNAIL_MAX_DIM, CUSTOM_SOFTWARE_ICON_MAX_DIM
+    global COLUMN_WIDTH, PROJECT_ROW_HEIGHT, ROW_SPACING, THUMBNAIL_MAX_DIM
+    global CUSTOM_SOFTWARE_ICON_MAX_DIM, SHOW_FILE_IMAGE_PREVIEWS, FILE_PREVIEW_ROW_HEIGHT
 
     settings = load_settings()
     COLUMN_WIDTH = settings["column_width"]
     PROJECT_ROW_HEIGHT = settings["project_row_height"]
+    ROW_SPACING = settings["row_spacing"]
     THUMBNAIL_MAX_DIM = settings["thumbnail_max_dim"]
     CUSTOM_SOFTWARE_ICON_MAX_DIM = settings["software_icon_max_dim"]
+    SHOW_FILE_IMAGE_PREVIEWS = settings["show_file_image_previews"]
+    FILE_PREVIEW_ROW_HEIGHT = settings["file_preview_size"]
+    _apply_font_settings(settings)
     root = Path(settings["root_path"]) if settings["remember_last_root"] else ROOT
 
     app = QApplication(sys.argv)

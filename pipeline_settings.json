@@ -1,9 +1,47 @@
 {
   "root_path": "F:\\PIPELINE",
-  "remember_last_root": true,
-  "column_width": 200,
+  "remember_last_root": false,
+  "column_width": 220,
   "project_row_height": 64,
+  "row_spacing": 1,
   "thumbnail_max_dim": 1024,
   "software_icon_max_dim": 128,
-  "confirm_before_move": true
+  "show_file_image_previews": true,
+  "file_preview_size": 64,
+  "confirm_before_move": true,
+  "font_files": {
+    "family": "JetBrains Mono",
+    "size": 12,
+    "bold": false,
+    "smoothing": "current",
+    "color": ""
+  },
+  "font_folders": {
+    "family": "",
+    "size": 12,
+    "bold": false,
+    "smoothing": "current",
+    "color": ""
+  },
+  "font_info": {
+    "family": "",
+    "size": 12,
+    "bold": false,
+    "smoothing": "previous",
+    "color": ""
+  },
+  "font_buttons": {
+    "family": "",
+    "size": 12,
+    "bold": false,
+    "smoothing": "current",
+    "color": ""
+  },
+  "font_app": {
+    "family": "",
+    "size": 12,
+    "bold": false,
+    "smoothing": "previous",
+    "color": ""
+  }
 }
