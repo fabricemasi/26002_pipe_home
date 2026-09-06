@@ -123,11 +123,6 @@ THUMBNAIL_FILENAME = ".thumbnail.png"
 THUMBNAIL_MAX_DIM = 1024   # taille max (px) a laquelle une vignette perso est enregistree
 PROJECT_ROW_HEIGHT = 64    # hauteur de ligne (vignette carree + texte a droite)
 
-# Libelle (singulier, minuscule) affiche au-dessus de chaque aperçu empile
-# dans la premiere colonne (voir Column.set_preview_stack) pour un titre de
-# colonne a vignettes donne.
-PREVIEW_KIND_LABELS = {"Projets": "projet", "Sous-projet": "sous-projet"}
-
 # Logos de logiciel (colonne "Logiciels") : badge colore genere a la volee
 # (pas de fichier image) par defaut, identifie par le nom du dossier (HOUDINI,
 # MAYA...). Peut etre remplace par une image perso via le clic droit ; cette
@@ -982,27 +977,34 @@ class FileListWidget(QListWidget):
 # selectionne ayant une vignette, empiles les uns sous les autres.
 # ==========================================================================
 
+PREVIEW_TITLE_HEIGHT = 24   # hauteur fixe de la barre de titre, au-dessus de chaque image empilee
+
+
 class _SquarePreviewImage(QLabel):
-    """Image carree qui suit la largeur disponible (colonne redimensionnable),
-    recadree en « cover » depuis l'image source. Le fichier d'origine sur le
-    disque n'est jamais modifie/degrade : on ne fait que le redimensionner en
-    memoire pour l'affichage, a chaque changement de largeur."""
+    """Image carree bord a bord (aucune marge) avec les bords de la colonne,
+    de taille EXPLICITEMENT fixee (voir set_side) plutot que recalculee en
+    reaction a un resizeEvent : un widget dont la taille reagit a son propre
+    resizeEvent peut se faire redimensionner une seconde fois par son parent
+    avant que ce premier changement soit repercute, le rendant tantot trop
+    petit, tantot etire par un layout qui redistribue l'espace en trop —
+    exactement le symptome observe (espaces morts, doublons visuels lors
+    d'une navigation rapide). Taille fixe des le depart = aucune ambiguite.
+    Le fichier d'origine sur le disque n'est jamais modifie/degrade : on ne
+    fait que le redimensionner en memoire pour l'affichage."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._raw = QPixmap()
-        self.setStyleSheet(f"background: {C['well']}; border: 1px solid {C['border']};")
+        self.setStyleSheet(f"background: {C['well']}; border-bottom: 1px solid {C['border']};")
 
     def set_source_pixmap(self, pixmap: QPixmap):
         self._raw = pixmap
         self._refresh()
 
-    def resizeEvent(self, event):
-        width = self.width()
-        if width > 0 and self.height() != width:
-            self.setFixedHeight(width)
+    def set_side(self, side: int):
+        if side > 0:
+            self.setFixedSize(side, side)
         self._refresh()
-        super().resizeEvent(event)
 
     def _refresh(self):
         side = self.width()
@@ -1013,31 +1015,44 @@ class _SquarePreviewImage(QLabel):
 
 
 class _PreviewBlock(QWidget):
-    """Un niveau d'aperçu empile : libelle ("projet" / "sous-projet"), nom,
-    puis image carree."""
+    """Un niveau d'aperçu empile : une barre de titre a hauteur fixe (nom du
+    projet/sous-projet, comme une ligne normale de la liste), suivie
+    directement (sans espace) de son image carree bord a bord avec la
+    colonne. `width` (la largeur de contenu de la colonne au moment de la
+    construction) fixe la taille de l'image des le depart — voir
+    _SquarePreviewImage.set_side."""
 
-    def __init__(self, kind_label: str, title: str, pixmap: QPixmap, parent=None):
+    def __init__(self, title: str, pixmap: QPixmap, width: int, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
+        layout.setSpacing(0)
 
-        kind = QLabel(kind_label)
-        kind.setFont(role_font("info", 10, 400))
-        kind.setStyleSheet(f"color: {role_color('info', C['dim'])}; background: transparent;")
-
+        title_bar = QWidget()
+        title_bar.setFixedHeight(PREVIEW_TITLE_HEIGHT)
+        title_bar.setStyleSheet(f"border-bottom: 1px solid {C['border']};")
+        title_layout = QHBoxLayout(title_bar)
+        title_layout.setContentsMargins(10, 0, 10, 0)
         name = QLabel(title)
-        name.setFont(role_font("folders", 13, 700))
+        name.setFont(role_font("folders", 12, 600, tracking=0.01))
         name.setStyleSheet(f"color: {role_color('folders', C['text'])}; background: transparent;")
-        name.setWordWrap(True)
+        title_layout.addWidget(name)
 
         self.image = _SquarePreviewImage()
         self.image.set_source_pixmap(pixmap)
+        self.image.set_side(width)
 
-        layout.addWidget(kind)
-        layout.addWidget(name)
-        layout.addSpacing(6)
+        layout.addWidget(title_bar)
         layout.addWidget(self.image)
+
+        # Sans ceci, ce widget garde une politique de taille verticale
+        # "Preferred" par defaut : des qu'un parent (voir Column) lui offre
+        # plus de hauteur que son contenu n'en a besoin (ex. la liste TYPE
+        # capee plus haut libere de la place), Qt etire le bloc au-dela de
+        # ses 24+width px reels et repartit l'exces en espaces morts AVANT,
+        # ENTRE et APRES la barre de titre et l'image — exactement le defaut
+        # visible (grand vide au-dessus du titre, avant l'image).
+        self.setFixedHeight(PREVIEW_TITLE_HEIGHT + width)
 
 
 # ==========================================================================
@@ -1101,9 +1116,10 @@ class Column(QWidget):
         # il ne prend aucune place et la liste garde son comportement normal
         # (etiree sur toute la hauteur de la colonne).
         self.preview_container = QWidget()
+        self.preview_container.setStyleSheet(f"border-top: 1px solid {C['border']};")
         self.preview_layout = QVBoxLayout(self.preview_container)
-        self.preview_layout.setContentsMargins(14, 16, 14, 16)
-        self.preview_layout.setSpacing(18)
+        self.preview_layout.setContentsMargins(0, 0, 0, 0)
+        self.preview_layout.setSpacing(0)
         self.preview_container.hide()
 
         layout = QVBoxLayout(self)
@@ -1112,6 +1128,15 @@ class Column(QWidget):
         layout.addWidget(header)
         layout.addWidget(self.list, 1)
         layout.addWidget(self.preview_container, 0)
+        # Espaceur de fin, initialement sans etirement (voir
+        # set_preview_stack) : tant que la liste garde son facteur
+        # d'etirement (pas d'apercu), il n'absorbe rien. Des que la liste est
+        # plafonnee en hauteur (apercu visible), c'est LUI qui recupere tout
+        # l'espace en trop en fin de colonne — sinon Qt le rend quand meme a
+        # la liste malgre son plafond, en la centrant dans l'espace qui lui
+        # avait ete alloue au lieu de la laisser collee en haut, sous l'en-tete.
+        layout.addStretch(0)
+        self._column_layout = layout
 
         self.setFixedWidth(COLUMN_WIDTH)
         self.setObjectName("Column")
@@ -1138,27 +1163,75 @@ class Column(QWidget):
         total = sum(self.list.sizeHintForRow(i) for i in range(self.list.count()))
         return total + 2
 
-    def set_preview_stack(self, entries: list[tuple[str, str, QPixmap]]):
+    def set_preview_stack(self, entries: list[tuple[str, QPixmap]]):
         """Peuple (ou vide) l'aperçu empile sous la liste : `entries` est une
-        liste de (libelle, titre, pixmap), un par niveau selectionne plus
-        loin dans l'arborescence qui possede une vignette (voir
+        liste de (titre, pixmap), un par niveau selectionne plus loin dans
+        l'arborescence qui possede une vignette (voir
         PipelineBrowser.update_preview_stack). Quand elle est vide, la liste
         retrouve son comportement normal (etiree sur toute la colonne)."""
         while self.preview_layout.count():
             item = self.preview_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                # takeAt() le retire du layout mais pas de l'arbre des widgets
+                # enfants : sans hide()/setParent(None) immediats, il reste
+                # affiche a sa derniere position (plus geree par le layout)
+                # jusqu'a ce que deleteLater() s'execute, faisant apparaitre
+                # un « fantome » en surimpression du bloc precedent des que
+                # la selection change deux fois de suite rapidement.
+                widget.hide()
+                widget.setParent(None)
                 widget.deleteLater()
 
         if not entries:
             self.preview_container.hide()
             self.list.setMaximumHeight(QWIDGETSIZE_MAX)
+            self._column_layout.setStretch(1, 1)   # la liste (index 1) reprend tout
+            self._column_layout.setStretch(3, 0)   # l'espaceur de fin (index 3) n'absorbe rien
             return
 
-        for kind_label, title, pixmap in entries:
-            self.preview_layout.addWidget(_PreviewBlock(kind_label, title, pixmap))
+        # self.width() (fixee explicitement via setFixedWidth) plutot que
+        # self.list.width() : interroge en plein milieu de la chaine de
+        # signaux de selection, ce dernier peut encore renvoyer une largeur
+        # perimee (le layout n'a pas fini de se reappliquer), ce qui a deja
+        # produit des images bien trop grandes juste apres une selection.
+        width = self.width() - 1
+        for title, pixmap in entries:
+            self.preview_layout.addWidget(_PreviewBlock(title, pixmap, width))
         self.preview_container.show()
+        # Meme raisonnement que pour chaque bloc (voir _PreviewBlock) : sans
+        # cette limite explicite, le conteneur lui-meme peut etre etire par
+        # la colonne au-dela de la hauteur reelle de ses blocs.
+        self.preview_container.setFixedHeight(len(entries) * (PREVIEW_TITLE_HEIGHT + width))
         self.list.setMaximumHeight(self._list_content_height())
+        # La liste ne doit plus reclamer sa part d'etirement (elle est
+        # plafonnee) : sans ca, Qt lui laisse quand meme une grande partie de
+        # la hauteur disponible (a cause du stretch=1 pose a la construction)
+        # puis, ne pouvant pas depasser son maximum, la CENTRE dans cet espace
+        # au lieu de la coller sous l'en-tete — l'espaceur de fin (index 3)
+        # recupere desormais tout l'exces, qui reste alors sous l'apercu.
+        self._column_layout.setStretch(1, 0)
+        self._column_layout.setStretch(3, 1)
+
+    def _resize_preview_images(self):
+        """Redimensionne les images de l'aperçu empile (voir set_preview_stack)
+        a la volee pendant un glisser de la bordure de colonne, sans
+        reconstruire les blocs."""
+        if not self.preview_container.isVisible():
+            return
+        # self.width() (fixee explicitement via setFixedWidth) plutot que
+        # self.list.width() : interroge en plein milieu de la chaine de
+        # signaux de selection, ce dernier peut encore renvoyer une largeur
+        # perimee (le layout n'a pas fini de se reappliquer), ce qui a deja
+        # produit des images bien trop grandes juste apres une selection.
+        width = self.width() - 1
+        count = self.preview_layout.count()
+        for i in range(count):
+            block = self.preview_layout.itemAt(i).widget()
+            if block is not None:
+                block.image.set_side(width)
+                block.setFixedHeight(PREVIEW_TITLE_HEIGHT + width)
+        self.preview_container.setFixedHeight(count * (PREVIEW_TITLE_HEIGHT + width))
 
     def refresh_all(self):
         """Rafraichit toutes les colonnes de la fenetre (utilise apres un
@@ -1186,6 +1259,7 @@ class Column(QWidget):
         new_width = max(COLUMN_MIN_WIDTH, min(COLUMN_MAX_WIDTH, self._resize_start_width + delta))
         self.setFixedWidth(new_width)
         self.list.doItemsLayout()
+        self._resize_preview_images()
 
     def resize_end(self):
         self._resizing = False
@@ -2048,20 +2122,19 @@ class PipelineBrowser(QMainWindow):
 
     def update_preview_stack(self):
         """Recalcule l'aperçu empile de la premiere colonne (voir
-        Column.set_preview_stack) : un bloc (libelle + titre + image) par
-        colonne a vignettes (Projets, Sous-projet) actuellement selectionnee,
-        dans l'ordre de navigation."""
+        Column.set_preview_stack) : un bloc (titre + image) par colonne a
+        vignettes (Projets, Sous-projet) actuellement selectionnee, dans
+        l'ordre de navigation."""
         if not self.columns:
             return
-        entries: list[tuple[str, str, QPixmap]] = []
+        entries: list[tuple[str, QPixmap]] = []
         for column in self.columns:
             if not column.has_thumbnails:
                 continue
             path = column.current_path()
             if path is None:
                 continue
-            kind_label = PREVIEW_KIND_LABELS.get(column.column_title, column.column_title.lower())
-            entries.append((kind_label, path.name, project_thumbnail_pixmap(path)))
+            entries.append((path.name, project_thumbnail_pixmap(path)))
         self.columns[0].set_preview_stack(entries)
 
     def on_selected(self, column: Column, path: Path | None):
