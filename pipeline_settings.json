@@ -1,47 +1,154 @@
 {
   "root_path": "F:\\PIPELINE",
-  "remember_last_root": false,
-  "column_width": 220,
-  "project_row_height": 64,
-  "row_spacing": 1,
-  "thumbnail_max_dim": 1024,
-  "software_icon_max_dim": 128,
-  "show_file_image_previews": true,
-  "file_preview_size": 64,
-  "confirm_before_move": true,
-  "font_files": {
-    "family": "JetBrains Mono",
+  "ui_scale": 100,
+  "save_mode": "Par utilisateur",
+  "external_settings_path": "",
+  "window_radius": 0,
+  "header_height": 26,
+  "header_font_family": "",
+  "colors": {
+    "app_bg": "#101214",
+    "void": "#0d0f11",
+    "window": "#1a1c1e",
+    "chrome": "#202326",
+    "topbar": "#212427",
+    "well": "#000000",
+    "detail_bg": "#17191b",
+    "border": "#2c3034",
+    "border_soft": "#303539",
+    "sel_idle": "#2e3338",
+    "hover": "#232729",
+    "accent": "#3f6f9f",
+    "accent_text": "#eef2f5",
+    "btn": "#282c30",
+    "btn_border": "#383d42",
+    "btn_hover": "#31363b",
+    "btn_hover_bd": "#454b50",
+    "text": "#d6d9dc",
+    "text_file": "#b3babf",
+    "text_mono": "#b9bfc4",
+    "header": "#9aa1a7",
+    "label": "#7d858b",
+    "dim": "#5f666b",
+    "count": "#5c6368",
+    "mark_dir_bd": "#6c757b",
+    "mark_dir_fill": "#3b4045",
+    "mark_file_bd": "#454b50",
+    "scroll": "#35393d",
+    "scroll_hover": "#464b50"
+  },
+  "font_main": {
+    "family": "",
     "size": 12,
     "bold": false,
     "smoothing": "current",
-    "color": ""
+    "color": "#ff007f",
+    "custom": true
+  },
+  "font_titles": {
+    "family": "",
+    "size": 12,
+    "bold": false,
+    "smoothing": "current",
+    "color": "#ff00ff",
+    "custom": true
   },
   "font_folders": {
     "family": "",
-    "size": 12,
+    "size": 14,
     "bold": false,
     "smoothing": "current",
-    "color": ""
+    "color": "#ffffff",
+    "custom": true
   },
-  "font_info": {
-    "family": "",
-    "size": 12,
+  "font_files": {
+    "family": "JetBrains Mono",
+    "size": 14,
     "bold": false,
-    "smoothing": "previous",
-    "color": ""
+    "smoothing": "current",
+    "color": "#c3c3c3",
+    "custom": true
   },
   "font_buttons": {
     "family": "",
     "size": 12,
     "bold": false,
     "smoothing": "current",
-    "color": ""
+    "color": "#7d858b",
+    "custom": false
   },
-  "font_app": {
+  "font_colhead": {
     "family": "",
-    "size": 12,
+    "size": 11,
+    "bold": false,
+    "smoothing": "current",
+    "color": "#7d858b",
+    "custom": true
+  },
+  "font_info": {
+    "family": "",
+    "size": 11,
     "bold": false,
     "smoothing": "previous",
-    "color": ""
-  }
+    "color": "#6db2cf",
+    "custom": true
+  },
+  "font_info2": {
+    "family": "",
+    "size": 11,
+    "bold": false,
+    "smoothing": "previous",
+    "color": "#cfcfcf",
+    "custom": true
+  },
+  "button_radius": 0,
+  "columns": {
+    "Type": {
+      "width": 140,
+      "height": 25,
+      "spacing": 0
+    },
+    "Projets": {
+      "width": 230,
+      "height": 60,
+      "spacing": 0,
+      "img_pad": 6,
+      "img_radius": 5,
+      "sep_h": true,
+      "sep_v": false
+    },
+    "Sous-projet": {
+      "width": 230,
+      "height": 60,
+      "spacing": 0,
+      "img_pad": 0,
+      "img_radius": 0,
+      "sep_h": true,
+      "sep_v": false,
+      "img_pad_link": true,
+      "img_radius_link": true
+    },
+    "Logiciels": {
+      "width": 300,
+      "height": 44,
+      "spacing": 0,
+      "plain_height": 30,
+      "img_pad": 3,
+      "img_radius": 2,
+      "sep_h": true,
+      "sep_v": true
+    },
+    "Contenu": {
+      "width": 186,
+      "height": 58,
+      "spacing": 0,
+      "plain_height": 26,
+      "img_pad": 8,
+      "img_radius": 5,
+      "sep_h": true,
+      "sep_v": false
+    }
+  },
+  "preview_pad": 10,
+  "preview_radius": 6
 }

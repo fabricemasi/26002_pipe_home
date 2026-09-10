@@ -1,0 +1,290 @@
+{
+  "fab": {
+    "root_path": "F:\\PIPELINE",
+    "ui_scale": 100,
+    "save_mode": "Par utilisateur",
+    "external_settings_path": "",
+    "window_radius": 0,
+    "header_height": 26,
+    "header_font_family": "",
+    "colors": {
+      "app_bg": "#101214",
+      "void": "#0d0f11",
+      "window": "#1a1c1e",
+      "chrome": "#202326",
+      "topbar": "#212427",
+      "well": "#1a1c1e",
+      "detail_bg": "#1a1c1e",
+      "border": "#2c3034",
+      "border_soft": "#303539",
+      "sel_idle": "#2e3338",
+      "hover": "#232729",
+      "accent": "#3f6f9f",
+      "accent_text": "#eef2f5",
+      "btn": "#282c30",
+      "btn_border": "#383d42",
+      "btn_hover": "#31363b",
+      "btn_hover_bd": "#454b50",
+      "text": "#d6d9dc",
+      "text_file": "#b3babf",
+      "text_mono": "#b9bfc4",
+      "header": "#9aa1a7",
+      "label": "#7d858b",
+      "dim": "#5f666b",
+      "count": "#5c6368",
+      "mark_dir_bd": "#6c757b",
+      "mark_dir_fill": "#3b4045",
+      "mark_file_bd": "#454b50",
+      "scroll": "#35393d",
+      "scroll_hover": "#464b50"
+    },
+    "font_main": {
+      "family": "",
+      "size": 12,
+      "bold": false,
+      "smoothing": "current",
+      "color": "#7d858b",
+      "custom": false
+    },
+    "font_titles": {
+      "family": "",
+      "size": 12,
+      "bold": false,
+      "smoothing": "current",
+      "color": "#7d858b",
+      "custom": false
+    },
+    "font_folders": {
+      "family": "",
+      "size": 12,
+      "bold": false,
+      "smoothing": "current",
+      "color": "#7d858b",
+      "custom": false
+    },
+    "font_files": {
+      "family": "",
+      "size": 12,
+      "bold": false,
+      "smoothing": "current",
+      "color": "#7d858b",
+      "custom": false
+    },
+    "font_buttons": {
+      "family": "",
+      "size": 12,
+      "bold": false,
+      "smoothing": "current",
+      "color": "#7d858b",
+      "custom": false
+    },
+    "font_colhead": {
+      "family": "",
+      "size": 12,
+      "bold": false,
+      "smoothing": "current",
+      "color": "#7d858b",
+      "custom": false
+    },
+    "font_info": {
+      "family": "",
+      "size": 12,
+      "bold": false,
+      "smoothing": "current",
+      "color": "#7d858b",
+      "custom": false
+    },
+    "font_info2": {
+      "family": "",
+      "size": 12,
+      "bold": false,
+      "smoothing": "current",
+      "color": "#7d858b",
+      "custom": false
+    },
+    "button_radius": 0,
+    "columns": {
+      "Type": {
+        "width": 140,
+        "height": 25,
+        "spacing": 0
+      },
+      "Projets": {
+        "width": 208,
+        "height": 58,
+        "spacing": 1,
+        "img_pad": 0,
+        "img_radius": 0
+      },
+      "Sous-projet": {
+        "width": 208,
+        "height": 58,
+        "spacing": 1,
+        "img_pad": 0,
+        "img_radius": 0,
+        "img_pad_link": true,
+        "img_radius_link": true
+      },
+      "Logiciels": {
+        "width": 300,
+        "height": 30,
+        "spacing": 0,
+        "img_pad": 3,
+        "img_radius": 2
+      },
+      "Contenu": {
+        "width": 186,
+        "height": 58,
+        "spacing": 0,
+        "img_pad": 8,
+        "img_radius": 5
+      }
+    },
+    "preview_pad": 23,
+    "preview_radius": 4
+  },
+  "Fab": {
+    "root_path": "F:\\PIPELINE",
+    "ui_scale": 100,
+    "save_mode": "Par utilisateur",
+    "external_settings_path": "",
+    "window_radius": 0,
+    "header_height": 26,
+    "header_font_family": "",
+    "colors": {
+      "app_bg": "#101214",
+      "void": "#0d0f11",
+      "window": "#1a1c1e",
+      "chrome": "#202326",
+      "topbar": "#212427",
+      "well": "#1a1c1e",
+      "detail_bg": "#1a1c1e",
+      "border": "#2c3034",
+      "border_soft": "#303539",
+      "sel_idle": "#2e3338",
+      "hover": "#232729",
+      "accent": "#3f6f9f",
+      "accent_text": "#eef2f5",
+      "btn": "#282c30",
+      "btn_border": "#383d42",
+      "btn_hover": "#31363b",
+      "btn_hover_bd": "#454b50",
+      "text": "#d6d9dc",
+      "text_file": "#b3babf",
+      "text_mono": "#b9bfc4",
+      "header": "#9aa1a7",
+      "label": "#7d858b",
+      "dim": "#5f666b",
+      "count": "#5c6368",
+      "mark_dir_bd": "#6c757b",
+      "mark_dir_fill": "#3b4045",
+      "mark_file_bd": "#454b50",
+      "scroll": "#35393d",
+      "scroll_hover": "#464b50"
+    },
+    "font_main": {
+      "family": "",
+      "size": 12,
+      "bold": false,
+      "smoothing": "current",
+      "color": "#7d858b",
+      "custom": false
+    },
+    "font_titles": {
+      "family": "",
+      "size": 12,
+      "bold": false,
+      "smoothing": "current",
+      "color": "#7d858b",
+      "custom": false
+    },
+    "font_folders": {
+      "family": "",
+      "size": 12,
+      "bold": false,
+      "smoothing": "current",
+      "color": "#7d858b",
+      "custom": false
+    },
+    "font_files": {
+      "family": "",
+      "size": 12,
+      "bold": false,
+      "smoothing": "current",
+      "color": "#7d858b",
+      "custom": false
+    },
+    "font_buttons": {
+      "family": "",
+      "size": 12,
+      "bold": false,
+      "smoothing": "current",
+      "color": "#7d858b",
+      "custom": false
+    },
+    "font_colhead": {
+      "family": "",
+      "size": 12,
+      "bold": false,
+      "smoothing": "current",
+      "color": "#7d858b",
+      "custom": false
+    },
+    "font_info": {
+      "family": "",
+      "size": 12,
+      "bold": false,
+      "smoothing": "current",
+      "color": "#7d858b",
+      "custom": false
+    },
+    "font_info2": {
+      "family": "",
+      "size": 12,
+      "bold": false,
+      "smoothing": "current",
+      "color": "#7d858b",
+      "custom": false
+    },
+    "button_radius": 0,
+    "columns": {
+      "Type": {
+        "width": 140,
+        "height": 25,
+        "spacing": 0
+      },
+      "Projets": {
+        "width": 208,
+        "height": 58,
+        "spacing": 1,
+        "img_pad": 0,
+        "img_radius": 0
+      },
+      "Sous-projet": {
+        "width": 208,
+        "height": 58,
+        "spacing": 1,
+        "img_pad": 0,
+        "img_radius": 0,
+        "img_pad_link": true,
+        "img_radius_link": true
+      },
+      "Logiciels": {
+        "width": 300,
+        "height": 30,
+        "spacing": 0,
+        "img_pad": 3,
+        "img_radius": 2
+      },
+      "Contenu": {
+        "width": 186,
+        "height": 58,
+        "spacing": 0,
+        "img_pad": 8,
+        "img_radius": 5
+      }
+    },
+    "preview_pad": 10,
+    "preview_radius": 4
+  }
+}

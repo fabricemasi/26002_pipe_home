@@ -1,0 +1,6 @@
+PySide6
+# Optionnel : uniquement necessaire pour l'apercu des fichiers .exr (voir
+# _decode_exr_image dans pipeline_browser.py). Sans ce paquet, l'appli
+# fonctionne normalement, ces fichiers restent juste sans apercu.
+OpenEXR
+numpy
