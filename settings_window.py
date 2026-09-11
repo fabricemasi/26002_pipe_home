@@ -2,15 +2,30 @@
 """
 Fenetre de parametres de Pipeline Browser.
 
-Reproduction fidele de la maquette html fournie ("VFX Pipeline Settings v2") :
-meme barre de titre interne, meme barre d'outils (preset + recherche), meme
-navigation laterale a rails, meme en-tete de page souligne d'accent, memes
-lignes de reglage (chemin / slider / select / segmente / interrupteur /
-couleur), meme table de polices, meme grille de couleurs, meme barre du bas.
-Les couleurs/tailles ci-dessous (voir M) sont recopiees telles quelles de la
-maquette plutot que de reutiliser la palette de app_style.C — c'est la
-palette PROPRE a cette fenetre, independante de celle (modifiable) du
-navigateur principal.
+Reproduction fidele de la maquette html "Parametres generaux" (refonte totale,
+remplace l'ancienne fenetre a navigation laterale + pages) : meme barre de
+titre, meme barre d'outils presets, un unique panneau defilant a sections
+(Application / Polices / Couleurs / Entetes / Geometrie), meme barre du bas
+(Valeurs par defaut / Appliquer / Annuler / Enregistrer). La maquette avait
+en plus un panneau "Apercu en direct" a droite (fenetre miniature simulee) —
+supprime a la demande de l'utilisateur, la previsualisation en direct reste
+assuree sur la VRAIE fenetre principale (voir settingsChanged).
+
+La maquette n'expose que 8 couleurs semantiques, 4 roles de police (famille
+seule, sans taille/gras/couleur/lissage) et aucun reglage par colonne — bien
+moins que ce que l'appli sait faire (29 couleurs, 8 roles de police detailles,
+5 pages de geometrie de colonnes, mode de sauvegarde...). Choix assume (voir
+l'echange avec l'utilisateur) : fidelite totale a la maquette. Les reglages
+qui n'y figurent plus RESTENT dans le fichier de reglages et continuent
+d'etre appliques tels quels (voir DEFAULT_SETTINGS et apply_all_settings dans
+pipeline_browser.py) — simplement plus aucune UI ici pour les changer, ils
+restent fixes a leur valeur actuelle. Voir SEMANTIC_COLOR_SLOTS (app_style.py)
+pour le detail du mappage des 8 couleurs vers les cles reelles de C.
+
+Les couleurs/tailles ci-dessous (voir M) sont la palette FIXE de cette
+fenetre, independante de celle (modifiable en direct) du navigateur
+principal — memes raisons que l'ancienne fenetre : une fenetre de parametres
+qui s'auto-appliquerait ses propres reglages pourrait se rendre illisible.
 
     python settings_window.py   (pour previsualiser la fenetre seule)
 """
@@ -18,17 +33,15 @@ navigateur principal.
 import json
 import sys
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from PySide6.QtCore import QPoint, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QCursor, QFont, QIntValidator, QPainter
+from PySide6.QtGui import QColor, QFont, QIntValidator, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
-    QButtonGroup,
     QColorDialog,
     QDialog,
     QFileDialog,
-    QFontComboBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -48,18 +61,17 @@ from PySide6.QtWidgets import (
 from app_style import (
     C,
     COLOR_FIELDS,
-    SMOOTHING_CHOICES,
-    SMOOTHING_LABELS_SHORT,
-    WINDOW_ROUNDED_RADIUS,
+    SEMANTIC_COLOR_SLOTS,
     apply_dwm_frame,
     auto_family_for_role,
     installed_font_families,
+    resize_hit_test,
     start_native_move,
 )
 
 # ==========================================================================
-# Palette et metriques de LA MAQUETTE (independantes de app_style.C : voir
-# la remarque en tete de fichier).
+# Palette et metriques FIXES de cette fenetre (voir la remarque de tete de
+# fichier) — recopiees de la maquette html.
 # ==========================================================================
 
 M = {
@@ -73,9 +85,13 @@ M = {
     "title_fg": "#8d949a",
     "dirty_fg": "#c2914a",
     "clean_fg": "#5d656b",
+    "dirty_border": "#5c4f2a",
+    "dirty_dot": "#c2914a",
+    "clean_dot": "#3f8f6b",
     "close_hover_bg": "#232a30",
     "close_fg": "#7d858b",
     "close_hover_fg": "#d6d9dc",
+    "dot_border": "#4d565c",
     "toolbar_bg": "#1b1e21",
     "field_bg": "#101214",
     "field_border": "#2e343a",
@@ -88,34 +104,18 @@ M = {
     "btn_border": "#353b41",
     "btn_fg": "#c4cacf",
     "btn_hover": "#2f353b",
-    "slash": "#4c545a",
     "placeholder": "#5d656b",
-    "nav_bg": "#131517",
-    "nav_group_fg": "#5d656b",
-    "nav_fg": "#aab1b6",
-    "nav_fg_active": "#eaf0f5",
-    "nav_bg_active": "#20262b",
-    "nav_hover": "#1c2125",
-    "nav_glyph": "#4f565b",
-    "nav_glyph_active": "#8fb4d5",
-    "nav_count": "#4f565b",
-    "nav_count_active": "#7f9dba",
-    "page_head_bg": "#1b1e21",
-    "page_title": "#cfe1f0",
-    "page_hint": "#6e767c",
+    "section_title": "#5f9bd0",
     "group_title": "#d6d9dc",
-    "group_divider": "#262a2e",
     "group_note": "#5d656b",
-    "row_divider": "#232629",
     "row_label": "#cdd2d6",
-    "row_label_off": "#6a7278",
+    "row_label_off": "#7a828a",
     "row_note": "#5d656b",
     "value_text": "#e0e4e7",
     "value_text_off": "#6a7278",
     "unit": "#5d656b",
     "track_bg": "#25292d",
-    "knob_off": "#4f565b",
-    "seg_fg": "#98a0a7",
+    "knob_off": "#5d656b",
     "toggle_on_fg": "#9dc0e0",
     "toggle_off_fg": "#5d656b",
     "swatch_border": "#3a4045",
@@ -126,36 +126,24 @@ M = {
     "table_head_fg": "#8d949a",
     "bold_mark_fg": "#0f1114",
     "preview_bg": "#131517",
-    "preview_border": "#262a2e",
+    "preview_border": "#23282c",
     "reset_fg": "#9aa2a9",
     "reset_hover_fg": "#c8ced3",
+    "edge_off": "#262a2e",
+    "edge_hint": "#4c545a",
+    "dash": "#454d53",
 }
 
 # ==========================================================================
-# Persistance
+# Persistance — un seul emplacement (voir la remarque de tete de fichier :
+# le mode de sauvegarde a 4 positions de l'ancienne fenetre a disparu avec
+# la maquette, qui n'a qu'un reglage "Preset" ; le fichier actif reste celui
+# deja utilise aujourd'hui, aucun changement de comportement).
 # ==========================================================================
-
-SAVE_MODES = ["Par utilisateur", "Global (partage)", "Par projet", "Fichier externe"]
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _PER_USER_PATH = _SCRIPT_DIR / "pipeline_settings.json"
-_SHARED_PATH = _SCRIPT_DIR / "pipeline_settings.shared.json"
 _PRESETS_PATH = _SCRIPT_DIR / "pipeline_settings.presets.json"
-
-
-def _settings_path(settings: dict) -> Path:
-    mode = settings.get("save_mode", "Par utilisateur")
-    if mode == "Global (partage)":
-        return _SHARED_PATH
-    if mode == "Par projet":
-        root = settings.get("root_path") or str(_SCRIPT_DIR)
-        return Path(root) / "pipeline_settings.json"
-    if mode == "Fichier externe":
-        external = settings.get("external_settings_path") or ""
-        if external:
-            return Path(external)
-    return _PER_USER_PATH
-
 
 _DEFAULT_FONT = {
     "family": "", "size": 12, "bold": False, "smoothing": "current", "color": "", "custom": False,
@@ -176,24 +164,29 @@ DEFAULT_COLUMNS: dict[str, dict[str, Any]] = {
 DEFAULT_SETTINGS: dict[str, Any] = {
     "root_path": r"F:\PIPELINE",
     "ui_scale": 100,
-    "save_mode": "Par utilisateur",
-    "external_settings_path": "",
     "window_radius": 0,
     "header_height": 26,
-    "header_font_family": "",
+    "header_padding": 0,
+    "header_color": "skinN1",
+    "header_radius": 0,
+    "header_edges": {"top": False, "right": False, "bottom": True, "left": False},
+    "header_font_family": "",   # fige : plus d'UI (voir remarque de tete de fichier)
+    "input_frame": True,
+    "input_radius": 0,
+    "button_frame": True,
+    "button_radius": 0,
     "colors": {key: C[key] for key, _, _ in COLOR_FIELDS},
     "font_main": dict(_DEFAULT_FONT),
     "font_titles": dict(_DEFAULT_FONT),
-    "font_folders": dict(_DEFAULT_FONT),
+    "font_folders": dict(_DEFAULT_FONT),    # fige
     "font_files": dict(_DEFAULT_FONT),
-    "font_buttons": dict(_DEFAULT_FONT),
-    "font_colhead": dict(_DEFAULT_FONT),
+    "font_buttons": dict(_DEFAULT_FONT),    # fige
+    "font_colhead": dict(_DEFAULT_FONT),    # fige
     "font_info": dict(_DEFAULT_FONT),
-    "font_info2": dict(_DEFAULT_FONT),
-    "button_radius": 0,
-    "columns": json.loads(json.dumps(DEFAULT_COLUMNS)),
-    "preview_pad": 0,
-    "preview_radius": 0,
+    "font_info2": dict(_DEFAULT_FONT),      # fige
+    "columns": json.loads(json.dumps(DEFAULT_COLUMNS)),   # fige
+    "preview_pad": 0,     # fige
+    "preview_radius": 0,  # fige
 }
 
 
@@ -218,20 +211,13 @@ def load_settings() -> dict[str, Any]:
             _merge(json.loads(_PER_USER_PATH.read_text(encoding="utf-8")))
     except (OSError, ValueError):
         pass
-    try:
-        real_path = _settings_path(settings)
-        if real_path != _PER_USER_PATH and real_path.is_file():
-            _merge(json.loads(real_path.read_text(encoding="utf-8")))
-    except (OSError, ValueError):
-        pass
     return settings
 
 
 def save_settings(settings: dict[str, Any]) -> None:
-    path = _settings_path(settings)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(settings, indent=2, ensure_ascii=False), encoding="utf-8")
+        _PER_USER_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _PER_USER_PATH.write_text(json.dumps(settings, indent=2, ensure_ascii=False), encoding="utf-8")
     except OSError:
         pass
 
@@ -255,56 +241,47 @@ def _save_presets(presets: dict[str, dict]) -> None:
 
 
 # ==========================================================================
-# Petits widgets reproduisant exactement les controles de la maquette.
+# Petits widgets reproduisant les controles de la maquette.
 # ==========================================================================
 
-def _qfont(size: int, weight: int = 400, mono: bool = False) -> QFont:
+def _qfont(size: int, weight: int = 400, mono: bool = False, tracking: float = 0.0) -> QFont:
     f = QFont("Consolas" if mono else "Segoe UI")
     f.setPixelSize(size)
     f.setWeight(QFont.Weight(weight))
+    if tracking:
+        f.setLetterSpacing(QFont.AbsoluteSpacing, tracking)
     return f
 
 
 class _Btn(QPushButton):
-    """Bouton rectangulaire plat, style boutons de la maquette (bg/bordure/
-    hover uniformes, sans le degrade natif de Fusion)."""
+    """Bouton rectangulaire plat (voir la meme classe dans l'ancienne
+    fenetre — inchangee, deja fidele)."""
 
     def __init__(self, text: str, bg: str, border: str, fg: str, hover: str,
-                 height: int = 24, weight: int = 500, padding: str = "0 10px", parent=None):
+                 height: int = 24, weight: int = 500, padding: str = "0 11px", parent=None):
         super().__init__(text, parent)
         self.setFixedHeight(height)
         self.setCursor(Qt.ArrowCursor)
-        # Sans ceci, Fusion dessine un rectangle pointille de focus autour du
-        # texte du bouton des qu'il regoit le focus clavier (des le premier
-        # clic) : ce cadre "sur le texte" est exactement ce qui etait signale.
         self.setFocusPolicy(Qt.NoFocus)
         self.setFont(_qfont(11, weight))
+        border_rule = f"border: 1px solid {border};" if border else "border: none;"
         self.setStyleSheet(
-            f"QPushButton {{ background: {bg}; border: 1px solid {border}; color: {fg}; "
-            f"padding: {padding}; }}"
+            f"QPushButton {{ background: {bg}; {border_rule} color: {fg}; padding: {padding}; }}"
             f"QPushButton:hover {{ background: {hover}; }}"
         )
 
 
 class _MiniSlider(QWidget):
-    """Slider peint a la main : filet 3px + curseur rectangulaire 3x14,
-    exactement la geometrie de la maquette (un QSlider stylise via QSS ne
-    reproduit pas fidelement un curseur aussi fin)."""
+    """Slider peint a la main : filet 3px + curseur 3x14."""
 
     valueChanged = Signal(int)
 
-    def __init__(self, minimum: int, maximum: int, value: int, width: int = 170,
-                 muted: bool = False, parent=None):
+    def __init__(self, minimum: int, maximum: int, value: int, width: int = 170, parent=None):
         super().__init__(parent)
         self._min, self._max = minimum, maximum
         self._value = max(minimum, min(maximum, value))
-        self._muted = muted
         self.setFixedSize(width, 22)
         self.setCursor(Qt.ArrowCursor)
-
-    def setMuted(self, muted: bool):
-        self._muted = muted
-        self.update()
 
     def value(self) -> int:
         return self._value
@@ -337,66 +314,49 @@ class _MiniSlider(QWidget):
         p.setRenderHint(QPainter.Antialiasing, False)
         mid_y = self.height() // 2
         p.fillRect(0, mid_y - 1, self.width(), 3, QColor(M["track_bg"]))
-        fill_color = M["knob_off"] if self._muted else M["accent"]
-        knob_color = M["knob_off"] if self._muted else "#8fb4d5"
         fill_w = round(self._pct() * self.width())
         if fill_w > 0:
-            p.fillRect(0, mid_y - 1, fill_w, 3, QColor(fill_color))
+            p.fillRect(0, mid_y - 1, fill_w, 3, QColor(M["accent"]))
         knob_x = max(0, min(self.width() - 3, fill_w - 1))
-        p.fillRect(knob_x, mid_y - 7, 3, 14, QColor(knob_color))
+        p.fillRect(knob_x, mid_y - 7, 3, 14, QColor("#8fb4d5"))
         p.end()
 
 
 class _SliderField(QWidget):
-    """Slider + boite de lecture numerique a droite (unite comprise) —
-    assemble _MiniSlider avec sa valeur affichee, comme dans la maquette."""
+    """Slider + boite de lecture/saisie numerique a droite (unite comprise)."""
 
     valueChanged = Signal(int)
 
     def __init__(self, minimum: int, maximum: int, value: int, unit: str = "px",
-                 slider_width: int = 170, box_width: int = 68, muted: bool = False, parent=None):
+                 slider_width: int = 170, box_width: int = 68, parent=None):
         super().__init__(parent)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
-        self.slider = _MiniSlider(minimum, maximum, value, slider_width, muted)
+        self.slider = _MiniSlider(minimum, maximum, value, slider_width)
         box = QWidget()
         box.setObjectName("SliderValueBox")
         box.setAttribute(Qt.WA_StyledBackground, True)
         box.setFixedSize(box_width, 25)
-        # Selecteur scope a #SliderValueBox : une regle nue (sans selecteur)
-        # cascade en QSS sur value_label/unit_label ci-dessous, y dessinant
-        # chacun leur propre filet — c'etait le "border actif sur le texte"
-        # signale par l'utilisateur (visible autour de la valeur numerique).
         box.setStyleSheet(f"#SliderValueBox {{ background: {M['field_bg']}; border: 1px solid {M['field_border']}; }}")
         box_l = QHBoxLayout(box)
         box_l.setContentsMargins(7, 0, 7, 0)
         box_l.setSpacing(4)
         self._min, self._max = minimum, maximum
-        # QLineEdit plutot qu'un QLabel : la valeur doit rester saisissable
-        # au clavier (selection + frappe directe), pas seulement lisible —
-        # voir la remarque de l'utilisateur, capture a l'appui.
         self.value_label = QLineEdit(str(value))
         self.value_label.setFont(_qfont(11, 400, mono=True))
         self.value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.value_label.setFrame(False)
-        # Pas de bornes sur le validateur lui-meme : avec QIntValidator(min,
-        # max), Qt considere un depassement comme durablement invalide et
-        # bloque jusqu'au retour-arriere (Entree ne fait plus rien, le champ
-        # reste coince sur un texte incoherent) — le clamp reel se fait a la
-        # validation, dans _on_text_edited.
         self.value_label.setValidator(QIntValidator(self.value_label))
-        self.value_label.setStyleSheet("background: transparent; border: none; padding: 0;")
+        self.value_label.setStyleSheet(f"background: transparent; border: none; padding: 0; color: {M['value_text']};")
         self.value_label.editingFinished.connect(self._on_text_edited)
-        self.unit_label = QLabel(unit)
-        self.unit_label.setFont(_qfont(9, 400, mono=True))
-        self.unit_label.setStyleSheet(f"color: {M['unit']}; background: transparent;")
+        unit_label = QLabel(unit)
+        unit_label.setFont(_qfont(9, 400, mono=True))
+        unit_label.setStyleSheet(f"color: {M['unit']}; background: transparent;")
         box_l.addWidget(self.value_label, 1)
-        box_l.addWidget(self.unit_label)
-        self._box = box
+        box_l.addWidget(unit_label)
         layout.addWidget(self.slider)
         layout.addWidget(box)
-        self.setMuted(muted)
         self.slider.valueChanged.connect(self._on_change)
 
     def _on_change(self, value: int):
@@ -404,26 +364,13 @@ class _SliderField(QWidget):
         self.valueChanged.emit(value)
 
     def _on_text_edited(self):
-        """Valide la saisie clavier a la validation (Entree ou perte de
-        focus) : texte vide/invalide ou hors bornes revient simplement a la
-        valeur courante du slider plutot que de planter/laisser un etat
-        incoherent — QIntValidator borne deja la plupart des cas, ceci
-        couvre le champ laisse vide ou juste "-"."""
         text = self.value_label.text().strip()
         try:
             value = max(self._min, min(self._max, int(text)))
         except ValueError:
             value = self.slider.value()
         self.slider.setValue(value)
-        # setValue() ne re-emet valueChanged (donc ne retexte value_label)
-        # que si la valeur a change — la reafficher nous-memes couvre aussi
-        # le cas ou la saisie invalide revient a l'identique.
         self.value_label.setText(str(self.slider.value()))
-
-    def setMuted(self, muted: bool):
-        self.slider.setMuted(muted)
-        color = M["value_text_off"] if muted else M["value_text"]
-        self.value_label.setStyleSheet(f"background: transparent; border: none; padding: 0; color: {color};")
 
     def value(self) -> int:
         return self.slider.value()
@@ -433,8 +380,7 @@ class _SliderField(QWidget):
 
 
 class _SelectField(QPushButton):
-    """Bouton "select" (valeur + chevron), ouvre un QMenu — reproduit la
-    boite cliquable de la maquette plutot qu'un QComboBox natif."""
+    """Bouton "select" (valeur + chevron), ouvre un QMenu."""
 
     changed = Signal(str)
 
@@ -446,16 +392,13 @@ class _SelectField(QPushButton):
         self.setCursor(Qt.ArrowCursor)
         self.setFocusPolicy(Qt.NoFocus)
         self.setFont(_qfont(11, 400))
-        self._apply_style()
-        self.clicked.connect(self._open_menu)
-        self._sync_text()
-
-    def _apply_style(self):
         self.setStyleSheet(
             f"QPushButton {{ background: {M['field_bg']}; border: 1px solid {M['field_border']}; "
             f"color: {M['value_fg']}; text-align: left; padding: 0 8px; }}"
             f"QPushButton:hover {{ border-color: {M['field_border_hover']}; }}"
         )
+        self.clicked.connect(self._open_menu)
+        self._sync_text()
 
     def _sync_text(self):
         self.setText(self._value + "  \u25be")
@@ -489,21 +432,10 @@ class _SelectField(QPushButton):
 
 
 class _FontSelectField(_SelectField):
-    """Variante de _SelectField pour choisir une police : un QMenu classique
-    ne rend chaque entree que comme du texte plat dans une seule police, et
-    ne defile que par petites fleches haut/bas des qu'il deborde de l'ecran
-    — mediocre avec ~200 polices. Ici, une vraie liste deroulante (scroll
-    natif fluide, molette comprise) ou chaque nom de police est rendu DANS
-    cette police : l'apercu est direct, pas besoin de la selectionner pour
-    voir a quoi elle ressemble.
-
-    `auto_label`, si fourni, est le nom REEL de la police que l'auto-
-    detection choisirait pour ce role (voir auto_family_for_role) : affiche
-    a la place du mot generique "Systeme" partout ou l'entree "Systeme" est
-    rendue (bouton + liste), sans changer la valeur STOCKEE (toujours
-    "Systeme" en interne — la case reste bien "auto-detection", pas "police
-    figee sur celle-ci en particulier" ; si l'auto-detection venait a
-    resoudre une autre police, ce libelle suivrait tout seul)."""
+    """Variante de _SelectField pour choisir une police : vraie liste
+    deroulante (scroll natif, molette comprise) ou chaque nom de police est
+    rendu DANS cette police — voir la meme classe dans l'ancienne fenetre,
+    logique inchangee."""
 
     def __init__(self, options: list[str], current: str, width: int = 200,
                  auto_label: str | None = None, parent=None):
@@ -516,15 +448,13 @@ class _FontSelectField(_SelectField):
         return opt
 
     def _sync_text(self):
-        self.setText(self._display_label(self._value) + "  ▾")
+        self.setText(self._display_label(self._value) + "  \u25be")
 
     def _open_menu(self):
         popup = QWidget(self, Qt.Popup)
         popup.setObjectName("FontPopup")
         popup.setAttribute(Qt.WA_StyledBackground, True)
-        popup.setStyleSheet(
-            f"#FontPopup {{ background: {M['toolbar_bg']}; border: 1px solid {M['field_border']}; }}"
-        )
+        popup.setStyleSheet(f"#FontPopup {{ background: {M['toolbar_bg']}; border: 1px solid {M['field_border']}; }}")
         layout = QVBoxLayout(popup)
         layout.setContentsMargins(1, 1, 1, 1)
         layout.setSpacing(0)
@@ -541,22 +471,9 @@ class _FontSelectField(_SelectField):
         current_item = None
         for opt in self._options:
             if opt == self._auto_label and opt != self._value:
-                # Deja represente par l'entree "Systeme" ci-dessus (voir
-                # _display_label) : ne PAS la retirer de self._options
-                # (une police explicitement choisie qui coinciderait avec
-                # l'auto-detection doit rester distincte, voir le
-                # commentaire au point de construction), juste ne pas la
-                # re-afficher en double ici.
                 continue
             item = QListWidgetItem(self._display_label(opt))
-            # La valeur reelle (potentiellement differente du texte affiche
-            # pour l'entree "Systeme", voir _display_label) voyage a part —
-            # lire item.text() au clic donnerait le libelle, pas la valeur.
             item.setData(Qt.UserRole, opt)
-            # "Systeme" reste dans la police de l'appli (rien a previsualiser
-            # de plus : son libelle EST deja le nom de la police reellement
-            # utilisee) ; chaque police explicite est rendue dans elle-meme
-            # — l'apercu direct demande par l'utilisateur.
             item.setFont(_qfont(12, 400) if opt == "Systeme" else QFont(opt, 12))
             listw.addItem(item)
             if opt == self._value:
@@ -578,68 +495,14 @@ class _FontSelectField(_SelectField):
         self._select(opt)
 
 
-class _Segmented(QWidget):
-    """Controle a positions exclusives (lissage 3 positions, etc.)."""
-
-    changed = Signal(str)
-
-    def __init__(self, choices: list[str], labels: dict[str, str], current: str,
-                 height: int = 25, seg_width: int = 0, parent=None):
-        super().__init__(parent)
-        self._choices = choices
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        self._buttons: dict[str, QPushButton] = {}
-        group = QButtonGroup(self)
-        group.setExclusive(True)
-        for i, key in enumerate(choices):
-            btn = QPushButton(labels.get(key, key))
-            btn.setCheckable(True)
-            btn.setChecked(key == current)
-            btn.setFont(_qfont(10, 400))
-            btn.setFixedHeight(height)
-            # Largeur MINIMALE (pas fixe) : une largeur fixe trop etroite
-            # rognait le texte des libelles les plus longs ("Moyen") — voir
-            # sizeHint() ci-dessous, qui tient compte du texte reel.
-            if seg_width:
-                btn.setMinimumWidth(seg_width)
-            btn.setCursor(Qt.ArrowCursor)
-            btn.setFocusPolicy(Qt.NoFocus)
-            sep = "" if i == 0 else f"border-left: 1px solid {M['field_border']};"
-            btn.setStyleSheet(
-                "QPushButton { background: " + M["field_bg"] + "; border: 1px solid " + M["field_border"] +
-                "; " + sep + f" color: {M['seg_fg']}; padding: 0 6px; }}"
-                "QPushButton:checked { background: " + M["accent"] + "; color: " + M["accent_fg"] +
-                "; font-weight: 600; }"
-                "QPushButton:hover:!checked { background: #1c2328; }"
-            )
-            group.addButton(btn)
-            layout.addWidget(btn)
-            self._buttons[key] = btn
-            btn.clicked.connect(lambda _checked, k=key: self._select(k))
-
-    def _select(self, key: str):
-        self.changed.emit(key)
-
-    def value(self) -> str:
-        for key, btn in self._buttons.items():
-            if btn.isChecked():
-                return key
-        return self._choices[0]
-
-    def setValue(self, key: str):
-        if key in self._buttons:
-            self._buttons[key].setChecked(True)
-
-
 class _Toggle(QWidget):
-    """Interrupteur peint a la main (piste 30x15 + curseur 11x11), fidele a
-    la maquette — bien plus distinctif qu'une QCheckBox."""
+    """Interrupteur peint a la main (piste 30x15 + curseur 11x11) + libelle
+    d'etat a droite — utilise pour les cadres actif/sans de la page
+    Geometrie."""
 
     toggled = Signal(bool)
 
-    def __init__(self, checked: bool = False, on_label="lie", off_label="libre", parent=None):
+    def __init__(self, checked: bool = False, on_label="actif", off_label="sans", parent=None):
         super().__init__(parent)
         self._checked = checked
         self._on_label, self._off_label = on_label, off_label
@@ -669,9 +532,8 @@ class _Toggle(QWidget):
         p.setBrush(track_bg)
         p.drawRect(0, y, 29, 14)
         knob_x = 1 + (29 - 1 - 11) if self._checked else 1
-        knob_color = QColor("#f2f6f9" if self._checked else M["knob_off"])
         p.setPen(Qt.NoPen)
-        p.setBrush(knob_color)
+        p.setBrush(QColor("#f2f6f9" if self._checked else M["knob_off"]))
         p.drawRect(knob_x, y + 2, 11, 11)
         p.setFont(_qfont(10, 400, mono=True))
         p.setPen(QColor(M["toggle_on_fg"] if self._checked else M["toggle_off_fg"]))
@@ -681,53 +543,29 @@ class _Toggle(QWidget):
 
 
 class _ColorField(QWidget):
-    """Pastille cliquable + boite hexadecimale a droite, exactement comme la
-    maquette (le hex n'est pas dans un champ editable dans la maquette : ici
-    aussi, purement en lecture, la pastille est le seul point d'entree)."""
+    """Pastille cliquable (ouvre QColorDialog) + boite hexadecimale."""
 
     changed = Signal(str)
 
-    def __init__(self, value: str, swatch_size: int = 25, hex_box: bool = True, parent=None):
+    def __init__(self, value: str, swatch_size: int = 24, parent=None):
         super().__init__(parent)
         self._value = value
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(7)
+        layout.setSpacing(10)
         self.swatch = QPushButton()
         self.swatch.setFixedSize(swatch_size, swatch_size)
         self.swatch.setCursor(Qt.ArrowCursor)
         self.swatch.setFocusPolicy(Qt.NoFocus)
         self.swatch.clicked.connect(self._pick)
         layout.addWidget(self.swatch)
-        self.hex_label = None
-        if hex_box:
-            box = QWidget()
-            box.setObjectName("HexBox")
-            box.setAttribute(Qt.WA_StyledBackground, True)
-            box.setFixedSize(88, 25)
-            # Voir la meme remarque sur #SliderValueBox : sans ce selecteur,
-            # le filet cascaderait sur hex_label ci-dessous.
-            box.setStyleSheet(f"#HexBox {{ background: {M['field_bg']}; border: 1px solid {M['field_border']}; }}")
-            box_l = QHBoxLayout(box)
-            box_l.setContentsMargins(8, 0, 8, 0)
-            self.hex_label = QLabel(value)
-            self.hex_label.setFont(_qfont(11, 400, mono=True))
-            self.hex_label.setStyleSheet(f"color: {M['value_muted']}; background: transparent;")
-            box_l.addWidget(self.hex_label)
-            layout.addWidget(box)
         self._refresh()
 
     def _refresh(self):
-        # Un seul bloc QSS explicite (selecteur QPushButton), plutot que des
-        # declarations nues suivies d'un rajout de regle a part : le melange
-        # des deux formes dans un meme setStyleSheet() a le mauvais gout de
-        # ne plus peindre du tout le fond selon le style actif.
         self.swatch.setStyleSheet(
             "QPushButton { background: " + self._value + "; border: 1px solid " + M["swatch_border"] + "; }"
             "QPushButton:hover { border-color: " + M["swatch_border_hover"] + "; }"
         )
-        if self.hex_label is not None:
-            self.hex_label.setText(self._value)
 
     def _pick(self):
         chosen = QColorDialog.getColor(QColor(self._value), self, "Choisir une couleur")
@@ -739,17 +577,20 @@ class _ColorField(QWidget):
     def value(self) -> str:
         return self._value
 
+    def setValue(self, value: str):
+        self._value = value
+        self._refresh()
+
 
 class _CheckSquare(QWidget):
-    """Petite case carree (colonne "Gras" de la table de polices)."""
-
-    toggled = Signal(bool)
+    """Petite case carree — purement decorative ici (voir _EdgeCheckItem :
+    le clic est capte par la ligne entiere, pas par la case elle-meme)."""
 
     def __init__(self, checked: bool = False, parent=None):
         super().__init__(parent)
         self._checked = checked
-        self.setFixedSize(15, 15)
-        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedSize(14, 14)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
     def isChecked(self) -> bool:
         return self._checked
@@ -758,11 +599,6 @@ class _CheckSquare(QWidget):
         if checked != self._checked:
             self._checked = checked
             self.update()
-            self.toggled.emit(checked)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.setChecked(not self._checked)
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -771,26 +607,20 @@ class _CheckSquare(QWidget):
         bd = QColor(M["accent_border"] if self._checked else M["field_border"])
         p.setPen(bd)
         p.setBrush(bg)
-        p.drawRect(0, 0, 14, 14)
+        p.drawRect(0, 0, 13, 13)
         if self._checked:
             p.setPen(QColor(M["bold_mark_fg"]))
             p.setFont(_qfont(9, 700, mono=True))
-            p.drawText(0, 0, 14, 14, Qt.AlignCenter, "\u2713")
+            p.drawText(0, 0, 13, 13, Qt.AlignCenter, "\u2713")
         p.end()
 
 
 # ==========================================================================
-# Blocs de mise en page (groupes / lignes / en-tetes), fideles a la maquette.
+# Blocs de mise en page (sections / lignes), fideles a la maquette.
 # ==========================================================================
 
-def _label_block(text: str, note: str = "", off: bool = False) -> QWidget:
+def _label_block(text: str, note: str = "") -> QWidget:
     box = QWidget()
-    # Sans ceci, un QLabel a la ligne (note.setWordWrap) impose au premier
-    # passage de mise en page sa largeur NON repliee comme sizeHint, et rien
-    # ne la retrecit ensuite meme si le facteur d'etirement de la ligne (voir
-    # _Row) devrait le forcer — toute la ligne (et son controle a droite,
-    # pousse hors champ) se retrouve alors bien plus large que la fenetre.
-    # Ignored laisse le stretch du parent dieter la largeur reelle.
     box.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
     layout = QVBoxLayout(box)
     layout.setContentsMargins(0, 6, 0, 6)
@@ -798,7 +628,7 @@ def _label_block(text: str, note: str = "", off: bool = False) -> QWidget:
     name = QLabel(text)
     name.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
     name.setFont(_qfont(12, 400))
-    name.setStyleSheet(f"color: {M['row_label_off'] if off else M['row_label']}; background: transparent;")
+    name.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
     layout.addWidget(name)
     if note:
         sub = QLabel(note)
@@ -811,11 +641,11 @@ def _label_block(text: str, note: str = "", off: bool = False) -> QWidget:
 
 
 class _Row(QWidget):
-    """Ligne de reglage : libelle+note a gauche, controle a droite. Pas de
+    """Ligne de reglage : libelle(+note) a gauche, controle a droite. Pas de
     filet de separation entre les lignes d'un groupe (juge parasite a
     l'usage — voir la remarque de l'utilisateur, capture a l'appui)."""
 
-    def __init__(self, label: str, control: QWidget, note: str = "", last: bool = False, parent=None):
+    def __init__(self, label: str, control: QWidget, note: str = "", parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WA_StyledBackground, True)
         layout = QHBoxLayout(self)
@@ -826,500 +656,210 @@ class _Row(QWidget):
         control.setParent(self)
         layout.addWidget(control, 0, Qt.AlignVCenter)
         self.setMinimumHeight(32)
-        self.setObjectName("SettingsRow")
 
 
-class _Group(QWidget):
-    """Groupe de lignes avec titre + filet + note optionnelle en tete."""
+class _Section(QWidget):
+    """Section de la page : titre bleu petites capitales + note optionnelle,
+    PAS de filet horizontal (la maquette n'en a pas ici, contrairement a
+    l'ancien _Group) — juste un espacement genereux (voir SettingsWindow,
+    layout.setSpacing(34) entre sections)."""
 
-    def __init__(self, title: str = "", note: str = "", parent=None):
+    def __init__(self, title: str, note: str = "", parent=None):
         super().__init__(parent)
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(0)
-        if title:
-            head = QWidget()
-            head_l = QHBoxLayout(head)
-            head_l.setContentsMargins(0, 0, 0, 8)
-            head_l.setSpacing(10)
-            name = QLabel(title)
-            name.setFont(_qfont(11, 600))
-            name.setStyleSheet(f"color: {M['group_title']}; background: transparent;")
-            head_l.addWidget(name)
-            line = QFrame()
-            line.setFixedHeight(1)
-            line.setStyleSheet(f"background: {M['group_divider']};")
-            head_l.addWidget(line, 1)
-            if note:
-                note_label = QLabel(note)
-                note_label.setFont(_qfont(10, 400))
-                note_label.setStyleSheet(f"color: {M['group_note']}; background: transparent;")
-                # Ignored : ce libelle partage la ligne d'entete avec le
-                # filet extensible juste avant lui — un texte plus long que
-                # prevu ne doit jamais forcer toute la page a s'elargir (voir
-                # la meme remarque dans _label_block). Reserve aux notes
-                # COURTES (ex. "18 valeurs") ; un paragraphe explicatif va
-                # dans une ligne a part, sous l'entete (voir add_note ci-dessous).
-                note_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-                head_l.addWidget(note_label)
-            self._layout.addWidget(head)
+        head = QWidget()
+        head_l = QHBoxLayout(head)
+        head_l.setContentsMargins(0, 0, 0, 10)
+        head_l.setSpacing(12)
+        name = QLabel(title.upper())
+        name.setFont(_qfont(10, 600, tracking=1.4))
+        name.setStyleSheet(f"color: {M['section_title']}; background: transparent;")
+        head_l.addWidget(name)
+        if note:
+            note_label = QLabel(note)
+            note_label.setFont(_qfont(10, 400))
+            note_label.setStyleSheet(f"color: {M['group_note']}; background: transparent;")
+            head_l.addWidget(note_label)
+        head_l.addStretch(1)
+        self._layout.addWidget(head)
 
     def add(self, widget: QWidget):
         self._layout.addWidget(widget)
 
-    def add_note(self, text: str):
-        """Ligne de texte explicatif pleine largeur, correctement replie —
-        a utiliser pour un paragraphe (l'entete de groupe ne convient qu'a
-        une note courte, voir la remarque plus haut)."""
-        label = QLabel(text)
-        label.setWordWrap(True)
-        label.setFont(_qfont(10, 400))
-        label.setStyleSheet(f"color: {M['group_note']}; background: transparent; padding-bottom: 8px;")
-        self._layout.addWidget(label)
+
+def _table_frame() -> tuple[QWidget, QVBoxLayout]:
+    """Cadre exterieur complet (perimetre 1px) d'un tableau — entete et
+    lignes empilees a l'interieur, separees seulement par un filet
+    horizontal (voir _table_header/_table_row), jamais par des boites
+    individuelles : un tableau bien "ferme" (un seul rectangle), pas une
+    pile de rectangles accoles (voir la remarque de l'utilisateur, capture
+    a l'appui — les tableaux Polices/Geometrie avaient chacun leur propre
+    filet gauche/droite/bas, un empilement qui pouvait paraitre "ouvert")."""
+    frame = QWidget()
+    frame.setObjectName("TableFrame")
+    frame.setAttribute(Qt.WA_StyledBackground, True)
+    frame.setStyleSheet(f"#TableFrame {{ border: 1px solid {M['panel_border']}; }}")
+    layout = QVBoxLayout(frame)
+    # Marge de 1px (= l'epaisseur du filet de #TableFrame), PAS 0 : a marge
+    # nulle, l'entete/les lignes (chacun avec son propre fond peint via
+    # WA_StyledBackground) recouvrent exactement le filet du cadre et le
+    # rendent invisible — meme bug, meme correctif que #Panel dans
+    # SettingsWindow.__init__ (voir la remarque de l'utilisateur, capture
+    # a l'appui : le cadre etait bel et bien absent a l'ecran).
+    layout.setContentsMargins(1, 1, 1, 1)
+    layout.setSpacing(0)
+    return frame, layout
 
 
-def _page_header(title: str, hint: str) -> QWidget:
-    header = QWidget()
-    header.setObjectName("PageHeader")
-    header.setAttribute(Qt.WA_StyledBackground, True)
-    header.setFixedHeight(32)
-    # Selecteur scope a #PageHeader : une regle nue (sans selecteur) cascade
-    # en QSS sur tous les widgets enfants (voir la meme remarque pour
-    # #SettingsRow/#NavWrap plus haut) — c'etait la vraie source du filet
-    # bleu signale par l'utilisateur, qui persistait sous chaque libelle de
-    # cet entete meme apres avoir retire le filet du groupe de reglages.
-    # Suppression pure et simple du filet (juge parasite a l'usage).
-    header.setStyleSheet(f"#PageHeader {{ background: {M['page_head_bg']}; }}")
-    layout = QHBoxLayout(header)
-    layout.setContentsMargins(18, 0, 18, 0)
-    layout.setSpacing(10)
-    title_label = QLabel(title.upper())
-    title_label.setFont(_qfont(9, 600))
-    title_label.setStyleSheet(f"color: {M['page_title']}; background: transparent; letter-spacing: 1px;")
-    hint_label = QLabel(hint)
-    hint_label.setFont(_qfont(11, 400))
-    hint_label.setStyleSheet(f"color: {M['page_hint']}; background: transparent;")
-    layout.addWidget(title_label)
-    layout.addWidget(hint_label, 1)
-    return header
+def _table_header(cells: list[tuple[str, int]]) -> QWidget:
+    """cells : (libelle, largeur) — largeur 0 => colonne extensible. Filet
+    du bas SEULEMENT (separation avec la premiere ligne) : le perimetre du
+    tableau est deja fourni par _table_frame, pas par l'entete elle-meme."""
+    head = QWidget()
+    head.setObjectName("TableHead")
+    head.setAttribute(Qt.WA_StyledBackground, True)
+    head.setFixedHeight(26)
+    head.setStyleSheet(f"#TableHead {{ background: {M['table_head_bg']}; border-bottom: 1px solid {M['panel_border']}; }}")
+    layout = QHBoxLayout(head)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(0)
+    for text, width in cells:
+        cell = QLabel(text.upper())
+        cell.setFont(_qfont(9, 600))
+        cell.setStyleSheet(f"color: {M['table_head_fg']}; background: transparent; padding: 0 10px;")
+        if width:
+            cell.setFixedWidth(width)
+            layout.addWidget(cell, 0)
+        else:
+            layout.addWidget(cell, 1)
+    return head
 
 
-# ==========================================================================
-# Navigation laterale (rails, glyphes, compteurs, groupe "Colonnes")
-# ==========================================================================
-
-class _NavRow(QWidget):
-    clicked = Signal()
-
-    def __init__(self, label: str, count: str = "", indent: bool = False, parent=None):
-        super().__init__(parent)
-        # Indispensable pour qu'une sous-classe de QWidget peigne son propre
-        # style (fond/rail) — voir la meme remarque pour TitleBar/Column
-        # dans pipeline_browser.py.
-        self.setAttribute(Qt.WA_StyledBackground, True)
-        self._active = False
-        self.setFixedHeight(29)
-        self.setCursor(Qt.PointingHandCursor)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(20 if indent else 12, 0, 12, 0)
-        layout.setSpacing(9)
-        self.glyph = QFrame()
-        self.glyph.setFixedSize(3, 11)
-        layout.addWidget(self.glyph, 0, Qt.AlignVCenter)
-        self.text_label = QLabel(label)
-        self.text_label.setFont(_qfont(12, 400))
-        layout.addWidget(self.text_label, 1)
-        self.count_label = QLabel(count)
-        self.count_label.setFont(_qfont(9, 400, mono=True))
-        layout.addWidget(self.count_label, 0, Qt.AlignRight)
-        self._refresh()
-
-    def setActive(self, active: bool):
-        self._active = active
-        self._refresh()
-        self.text_label.setFont(_qfont(12, 600 if active else 400))
-
-    def _refresh(self):
-        a = self._active
-        self.setStyleSheet(
-            f"_NavRow {{ background: {M['nav_bg_active'] if a else 'transparent'}; "
-            f"border-left: 2px solid {M['accent'] if a else 'transparent'}; }}"
-            f"_NavRow:hover {{ background: {M['nav_bg_active'] if a else M['nav_hover']}; }}"
-        )
-        self.glyph.setStyleSheet(f"background: {M['nav_glyph_active'] if a else M['nav_glyph']};")
-        self.text_label.setStyleSheet(
-            f"color: {M['nav_fg_active'] if a else M['nav_fg']}; background: transparent;"
-        )
-        self.count_label.setStyleSheet(
-            f"color: {M['nav_count_active'] if a else M['nav_count']}; background: transparent;"
-        )
-
-    def setFilterMatch(self, matches: bool):
-        self.setVisible(matches)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.clicked.emit()
-
-
-def _nav_group_header(label: str) -> QWidget:
+def _table_row(bg: str, first: bool) -> tuple[QWidget, QHBoxLayout]:
+    """`first` : la toute premiere ligne de donnees colle directement sous
+    l'entete (qui a deja son propre filet du bas) — seules les lignes
+    SUIVANTES ont besoin de leur propre filet du haut ; aucune ligne ne
+    dessine plus ses propres cotes gauche/droite (voir _table_frame)."""
     row = QWidget()
-    row.setFixedHeight(26)
+    row.setObjectName("TableRow")
+    row.setAttribute(Qt.WA_StyledBackground, True)
+    row.setMinimumHeight(36)
+    border = "" if first else f"border-top: 1px solid {M['panel_border']};"
+    row.setStyleSheet(f"#TableRow {{ background: {bg}; {border} }}")
     layout = QHBoxLayout(row)
-    layout.setContentsMargins(12, 0, 12, 0)
-    text = QLabel(label.upper())
-    text.setFont(_qfont(9, 600))
-    text.setStyleSheet(f"color: {M['nav_group_fg']}; background: transparent; letter-spacing: 1px;")
-    layout.addWidget(text)
-    return row
+    layout.setContentsMargins(0, 6, 0, 6)
+    layout.setSpacing(0)
+    return row, layout
+
+
+def _table_cell(widget: QWidget, width: int, layout: QHBoxLayout, center: bool = False):
+    cell = QWidget()
+    cell_l = QHBoxLayout(cell)
+    cell_l.setContentsMargins(10, 0, 10, 0)
+    if center:
+        cell_l.setAlignment(Qt.AlignVCenter)
+    cell_l.addWidget(widget)
+    if width:
+        cell.setFixedWidth(width)
+        layout.addWidget(cell, 0)
+    else:
+        layout.addWidget(cell, 1)
 
 
 # ==========================================================================
-# Page "Colonne ..." — largeur / hauteur / espacement (+ Images)
+# Section "Polices" — table Role/Police/Apercu (3 colonnes, famille seule).
+# Les 4 roles non repris ici (dossiers, boutons, entete de colonnes, info2)
+# restent dans le fichier de reglages tels quels (voir DEFAULT_SETTINGS) :
+# ils suivent silencieusement "Police principale" si elle est personnalisee
+# (voir app_style.role_font), sinon l'auto-detection habituelle — exactement
+# leur comportement actuel, juste sans UI pour le changer directement.
 # ==========================================================================
 
-class _ColumnPage(QWidget):
-    changed = Signal()
-
-    def __init__(self, conf: dict, show_images: bool, linkable: bool = False, mixed_rows: bool = False, parent=None):
-        super().__init__(parent)
-        self._linkable = linkable
-        self._mixed_rows = mixed_rows
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(18)
-
-        geo = _Group()
-        self.width_field = _SliderField(120, 480, conf.get("width", 200))
-        geo.add(_Row("Largeur de la colonne", self.width_field))
-        self.height_field = _SliderField(16, 120, conf.get("height", 24))
-        geo.add(_Row("Hauteur des lignes (avec apercu)" if mixed_rows else "Hauteur des lignes", self.height_field))
-        self.plain_height_field = None
-        if mixed_rows:
-            # Seulement pour les colonnes qui melangent lignes normales et
-            # lignes-carte avec vignette (Logiciels/Contenu, voir
-            # RowDelegate.sizeHint) : Projets/Sous-projet affichent
-            # systematiquement une vignette, une seule hauteur y suffit.
-            self.plain_height_field = _SliderField(12, 100, conf.get("plain_height", conf.get("height", 24)))
-            geo.add(_Row("Hauteur des lignes (sans apercu)", self.plain_height_field))
-        self.spacing_field = _SliderField(0, 12, conf.get("spacing", 0))
-        geo.add(_Row("Espacement entre fichiers", self.spacing_field, last=not show_images))
-        layout.addWidget(geo)
-
-        self.pad_link = None
-        self.radius_link = None
-        self.pad_field = None
-        self.radius_field = None
-        self.sep_h_field = None
-        self.sep_v_field = None
-        if show_images:
-            img = _Group("Images")
-            img.add_note(
-                "Par defaut, l'image occupe la hauteur de la ligne ; sa taille reelle "
-                "est reglee via le padding, applique a l'identique sur les 4 cotes."
-            )
-            if linkable:
-                self.pad_link = _Toggle(conf.get("img_pad_link", True), "lie", "libre")
-                img.add(_Row("Lier le padding aux images de Projets", self.pad_link))
-            self.pad_field = _SliderField(0, 16, conf.get("img_pad", 0))
-            img.add(_Row("Padding (4 cotes)", self.pad_field))
-            if linkable:
-                self.radius_link = _Toggle(conf.get("img_radius_link", True), "lie", "libre")
-                img.add(_Row("Lier le border radius aux images de Projets", self.radius_link))
-            self.radius_field = _SliderField(0, 24, conf.get("img_radius", 0))
-            img.add(_Row("Border radius", self.radius_field, last=True))
-            layout.addWidget(img)
-            if linkable:
-                self.pad_link.toggled.connect(self._update_link_state)
-                self.radius_link.toggled.connect(self._update_link_state)
-                self._update_link_state()
-
-            sep = _Group("Separateurs")
-            self.sep_h_field = _Toggle(conf.get("sep_h", True), "visible", "masquee")
-            sep.add(_Row("Ligne horizontale (entre les lignes)", self.sep_h_field))
-            self.sep_v_field = _Toggle(conf.get("sep_v", True), "visible", "masquee")
-            sep.add(_Row("Ligne verticale (vignette / texte)", self.sep_v_field, last=True))
-            layout.addWidget(sep)
-
-        layout.addStretch(1)
-
-        self.width_field.valueChanged.connect(lambda _: self.changed.emit())
-        self.height_field.valueChanged.connect(lambda _: self.changed.emit())
-        if mixed_rows:
-            self.plain_height_field.valueChanged.connect(lambda _: self.changed.emit())
-        self.spacing_field.valueChanged.connect(lambda _: self.changed.emit())
-        if show_images:
-            self.pad_field.valueChanged.connect(lambda _: self.changed.emit())
-            self.radius_field.valueChanged.connect(lambda _: self.changed.emit())
-            if linkable:
-                self.pad_link.toggled.connect(lambda _: self.changed.emit())
-                self.radius_link.toggled.connect(lambda _: self.changed.emit())
-            self.sep_h_field.toggled.connect(lambda _: self.changed.emit())
-            self.sep_v_field.toggled.connect(lambda _: self.changed.emit())
-
-    def _update_link_state(self, *_args):
-        self.pad_field.setMuted(self.pad_link.isChecked())
-        self.pad_field.setEnabled(not self.pad_link.isChecked())
-        self.radius_field.setMuted(self.radius_link.isChecked())
-        self.radius_field.setEnabled(not self.radius_link.isChecked())
-
-    def value(self) -> dict:
-        out = {
-            "width": self.width_field.value(),
-            "height": self.height_field.value(),
-            "spacing": self.spacing_field.value(),
-        }
-        if self.plain_height_field is not None:
-            out["plain_height"] = self.plain_height_field.value()
-        if self.pad_field is not None:
-            out["img_pad"] = self.pad_field.value()
-            out["img_radius"] = self.radius_field.value()
-            out["sep_h"] = self.sep_h_field.isChecked()
-            out["sep_v"] = self.sep_v_field.isChecked()
-        if self._linkable:
-            out["img_pad_link"] = self.pad_link.isChecked()
-            out["img_radius_link"] = self.radius_link.isChecked()
-        return out
-
-
-# ==========================================================================
-# Page "Polices de caracteres" — table Role/Police/Taille/Gras/Coul./Lissage
-# ==========================================================================
-
-_ROLE_ROWS = [
-    ("font_main", "Police principale", "Corps de texte general"),
-    ("font_titles", "Police principale titres", "Titres et intitules de fenetre"),
-    ("font_folders", "Dossiers", "Rangees de dossiers"),
-    ("font_files", "Fichiers", "Rangees de fichiers"),
-    ("font_buttons", "Boutons", "Barre d'outils et actions"),
-    ("font_colhead", "Entete de colonnes", "Bandeau haut de chaque colonne"),
-    ("font_info", "Informations diverses / invites", "Compteurs, tailles, chemins"),
-    ("font_info2", "Informations diverses / invites (2)", "Second jeu, notes/etats secondaires"),
+_FONT_ROLES = [
+    ("font_main", "app", "Police principale", "asset__spaceship_01"),
+    ("font_info", "info", "Police informations", "121.7 KB · v004 · 2026-09-03"),
+    ("font_titles", "titles", "Police principale titres", "Fichiers pour AIRPLANE"),
+    ("font_files", "files", "Police fichiers", "foot.001.OBJ"),
 ]
 
-# Cle de reglage -> role app_style.py (voir apply_all_settings dans
-# pipeline_browser.py, meme mapping) : necessaire pour retrouver, pour
-# chaque ligne de la table, quelle police l'auto-detection choisirait
-# reellement (voir auto_family_for_role) et l'afficher au lieu du mot
-# generique "Systeme" dans le selecteur.
-_ROLE_KEY_TO_STYLE_ROLE = {
-    "font_main": "app",
-    "font_titles": "titles",
-    "font_folders": "folders",
-    "font_files": "files",
-    "font_buttons": "buttons",
-    "font_colhead": "colhead",
-    "font_info": "info",
-    "font_info2": "info2",
-}
-
-
 def _font_choices() -> list[str]:
-    """"Systeme" (auto-detection, voir role_font) suivi de TOUTES les
-    polices reellement installees sur la machine — plus la liste figee
-    d'avant (6 polices "maison", pas forcement presentes chez
-    l'utilisateur), voir installed_font_families dans app_style.py."""
     return ["Systeme"] + installed_font_families()
 
 
-class _FontTable(QWidget):
+class _SimpleFontTable(QWidget):
+    """Une ligne par role (voir _FONT_ROLES) : nom de role, selecteur de
+    police, apercu du nom de fichier/dossier dans cette police. Choisir une
+    police (meme "Systeme" explicitement) marque le role "personnalise"
+    (voir _current_values dans SettingsWindow) — sinon le changement de
+    famille resterait sans effet si ce role n'avait encore jamais ete
+    personnalise (voir app_style.role_font : la famille stockee n'est prise
+    en compte que si `custom` est vrai)."""
+
     changed = Signal()
 
     def __init__(self, settings: dict, parent=None):
         super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        frame, layout = _table_frame()
+        layout.addWidget(_table_header([("Role", 196), ("Police", 212), ("Apercu", 0)]))
 
-        grid = QGridLayout()
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(0)
-        grid.setVerticalSpacing(0)
-        headers = [("Role", 1, 170), ("Police", 0, 146), ("Taille", 0, 132),
-                   ("Gras", 0, 46), ("Coul.", 0, 56), ("Lissage", 0, 156)]
-        head = QWidget()
-        head.setObjectName("TableHead")
-        head.setAttribute(Qt.WA_StyledBackground, True)
-        head.setFixedHeight(26)
-        # Scope a #TableHead : sinon le filet cascade sur chaque `cell` de
-        # l'entete ci-dessous (meme bug que #SliderValueBox plus haut).
-        head.setStyleSheet(f"#TableHead {{ background: {M['table_head_bg']}; border: 1px solid {M['panel_border']}; }}")
-        head_l = QHBoxLayout(head)
-        head_l.setContentsMargins(0, 0, 0, 0)
-        head_l.setSpacing(0)
-        for text, stretch, width in headers:
-            cell = QLabel(text.upper())
-            cell.setFont(_qfont(9, 600))
-            cell.setStyleSheet(f"color: {M['table_head_fg']}; background: transparent; padding: 0 10px;")
-            if stretch:
-                head_l.addWidget(cell, 1)
-            else:
-                cell.setFixedWidth(width)
-                head_l.addWidget(cell, 0)
-        layout.addWidget(head)
-
-        self.role_rows: dict[str, dict[str, Any]] = {}
-        for i, (key, role_name, note) in enumerate(_ROLE_ROWS):
+        self.rows: dict[str, dict[str, Any]] = {}
+        for i, (key, style_role, label, sample) in enumerate(_FONT_ROLES):
             conf = settings[key]
-            row = QWidget()
-            row.setObjectName("TableRow")
-            row.setAttribute(Qt.WA_StyledBackground, True)
-            row.setMinimumHeight(36)
             bg = M["table_row_a"] if i % 2 else M["table_row_b"]
-            # Scope a #TableRow : sinon le filet cascade sur `name`/
-            # `note_label` (et tout autre QLabel nu de la ligne) ci-dessous.
-            row.setStyleSheet(
-                f"#TableRow {{ background: {bg}; border: 1px solid {M['panel_border']}; border-top: none; }}"
-            )
-            row_l = QHBoxLayout(row)
-            row_l.setContentsMargins(0, 6, 0, 6)
-            row_l.setSpacing(0)
+            row, row_l = _table_row(bg, first=(i == 0))
 
-            role_cell = QWidget()
-            role_l = QVBoxLayout(role_cell)
-            role_l.setContentsMargins(10, 0, 10, 0)
-            role_l.setSpacing(1)
-            name = QLabel(role_name)
+            name = QLabel(label)
             name.setFont(_qfont(12, 400))
             name.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
-            note_label = QLabel(note)
-            note_label.setFont(_qfont(10, 400))
-            note_label.setStyleSheet(f"color: {M['row_note']}; background: transparent;")
-            role_l.addWidget(name)
-            role_l.addWidget(note_label)
-            row_l.addWidget(role_cell, 1)
+            _table_cell(name, 196, row_l, center=True)
 
-            style_role = _ROLE_KEY_TO_STYLE_ROLE[key]
-            auto_label = auto_family_for_role(style_role)
-            # La liste complete est gardee telle quelle (PAS de filtre) :
-            # _FontSelectField se charge lui-meme de ne pas afficher deux
-            # fois la police auto-detectee (une fois sous son vrai nom pour
-            # "Systeme", une fois comme entree normale) SANS retirer cette
-            # entree des valeurs valides — sinon un choix explicite qui
-            # coincide avec l'auto-detection se ferait silencieusement
-            # requalifier en "Systeme" a la prochaine sauvegarde.
             current_family = conf.get("family") or "Systeme"
-            font_select = _FontSelectField(_font_choices(), current_family, width=126, auto_label=auto_label)
-            font_cell = QWidget()
-            font_cell.setFixedWidth(146)
-            font_cell_l = QHBoxLayout(font_cell)
-            font_cell_l.setContentsMargins(10, 0, 10, 0)
-            font_cell_l.addWidget(font_select)
-            row_l.addWidget(font_cell, 0)
+            auto_label = auto_family_for_role(style_role)
+            font_select = _FontSelectField(_font_choices(), current_family, width=192, auto_label=auto_label)
+            _table_cell(font_select, 212, row_l, center=True)
 
-            # box_width 32 (comme les autres champs a unite courte) etait
-            # trop etroit pour 2 chiffres (10-20) : un nombre aligne a
-            # droite qui deborde se fait couper a GAUCHE plutot qu'a droite,
-            # donc "12" perdait son "1" et n'affichait plus que "2" — cause
-            # du "on passe de 9 a 0" signale par l'utilisateur.
-            size_field = _SliderField(4, 20, int(conf.get("size", 12)), unit="", slider_width=60, box_width=42)
-            size_cell = QWidget()
-            size_cell.setFixedWidth(132)
-            size_cell_l = QHBoxLayout(size_cell)
-            size_cell_l.setContentsMargins(10, 0, 10, 0)
-            size_cell_l.addWidget(size_field)
-            row_l.addWidget(size_cell, 0)
-
-            bold_check = _CheckSquare(bool(conf.get("bold", False)))
-            bold_cell = QWidget()
-            bold_cell.setFixedWidth(46)
-            bold_cell_l = QHBoxLayout(bold_cell)
-            bold_cell_l.setContentsMargins(0, 0, 0, 0)
-            bold_cell_l.setAlignment(Qt.AlignCenter)
-            bold_cell_l.addWidget(bold_check)
-            row_l.addWidget(bold_cell, 0)
-
-            color_field = _ColorField(conf.get("color") or "#7d858b", swatch_size=22, hex_box=False)
-            color_cell = QWidget()
-            color_cell.setFixedWidth(56)
-            color_cell_l = QHBoxLayout(color_cell)
-            color_cell_l.setContentsMargins(0, 0, 0, 0)
-            color_cell_l.setAlignment(Qt.AlignCenter)
-            color_cell_l.addWidget(color_field)
-            row_l.addWidget(color_cell, 0)
-
-            aa_seg = _Segmented(list(SMOOTHING_CHOICES), SMOOTHING_LABELS_SHORT,
-                                conf.get("smoothing") or "current", height=24, seg_width=44)
-            aa_cell = QWidget()
-            aa_cell.setFixedWidth(156)
-            aa_cell_l = QHBoxLayout(aa_cell)
-            aa_cell_l.setContentsMargins(10, 0, 10, 0)
-            aa_cell_l.addWidget(aa_seg)
-            row_l.addWidget(aa_cell, 0)
+            preview = QLabel(sample)
+            preview.setFont(QFont(current_family if current_family != "Systeme" else auto_label, 10))
+            preview.setStyleSheet(f"color: {M['value_muted']}; background: transparent;")
+            _table_cell(preview, 0, row_l, center=True)
 
             layout.addWidget(row)
+            entry = {"field": font_select, "preview": preview, "auto": auto_label,
+                     "custom": bool(conf.get("custom", False))}
+            self.rows[key] = entry
 
-            entry = {
-                "font": font_select, "size": size_field, "bold": bold_check,
-                "color": color_field, "aa": aa_seg, "custom": conf.get("custom", False),
-            }
-            self.role_rows[key] = entry
-
-            def _mark_custom(_x=None, e=entry):
+            def _on_pick(family: str, e=entry):
                 e["custom"] = True
+                shown = family if family != "Systeme" else e["auto"]
+                e["preview"].setFont(QFont(shown, 10))
                 self.changed.emit()
 
-            font_select.changed.connect(_mark_custom)
-            size_field.valueChanged.connect(_mark_custom)
-            bold_check.toggled.connect(_mark_custom)
-            color_field.changed.connect(_mark_custom)
-            aa_seg.changed.connect(_mark_custom)
+            font_select.changed.connect(_on_pick)
 
-        # -- barre d'apercu --
-        preview = QWidget()
-        preview.setObjectName("FontPreviewBar")
-        preview.setAttribute(Qt.WA_StyledBackground, True)
-        # Scope a #FontPreviewBar : sinon le filet cascade sur tag/name1/
-        # name2/name3 ci-dessous.
-        preview.setStyleSheet(
-            f"#FontPreviewBar {{ background: {M['preview_bg']}; border: 1px solid {M['preview_border']}; }}"
-        )
-        preview.setFixedHeight(46)
-        pv_l = QHBoxLayout(preview)
-        pv_l.setContentsMargins(14, 0, 14, 0)
-        pv_l.setSpacing(16)
-        tag = QLabel("APERCU")
-        tag.setFont(_qfont(9, 600))
-        tag.setStyleSheet(f"color: {M['label_dim']}; background: transparent;")
-        divider = QFrame()
-        divider.setFixedSize(1, 24)
-        divider.setStyleSheet(f"background: {M['panel_border']};")
-        name1 = QLabel("asset__spaceship_01")
-        name1.setFont(_qfont(12, 600))
-        name1.setStyleSheet(f"color: {M['group_title']}; background: transparent;")
-        name2 = QLabel("foot.001.OBJ")
-        name2.setFont(_qfont(12, 400, mono=True))
-        name2.setStyleSheet(f"color: #b3babf; background: transparent;")
-        name3 = QLabel("121.7 KB \u00b7 v004")
-        name3.setFont(_qfont(11, 400, mono=True))
-        name3.setStyleSheet(f"color: #6a7278; background: transparent;")
-        pv_l.addWidget(tag)
-        pv_l.addWidget(divider)
-        pv_l.addWidget(name1)
-        pv_l.addWidget(name2)
-        pv_l.addWidget(name3)
-        pv_l.addStretch(1)
-        layout.addSpacing(14)
-        layout.addWidget(preview)
-        layout.addStretch(1)
+        outer.addWidget(frame)
 
     def value(self) -> dict[str, dict]:
         out = {}
-        for key, entry in self.role_rows.items():
-            family = entry["font"].value()
+        for key, entry in self.rows.items():
+            family = entry["field"].value()
             out[key] = {
                 "family": "" if family == "Systeme" else family,
-                "size": entry["size"].value(),
-                "bold": entry["bold"].isChecked(),
-                "smoothing": entry["aa"].value(),
-                "color": entry["color"].value(),
                 "custom": entry["custom"],
             }
         return out
 
 
 # ==========================================================================
-# Page "Couleurs de l'interface" — grille 2 colonnes
+# Section "Couleurs" — grille 2 colonnes, 8 pastilles semantiques (voir
+# app_style.SEMANTIC_COLOR_SLOTS). "Selection en cours" et "Bouton" pilotent
+# la MEME cle reelle ("accent", voir la remarque dans app_style.py) : les
+# deux pastilles restent donc synchronisees, un changement sur l'une se
+# repercute immediatement sur l'autre — fidele au reste de l'appli, qui n'a
+# qu'une seule couleur d'accent pour les deux roles.
 # ==========================================================================
 
 class _ColorGrid(QWidget):
@@ -1335,46 +875,453 @@ class _ColorGrid(QWidget):
         grid.setContentsMargins(1, 1, 1, 1)
         grid.setHorizontalSpacing(1)
         grid.setVerticalSpacing(1)
-        self.fields: dict[str, _ColorField] = {}
-        for i, (key, label, note) in enumerate(COLOR_FIELDS):
+        self._fields_by_real_key: dict[str, list[_ColorField]] = {}
+        self._hex_labels_by_real_key: dict[str, list[QLabel]] = {}
+        for i, (slot, real_key, label) in enumerate(SEMANTIC_COLOR_SLOTS):
             cell = QWidget()
             cell.setStyleSheet(f"background: {M['table_row_b']};")
             cell_l = QHBoxLayout(cell)
             cell_l.setContentsMargins(10, 7, 10, 7)
             cell_l.setSpacing(10)
-            field = _ColorField(colors.get(key, "#000000"), swatch_size=24, hex_box=False)
-            self.fields[key] = field
+            field = _ColorField(colors.get(real_key, "#000000"), swatch_size=24)
             cell_l.addWidget(field)
-            text_block = QWidget()
-            text_l = QVBoxLayout(text_block)
-            text_l.setContentsMargins(0, 0, 0, 0)
-            text_l.setSpacing(1)
             name = QLabel(label)
             name.setFont(_qfont(11, 400))
             name.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
             name.setWordWrap(False)
-            sub = QLabel(note)
-            sub.setFont(_qfont(9, 400))
-            sub.setStyleSheet(f"color: {M['row_note']}; background: transparent;")
-            text_l.addWidget(name)
-            text_l.addWidget(sub)
-            cell_l.addWidget(text_block, 1)
-            hex_label = QLabel(colors.get(key, "").upper())
+            cell_l.addWidget(name, 1)
+            hex_label = QLabel(colors.get(real_key, ""))
             hex_label.setFont(_qfont(10, 400, mono=True))
             hex_label.setStyleSheet(f"color: {M['table_head_fg']}; background: transparent;")
             cell_l.addWidget(hex_label)
-            field.changed.connect(lambda v, hl=hex_label: hl.setText(v.upper()))
-            field.changed.connect(lambda _: self.changed.emit())
+            self._fields_by_real_key.setdefault(real_key, []).append(field)
+            self._hex_labels_by_real_key.setdefault(real_key, []).append(hex_label)
+            field.changed.connect(lambda v, rk=real_key: self._sync_key(rk, v))
             row, col = divmod(i, 2)
             grid.addWidget(cell, row, col)
         outer.addWidget(wrap)
 
+    def _sync_key(self, real_key: str, value: str):
+        """Repercute un changement sur TOUTES les pastilles qui pointent
+        vers la meme cle reelle (voir la remarque de tete de classe :
+        selCur/button partagent "accent")."""
+        for field in self._fields_by_real_key[real_key]:
+            field.setValue(value)
+        for label in self._hex_labels_by_real_key[real_key]:
+            label.setText(value)
+        self.changed.emit()
+
     def value(self) -> dict[str, str]:
-        return {key: field.value() for key, field in self.fields.items()}
+        return {real_key: fields[0].value() for real_key, fields in self._fields_by_real_key.items()}
 
 
 # ==========================================================================
-# Fenetre principale (frameless, meme chrome que le navigateur principal)
+# Section "Entetes" — hauteur / couleur (choisie parmi les 8 pastilles
+# semantiques) / rayon des angles / cadre par cote.
+# ==========================================================================
+
+_SLOT_LABELS = {slot: label for slot, _real, label in SEMANTIC_COLOR_SLOTS}
+_SLOT_REAL = {slot: real for slot, real, _label in SEMANTIC_COLOR_SLOTS}
+
+
+class _HeaderColorField(QWidget):
+    """Ligne cliquable (pastille + libelle + chevron) ouvrant un QMenu sur
+    les 8 pastilles semantiques, plus une boite hex a droite en lecture
+    seule — la couleur elle-meme se change page Couleurs, ici on choisit
+    juste QUELLE pastille alimente le fond de l'entete."""
+
+    changed = Signal(str)
+
+    def __init__(self, colors: dict, current_slot: str, parent=None):
+        super().__init__(parent)
+        self._colors = colors
+        self._slot = current_slot if current_slot in _SLOT_LABELS else "skinN1"
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+
+        self.btn = QPushButton()
+        self.btn.setFlat(True)
+        self.btn.setCursor(Qt.ArrowCursor)
+        self.btn.setFocusPolicy(Qt.NoFocus)
+        self.btn.setFixedHeight(25)
+        # Largeur fixe (280, meme calcul que les sliders de cette meme
+        # section — voir _section_headers) : sans elle, ce bouton ne se
+        # dimensionne que sur son propre texte et le controle entier ne
+        # s'aligne pas avec les autres lignes du tableau Entetes.
+        self.btn.setFixedWidth(280)
+        self.btn.setStyleSheet(
+            f"QPushButton {{ background: {M['field_bg']}; border: 1px solid {M['field_border']}; "
+            f"text-align: left; padding: 0 8px; }}"
+            f"QPushButton:hover {{ border-color: {M['field_border_hover']}; }}"
+        )
+        self.btn.clicked.connect(self._open_menu)
+        layout.addWidget(self.btn, 1)
+
+        hex_box = QWidget()
+        hex_box.setObjectName("HeaderHexBox")
+        hex_box.setAttribute(Qt.WA_StyledBackground, True)
+        hex_box.setFixedSize(68, 25)
+        hex_box.setStyleSheet(f"#HeaderHexBox {{ background: {M['field_bg']}; border: 1px solid {M['field_border']}; }}")
+        hex_l = QHBoxLayout(hex_box)
+        hex_l.setContentsMargins(7, 0, 7, 0)
+        self.hex_label = QLabel()
+        self.hex_label.setFont(_qfont(11, 400, mono=True))
+        self.hex_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.hex_label.setStyleSheet(f"color: {M['value_muted']}; background: transparent;")
+        hex_l.addWidget(self.hex_label)
+        layout.addWidget(hex_box)
+        self._refresh()
+
+    def _current_hex(self) -> str:
+        return self._colors.get(_SLOT_REAL.get(self._slot, "chrome"), "#000000")
+
+    def _refresh(self):
+        swatch = f"background: {self._current_hex()}; border: 1px solid {M['swatch_border']};"
+        self.btn.setIcon(_solid_icon(self._current_hex()))
+        self.btn.setIconSize(self.btn.iconSize())
+        self.btn.setText("  " + _SLOT_LABELS.get(self._slot, self._slot) + "  ▾")
+        self.hex_label.setText(self._current_hex())
+
+    def _open_menu(self):
+        menu = QMenu(self)
+        menu.setFont(_qfont(11, 400))
+        menu.setStyleSheet(
+            f"QMenu {{ background: {M['toolbar_bg']}; border: 1px solid {M['field_border']}; padding: 4px 0; }}"
+            f"QMenu::item {{ padding: 5px 16px; color: {M['value_fg']}; }}"
+            f"QMenu::item:selected {{ background: {M['accent']}; color: {M['accent_fg']}; }}"
+        )
+        for slot, _real, label in SEMANTIC_COLOR_SLOTS:
+            action = menu.addAction(_solid_icon(self._colors.get(_SLOT_REAL[slot], "#000")), label)
+            action.triggered.connect(lambda _c=False, s=slot: self._select(s))
+        menu.exec(self.btn.mapToGlobal(QPoint(0, self.btn.height())))
+
+    def _select(self, slot: str):
+        if slot != self._slot:
+            self._slot = slot
+            self._refresh()
+            self.changed.emit(slot)
+
+    def value(self) -> str:
+        return self._slot
+
+    def refresh_colors(self, colors: dict):
+        """A appeler quand la page Couleurs a change une valeur — la
+        pastille choisie ici doit suivre (voir SettingsWindow._on_colors_changed)."""
+        self._colors = colors
+        self._refresh()
+
+    def setValue(self, slot: str, colors: dict):
+        """Reapplique a la fois le slot choisi ET la palette source —
+        utilise par Valeurs par defaut / chargement d'un preset (voir
+        SettingsWindow._apply_values_to_controls), qui doivent pouvoir
+        changer les deux d'un coup sans emettre `changed` a chaque etape
+        intermediaire."""
+        self._slot = slot if slot in _SLOT_LABELS else "skinN1"
+        self._colors = colors
+        self._refresh()
+
+
+def _solid_icon(hex_value: str):
+    from PySide6.QtGui import QIcon, QPixmap
+    pix = QPixmap(14, 14)
+    pix.fill(QColor(hex_value))
+    return QIcon(pix)
+
+
+class _EdgeBar(QWidget):
+    """Un des 4 filets cliquables de _EdgeBox (haut/droite/bas/gauche)."""
+
+    clicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._on = False
+        self.setCursor(Qt.PointingHandCursor)
+
+    def setOn(self, on: bool):
+        if on != self._on:
+            self._on = on
+            self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(M["accent"] if self._on else M["edge_off"]))
+        p.end()
+
+
+class _EdgeBox(QWidget):
+    """Rectangle en pointilles (92x52) representant l'entete, avec ses 4
+    cotes cliquables — voir _HeaderEdgesField pour la synchronisation avec
+    la liste de cases a cocher juxtaposee."""
+
+    changed = Signal(str)   # emet le cote qui vient de changer
+
+    def __init__(self, edges: dict, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(92, 52)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet(f"background: {M['field_bg']}; border: 1px dashed {M['panel_border']};")
+        label = QLabel("entete", self)
+        label.setFont(_qfont(9, 400, mono=True))
+        label.setStyleSheet(f"color: {M['edge_hint']}; background: transparent;")
+        label.adjustSize()
+        label.move((92 - label.width()) // 2, (52 - label.height()) // 2)
+        self.bars: dict[str, _EdgeBar] = {}
+        for name in ("top", "right", "bottom", "left"):
+            bar = _EdgeBar(self)
+            bar.setOn(bool(edges.get(name, False)))
+            bar.clicked.connect(lambda n=name: self._toggle(n))
+            self.bars[name] = bar
+        self.bars["top"].setGeometry(0, 0, 92, 3)
+        self.bars["bottom"].setGeometry(0, 49, 92, 3)
+        self.bars["left"].setGeometry(0, 0, 3, 52)
+        self.bars["right"].setGeometry(89, 0, 3, 52)
+
+    def _toggle(self, name: str):
+        bar = self.bars[name]
+        bar.setOn(not bar._on)
+        self.changed.emit(name)
+
+    def value(self) -> dict[str, bool]:
+        return {name: bar._on for name, bar in self.bars.items()}
+
+    def setValue(self, edges: dict):
+        for name, bar in self.bars.items():
+            bar.setOn(bool(edges.get(name, False)))
+
+
+class _EdgeCheckItem(QWidget):
+    """Une ligne de la liste 2x2 (case + libelle) — toute la ligne est
+    cliquable, pas seulement la case (voir _CheckSquare.WA_TransparentFor
+    MouseEvents : la case est purement decorative ici)."""
+
+    clicked = Signal()
+
+    def __init__(self, label: str, on: bool, parent=None):
+        super().__init__(parent)
+        self.setCursor(Qt.PointingHandCursor)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(7)
+        self.box = _CheckSquare(on)
+        layout.addWidget(self.box)
+        self.text = QLabel(label)
+        self.text.setFont(_qfont(11, 400))
+        layout.addWidget(self.text, 1)
+        self._refresh_label(on)
+
+    def _refresh_label(self, on: bool):
+        self.text.setStyleSheet(f"color: {M['row_label'] if on else M['row_label_off']}; background: transparent;")
+
+    def setOn(self, on: bool):
+        self.box.setChecked(on)
+        self._refresh_label(on)
+
+    def isOn(self) -> bool:
+        return self.box.isChecked()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+
+
+class _HeaderEdgesField(QWidget):
+    """Boite a cotes cliquables + liste de cases 2x2, synchronisees dans
+    les deux sens (cliquer un cote de la boite coche/decoche la case
+    correspondante, et inversement)."""
+
+    changed = Signal()
+
+    _ORDER = [("top", "Haut"), ("right", "Droite"), ("bottom", "Bas"), ("left", "Gauche")]
+
+    def __init__(self, edges: dict, parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+        self.box = _EdgeBox(edges)
+        self.box.changed.connect(self._on_box_toggled)
+        layout.addWidget(self.box)
+
+        grid_wrap = QWidget()
+        grid = QGridLayout(grid_wrap)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(5)
+        self.items: dict[str, _EdgeCheckItem] = {}
+        for i, (key, label) in enumerate(self._ORDER):
+            item = _EdgeCheckItem(label, bool(edges.get(key, False)))
+            item.clicked.connect(lambda k=key: self._toggle(k))
+            self.items[key] = item
+            row, col = divmod(i, 2)
+            grid.addWidget(item, row, col)
+        layout.addWidget(grid_wrap, 1)
+
+    def _toggle(self, key: str):
+        item = self.items[key]
+        new_on = not item.isOn()
+        item.setOn(new_on)
+        self.box.bars[key].setOn(new_on)
+        self.changed.emit()
+
+    def _on_box_toggled(self, key: str):
+        """Clic direct sur un cote de la boite (plutot que sur la ligne de
+        la liste) : repercute l'etat du filet sur la case correspondante."""
+        self.items[key].setOn(self.box.bars[key]._on)
+        self.changed.emit()
+
+    def value(self) -> dict[str, bool]:
+        return {key: item.isOn() for key, item in self.items.items()}
+
+    def setValue(self, edges: dict):
+        self.box.setValue(edges)
+        for key, item in self.items.items():
+            item.setOn(bool(edges.get(key, False)))
+
+
+# ==========================================================================
+# Section "Geometrie" — table Element/Cadre/Coins arrondis, 3 lignes :
+# Fenetres (rayon seul, pas de cadre reglable — le filet du panneau
+# principal est structurel, voir #CentralFrame dans pipeline_browser.py),
+# Zones de saisie et Boutons (cadre actif/sans + rayon).
+# ==========================================================================
+
+class _GeoTable(QWidget):
+    changed = Signal()
+
+    def __init__(self, window_radius: int, input_frame: bool, input_radius: int,
+                 button_frame: bool, button_radius: int, parent=None):
+        super().__init__(parent)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        frame_wrap, layout = _table_frame()
+        layout.addWidget(_table_header([("Element", 0), ("Cadre", 150), ("Coins arrondis", 246)]))
+
+        self.window_radius_field = _SliderField(0, 24, window_radius, slider_width=140, box_width=58)
+        self.input_frame_toggle = _Toggle(input_frame)
+        self.input_radius_field = _SliderField(0, 16, input_radius, slider_width=140, box_width=58)
+        self.button_frame_toggle = _Toggle(button_frame)
+        self.button_radius_field = _SliderField(0, 16, button_radius, slider_width=140, box_width=58)
+
+        rows = [
+            ("Fenetres", None, self.window_radius_field),
+            ("Zones de saisie", self.input_frame_toggle, self.input_radius_field),
+            ("Boutons", self.button_frame_toggle, self.button_radius_field),
+        ]
+        for i, (label, frame_toggle, radius_field) in enumerate(rows):
+            bg = M["table_row_a"] if i % 2 else M["table_row_b"]
+            row, row_l = _table_row(bg, first=(i == 0))
+            name = QLabel(label)
+            name.setFont(_qfont(12, 400))
+            name.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+            _table_cell(name, 0, row_l, center=True)
+            if frame_toggle is not None:
+                _table_cell(frame_toggle, 150, row_l, center=True)
+                frame_toggle.toggled.connect(lambda _c: self.changed.emit())
+            else:
+                dash = QLabel("—")
+                dash.setFont(_qfont(10, 400, mono=True))
+                dash.setStyleSheet(f"color: {M['dash']}; background: transparent;")
+                _table_cell(dash, 150, row_l, center=True)
+            _table_cell(radius_field, 246, row_l, center=True)
+            radius_field.valueChanged.connect(lambda _v: self.changed.emit())
+            layout.addWidget(row)
+
+        outer.addWidget(frame_wrap)
+
+    def value(self) -> dict[str, Any]:
+        return {
+            "window_radius": self.window_radius_field.value(),
+            "input_frame": self.input_frame_toggle.isChecked(),
+            "input_radius": self.input_radius_field.value(),
+            "button_frame": self.button_frame_toggle.isChecked(),
+            "button_radius": self.button_radius_field.value(),
+        }
+
+
+class _HamburgerButton(QPushButton):
+    """Bouton icone "liste de presets" — 3 barres dessinees au QPainter au
+    lieu d'un glyphe unicode (le glyphe "hamburger" n'est pas garanti par
+    toutes les polices systeme et rendait un carre vide a l'ecran)."""
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        color = self.palette().color(self.foregroundRole())
+        painter.setPen(QPen(QColor(color), 1.4))
+        w, h = self.width(), self.height()
+        bar_w = 12
+        x0 = (w - bar_w) / 2
+        for i, dy in enumerate((-4, 0, 4)):
+            y = h / 2 + dy
+            painter.drawLine(int(x0), int(y), int(x0 + bar_w), int(y))
+        painter.end()
+
+
+class _DoubleClickBox(QWidget):
+    """QWidget generique qui emet doubleClicked — utilise pour la boite de
+    preset (double-clic pour renommer, voir SettingsWindow._build_toolbar)."""
+
+    doubleClicked = Signal()
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.doubleClicked.emit()
+        super().mouseDoubleClickEvent(event)
+
+
+class _PresetListRow(QWidget):
+    """Une ligne de la liste de presets (voir SettingsWindow.
+    _open_preset_popup) : nom cliquable (charge ce preset) + croix a droite
+    (le supprime) — toute la ligne HORS la croix reagit au clic, voir
+    mousePressEvent."""
+
+    clicked = Signal()
+    deleteClicked = Signal()
+
+    def __init__(self, name: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("PresetListRow")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(28)
+        self.setStyleSheet(
+            f"#PresetListRow {{ background: transparent; }}"
+            f"#PresetListRow:hover {{ background: {M['btn_hover']}; }}"
+        )
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 0, 6, 0)
+        layout.setSpacing(8)
+        label = QLabel(name)
+        label.setFont(_qfont(11, 400))
+        label.setStyleSheet(f"color: {M['value_fg']}; background: transparent;")
+        layout.addWidget(label, 1)
+        del_btn = QPushButton("×")
+        del_btn.setFlat(True)
+        del_btn.setCursor(Qt.ArrowCursor)
+        del_btn.setFocusPolicy(Qt.NoFocus)
+        del_btn.setFixedSize(20, 20)
+        del_btn.setFont(_qfont(13, 400, mono=True))
+        del_btn.setStyleSheet(
+            "QPushButton { background: transparent; border: none; padding: 0; color: " + M["close_fg"] + "; }"
+            "QPushButton:hover { background: " + M["close_hover_bg"] + "; color: #ff8a80; }"
+        )
+        del_btn.clicked.connect(self.deleteClicked.emit)
+        layout.addWidget(del_btn)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+
+
+# ==========================================================================
+# Fenetre principale (frameless, chrome propre a cette fenetre).
 # ==========================================================================
 
 class _SettingsTitleBar(QWidget):
@@ -1384,13 +1331,6 @@ class _SettingsTitleBar(QWidget):
         super().__init__(parent)
         self._dialog = dialog
         self.setFixedHeight(28)
-        # objectName + selecteur ID + WA_StyledBackground : sans ca, une
-        # regle "nue" (sans selecteur) posee sur une SOUS-CLASSE de QWidget
-        # ne se peint pas du tout OU (pire, une fois l'attribut seul ajoute
-        # sans le ciblage par id) se propage a l'enfant sans bordure propre
-        # le plus proche (ici title_label), qui se retrouve souligne sur sa
-        # seule largeur de texte au lieu du filet courant sur toute la barre
-        # — exactement la ligne partielle signalee.
         self.setObjectName("SettingsTitleBar")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet(
@@ -1399,26 +1339,26 @@ class _SettingsTitleBar(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 0, 0, 0)
         layout.setSpacing(9)
-        icon = QLabel()
-        icon.setFixedSize(9, 9)
-        icon.setStyleSheet(f"border: 1px solid {M['close_fg']}; background: transparent;")
-        self.title_label = QLabel("Parametres \u2014 Pipeline Browser")
-        self.title_label.setFont(_qfont(11, 400))
-        self.title_label.setStyleSheet(f"color: {M['title_fg']}; background: transparent;")
+        dot = QLabel()
+        dot.setFixedSize(9, 9)
+        dot.setStyleSheet(f"border: 1px solid {M['dot_border']}; background: transparent;")
+        layout.addWidget(dot)
+        title = QLabel("Parametres generaux")
+        title.setFont(_qfont(11, 400))
+        title.setStyleSheet(f"color: {M['title_fg']}; background: transparent;")
+        layout.addWidget(title)
+        layout.addStretch(1)
         self.dirty_label = QLabel("")
         self.dirty_label.setFont(_qfont(10, 400, mono=True))
-        layout.addWidget(icon)
-        layout.addWidget(self.title_label)
-        layout.addStretch(1)
         layout.addWidget(self.dirty_label)
-        self.close_btn = QPushButton("\u00d7")
+        self.close_btn = QPushButton("×")
         self.close_btn.setFixedSize(26, 20)
         self.close_btn.setCursor(Qt.ArrowCursor)
         self.close_btn.setFocusPolicy(Qt.NoFocus)
         self.close_btn.setFlat(True)
         self.close_btn.setFont(_qfont(11, 400, mono=True))
         self.close_btn.setStyleSheet(
-            "QPushButton { background: transparent; border: none; color: " + M["close_fg"] + "; }"
+            "QPushButton { background: transparent; border: none; padding: 0; color: " + M["close_fg"] + "; }"
             "QPushButton:hover { background: " + M["close_hover_bg"] + "; color: " + M["close_hover_fg"] + "; }"
         )
         self.close_btn.clicked.connect(self.closeClicked.emit)
@@ -1433,8 +1373,6 @@ class _SettingsTitleBar(QWidget):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            # Voir app_style.start_native_move et la meme remarque dans
-            # pipeline_browser.py.TitleBar.mousePressEvent.
             start_native_move(self._dialog)
             event.accept()
         else:
@@ -1443,9 +1381,9 @@ class _SettingsTitleBar(QWidget):
 
 class SettingsWindow(QDialog):
     """Fenetre de parametres, reproduction fidele de la maquette html
-    fournie. Chaque changement se previsualise en direct sur la fenetre
-    principale (settingsChanged), sans toucher au disque ; Enregistrer
-    persiste (settingsSaved)."""
+    "Parametres generaux". Chaque changement se previsualise en direct sur
+    la fenetre principale (settingsChanged), sans toucher au disque ;
+    Enregistrer persiste (settingsSaved)."""
 
     settingsChanged = Signal(dict)
     settingsSaved = Signal(dict)
@@ -1454,7 +1392,15 @@ class SettingsWindow(QDialog):
         super().__init__(parent)
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.resize(1080, 800)
+        # 1020 (largeur maquette) - 284 (panneau "Apercu en direct", supprime
+        # a la demande de l'utilisateur) : la page de gauche n'a plus besoin
+        # de toute cette largeur.
+        self.resize(760, 820)
+        # Redimensionnable par l'utilisateur (voir nativeEvent ci-dessous,
+        # meme mecanisme que PipelineBrowser) : largeur/hauteur minimales
+        # sous lesquelles les lignes de reglage (slider+boite fixe a
+        # droite) commenceraient a se chevaucher avec leur libelle.
+        self.setMinimumSize(640, 480)
 
         self.settings = load_settings()
         self._original_settings = json.loads(json.dumps(self.settings))
@@ -1462,16 +1408,9 @@ class SettingsWindow(QDialog):
         self._dirty = False
         self._current_preset = "Personnalise"
 
-        # Le rafraichissement declenche par settingsChanged (recalcul complet
-        # des colonnes dans la fenetre principale) est lourd : au fil d'un
-        # glisser de slider, mouseMoveEvent tire des dizaines de crans par
-        # seconde. L'appeler en direct depuis _on_live_change (donc depuis
-        # la pile de mouseMoveEvent) empecherait Qt de repeindre le curseur
-        # du slider tant que ce travail n'est pas fini. On le differe donc
-        # TOUJOURS via ce timer (jamais d'appel synchrone), au plus une fois
-        # toutes les 30ms tant que le slider bouge encore (~33 rafraichis-
-        # sements/s, imperceptible), avec un dernier appel garanti sur la
-        # valeur finale des que le mouvement s'arrete (voir _flush_live_apply).
+        # Voir la meme remarque dans l'ancienne fenetre : le rafraichissement
+        # (previsualisation complete sur la fenetre principale) est lourd,
+        # on le differe donc toujours de 30ms au fil d'un glisser de slider.
         self._live_pending = False
         self._live_timer = QTimer(self)
         self._live_timer.setInterval(30)
@@ -1487,11 +1426,6 @@ class SettingsWindow(QDialog):
         outer.addWidget(panel)
 
         root = QVBoxLayout(panel)
-        # Marge de 1px (= l'epaisseur du filet de #Panel, voir
-        # _apply_panel_radius), PAS 0 : a marge nulle, les enfants
-        # (titlebar, barre d'outils...) sont peints PAR-DESSUS la bordure du
-        # panneau sur ses 4 cotes et la rendent invisible — meme bug, et
-        # meme correctif, que #CentralFrame dans pipeline_browser.py.
         root.setContentsMargins(1, 1, 1, 1)
         root.setSpacing(0)
 
@@ -1504,125 +1438,166 @@ class SettingsWindow(QDialog):
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
-        body.addWidget(self._build_nav())
-        body.addWidget(self._build_pages(), 1)
+        body.addWidget(self._build_content(), 1)
         root.addLayout(body, 1)
 
         root.addWidget(self._build_bottom_bar())
 
-        self._select_page(0)
         self._connect_live_updates()
+        self._preview_now()
 
-    # -- barre d'outils (preset + recherche) --
+    # -- barre d'outils (preset) --
 
     def _build_toolbar(self) -> QWidget:
         bar = QWidget()
-        bar.setFixedHeight(36)
+        bar.setFixedHeight(40)
         bar.setStyleSheet(f"background: {M['toolbar_bg']};")
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(10, 0, 10, 0)
+        layout.setContentsMargins(14, 0, 14, 0)
         layout.setSpacing(8)
 
-        preset_box = QWidget()
-        preset_box.setObjectName("PresetBox")
-        preset_box.setAttribute(Qt.WA_StyledBackground, True)
-        preset_box.setFixedHeight(24)
-        # Scope a #PresetBox : sinon le filet cascade sur preset_tag
-        # ci-dessous (qui pose deja son propre border-right, en double).
-        preset_box.setStyleSheet(f"#PresetBox {{ background: {M['field_bg']}; border: 1px solid {M['field_border']}; }}")
-        preset_l = QHBoxLayout(preset_box)
-        preset_l.setContentsMargins(0, 0, 0, 0)
-        preset_l.setSpacing(0)
-        preset_tag = QLabel("PRESET")
-        preset_tag.setFont(_qfont(9, 600))
-        preset_tag.setStyleSheet(
-            f"color: {M['label_dim']}; background: transparent; padding: 0 8px; "
-            f"border-right: 1px solid {M['field_border']};"
-        )
-        preset_l.addWidget(preset_tag)
-        self.preset_btn = QPushButton()
-        self.preset_btn.setFlat(True)
-        self.preset_btn.setCursor(Qt.ArrowCursor)
-        self.preset_btn.setFocusPolicy(Qt.NoFocus)
-        self.preset_btn.setFont(_qfont(11, 400))
-        self.preset_btn.setStyleSheet(
-            "QPushButton { background: transparent; border: none; color: " + M["value_fg"] +
-            "; padding: 0 8px; text-align: left; }"
-            "QPushButton:hover { background: #1a1f24; }"
-        )
-        self.preset_btn.clicked.connect(self._open_preset_menu)
-        preset_l.addWidget(self.preset_btn, 1)
-        self._sync_preset_label()
-        layout.addWidget(preset_box)
+        tag = QLabel("Preset")
+        tag.setFont(_qfont(9, 600, tracking=0.7))
+        tag.setStyleSheet(f"color: {M['label_dim']}; background: transparent;")
+        layout.addWidget(tag)
 
-        save_as_btn = _Btn("Enregistrer sous", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"])
-        save_as_btn.clicked.connect(self._save_preset_as)
-        import_btn = _Btn("Importer", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"])
-        import_btn.clicked.connect(self._import_settings)
-        export_btn = _Btn("Exporter", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"])
-        export_btn.clicked.connect(self._export_settings)
-        layout.addWidget(save_as_btn)
-        layout.addWidget(import_btn)
-        layout.addWidget(export_btn)
+        # Double-clic pour renommer (en plus du bouton "Renommer" ci-dessous
+        # — voir la remarque de l'utilisateur, capture a l'appui).
+        self.preset_box = _DoubleClickBox()
+        self.preset_box.setObjectName("PresetBox")
+        self.preset_box.setAttribute(Qt.WA_StyledBackground, True)
+        self.preset_box.setFixedSize(260, 26)
+        self.preset_box.doubleClicked.connect(self._rename_preset)
+        preset_l = QHBoxLayout(self.preset_box)
+        preset_l.setContentsMargins(9, 0, 9, 0)
+        preset_l.setSpacing(8)
+        self.preset_name_label = QLabel()
+        self.preset_name_label.setFont(_qfont(12, 400))
+        preset_l.addWidget(self.preset_name_label, 1)
+        self.preset_dot = QLabel()
+        self.preset_dot.setFixedSize(6, 6)
+        preset_l.addWidget(self.preset_dot)
+        layout.addWidget(self.preset_box)
+
+        # "Enregistrer" remplace l'ancien bouton "Renommer" — le double-clic
+        # sur la boite de preset couvre deja le renommage (voir plus haut) ;
+        # ce bouton sauvegarde directement les valeurs courantes dans le
+        # preset actif (ou ouvre "Nouveau preset..." s'il n'y en a pas
+        # encore un de charge) — voir la remarque de l'utilisateur, capture
+        # a l'appui.
+        save_btn = _Btn("Enregistrer", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=26)
+        save_btn.clicked.connect(self._save_current_preset)
+        layout.addWidget(save_btn)
+
+        divider = QFrame()
+        divider.setFixedSize(1, 16)
+        divider.setStyleSheet(f"background: {M['panel_border']};")
+        layout.addWidget(divider)
+
+        # Un seul bouton icone remplace "Enregistrer sous…"/"Ouvrir un
+        # preset…" (voir la remarque de l'utilisateur, capture a l'appui) :
+        # ouvre une liste (voir _open_preset_popup) qui permet a la fois de
+        # charger un preset existant, d'en supprimer un (croix), et d'en
+        # enregistrer un nouveau ("+ Nouveau preset…", en tete de liste).
+        self._preset_menu_btn = _HamburgerButton("")
+        self._preset_menu_btn.setFixedSize(26, 26)
+        self._preset_menu_btn.setCursor(Qt.ArrowCursor)
+        self._preset_menu_btn.setFocusPolicy(Qt.NoFocus)
+        self._preset_menu_btn.setStyleSheet(
+            f"QPushButton {{ background: {M['btn_bg']}; border: 1px solid {M['btn_border']}; color: {M['btn_fg']}; }}"
+            f"QPushButton:hover {{ background: {M['btn_hover']}; }}"
+        )
+        self._preset_menu_btn.clicked.connect(self._open_preset_popup)
+        layout.addWidget(self._preset_menu_btn)
+
         layout.addStretch(1)
 
-        search_box = QWidget()
-        search_box.setObjectName("SearchBox")
-        search_box.setAttribute(Qt.WA_StyledBackground, True)
-        search_box.setFixedSize(210, 24)
-        # Scope a #SearchBox : sans lui, le filet cascade sur `slash`
-        # ci-dessous, dessinant un contour autour du seul "/" — exactement
-        # ce que montrait la capture de l'utilisateur.
-        search_box.setStyleSheet(f"#SearchBox {{ background: {M['field_bg']}; border: 1px solid {M['field_border']}; }}")
-        search_l = QHBoxLayout(search_box)
-        search_l.setContentsMargins(8, 0, 8, 0)
-        search_l.setSpacing(7)
-        slash = QLabel("/")
-        slash.setFont(_qfont(10, 400, mono=True))
-        slash.setStyleSheet(f"color: {M['slash']}; background: transparent;")
-        self.search_field = QLineEdit()
-        self.search_field.setPlaceholderText("Rechercher un parametre")
-        self.search_field.setFont(_qfont(11, 400))
-        self.search_field.setFrame(False)
-        self.search_field.setStyleSheet(
-            f"background: transparent; border: none; color: {M['value_fg']};"
-        )
-        search_l.addWidget(slash)
-        search_l.addWidget(self.search_field)
-        self.search_field.textChanged.connect(self._filter_nav)
-        layout.addWidget(search_box)
+        path_label = QLabel(f"{_PRESETS_PATH.name} · {_PRESETS_PATH.parent}")
+        path_label.setFont(_qfont(10, 400, mono=True))
+        path_label.setStyleSheet(f"color: {M['group_note']}; background: transparent;")
+        layout.addWidget(path_label)
+
+        self._sync_preset_box()
         return bar
 
-    def _sync_preset_label(self):
-        self.preset_btn.setText(self._current_preset + "  \u25be")
-
-    def _open_preset_menu(self):
-        menu = QMenu(self)
-        menu.setFont(_qfont(11, 400))
-        menu.setStyleSheet(
-            f"QMenu {{ background: {M['toolbar_bg']}; border: 1px solid {M['field_border']}; padding: 4px 0; }}"
-            f"QMenu::item {{ padding: 5px 16px; color: {M['value_fg']}; }}"
-            f"QMenu::item:selected {{ background: {M['accent']}; color: {M['accent_fg']}; }}"
+    def _sync_preset_box(self):
+        border = M["dirty_border"] if self._dirty else M["field_border"]
+        self.preset_box.setStyleSheet(
+            f"#PresetBox {{ background: {M['field_bg']}; border: 1px solid {border}; }}"
         )
+        self.preset_name_label.setText(self._current_preset + (" *" if self._dirty else ""))
+        self.preset_name_label.setStyleSheet(f"color: {M['value_fg']}; background: transparent;")
+        dot_color = M["dirty_dot"] if self._dirty else M["clean_dot"]
+        self.preset_dot.setStyleSheet(f"background: {dot_color};")
+
+    def _open_preset_popup(self):
+        """Liste des presets (voir _PresetListRow) : "+ Nouveau preset…" en
+        tete (enregistre les valeurs courantes sous un nouveau nom), puis
+        chaque preset existant — clic sur le nom pour le charger, sur la
+        croix pour le supprimer. Remplace les 2 anciens boutons "Enregistrer
+        sous…"/"Ouvrir un preset…" (voir la remarque de l'utilisateur,
+        capture a l'appui)."""
+        popup = QWidget(self, Qt.Popup)
+        popup.setObjectName("PresetPopup")
+        popup.setAttribute(Qt.WA_StyledBackground, True)
+        popup.setStyleSheet(f"#PresetPopup {{ background: {M['toolbar_bg']}; border: 1px solid {M['field_border']}; }}")
+        layout = QVBoxLayout(popup)
+        layout.setContentsMargins(1, 1, 1, 1)
+        layout.setSpacing(0)
+
+        new_btn = _Btn("+  Nouveau preset…", "transparent", "", M["value_fg"], M["btn_hover"],
+                       height=30, weight=500, padding="0 12px")
+        new_btn.setStyleSheet(new_btn.styleSheet() + "QPushButton { text-align: left; }")
+        new_btn.clicked.connect(lambda: (popup.close(), self._save_preset_as()))
+        layout.addWidget(new_btn)
+
         presets = _load_presets()
-        if not presets:
-            action = menu.addAction("(aucun preset enregistre)")
-            action.setEnabled(False)
-        for name in presets:
-            action = menu.addAction(name)
-            action.triggered.connect(lambda _c=False, n=name, p=presets: self._load_preset(n, p))
-        menu.exec(self.preset_btn.mapToGlobal(QPoint(0, self.preset_btn.height())))
+        if presets:
+            divider = QFrame()
+            divider.setFixedHeight(1)
+            divider.setStyleSheet(f"background: {M['field_border']};")
+            layout.addWidget(divider)
+            for name in presets:
+                row = _PresetListRow(name)
+                row.clicked.connect(lambda n=name: (popup.close(), self._load_preset(n, _load_presets())))
+                row.deleteClicked.connect(lambda n=name: self._delete_preset(n, popup))
+                layout.addWidget(row)
+        else:
+            empty = QLabel("(aucun preset enregistre)")
+            empty.setFont(_qfont(11, 400))
+            empty.setStyleSheet(f"color: {M['group_note']}; background: transparent; padding: 6px 12px;")
+            layout.addWidget(empty)
+
+        popup.setFixedWidth(max(self._preset_menu_btn.width(), 220))
+        popup.adjustSize()
+        popup.move(self._preset_menu_btn.mapToGlobal(QPoint(0, self._preset_menu_btn.height())))
+        popup.show()
+
+    def _delete_preset(self, name: str, popup: QWidget):
+        presets = _load_presets()
+        presets.pop(name, None)
+        _save_presets(presets)
+        if self._current_preset == name:
+            self._current_preset = "Personnalise"
+            self._sync_preset_box()
+        popup.close()
+        # Rouvre aussitot la liste a jour (sans le preset supprime) : plus
+        # pratique que refermer purement et simplement si l'utilisateur
+        # veut enchainer plusieurs suppressions.
+        self._open_preset_popup()
 
     def _load_preset(self, name: str, presets: dict):
         data = presets.get(name)
         if not data:
             return
-        merged = json.loads(json.dumps(DEFAULT_SETTINGS))
-        merged.update(data)
-        self._apply_values_to_controls(merged)
+        # _apply_values_to_controls fusionne deja data par-dessus
+        # DEFAULT_SETTINGS (voir sa docstring) : pas besoin de le refaire ici.
+        self._apply_values_to_controls(data)
         self._current_preset = name
-        self._sync_preset_label()
-        self._on_live_change()
+        self._dirty = False
+        self.titlebar.set_dirty(False)
+        self._sync_preset_box()
+        self._preview_now()
 
     def _save_preset_as(self):
         name, ok = QInputDialog.getText(self, "Enregistrer sous", "Nom du preset :")
@@ -1632,286 +1607,196 @@ class SettingsWindow(QDialog):
         presets[name.strip()] = self._current_values()
         _save_presets(presets)
         self._current_preset = name.strip()
-        self._sync_preset_label()
+        self._dirty = False
+        self.titlebar.set_dirty(False)
+        self._sync_preset_box()
 
-    def _import_settings(self):
-        path, _filter = QFileDialog.getOpenFileName(self, "Importer des parametres", "", "JSON (*.json)")
-        if not path:
+    def _save_current_preset(self):
+        """Bouton "Enregistrer" de la barre a outils : sauvegarde les
+        valeurs courantes dans le preset actif ; si aucun preset n'est
+        charge (etat "Personnalise"), se rabat sur "Nouveau preset..."."""
+        if not self._current_preset or self._current_preset == "Personnalise":
+            self._save_preset_as()
             return
-        try:
-            data = json.loads(Path(path).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return
-        merged = json.loads(json.dumps(DEFAULT_SETTINGS))
-        merged.update(data)
-        self._apply_values_to_controls(merged)
-        self._current_preset = Path(path).stem
-        self._sync_preset_label()
-        self._on_live_change()
+        presets = _load_presets()
+        presets[self._current_preset] = self._current_values()
+        _save_presets(presets)
+        self._dirty = False
+        self.titlebar.set_dirty(False)
+        self._sync_preset_box()
 
-    def _export_settings(self):
-        path, _filter = QFileDialog.getSaveFileName(self, "Exporter les parametres", "parametres.json", "JSON (*.json)")
-        if not path:
+    def _rename_preset(self):
+        new_name, ok = QInputDialog.getText(self, "Renommer", "Nouveau nom :", text=self._current_preset)
+        new_name = new_name.strip()
+        if not ok or not new_name or new_name == self._current_preset:
             return
-        try:
-            Path(path).write_text(json.dumps(self._current_values(), indent=2, ensure_ascii=False), encoding="utf-8")
-        except OSError:
-            pass
+        presets = _load_presets()
+        if self._current_preset in presets:
+            presets[new_name] = presets.pop(self._current_preset)
+            _save_presets(presets)
+        self._current_preset = new_name
+        self._sync_preset_box()
 
     def _apply_values_to_controls(self, data: dict):
         """Reapplique un dict complet de reglages sur TOUS les controles —
-        utilise par le chargement d'un preset/import. Reconstruit les pages
-        qui n'exposent pas de setter direct plutot que d'ajouter un setter
-        a chaque widget custom, plus simple et tout aussi fiable."""
-        self.root_field.setText(data.get("root_path", DEFAULT_SETTINGS["root_path"]))
-        self.scale_field.setValue(int(data.get("ui_scale", 100)))
-        self.save_mode_select.setValue(data.get("save_mode", "Par utilisateur"))
-        self.external_path_field.setText(data.get("external_settings_path", ""))
-        self.window_radius_toggle.setChecked(int(data.get("window_radius", 0)) > 0)
-        self.header_height_field.setValue(int(data.get("header_height", 26)))
-        self.button_radius_field.setValue(int(data.get("button_radius", 0)))
-        self.preview_pad_field.setValue(int(data.get("preview_pad", 0)))
-        self.preview_radius_field.setValue(int(data.get("preview_radius", 0)))
-        for key, field in self.color_grid.fields.items():
-            new_val = (data.get("colors") or {}).get(key)
-            if new_val:
-                field._value = new_val
-                field._refresh()
+        utilise par Valeurs par defaut et le chargement d'un preset.
 
-    # -- navigation --
+        Remplace D'ABORD self.settings par (une copie de) `data` en entier,
+        AVANT de synchroniser les widgets : _current_values() fusionne les
+        valeurs des widgets par-dessus self.settings pour les cles sans UI
+        (couleurs non exposees, detail des polices figees..., voir la
+        remarque de tete de fichier) — sans ce remplacement prealable,
+        self.settings serait reste bloque sur son contenu de CONSTRUCTION
+        (le fichier charge au demarrage), et "Valeurs par defaut"/le
+        chargement d'un preset auraient eu l'air de fonctionner (les
+        widgets suivent bien) sans jamais reellement s'appliquer aux cles
+        gelees — bug reel confirme en repassant un preset "as-is" par ce
+        chemin (voir git diff sur pipeline_settings.presets.json)."""
+        self.settings = json.loads(json.dumps(DEFAULT_SETTINGS))
+        self.settings.update(json.loads(json.dumps(data)))
 
-    def _build_nav(self) -> QWidget:
-        nav_wrap = QWidget()
-        nav_wrap.setObjectName("NavWrap")
-        nav_wrap.setFixedWidth(218)
-        # Selecteur scope a #NavWrap : une regle nue cascaderait en QSS sur
-        # chaque _NavRow (et ses QLabel internes), y dessinant un border-right
-        # fantome a leur propre bord droit — memes filets parasites que le
-        # border-bottom non scope de _Row (voir plus haut).
-        nav_wrap.setStyleSheet(
-            f"#NavWrap {{ background: {M['nav_bg']}; border-right: 1px solid {M['panel_border']}; }}"
-        )
-        layout = QVBoxLayout(nav_wrap)
-        layout.setContentsMargins(0, 6, 0, 6)
-        layout.setSpacing(0)
+        self.root_field.setText(self.settings.get("root_path", DEFAULT_SETTINGS["root_path"]))
+        self.scale_field.setValue(int(self.settings.get("ui_scale", 100)))
+        for key, entry in self.font_table.rows.items():
+            conf = self.settings.get(key) or {}
+            family = conf.get("family") or "Systeme"
+            entry["field"].setValue(family)
+            shown = family if family != "Systeme" else entry["auto"]
+            entry["preview"].setFont(QFont(shown, 10))
+            entry["custom"] = bool(conf.get("custom", False))
+        for real_key, hexval in (self.settings.get("colors") or {}).items():
+            if real_key in self.color_grid._fields_by_real_key:
+                self.color_grid._sync_key(real_key, hexval)
+        self.header_height_field.setValue(int(self.settings.get("header_height", 26)))
+        self.header_padding_field.setValue(int(self.settings.get("header_padding", 0)))
+        self.header_color_field.setValue(self.settings.get("header_color", "skinN1"), self.settings["colors"])
+        self.header_radius_field.setValue(int(self.settings.get("header_radius", 0)))
+        self.header_edges_field.setValue(self.settings.get("header_edges") or {})
+        self.geo_table.window_radius_field.setValue(int(self.settings.get("window_radius", 0)))
+        self.geo_table.input_frame_toggle.setChecked(bool(self.settings.get("input_frame", True)))
+        self.geo_table.input_radius_field.setValue(int(self.settings.get("input_radius", 0)))
+        self.geo_table.button_frame_toggle.setChecked(bool(self.settings.get("button_frame", True)))
+        self.geo_table.button_radius_field.setValue(int(self.settings.get("button_radius", 0)))
 
-        self._nav_rows: list[_NavRow] = []
-        self._pages: list[tuple[str, str, QWidget]] = []  # (nav_label, page_id) filled in _build_pages
-        self._page_specs = [
-            ("General", "6", False),
-            ("Couleurs de l'interface", str(len(COLOR_FIELDS)), False),
-            ("Polices de caracteres", "8", False),
-            ("Boutons", "1", False),
-            ("Colonne Type", "3", True),
-            ("Colonne Projets", "5", True),
-            ("Colonne Sous-projet", "5", True),
-            ("Colonne Logiciels", "5", True),
-            ("Colonnes Contenu", "5", True),
-            ("Images projets et sous-projets", "2", False),
-        ]
-        group_inserted = False
-        for i, (label, count, in_columns_group) in enumerate(self._page_specs):
-            if in_columns_group and not group_inserted:
-                layout.addWidget(_nav_group_header("Colonnes"))
-                group_inserted = True
-            row = _NavRow(label, count, indent=in_columns_group)
-            row.clicked.connect(lambda idx=i: self._select_page(idx))
-            layout.addWidget(row)
-            self._nav_rows.append(row)
+    # -- contenu (sections) --
+
+    def _build_content(self) -> QWidget:
+        scroller = QScrollArea()
+        scroller.setWidgetResizable(True)
+        scroller.setFrameShape(QFrame.NoFrame)
+        scroller.setStyleSheet(f"background: {M['panel_bg']};")
+        inner = QWidget()
+        layout = QVBoxLayout(inner)
+        layout.setContentsMargins(20, 18, 18, 26)
+        layout.setSpacing(34)
+        layout.addWidget(self._section_application())
+        layout.addWidget(self._section_fonts())
+        layout.addWidget(self._section_colors())
+        layout.addWidget(self._section_headers())
+        layout.addWidget(self._section_geometry())
         layout.addStretch(1)
-        return nav_wrap
+        scroller.setWidget(inner)
+        return scroller
 
-    def _select_page(self, index: int):
-        for i, row in enumerate(self._nav_rows):
-            row.setActive(i == index)
-        self.stack_widgets[index].raise_()
-        self.pages_area.setCurrentIndex(index)
+    def _section_application(self) -> QWidget:
+        section = _Section("Application")
 
-    def _filter_nav(self, text: str):
-        text = text.strip().lower()
-        for row, (label, _count, _grp) in zip(self._nav_rows, self._page_specs):
-            row.setFilterMatch(not text or text in label.lower())
-
-    # -- pages --
-
-    def _build_pages(self) -> QWidget:
-        from PySide6.QtWidgets import QStackedWidget
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        self.pages_area = QStackedWidget()
-        self.stack_widgets: list[QWidget] = []
-
-        page_defs = [
-            ("General", "Racine, echelle, sauvegarde, entete des colonnes", self._page_general),
-            ("Couleurs de l'interface", "Cliquez une pastille pour parcourir la palette", self._page_colors),
-            ("Polices de caracteres", "Un role par ligne : police, taille 4-20, gras, couleur, lissage", self._page_fonts),
-            ("Boutons", "Geometrie des boutons de la barre d'outils", self._page_buttons),
-            ("Colonne Type", "Colonne sans vignette", lambda: self._page_column("Type", False, False)),
-            ("Colonne Projets", "Colonne a vignette \u2014 source du lien pour les sous-projets", lambda: self._page_column("Projets", True, False)),
-            ("Colonne Sous-projet", "Vignette liee aux projets par defaut", lambda: self._page_column("Sous-projet", True, True)),
-            ("Colonne Logiciels", "Icones logicielles", lambda: self._page_column("Logiciels", True, False, True)),
-            ("Colonnes Contenu", "Toutes les colonnes de contenu au-dela des logiciels", lambda: self._page_column("Contenu", True, False, True)),
-            ("Images projets et sous-projets", "Padding sur les 4 cotes \u2014 reglage global des vignettes de projet", self._page_preview),
-        ]
-
-        for title, hint, builder in page_defs:
-            page_wrap = QWidget()
-            page_l = QVBoxLayout(page_wrap)
-            page_l.setContentsMargins(0, 0, 0, 0)
-            page_l.setSpacing(0)
-            page_l.addWidget(_page_header(title, hint))
-
-            scroller = QScrollArea()
-            scroller.setWidgetResizable(True)
-            scroller.setFrameShape(QFrame.NoFrame)
-            scroller.setStyleSheet(f"background: {M['panel_bg']};")
-            inner = QWidget()
-            inner_l = QVBoxLayout(inner)
-            inner_l.setContentsMargins(18, 14, 18, 20)
-            inner_l.addWidget(builder())
-            scroller.setWidget(inner)
-            page_l.addWidget(scroller, 1)
-
-            self.pages_area.addWidget(page_wrap)
-            self.stack_widgets.append(page_wrap)
-
-        layout.addWidget(self.pages_area)
-        return container
-
-    def _page_general(self) -> QWidget:
-        wrap = QWidget()
-        layout = QVBoxLayout(wrap)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(18)
-
-        group = _Group()
         self.root_field = QLineEdit(self.settings["root_path"])
         self.root_field.setFont(_qfont(12, 400, mono=True))
-        self.root_field.setFixedHeight(25)
+        self.root_field.setFixedSize(268, 25)
         self.root_field.setStyleSheet(
             f"background: {M['field_bg']}; border: 1px solid {M['field_border']}; "
             f"color: {M['value_muted']}; padding: 0 8px;"
         )
         browse_btn = _Btn("Parcourir", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=25)
         browse_btn.clicked.connect(self._browse_root)
+        # Largeur FIXE (pas le sizeHint naturel du bouton) : le bloc de
+        # controle de cette ligne (champ+bouton = 268+6+84 = 358) doit faire
+        # exactement la meme largeur totale que celui de "Scale interface"
+        # juste en dessous (slider 280 + espacement 10 + boite 68 = 358),
+        # sans quoi les deux lignes ne s'alignent ni a gauche ni a droite
+        # (voir la remarque de l'utilisateur, capture a l'appui).
+        browse_btn.setFixedWidth(84)
         root_row = QWidget()
         root_row_l = QHBoxLayout(root_row)
         root_row_l.setContentsMargins(0, 0, 0, 0)
         root_row_l.setSpacing(6)
         root_row_l.addWidget(self.root_field)
         root_row_l.addWidget(browse_btn)
-        root_row.setFixedWidth(340)
-        group.add(_Row("Racine par defaut", root_row))
+        section.add(_Row("Racine par defaut", root_row))
 
-        self.scale_field = _SliderField(50, 200, int(self.settings["ui_scale"]), "%")
-        group.add(_Row("Scale general de l'interface", self.scale_field,
-                        "Multiplie la taille de toutes les polices"))
+        self.scale_field = _SliderField(50, 200, int(self.settings["ui_scale"]), "%", slider_width=280, box_width=68)
+        section.add(_Row("Scale interface", self.scale_field))
+        return section
 
-        self.save_mode_select = _SelectField(SAVE_MODES, self.settings["save_mode"])
-        group.add(_Row("Systeme de sauvegarde des differentes interfaces", self.save_mode_select))
-
-        self.external_path_field = QLineEdit(self.settings.get("external_settings_path", ""))
-        self.external_path_field.setFont(_qfont(11, 400, mono=True))
-        self.external_path_field.setFixedHeight(25)
-        self.external_path_field.setStyleSheet(
-            f"background: {M['field_bg']}; border: 1px solid {M['field_border']}; "
-            f"color: {M['value_muted']}; padding: 0 8px;"
-        )
-        external_btn = _Btn("...", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=25, padding="0")
-        external_btn.setFixedWidth(30)
-        external_btn.clicked.connect(self._browse_external_settings)
-        external_row = QWidget()
-        external_row_l = QHBoxLayout(external_row)
-        external_row_l.setContentsMargins(0, 0, 0, 0)
-        external_row_l.setSpacing(6)
-        external_row_l.addWidget(self.external_path_field)
-        external_row_l.addWidget(external_btn)
-        external_row.setFixedWidth(250)
-        self._external_row_widget = _Row("Fichier externe (si choisi ci-dessus)", external_row, last=True)
-        group.add(self._external_row_widget)
-        layout.addWidget(group)
-
-        header_group = _Group("Entete des colonnes")
-        self.header_height_field = _SliderField(18, 56, int(self.settings["header_height"]))
-        header_group.add(_Row("Hauteur de l'entete", self.header_height_field))
-        # "colhead" : meme role que la table de polices utilise pour
-        # "Entete de colonnes" (voir _ROLE_KEY_TO_STYLE_ROLE) — l'entete de
-        # colonne suit la meme police, cette page ne fait que la surcharger
-        # globalement (voir header_font_family dans apply_all_settings).
-        self.header_font_select = _FontSelectField(
-            _font_choices(), self.settings.get("header_font_family") or "Systeme",
-            width=200, auto_label=auto_family_for_role("colhead"),
-        )
-        header_group.add(_Row("Police de caractere", self.header_font_select,
-                              "Taille/gras/couleur/lissage : page Polices > Entete de colonnes", last=True))
-        layout.addWidget(header_group)
-
-        window_group = _Group()
-        # Toggle plutot qu'un slider en pixels : Windows n'offre de toute
-        # facon aucun controle fin du rayon cote DWM (juste rond/pas-rond,
-        # voir apply_dwm_frame dans app_style.py) — un curseur laissait
-        # croire a un reglage precis qui ne l'etait pas vraiment.
-        self.window_radius_toggle = _Toggle(
-            int(self.settings["window_radius"]) > 0, on_label="arrondi", off_label="carre"
-        )
-        window_group.add(_Row("Coins de la fenetre principale", self.window_radius_toggle, last=True))
-        layout.addWidget(window_group)
-
-        layout.addStretch(1)
-        self.save_mode_select.changed.connect(self._update_save_mode_row)
-        self._update_save_mode_row(self.save_mode_select.value())
-        return wrap
-
-    def _update_save_mode_row(self, *_args):
-        self._external_row_widget.setVisible(self.save_mode_select.value() == "Fichier externe")
-
-    def _page_colors(self) -> QWidget:
-        self.color_grid = _ColorGrid(self.settings["colors"])
-        return self.color_grid
-
-    def _page_fonts(self) -> QWidget:
-        self.font_table = _FontTable(self.settings)
+    def _section_fonts(self) -> QWidget:
+        self.font_table = _SimpleFontTable(self.settings)
         return self.font_table
 
-    def _page_buttons(self) -> QWidget:
+    def _section_colors(self) -> QWidget:
         wrap = QWidget()
         layout = QVBoxLayout(wrap)
         layout.setContentsMargins(0, 0, 0, 0)
-        group = _Group()
-        self.button_radius_field = _SliderField(0, 16, int(self.settings["button_radius"]))
-        group.add(_Row("Border radius", self.button_radius_field, last=True))
-        layout.addWidget(group)
-        layout.addStretch(1)
+        layout.setSpacing(0)
+        section = _Section("Couleurs")
+        self.color_grid = _ColorGrid(self.settings["colors"])
+        section.add(self.color_grid)
+        layout.addWidget(section)
         return wrap
 
-    def _page_column(self, title: str, show_images: bool, linkable: bool, mixed_rows: bool = False) -> QWidget:
-        page = _ColumnPage(self.settings["columns"][title], show_images, linkable, mixed_rows)
-        if not hasattr(self, "column_pages"):
-            self.column_pages = {}
-        self.column_pages[title] = page
-        return page
+    def _section_headers(self) -> QWidget:
+        wrap = QWidget()
+        outer_layout = QVBoxLayout(wrap)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+        section = _Section("Entetes")
 
-    def _page_preview(self) -> QWidget:
+        self.header_height_field = _SliderField(16, 56, int(self.settings["header_height"]), slider_width=280, box_width=68)
+        self.header_padding_field = _SliderField(0, 32, int(self.settings.get("header_padding", 0)), slider_width=280, box_width=68)
+        self.header_color_field = _HeaderColorField(self.settings["colors"], self.settings.get("header_color", "skinN1"))
+        self.header_radius_field = _SliderField(0, 16, int(self.settings.get("header_radius", 0)), slider_width=280, box_width=68)
+        self.header_edges_field = _HeaderEdgesField(self.settings.get("header_edges") or {})
+
+        # Tableau ferme (voir _table_frame — meme technique que Polices/
+        # Geometrie, voir la remarque de l'utilisateur, capture a l'appui) :
+        # une ligne "libelle(+note) / controle" par reglage, pas de colonnes
+        # multiples (une seule "valeur" par ligne, de nature differente
+        # d'une ligne a l'autre) donc pas d'entete de colonnes ici.
+        rows = [
+            ("Hauteur des entetes", self.header_height_field, ""),
+            ("Padding des entetes", self.header_padding_field, ""),
+            ("Couleur des entetes", self.header_color_field, ""),
+            ("Arrondi des angles", self.header_radius_field, ""),
+            ("Cadre des entetes", self.header_edges_field, ""),
+        ]
+        frame, table_layout = _table_frame()
+        for i, (label, control, note) in enumerate(rows):
+            bg = M["table_row_a"] if i % 2 else M["table_row_b"]
+            row, row_l = _table_row(bg, first=(i == 0))
+            row_l.setContentsMargins(14, 8, 14, 8)
+            row_l.setSpacing(14)
+            row_l.addWidget(_label_block(label, note), 1)
+            row_l.addWidget(control, 0, Qt.AlignVCenter)
+            table_layout.addWidget(row)
+        section.add(frame)
+        outer_layout.addWidget(section)
+        return wrap
+
+    def _section_geometry(self) -> QWidget:
         wrap = QWidget()
         layout = QVBoxLayout(wrap)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-        hint = QLabel("Padding et rayon de la grande vignette de l'apercu empile "
-                      "(sous la liste Projets/Sous-projet, ou dans Logiciels).")
-        hint.setWordWrap(True)
-        hint.setFont(_qfont(10, 400))
-        hint.setStyleSheet(f"color: {M['row_note']}; background: transparent;")
-        layout.addWidget(hint)
-        group = _Group()
-        self.preview_pad_field = _SliderField(0, 24, int(self.settings["preview_pad"]))
-        group.add(_Row("Padding (4 cotes)", self.preview_pad_field))
-        self.preview_radius_field = _SliderField(0, 32, int(self.settings["preview_radius"]))
-        group.add(_Row("Border radius", self.preview_radius_field, last=True))
-        layout.addWidget(group)
-        layout.addStretch(1)
+        layout.setSpacing(0)
+        section = _Section("Geometrie")
+        self.geo_table = _GeoTable(
+            int(self.settings.get("window_radius", 0)),
+            bool(self.settings.get("input_frame", True)),
+            int(self.settings.get("input_radius", 0)),
+            bool(self.settings.get("button_frame", True)),
+            int(self.settings.get("button_radius", 0)),
+        )
+        section.add(self.geo_table)
+        layout.addWidget(section)
         return wrap
 
     # -- barre du bas --
@@ -1924,16 +1809,14 @@ class SettingsWindow(QDialog):
         layout.setContentsMargins(14, 0, 14, 0)
         layout.setSpacing(8)
 
-        reset_btn = _Btn("Valeurs par defaut", "transparent", M["btn_border"], M["reset_fg"], M["btn_bg"], height=27)
+        reset_btn = _Btn("Valeurs par defaut", "transparent", M["btn_border"], M["reset_fg"], M["btn_bg"], height=27, padding="0 12px")
         reset_btn.clicked.connect(self._reset_defaults)
         layout.addWidget(reset_btn)
-
-        self.footer_label = QLabel()
-        self.footer_label.setFont(_qfont(10, 400, mono=True))
-        self.footer_label.setStyleSheet(f"color: {M['group_note']}; background: transparent;")
-        self._refresh_footer()
-        layout.addWidget(self.footer_label)
         layout.addStretch(1)
+
+        apply_btn = _Btn("Appliquer", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=27, padding="0 13px")
+        apply_btn.clicked.connect(self._on_apply)
+        layout.addWidget(apply_btn)
 
         cancel_btn = _Btn("Annuler", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=27, padding="0 13px")
         cancel_btn.clicked.connect(self.reject)
@@ -1945,15 +1828,12 @@ class SettingsWindow(QDialog):
         layout.addWidget(save_btn)
         return bar
 
-    def _refresh_footer(self):
-        path = _settings_path(self._current_values() if hasattr(self, "root_field") else self.settings)
-        self.footer_label.setText(f"{path.name} \u00b7 {path.parent}")
-
     def _reset_defaults(self):
         defaults = json.loads(json.dumps(DEFAULT_SETTINGS))
         defaults["root_path"] = self.settings.get("root_path", DEFAULT_SETTINGS["root_path"])
         self._apply_values_to_controls(defaults)
-        self._on_live_change()
+        self._mark_dirty()
+        self._preview_now()
 
     # -- actions --
 
@@ -1962,81 +1842,76 @@ class SettingsWindow(QDialog):
         if chosen:
             self.root_field.setText(chosen)
 
-    def _browse_external_settings(self):
-        chosen, _filter = QFileDialog.getSaveFileName(
-            self, "Fichier de parametres externe", self.external_path_field.text(), "JSON (*.json)"
-        )
-        if chosen:
-            self.external_path_field.setText(chosen)
-
-    def _on_radius_toggled(self, checked: bool):
-        self._apply_panel_radius(WINDOW_ROUNDED_RADIUS if checked else 0)
-
     def _apply_panel_radius(self, radius: int):
-        """Coins arrondis du panneau lui-meme (voir WA_TranslucentBackground
-        sur ce QDialog frameless) — la fenetre de parametres doit suivre le
-        meme reglage "Border radius de la fenetre principale" que la fenetre
-        du navigateur, pas rester a angles droits.
-
-        apply_dwm_frame (voir app_style.py) est indispensable ici aussi :
-        sans lui, DWM arrondit deja cette fenetre de lui-meme par defaut
-        (accent systeme, meme sur cette boite de dialogue), ce qui
-        contredirait un radius=0 tout comme sur la fenetre principale avant
-        correction — cette fenetre restait la seule non couverte."""
         self.panel.setStyleSheet(
             f"#Panel {{ background: {M['panel_bg']}; border: 1px solid {M['panel_border']}; "
             f"border-radius: {radius}px; }}"
         )
-        apply_dwm_frame(self, radius, M["panel_border"])
+        # resizable=True (voir PipelineBrowser._apply_native_frame, meme
+        # appel) : pose WS_THICKFRAME cote Windows, sans quoi nativeEvent
+        # ci-dessous n'aurait aucun bord natif a agrandir/retrecir.
+        apply_dwm_frame(self, radius, M["panel_border"], resizable=True)
+
+    _RESIZE_BORDER = 6
+
+    def nativeEvent(self, eventType, message):
+        """Redimensionnement par les bords de cette fenetre sans decoration
+        systeme — voir app_style.resize_hit_test (partage avec
+        PipelineBrowser.nativeEvent, meme mecanisme)."""
+        if eventType == b"windows_generic_MSG":
+            result = resize_hit_test(self, message, self._RESIZE_BORDER)
+            if result is not None:
+                return result
+        return super().nativeEvent(eventType, message)
 
     def _connect_live_updates(self):
-        self.scale_field.valueChanged.connect(self._on_live_change)
-        self.save_mode_select.changed.connect(self._on_live_change)
-        self.external_path_field.textChanged.connect(self._on_live_change)
-        self.window_radius_toggle.toggled.connect(self._on_radius_toggled)
-        self.window_radius_toggle.toggled.connect(self._on_live_change)
-        self.header_height_field.valueChanged.connect(self._on_live_change)
-        self.header_font_select.changed.connect(self._on_live_change)
-        self.button_radius_field.valueChanged.connect(self._on_live_change)
-        self.preview_pad_field.valueChanged.connect(self._on_live_change)
-        self.preview_radius_field.valueChanged.connect(self._on_live_change)
-        self.color_grid.changed.connect(self._on_live_change)
-        self.font_table.changed.connect(self._on_live_change)
-        for page in self.column_pages.values():
-            page.changed.connect(self._on_live_change)
+        self.scale_field.valueChanged.connect(self._mark_dirty)
+        self.font_table.changed.connect(self._mark_dirty)
+        self.color_grid.changed.connect(self._on_colors_changed)
+        self.header_height_field.valueChanged.connect(self._mark_dirty)
+        self.header_padding_field.valueChanged.connect(self._mark_dirty)
+        self.header_color_field.changed.connect(self._mark_dirty)
+        self.header_radius_field.valueChanged.connect(self._mark_dirty)
+        self.header_edges_field.changed.connect(self._mark_dirty)
+        self.geo_table.changed.connect(self._on_window_radius_changed)
+
+    def _on_colors_changed(self):
+        merged_colors = dict(self.settings["colors"])
+        merged_colors.update(self.color_grid.value())
+        self.header_color_field.refresh_colors(merged_colors)
+        self._mark_dirty()
+
+    def _on_window_radius_changed(self):
+        self._apply_panel_radius(self.geo_table.window_radius_field.value())
+        self._mark_dirty()
 
     def _current_values(self) -> dict:
-        columns = {title: page.value() for title, page in self.column_pages.items()}
-        header_family = self.header_font_select.value()
-        return {
+        colors = dict(self.settings["colors"])
+        colors.update(self.color_grid.value())
+        geo = self.geo_table.value()
+        out = dict(self.settings)
+        out.update({
             "root_path": self.root_field.text().strip() or DEFAULT_SETTINGS["root_path"],
             "ui_scale": self.scale_field.value(),
-            "save_mode": self.save_mode_select.value(),
-            "external_settings_path": self.external_path_field.text().strip(),
-            "window_radius": WINDOW_ROUNDED_RADIUS if self.window_radius_toggle.isChecked() else 0,
+            "colors": colors,
             "header_height": self.header_height_field.value(),
-            "header_font_family": "" if header_family == "Systeme" else header_family,
-            "colors": self.color_grid.value(),
-            **self.font_table.value(),
-            "button_radius": self.button_radius_field.value(),
-            "columns": columns,
-            "preview_pad": self.preview_pad_field.value(),
-            "preview_radius": self.preview_radius_field.value(),
-        }
+            "header_padding": self.header_padding_field.value(),
+            "header_color": self.header_color_field.value(),
+            "header_radius": self.header_radius_field.value(),
+            "header_edges": self.header_edges_field.value(),
+            **geo,
+        })
+        for key, conf in self.font_table.value().items():
+            merged = dict(self.settings[key])
+            merged.update(conf)
+            out[key] = merged
+        return out
 
-    def _on_live_change(self, *_args):
+    def _mark_dirty(self, *_args):
         self._dirty = True
         self.titlebar.set_dirty(True)
-        self._refresh_footer()
+        self._sync_preset_box()
         self._live_pending = True
-        # Toujours differe via le timer, MEME pour le tout premier cran :
-        # appeler _flush_live_apply() directement ici l'executerait de
-        # facon synchrone dans la pile de mouseMoveEvent, avant que Qt ait
-        # pu redessiner le curseur du slider (son update() n'est que
-        # planifie) — c'est ce qui donnait l'impression que le slider
-        # lui-meme trainait derriere la souris. Le timer (intervalle fixe,
-        # voir __init__) ne se declenche qu'une fois revenu dans la boucle
-        # d'evenements, apres que Qt a eu l'occasion de peindre.
         if not self._live_timer.isActive():
             self._live_timer.start()
 
@@ -2044,7 +1919,16 @@ class SettingsWindow(QDialog):
         if not self._live_pending:
             return
         self._live_pending = False
+        self._preview_now()
+
+    def _preview_now(self):
         self.settingsChanged.emit(self._current_values())
+
+    def _on_apply(self):
+        """Commit les valeurs courantes (y compris la racine, qui n'est PAS
+        previsualisee en direct sur chaque frappe — voir la remarque de tete
+        de fichier sur les 3 boutons) sans toucher au disque."""
+        self._preview_now()
 
     def _on_save(self):
         self.settings = self._current_values()
@@ -2052,6 +1936,7 @@ class SettingsWindow(QDialog):
         self._saved = True
         self._dirty = False
         self.titlebar.set_dirty(False)
+        self._sync_preset_box()
         self.settingsSaved.emit(self.settings)
         self.accept()
 

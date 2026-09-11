@@ -38,6 +38,7 @@ C = {
     "detail_bg":     "#17191b",
     "border":        "#2c3034",
     "border_soft":   "#303539",
+    "line":          "#3a3f44",
     "sel_idle":      "#2e3338",
     "hover":         "#232729",
     "accent":        "#3f6f9f",
@@ -320,6 +321,7 @@ COLOR_FIELDS: list[tuple[str, str, str]] = [
     ("detail_bg", "Fond inspecteur", "Panneau de droite"),
     ("border", "Bordures et separateurs", "Traits 1px entre les zones"),
     ("border_soft", "Bordure des champs", "Contour des champs de saisie"),
+    ("line", "Ligne", "Filets separateurs internes aux colonnes"),
     ("sel_idle", "Selection (colonne inactive)", "Ligne selectionnee hors focus"),
     ("hover", "Survol de ligne", "Retour au survol de la souris"),
     ("accent", "Couleur d'accent", "Selection active, boutons principaux"),
@@ -354,11 +356,115 @@ def set_color(key: str, hex_value: str) -> None:
 
 
 _BUTTON_RADIUS = 0
+_BUTTON_FRAME = True
+_INPUT_RADIUS = 0
+_INPUT_FRAME = True
 
 
 def set_button_radius(px: int) -> None:
     global _BUTTON_RADIUS
     _BUTTON_RADIUS = max(0, int(px))
+
+
+def set_button_frame(on: bool) -> None:
+    """Cadre (bordure 1px) des boutons standard (QPushButton, style global
+    — pas les boutons peints a la main de la fenetre de parametres, voir sa
+    palette M propre). Fenetre de parametres > Geometrie > Boutons."""
+    global _BUTTON_FRAME
+    _BUTTON_FRAME = bool(on)
+
+
+def set_input_radius(px: int) -> None:
+    global _INPUT_RADIUS
+    _INPUT_RADIUS = max(0, int(px))
+
+
+def set_input_frame(on: bool) -> None:
+    """Cadre (bordure 1px) des champs de saisie standard (QLineEdit, style
+    global). Fenetre de parametres > Geometrie > Zones de saisie."""
+    global _INPUT_FRAME
+    _INPUT_FRAME = bool(on)
+
+
+# ==========================================================================
+# Palette semantique a 8 cles, utilisee par la fenetre de parametres (page
+# "Couleurs", 2 colonnes x 4) et par la resolution de la couleur d'entete
+# ci-dessous : chaque "slot" semantique renvoie vers UNE cle reelle de C.
+# "selCur" et "button" pointent tous deux vers "accent" — le reste de
+# l'appli n'a qu'une seule couleur d'accent, a la fois pour la selection
+# active ET les boutons principaux (voir la note de "accent" dans
+# COLOR_FIELDS ci-dessus) : les deux pastilles de la fenetre de parametres
+# restent donc volontairement synchronisees plutot que d'introduire une
+# distinction qui n'existe nulle part ailleurs dans l'appli.
+# ==========================================================================
+
+SEMANTIC_COLOR_SLOTS: list[tuple[str, str, str]] = [
+    # Reamenage suite a la remarque de l'utilisateur (capture annotee de
+    # l'APPLI, pas de la fenetre de parametres) : les 3 "Skin secondaire
+    # niveau X" (chrome/border/detail_bg) sont retires de la grille — ils
+    # restent appliques (voir DEFAULT_SETTINGS["colors"] / apply_all_settings)
+    # mais ne sont plus editables ici, remplaces par des noms qui
+    # correspondent a de vraies zones identifiees sur la capture :
+    #   - "Fond" (ex "Skin principale") = C["window"], le fond visible
+    #     au-dela de la derniere colonne (CentralFrame) ;
+    #   - "Skin principale niveau 1" = C["topbar"], PARTAGE entre la barre
+    #     du haut (#TopBar) et le panneau d'apercu (PreviewColumn) ;
+    #   - "Skin principale niveau 2" = C["void"], le fond des colonnes de
+    #     liste (#ColumnsHost) ;
+    #   - "Zone de saisie" = C["well"], le fond des champs de texte (ex :
+    #     le champ ROOT) ;
+    #   - "Ligne" (nouveau reglage, voir C["line"]) = les filets separateurs
+    #     internes aux colonnes (paint_thumbnail_row, sep_h/sep_v), qui
+    #     utilisaient C["border"] jusqu'ici (pas de reglage dedie).
+    ("fond", "window", "Fond"),
+    ("skinN1", "topbar", "Skin principale niveau 1"),
+    ("skinN2", "void", "Skin principale niveau 2"),
+    ("saisie", "well", "Zone de saisie"),
+    ("ligne", "line", "Ligne"),
+    ("selCur", "accent", "Selection en cours"),
+    ("selDone", "sel_idle", "Selectionne"),
+    ("hover", "hover", "Survol"),
+    ("button", "accent", "Bouton"),
+]
+_SEMANTIC_TO_REAL = {slot: real for slot, real, _ in SEMANTIC_COLOR_SLOTS}
+
+_HEADER_COLOR_SLOT = "skinN1"
+_HEADER_RADIUS = 0
+_HEADER_EDGES = {"top": False, "right": False, "bottom": True, "left": False}
+
+
+def set_header_style(color_slot: str, radius: int, edges: dict) -> None:
+    """Reglages de l'entete de colonne (et de l'inspecteur, voir header_qss)
+    pilotes par la fenetre de parametres > Entetes : quelle pastille
+    semantique alimente le fond, le rayon des angles, et quels cotes
+    dessiner un filet 1px (couleur "border", la meme partout — seule la
+    presence/absence de chaque cote est reglable, pas sa couleur propre)."""
+    global _HEADER_COLOR_SLOT, _HEADER_RADIUS, _HEADER_EDGES
+    _HEADER_COLOR_SLOT = color_slot if color_slot in _SEMANTIC_TO_REAL else "skinN1"
+    _HEADER_RADIUS = max(0, int(radius))
+    _HEADER_EDGES = {k: bool(edges.get(k, False)) for k in ("top", "right", "bottom", "left")}
+
+
+def header_bg_hex() -> str:
+    return C.get(_SEMANTIC_TO_REAL.get(_HEADER_COLOR_SLOT, "chrome"), C["chrome"])
+
+
+def header_qss(object_name: str) -> str:
+    """Regle QSS complete (scopee a #object_name, voir la remarque sur les
+    selecteurs nus dans pipeline_browser.py) pour le FOND configurable d'une
+    barre d'entete — Column.header_fill ET DetailPanel.header_fill
+    partagent cette meme resolution. Le filet de separation structurel de
+    l'inspecteur (frontiere avec la derniere colonne) est gere a part, sur
+    le widget exterieur non inset (voir DetailPanel.__init__/refresh_colors
+    — HEADER_PADDING ne doit inset que ce fond configurable, jamais cette
+    limite de panneau)."""
+    def edge(name: str) -> str:
+        return f"1px solid {C['border']}" if _HEADER_EDGES.get(name) else "none"
+    return (
+        f"#{object_name} {{ background: {header_bg_hex()}; border-radius: {_HEADER_RADIUS}px; "
+        f"border-top: {edge('top')}; border-right: {edge('right')}; "
+        f"border-bottom: {edge('bottom')}; border-left: {edge('left')}; }}"
+    )
 
 
 # ==========================================================================
@@ -370,6 +476,8 @@ def build_stylesheet() -> str:
     rayon de bordure des boutons — appelee a chaque changement de couleur
     (voir refresh_style) plutot qu'une seule fois au demarrage, pour que la
     previsualisation en direct de la fenetre de parametres fonctionne."""
+    input_border = f"1px solid {C['border_soft']}" if _INPUT_FRAME else "none"
+    button_border = f"1px solid {C['btn_border']}" if _BUTTON_FRAME else "none"
     return f"""
 QWidget {{ background: {C['window']}; color: {C['text']}; }}
 QScrollArea, QScrollArea > QWidget > QWidget {{ background: {C['window']}; }}
@@ -377,7 +485,8 @@ QListWidget {{ background: {C['window']}; border: none; outline: none; }}
 
 QLineEdit {{
     background: {C['well']};
-    border: 1px solid {C['border_soft']};
+    border: {input_border};
+    border-radius: {_INPUT_RADIUS}px;
     color: {C['text_mono']};
     padding: 0 8px;
     selection-background-color: {C['accent']};
@@ -385,7 +494,7 @@ QLineEdit {{
 
 QPushButton {{
     background: {C['btn']};
-    border: 1px solid {C['btn_border']};
+    border: {button_border};
     border-radius: {_BUTTON_RADIUS}px;
     color: #c4cacf;
     padding: 0 12px;
@@ -528,6 +637,50 @@ def start_native_move(widget) -> None:
     handle = widget.windowHandle()
     if handle is not None:
         handle.startSystemMove()
+
+
+def resize_hit_test(widget, message, border: int = 6):
+    """Reponse a un WM_NCHITTEST pour une fenetre frameless redimensionnable
+    par les bords (voir apply_dwm_frame(..., resizable=True)) : sans cadre
+    natif, Windows ne sait plus quel bord/coin est survole pour proposer le
+    curseur et le glisser de redimensionnement habituels — on repond
+    nous-memes, Windows/Qt gerent ensuite le reste (curseur, aimantation,
+    contraintes de taille) normalement, comme pour une fenetre a cadre
+    classique. Factorise ici (identique jusque-la a la fenetre principale)
+    pour que toute fenetre frameless redimensionnable de l'appli (voir
+    PipelineBrowser.nativeEvent, SettingsWindow.nativeEvent) partage le
+    meme calcul plutot que de le dupliquer.
+
+    Retourne None si l'evenement n'est pas un WM_NCHITTEST exploitable —
+    l'appelant doit alors retomber sur super().nativeEvent() — ou (True,
+    hit) sinon, directement renvoyable tel quel depuis nativeEvent()."""
+    if sys.platform != "win32" or widget.isMaximized():
+        return None
+    try:
+        from ctypes import wintypes
+        msg = wintypes.MSG.from_address(int(message))
+        if msg.message != 0x0084:  # WM_NCHITTEST
+            return None
+        import ctypes
+        x = ctypes.c_short(msg.lParam & 0xFFFF).value - widget.frameGeometry().x()
+        y = ctypes.c_short((msg.lParam >> 16) & 0xFFFF).value - widget.frameGeometry().y()
+        w, h, b = widget.width(), widget.height(), border
+        left, right = x < b, x > w - b
+        top, bottom = y < b, y > h - b
+        hit = None
+        if top and left: hit = 13       # HTTOPLEFT
+        elif top and right: hit = 14    # HTTOPRIGHT
+        elif bottom and left: hit = 16  # HTBOTTOMLEFT
+        elif bottom and right: hit = 17 # HTBOTTOMRIGHT
+        elif left: hit = 10             # HTLEFT
+        elif right: hit = 11            # HTRIGHT
+        elif top: hit = 12              # HTTOP
+        elif bottom: hit = 15           # HTBOTTOM
+        if hit is not None:
+            return True, hit
+    except Exception:
+        pass
+    return None
 
 
 def refresh_style(app) -> None:

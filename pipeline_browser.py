@@ -118,12 +118,18 @@ from app_style import (
     apply_dwm_frame,
     apply_style,
     font,
+    header_qss,
     refresh_style,
+    resize_hit_test,
     role_color,
     role_font,
     scaled,
+    set_button_frame,
     set_button_radius,
     set_color,
+    set_header_style,
+    set_input_frame,
+    set_input_radius,
     set_role_font,
     set_ui_scale,
     start_native_move,
@@ -921,6 +927,7 @@ COLUMN_RESIZE_MARGIN = 5   # zone (px) autour de la bordure ou le curseur change
 ROW_HEIGHT = 24
 ROW_SPACING = 1            # espace (px) entre les lignes, dans toutes les colonnes
 HEADER_HEIGHT = 26
+HEADER_PADDING = 0    # inset (4 cotes) entre le fond colore de l'entete et les bords de la colonne/inspecteur (voir Column/DetailPanel)
 TOPBAR_HEIGHT = 40
 STATUS_HEIGHT = 24
 TITLEBAR_HEIGHT = 28
@@ -1532,11 +1539,15 @@ def paint_thumbnail_row(
             painter.restore()
         else:
             painter.drawPixmap(thumb_rect, cropped)
+    # Couleur dediee "Ligne" (C["line"]), pas C["border"] (reserve aux
+    # cadres/contours structurels) : ces filets internes aux colonnes ont
+    # leur propre reglage (voir SEMANTIC_COLOR_SLOTS dans app_style.py) —
+    # remarque de l'utilisateur, capture annotee de l'appli a l'appui.
     if sep_v:
-        painter.setPen(QColor(C["border"]))
+        painter.setPen(QColor(C["line"]))
         painter.drawLine(slot_rect.topRight(), slot_rect.bottomRight())
     if sep_h:
-        painter.setPen(QColor(C["border"]))
+        painter.setPen(QColor(C["line"]))
         painter.drawLine(rect.bottomLeft(), rect.bottomRight())
     thumb_rect = slot_rect
 
@@ -2048,6 +2059,196 @@ class _StatusLabel(QLabel):
         super().mousePressEvent(event)
 
 
+# Palette du detail "Fichiers pour X" (voir _FilesPreviewBlock) : reprend
+# le style "Actuel" (colonne de gauche) de la maquette HTML "VFX Column
+# Groups" fournie par l'utilisateur, plutot que la refonte "Propose"
+# (colonne de droite) qui l'a remplace ici un temps — apres avoir compare
+# les deux, l'utilisateur prefere ce style-la. Par rapport a cette refonte :
+# pastilles pleines et saturees pour in/over/out (au lieu d'un bandeau
+# fin), en-tete a un seul niveau "FICHIERS POUR X" (au lieu de "Fichiers" +
+# nom separes), lignes sans etat de survol/selection/chevron.
+FILES_TAG_LOUD = {"in": "#fb6b4d", "over": "#5ec93f", "out": "#5aaefb"}
+# Texte des pastilles : brun tres fonce sur in/out, vert tres fonce sur
+# over. Litteral de la maquette (pas recalcule pour le contraste) : le
+# rendu de reference demande a l'identique, meme si "out" (brun sur bleu)
+# y ressort deja moins que les deux autres.
+FILES_PILL_FG = {"in": "#3a0f05", "over": "#0f2a05", "out": "#3a0f05"}
+FILES_PALETTE = {
+    "tag_empty": "#6a7278",  # dossier vide/absent : meme pastille, teinte eteinte
+    "pane": "#1a1a1a",
+    "head": "#242424",
+    "border": "#2a2e32",
+    "title": "#9a9a9a",
+    "count": "#5f9bd0",
+    "row_fg": "#e8e8e8",
+}
+FILES_HEADER_PAD = 12   # marge horizontale de l'en-tete
+FILES_ROW_PAD = 16      # marge horizontale des pastilles et des lignes
+FILES_CONTENT_PAD = 10  # espace avant la 1re pastille / apres la derniere ligne
+FILES_GAP = 8           # petit ecart texte (titre/compteur d'en-tete) ; egalement
+                        # la marge basse de chaque pastille avant sa 1re ligne
+FILES_PILL_HEIGHT = 24
+FILES_PILL_RADIUS = 4
+FILES_ROW_HEIGHT = 25   # une ligne (sous-dossier ou fichier)
+FILES_GROUP_GAP = 14    # apres chaque groupe (pastille + ses lignes), avant le suivant
+
+
+class _FilesSectionHeader(QWidget):
+    """En-tete d'une section "Fichiers pour X" : un seul niveau, « FICHIERS
+    POUR <NOM> » en petites capitales grises, et le total reel d'elements a
+    droite. Meme hauteur que l'en-tete de la colonne Logiciels juste en
+    dessous (HEADER_HEIGHT) : les deux se lisent comme une seule grille."""
+
+    def __init__(self, name: str, count: int, parent=None):
+        super().__init__(parent)
+        self._title = f"FICHIERS POUR {name.upper()}"
+        self._count = count
+        self.setFixedHeight(scaled(HEADER_HEIGHT))
+
+    def paintEvent(self, event):
+        P = FILES_PALETTE
+        p = QPainter(self)
+        r = self.rect()
+        p.fillRect(r, QColor(P["head"]))
+        p.fillRect(QRect(r.left(), r.bottom(), r.width(), 1), QColor(P["border"]))
+        pad, gap = scaled(FILES_HEADER_PAD), scaled(FILES_GAP)
+        text_rect = r.adjusted(pad, 0, -pad, -1)
+
+        title_font = role_font("colhead", 11, 400, tracking=0.7)
+        count_font = role_font("info", 11, 400)
+
+        p.setFont(count_font)
+        count_text = str(self._count)
+        count_w = QFontMetrics(count_font).horizontalAdvance(count_text)
+        p.setPen(QColor(P["count"]))
+        p.drawText(text_rect, Qt.AlignVCenter | Qt.AlignRight, count_text)
+
+        title_right = text_rect.right() - count_w - gap
+        if title_right > text_rect.left():
+            p.setFont(title_font)
+            elided = QFontMetrics(title_font).elidedText(self._title, Qt.ElideRight, title_right - text_rect.left())
+            p.setPen(QColor(P["title"]))
+            p.drawText(QRect(text_rect.left(), text_rect.top(), title_right - text_rect.left(), text_rect.height()),
+                       Qt.AlignVCenter | Qt.AlignLeft, elided)
+        p.end()
+
+
+class _FilesGroupPill(QWidget):
+    """Pastille pleine d'un groupe IN / OVER / OUT : coins arrondis, fond
+    sature, libelle en gras — remplace le bandeau fin (trait de couleur +
+    filet) de la refonte "Propose". Teinte eteinte (voir FILES_PALETTE
+    "tag_empty") quand le dossier est vide ou absent, meme regle que les
+    indicateurs de _PreviewBlock. Sa propre marge basse (FILES_GAP, avant
+    la 1re ligne du groupe) est incluse dans sa hauteur fixe, comme pour
+    chaque autre element de la section (voir _FilesPreviewBlock)."""
+
+    def __init__(self, name: str, tag_color: str, parent=None):
+        super().__init__(parent)
+        self._name, self._tag = name, tag_color
+        self.setFixedHeight(scaled(FILES_PILL_HEIGHT) + scaled(FILES_GAP))
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        pill = QRect(scaled(FILES_ROW_PAD), 0, self.width() - 2 * scaled(FILES_ROW_PAD), scaled(FILES_PILL_HEIGHT))
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(self._tag))
+        p.drawRoundedRect(pill, scaled(FILES_PILL_RADIUS), scaled(FILES_PILL_RADIUS))
+
+        label_font = role_font("colhead", 13, 700)
+        p.setFont(label_font)
+        fg = FILES_PILL_FG.get(self._name, "#3a0f05") if self._tag != FILES_PALETTE["tag_empty"] else "#2a2a2a"
+        p.setPen(QColor(fg))
+        p.drawText(pill.adjusted(scaled(FILES_HEADER_PAD), 0, -scaled(FILES_HEADER_PAD), 0),
+                   Qt.AlignVCenter | Qt.AlignLeft, self._name.upper())
+        p.end()
+
+
+class _FilesRow(QWidget):
+    """Une ligne du detail "Fichiers pour X" : un sous-dossier (navigable,
+    ouvre son contenu dans la colonne suivante via `on_click`, voir
+    PipelineBrowser._open_status_folder) ou un fichier (ouvert avec
+    l'application par defaut, comme un double-clic dans une liste
+    classique) — meme rendu pour les deux, sans etat de survol/selection ni
+    chevron. Le nom est elide s'il ne tient pas."""
+
+    def __init__(self, name: str, is_dir: bool, on_click, parent=None):
+        super().__init__(parent)
+        self._name, self._is_dir, self._on_click = name, is_dir, on_click
+        self.setFixedHeight(scaled(FILES_ROW_HEIGHT))
+        self.setCursor(Qt.PointingHandCursor)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._on_click()
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        r = self.rect()
+        pad = scaled(FILES_ROW_PAD)
+        name_font = role_font("files", 13, 400)
+        p.setFont(name_font)
+        elided = QFontMetrics(name_font).elidedText(self._name, Qt.ElideRight, r.width() - 2 * pad)
+        p.setPen(QColor(FILES_PALETTE["row_fg"]))
+        p.drawText(r.adjusted(pad, 0, -pad, 0), Qt.AlignVCenter | Qt.AlignLeft, elided)
+        p.end()
+
+
+class _FilesPreviewBlock(QWidget):
+    """Section "Fichiers pour X" : le detail du contenu de in/over/out pour
+    un projet/sous-projet — en-tete (_FilesSectionHeader), puis pour chaque
+    indicateur une pastille (_FilesGroupPill) suivie d'une ligne par
+    element qu'il contient (_FilesRow : sous-dossier navigable ou fichier
+    ouvrable). Vient completer, dans la colonne "Logiciels", les vignettes
+    affichees dans la colonne juste avant (voir _PreviewBlock,
+    PipelineBrowser.image_preview_column) — pas les remplacer.
+
+    Hauteur fixee explicitement a la somme de ses parties (toutes a hauteur
+    fixe, les espacements passant par layout.addSpacing) : voir la
+    remarque dans _PreviewBlock — sans ca, un parent qui offre plus de
+    place etirerait le bloc et repartirait l'exces en espaces morts entre
+    ses lignes."""
+
+    def __init__(self, title: str, path: Path, open_status, open_dirs: frozenset = frozenset(), parent=None):
+        super().__init__(parent)
+        P = FILES_PALETTE
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet(f"background: {P['pane']}; border-bottom: 1px solid {P['border']};")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 1)  # 1px : laisse voir le border-bottom ci-dessus
+        layout.setSpacing(0)
+
+        groups: list[tuple[str, list[Path]]] = []
+        for name in STATUS_FOLDERS:
+            active, folder_path = status_folder_state(path, name)
+            groups.append((name, list_entries(folder_path) if active else []))
+        total = sum(len(children) for _name, children in groups)
+
+        layout.addWidget(_FilesSectionHeader(title, total))
+        height = scaled(HEADER_HEIGHT)
+        layout.addSpacing(scaled(FILES_CONTENT_PAD))
+        height += scaled(FILES_CONTENT_PAD)
+        for name, children in groups:
+            tag = FILES_TAG_LOUD[name] if children else P["tag_empty"]
+            layout.addWidget(_FilesGroupPill(name, tag))
+            height += scaled(FILES_PILL_HEIGHT) + scaled(FILES_GAP)
+            for child in children:
+                is_dir = child.is_dir()
+                # Un fichier pose directement dans in/over/out ne peut pas
+                # devenir une colonne (open_status ouvrirait une colonne
+                # vide a son nom) : il s'ouvre avec l'application par
+                # defaut, comme un double-clic dans une liste classique.
+                on_click = (lambda p=child: open_status(p)) if is_dir else (lambda p=child: open_path(p))
+                layout.addWidget(_FilesRow(child.name, is_dir, on_click))
+                height += scaled(FILES_ROW_HEIGHT)
+            layout.addSpacing(scaled(FILES_GROUP_GAP))
+            height += scaled(FILES_GROUP_GAP)
+        layout.addSpacing(scaled(FILES_CONTENT_PAD))
+        height += scaled(FILES_CONTENT_PAD) + 1
+        self.setFixedHeight(height)
+
+
 class _PreviewBlock(QWidget):
     """Un niveau d'aperçu empile : une rangee d'indicateurs in/over/out, une
     grande barre de titre « affiche » (nom du projet/sous-projet), suivies
@@ -2170,18 +2371,34 @@ class Column(QWidget):
         # PipelineBrowser — sans lui, title_label/count_label heriteraient du
         # border-bottom nu et se retrouveraient chacun souligne sur sa
         # largeur de texte au lieu du filet courant sur toute la colonne.
+        #
+        # header (exterieur, hauteur fixe, JAMAIS stylise) enveloppe
+        # header_fill (interieur, c'est LUI qui porte le fond/rayon/cadre de
+        # header_qss) avec une marge = HEADER_PADDING sur les 4 cotes : le
+        # padding regle "l'espace entre le fond colore et les bords de la
+        # colonne" (voir Parametres > Entetes), PAS la marge du texte a
+        # l'interieur du fond (qui reste fixe, voir header_fill_layout
+        # ci-dessous) — a ne pas confondre, voir la remarque de
+        # l'utilisateur qui a precise ce point.
         header = QWidget()
-        header.setObjectName("ColumnHeader")
+        header.setObjectName("ColumnHeaderOuter")
         header.setFixedHeight(scaled(HEADER_HEIGHT))
-        header.setStyleSheet(
-            f"#ColumnHeader {{ background: {C['chrome']}; border-bottom: 1px solid {C['border']}; }}"
-        )
         self.header = header
-        header_layout = QHBoxLayout(header)
+        header_outer_layout = QVBoxLayout(header)
+        header_outer_layout.setContentsMargins(scaled(HEADER_PADDING), scaled(HEADER_PADDING),
+                                                scaled(HEADER_PADDING), scaled(HEADER_PADDING))
+        header_outer_layout.setSpacing(0)
+
+        header_fill = QWidget()
+        header_fill.setObjectName("ColumnHeader")
+        header_fill.setStyleSheet(header_qss("ColumnHeader"))
+        self.header_fill = header_fill
+        header_layout = QHBoxLayout(header_fill)
         header_layout.setContentsMargins(10, 0, 10, 0)
         header_layout.addWidget(self.title_label)
         header_layout.addStretch(1)
         header_layout.addWidget(self.count_label)
+        header_outer_layout.addWidget(header_fill)
 
         self.list = FileListWidget(self)
         self.list.setFrameShape(QFrame.NoFrame)
@@ -2273,14 +2490,19 @@ class Column(QWidget):
         total = sum(self.list.sizeHintForRow(i) for i in range(self.list.count()))
         return total + 2
 
-    def set_preview_stack(self, entries: list[tuple[str, QPixmap, Path, object]]):
-        """Peuple (ou vide) l'aperçu empile au-dessus de la liste : `entries`
-        est une liste de (titre, pixmap, chemin, open_status), un par niveau
-        selectionne plus loin dans l'arborescence qui possede une vignette
-        (voir PipelineBrowser.update_preview_stack ; `open_status` ouvre un
-        indicateur in/over/out dans la colonne suivante, voir _PreviewBlock).
-        Quand elle est vide, la liste retrouve son comportement normal
-        (etiree sur toute la colonne)."""
+    def set_preview_stack(self, entries: list[tuple[str, QPixmap, Path, object]],
+                          open_dirs: frozenset = frozenset()):
+        """Peuple (ou vide) le detail "Fichiers pour X" au-dessus de la
+        liste "Logiciels" : `entries` est une liste de (titre, pixmap,
+        chemin, open_status), un par niveau selectionne plus loin dans
+        l'arborescence (voir PipelineBrowser.update_preview_stack) —
+        `pixmap` n'est pas utilise ici (les vignettes vivent a part, voir
+        PipelineBrowser.image_preview_column), seul `open_status` (ouvre un
+        sous-element dans la colonne suivante) sert (voir
+        _FilesPreviewBlock). `open_dirs` : dossiers ouverts dans une
+        colonne, pour marquer la ligne selectionnee. Quand `entries` est
+        vide, la liste retrouve son comportement normal (etiree sur toute
+        la colonne)."""
         while self.preview_layout.count():
             item = self.preview_layout.takeAt(0)
             widget = item.widget()
@@ -2302,19 +2524,19 @@ class Column(QWidget):
             self._column_layout.setStretch(3, 0)   # l'espaceur de fin (index 3) n'absorbe rien
             return
 
-        # self.width() (fixee explicitement via setFixedWidth) plutot que
-        # self.list.width() : interroge en plein milieu de la chaine de
-        # signaux de selection, ce dernier peut encore renvoyer une largeur
-        # perimee (le layout n'a pas fini de se reappliquer), ce qui a deja
-        # produit des images bien trop grandes juste apres une selection.
-        width = self.width() - 1
-        for title, pixmap, path, open_status in entries:
-            self.preview_layout.addWidget(_PreviewBlock(title, pixmap, width, path, open_status))
+        total_height = 0
+        for title, _pixmap, path, open_status in entries:
+            block = _FilesPreviewBlock(title, path, open_status, open_dirs)
+            self.preview_layout.addWidget(block)
+            # Hauteur fixee par le bloc lui-meme a la somme de ses parties
+            # (voir _FilesPreviewBlock) : maximumHeight() la renvoie telle
+            # quelle, la ou sizeHint() d'un QWidget a layout peut differer.
+            total_height += block.maximumHeight()
         self.preview_container.show()
-        # Meme raisonnement que pour chaque bloc (voir _PreviewBlock) : sans
-        # cette limite explicite, le conteneur lui-meme peut etre etire par
-        # la colonne au-dela de la hauteur reelle de ses blocs.
-        self.preview_container.setFixedHeight(len(entries) * (PREVIEW_BLOCK_EXTRA_HEIGHT + width))
+        # Meme raisonnement que pour chaque bloc : sans cette limite
+        # explicite, le conteneur lui-meme peut etre etire par la colonne
+        # au-dela de la hauteur reelle de ses blocs.
+        self.preview_container.setFixedHeight(total_height)
         self.list.setMaximumHeight(self._list_content_height())
         # La liste ne doit plus reclamer sa part d'etirement (elle est
         # plafonnee) : sans ca, Qt lui laisse quand meme une grande partie de
@@ -2326,24 +2548,20 @@ class Column(QWidget):
         self._column_layout.setStretch(3, 1)
 
     def _resize_preview_images(self):
-        """Redimensionne les images de l'aperçu empile (voir set_preview_stack)
-        a la volee pendant un glisser de la bordure de colonne, sans
-        reconstruire les blocs."""
+        """Recalcule la hauteur totale de l'apercu "Fichiers pour X" (voir
+        set_preview_stack) pendant un glisser de la bordure de colonne : la
+        largeur peut re-plier l'intitule "FICHIERS POUR X" sur plusieurs
+        lignes, ce qui change la hauteur de chaque bloc — pas d'image a
+        redimensionner ici (voir _PreviewBlock/image_preview_column pour
+        celles-ci, dans une colonne a part)."""
         if not self.preview_container.isVisible():
             return
-        # self.width() (fixee explicitement via setFixedWidth) plutot que
-        # self.list.width() : interroge en plein milieu de la chaine de
-        # signaux de selection, ce dernier peut encore renvoyer une largeur
-        # perimee (le layout n'a pas fini de se reappliquer), ce qui a deja
-        # produit des images bien trop grandes juste apres une selection.
-        width = self.width() - 1
-        count = self.preview_layout.count()
-        for i in range(count):
+        total_height = 0
+        for i in range(self.preview_layout.count()):
             block = self.preview_layout.itemAt(i).widget()
             if block is not None:
-                block.image.set_side(width)
-                block.setFixedHeight(PREVIEW_BLOCK_EXTRA_HEIGHT + width)
-        self.preview_container.setFixedHeight(count * (PREVIEW_BLOCK_EXTRA_HEIGHT + width))
+                total_height += block.maximumHeight()
+        self.preview_container.setFixedHeight(total_height)
 
     def refresh_all(self):
         """Rafraichit toutes les colonnes de la fenetre (utilise apres un
@@ -2450,18 +2668,21 @@ class Column(QWidget):
         car un changement de couleur depuis la fenetre de parametres ne
         retouche pas les widgets deja construits (voir la remarque sur
         set_color dans app_style.py)."""
-        self.header.setStyleSheet(
-            f"#ColumnHeader {{ background: {C['chrome']}; border-bottom: 1px solid {C['border']}; }}"
-        )
+        self.header_fill.setStyleSheet(header_qss("ColumnHeader"))
         self.preview_container.setStyleSheet(f"border-bottom: 1px solid {C['border']};")
         self.setStyleSheet(f"#Column {{ border-right: 1px solid {C['border']}; }}")
         self.title_label.setStyleSheet(f"color: {role_color('colhead', C['header'])}; background: transparent;")
         self.count_label.setStyleSheet(f"color: {role_color('info', C['count'])}; background: transparent;")
 
     def refresh_header(self):
-        """Reapplique la hauteur/police de l'entete (voir HEADER_HEIGHT, role
-        'colhead') — reglable en direct depuis Parametres > General."""
+        """Reapplique hauteur/padding/police de l'entete (voir HEADER_HEIGHT/
+        HEADER_PADDING, role 'colhead') — reglable en direct depuis
+        Parametres > Entetes. HEADER_PADDING est la marge de header (voir
+        __init__) : l'espace entre le fond colore (header_fill) et les
+        bords de la colonne, pas la marge du texte a l'interieur du fond."""
         self.header.setFixedHeight(scaled(HEADER_HEIGHT))
+        pad = scaled(HEADER_PADDING)
+        self.header.layout().setContentsMargins(pad, pad, pad, pad)
         self.title_label.setFont(role_font("colhead", 10, 600, tracking=0.9, caps=True))
         self.count_label.setFont(role_font("info", 10, 400))
 
@@ -2851,18 +3072,23 @@ class Column(QWidget):
 
 
 class PreviewColumn(QWidget):
-    """Colonne "fantome" affichee a la position de la colonne suivante,
-    juste apres une colonne a vignettes (Projets/Sous-projet) qui n'a pas
-    encore de selection : elle n'a pas de contenu de dossier propre, juste
-    l'apercu empile courant (voir PipelineBrowser.update_preview_stack),
-    pour que l'image du projet/sous-projet choisi soit visible des sa
-    selection, sans attendre le niveau suivant. Remplacee par la vraie
-    colonne (Column) des qu'une selection plus loin l'ouvre pour de bon.
+    """Colonne sans contenu de dossier propre, juste un apercu empile (voir
+    PipelineBrowser.update_preview_stack) — utilisee pour DEUX roles
+    distincts, avec chacun sa methode de peuplement :
 
-    Pas d'en-tete "Logiciels" ici : ce titre n'a de sens qu'une fois la
-    colonne Logiciels reellement ouverte (avec sa liste) — tant que seul le
-    projet (ou le sous-projet) est selectionne, seule l'image doit
-    apparaitre."""
+    1. PipelineBrowser.image_preview_column : les vignettes (voir
+       _PreviewBlock/set_preview_stack), PERMANENTES — cette colonne reste
+       toujours a sa place, jamais remplacee par une vraie colonne (il n'y
+       a pas de "dossier des images").
+    2. PipelineBrowser.preview_placeholder : le detail "Fichiers pour X"
+       (voir _FilesPreviewBlock/set_files_preview_stack), TEMPORAIRE — a la
+       position de "Logiciels" tant qu'elle n'a pas encore ete reellement
+       ouverte (pas de liste "Logiciels" a afficher avant ca), remplacee
+       par la vraie colonne (Column) des qu'une selection plus loin l'ouvre.
+
+    Pas d'en-tete ici dans les deux cas : ni "Logiciels" (n'a de sens
+    qu'une fois la colonne reellement ouverte), ni de titre pour les
+    vignettes (qui n'ont jamais eu de colonne dediee avant elles)."""
 
     def __init__(self, title: str, parent=None):
         super().__init__(parent)
@@ -2888,13 +3114,19 @@ class PreviewColumn(QWidget):
         # avec "#Column" l'aurait aussi impose aux vraies colonnes.
         self.setObjectName("PreviewColumn")
         self.setAttribute(Qt.WA_StyledBackground, True)
+        # Fond = C["topbar"], PAS C["void"] : ce panneau d'apercu partage
+        # desormais le meme reglage que la barre du haut ("Skin principale
+        # niveau 1", voir SEMANTIC_COLOR_SLOTS dans app_style.py) — remarque
+        # de l'utilisateur, capture annotee de l'appli a l'appui. C["void"]
+        # reste reserve au fond des colonnes de liste (ColumnsHost, "Skin
+        # principale niveau 2").
         self.setStyleSheet(
-            f"#PreviewColumn {{ background: {C['void']}; border-right: 1px solid {C['border']}; }}"
+            f"#PreviewColumn {{ background: {C['topbar']}; border-right: 1px solid {C['border']}; }}"
         )
 
     def refresh_colors(self):
         self.setStyleSheet(
-            f"#PreviewColumn {{ background: {C['void']}; border-right: 1px solid {C['border']}; }}"
+            f"#PreviewColumn {{ background: {C['topbar']}; border-right: 1px solid {C['border']}; }}"
         )
 
     def set_preview_stack(self, entries: list[tuple[str, QPixmap, Path, object]]):
@@ -2908,6 +3140,23 @@ class PreviewColumn(QWidget):
         width = self.width() - 1
         for title, pixmap, path, open_status in entries:
             self.preview_layout.addWidget(_PreviewBlock(title, pixmap, width, path, open_status))
+
+    def set_files_preview_stack(self, entries: list[tuple[str, QPixmap, Path, object]],
+                                open_dirs: frozenset = frozenset()):
+        """Variante "Fichiers pour X" de set_preview_stack (voir
+        _FilesPreviewBlock) : utilisee quand cette colonne fantome tient
+        la place de "Logiciels" avant qu'elle soit reellement ouverte
+        (voir PipelineBrowser.update_preview_stack) — `pixmap` ignore,
+        comme pour Column.set_preview_stack ; `open_dirs` idem."""
+        while self.preview_layout.count():
+            item = self.preview_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.hide()
+                widget.setParent(None)
+                widget.deleteLater()
+        for title, _pixmap, path, open_status in entries:
+            self.preview_layout.addWidget(_FilesPreviewBlock(title, path, open_status, open_dirs))
 
 
 def read_text_preview(path: Path) -> str | None:
@@ -2978,25 +3227,37 @@ class DetailPanel(QWidget):
         # peint par #DetailPanel sur ce segment — sans ce rappel, la ligne de
         # separation avec le reste de la fenetre serait coupee sur la
         # hauteur de l'en-tete.
+        # header (exterieur) porte le filet de gauche STRUCTUREL (continuite
+        # ci-dessus, jamais affecte par HEADER_PADDING) ; header_fill
+        # (interieur, inset de HEADER_PADDING sur les 4 cotes) porte le
+        # fond/rayon/cadre CONFIGURABLE de header_qss — meme separation
+        # exterieur/interieur que Column.header, voir sa remarque.
         header = QWidget()
-        header.setObjectName("DetailHeader")
+        header.setObjectName("DetailHeaderOuter")
         header.setFixedHeight(scaled(HEADER_HEIGHT))
-        header.setStyleSheet(
-            f"#DetailHeader {{ background: {C['chrome']}; border-bottom: 1px solid {C['border']};"
-            f" border-left: 1px solid {C['border']}; }}"
-        )
+        header.setStyleSheet(f"#DetailHeaderOuter {{ border-left: 1px solid {C['border']}; }}")
         self.header = header
+        header_outer_layout = QVBoxLayout(header)
+        pad = scaled(HEADER_PADDING)
+        header_outer_layout.setContentsMargins(pad, pad, pad, pad)
+        header_outer_layout.setSpacing(0)
+
+        header_fill = QWidget()
+        header_fill.setObjectName("DetailHeader")
+        header_fill.setStyleSheet(header_qss("DetailHeader"))
+        self.header_fill = header_fill
         self.header_title = QLabel("Inspecteur")
         self.header_title.setFont(role_font("colhead", 10, 600, tracking=0.9, caps=True))
         self.header_title.setStyleSheet(f"color: {role_color('colhead', C['header'])}; background: transparent;")
         self.badge = QLabel("")
         self.badge.setFont(role_font("info", 9, 600, tracking=0.6, caps=True))
         self.badge.setStyleSheet(f"color: {role_color('info', C['dim'])}; background: transparent;")
-        header_layout = QHBoxLayout(header)
+        header_layout = QHBoxLayout(header_fill)
         header_layout.setContentsMargins(10, 0, 10, 0)
         header_layout.addWidget(self.header_title)
         header_layout.addStretch(1)
         header_layout.addWidget(self.badge)
+        header_outer_layout.addWidget(header_fill)
 
         self.name = QLabel("")
         self.name.setFont(role_font("folders", 12, 600, tracking=0.12))
@@ -3156,6 +3417,8 @@ class DetailPanel(QWidget):
         ce panneau, contrairement aux colonnes, n'est pas reconstruit par
         PipelineBrowser.reload() apres un changement de reglages."""
         self.header.setFixedHeight(scaled(HEADER_HEIGHT))
+        pad = scaled(HEADER_PADDING)
+        self.header.layout().setContentsMargins(pad, pad, pad, pad)
         self.header_title.setFont(role_font("colhead", 10, 600, tracking=0.9, caps=True))
         self.header_title.setStyleSheet(f"color: {role_color('colhead', C['header'])}; background: transparent;")
         self.name.setFont(role_font("folders" if is_dir else "files", 12, 600, tracking=0.12))
@@ -3173,10 +3436,8 @@ class DetailPanel(QWidget):
         """Reapplique les couleurs fixees a la construction (voir la remarque
         sur refresh_colors dans Column) apres un changement de couleur."""
         self.setStyleSheet(f"#DetailPanel {{ background: {C['detail_bg']}; border-left: 1px solid {C['border']}; }}")
-        self.header.setStyleSheet(
-            f"#DetailHeader {{ background: {C['chrome']}; border-bottom: 1px solid {C['border']};"
-            f" border-left: 1px solid {C['border']}; }}"
-        )
+        self.header.setStyleSheet(f"#DetailHeaderOuter {{ border-left: 1px solid {C['border']}; }}")
+        self.header_fill.setStyleSheet(header_qss("DetailHeader"))
         self.well.setStyleSheet(f"background: {C['well']}; border: 1px solid #282c30;")
         self.refresh_fonts(True if not self.values["kind"].text() else self.values["kind"].text() == "Dossier")
 
@@ -3324,6 +3585,59 @@ def save_window_state(state: dict) -> None:
         pass
 
 
+class IconButton(QPushButton):
+    """Bouton dessine au QPainter (─ □ × pour TitleBar, engrenage pour les
+    Parametres) plutot qu'avec un glyphe de police : quel que soit le
+    symbole choisi (─, □, ×, ⚙...), toute police testee (mono_family(),
+    sans_family(), Segoe UI Symbol) le rendait soit absent soit minuscule/
+    flou a ces tailles de 11-14px (verifie pixel par pixel a chaque
+    tentative) — un souci de metriques internes a la police, pas de
+    contenu. Dessiner l'icone soi-meme evite ce souci une fois pour
+    toutes, quelle que soit la machine/les polices installees."""
+
+    def __init__(self, kind: str, color: str, hover_color: str, parent=None):
+        super().__init__(parent)
+        self._kind = kind
+        self._color = color
+        self._hover_color = hover_color
+
+    def set_colors(self, color: str, hover_color: str):
+        self._color = color
+        self._hover_color = hover_color
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        color = self._hover_color if self.underMouse() else self._color
+        pen = QPen(QColor(color))
+        pen.setWidthF(1.3)
+        pen.setCapStyle(Qt.FlatCap)
+        painter.setPen(pen)
+        rect = self.rect()
+        cx, cy = rect.center().x(), rect.center().y()
+        s = min(rect.width(), rect.height()) * 0.16
+        if self._kind == "min":
+            painter.drawLine(QPointF(cx - s, cy), QPointF(cx + s, cy))
+        elif self._kind == "max":
+            painter.drawRect(QRectF(cx - s, cy - s, 2 * s, 2 * s))
+        elif self._kind == "close":
+            painter.drawLine(QPointF(cx - s, cy - s), QPointF(cx + s, cy + s))
+            painter.drawLine(QPointF(cx - s, cy + s), QPointF(cx + s, cy - s))
+        elif self._kind == "gear":
+            r = s * 1.7
+            painter.drawEllipse(QPointF(cx, cy), r * 0.5, r * 0.5)
+            for i in range(8):
+                ang = math.radians(i * (360 / 8))
+                x1 = cx + math.cos(ang) * r * 0.7
+                y1 = cy + math.sin(ang) * r * 0.7
+                x2 = cx + math.cos(ang) * r
+                y2 = cy + math.sin(ang) * r
+                painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+        painter.end()
+
+
 # ==========================================================================
 # Barre de titre intrinseque : la fenetre principale est sans decoration
 # systeme (voir PipelineBrowser.__init__), donc cette barre en tient lieu —
@@ -3376,9 +3690,9 @@ class TitleBar(QWidget):
         layout.addWidget(self.title_label)
         layout.addStretch(1)
 
-        self.btn_min = self._make_button("─", window.showMinimized)
-        self.btn_max = self._make_button("□", self._toggle_max)
-        self.btn_close = self._make_button("×", window.close)
+        self.btn_min = self._make_button("min", window.showMinimized)
+        self.btn_max = self._make_button("max", self._toggle_max)
+        self.btn_close = self._make_button("close", window.close)
         layout.addWidget(self.btn_min)
         layout.addWidget(self.btn_max)
         layout.addWidget(self.btn_close)
@@ -3393,18 +3707,17 @@ class TitleBar(QWidget):
         for btn in (self.btn_min, self.btn_max, self.btn_close):
             btn.setFixedSize(scaled(26), scaled(TITLEBAR_HEIGHT))
 
-    def _make_button(self, glyph: str, slot) -> QPushButton:
-        btn = QPushButton(glyph)
+    def _make_button(self, kind: str, slot) -> IconButton:
+        btn = IconButton(kind, C["label"], C["text"])
         btn.setFixedSize(scaled(26), scaled(TITLEBAR_HEIGHT))
         btn.setCursor(Qt.ArrowCursor)
         btn.setFlat(True)
-        btn.setFont(font(11, 400, mono=True))
         btn.setStyleSheet(
             "QPushButton {"
-            f"  background: transparent; border: none; color: {C['label']};"
+            "  background: transparent; border: none;"
             "}"
             "QPushButton:hover {"
-            f"  background: {C['hover']}; color: {C['text']};"
+            f"  background: {C['hover']};"
             "}"
         )
         btn.clicked.connect(slot)
@@ -3459,6 +3772,11 @@ class PipelineBrowser(QMainWindow):
         self.resize(1280, 620)
         self.columns: list[Column] = []
         self.preview_placeholder: PreviewColumn | None = None
+        # Colonne permanente des vignettes (voir _PreviewBlock) : separee de
+        # "Logiciels" (qui ne montre plus que le detail "Fichiers pour X",
+        # voir _FilesPreviewBlock) — jamais remplacee par une vraie colonne,
+        # contrairement a preview_placeholder ci-dessus.
+        self.image_preview_column: PreviewColumn | None = None
         # Cle (couleurs + rayon des boutons) du dernier _apply_settings :
         # sert a ne reconstruire la feuille de style globale (voir
         # refresh_colors) que lorsque l'un des deux a vraiment change,
@@ -3478,11 +3796,16 @@ class PipelineBrowser(QMainWindow):
         self.btn_browse = QPushButton("Parcourir")
         self.btn_reload = QPushButton("Refresh")
         self.btn_last_place = QPushButton("↩ Dernier endroit")
-        self.btn_settings = QPushButton("⚙")
+        # IconButton (voir la classe, juste avant TitleBar), PAS un glyphe
+        # de police "⚙" : aucune police testee (sans_family(), Segoe UI
+        # Symbol...) ne le rendait de facon fiable a cette taille — meme
+        # correctif que pour les boutons min/max/close de TitleBar.
+        self.btn_settings = IconButton("gear", role_color("buttons", "#c4cacf"), C["text"])
         for btn in (self.btn_browse, self.btn_reload, self.btn_last_place, self.btn_settings):
             btn.setFont(role_font("buttons", 11, 500))
             btn.setFixedHeight(scaled(24))
             btn.setCursor(Qt.ArrowCursor)
+        for btn in (self.btn_browse, self.btn_reload, self.btn_last_place):
             btn.setStyleSheet(f"color: {role_color('buttons', '#c4cacf')};")
         self.btn_settings.setFixedWidth(scaled(28))
         self.btn_settings.setToolTip("Parametres")
@@ -3681,37 +4004,12 @@ class PipelineBrowser(QMainWindow):
 
     def nativeEvent(self, eventType, message):
         """Redonne le redimensionnement par les bords a cette fenetre sans
-        decoration systeme (voir __init__) : sans cadre natif, Windows ne
-        sait plus quel bord/coin est survole pour proposer les curseurs et
-        le glisser de redimensionnement habituels. On repond nous-memes au
-        message WM_NCHITTEST plutot que de reimplementer ce glisser a la
-        main — Windows/Qt gerent ensuite le reste (curseur, aimantation,
-        contraintes de taille) normalement, comme pour une fenetre a cadre
-        classique."""
-        if sys.platform == "win32" and eventType == b"windows_generic_MSG" and not self.isMaximized():
-            try:
-                from ctypes import wintypes
-                msg = wintypes.MSG.from_address(int(message))
-                if msg.message == 0x0084:  # WM_NCHITTEST
-                    import ctypes
-                    x = ctypes.c_short(msg.lParam & 0xFFFF).value - self.frameGeometry().x()
-                    y = ctypes.c_short((msg.lParam >> 16) & 0xFFFF).value - self.frameGeometry().y()
-                    w, h, b = self.width(), self.height(), self._RESIZE_BORDER
-                    left, right = x < b, x > w - b
-                    top, bottom = y < b, y > h - b
-                    hit = None
-                    if top and left: hit = 13       # HTTOPLEFT
-                    elif top and right: hit = 14    # HTTOPRIGHT
-                    elif bottom and left: hit = 16  # HTBOTTOMLEFT
-                    elif bottom and right: hit = 17 # HTBOTTOMRIGHT
-                    elif left: hit = 10             # HTLEFT
-                    elif right: hit = 11            # HTRIGHT
-                    elif top: hit = 12              # HTTOP
-                    elif bottom: hit = 15           # HTBOTTOM
-                    if hit is not None:
-                        return True, hit
-            except Exception:
-                pass
+        decoration systeme (voir __init__) — voir app_style.resize_hit_test
+        pour le detail (partage avec SettingsWindow.nativeEvent)."""
+        if eventType == b"windows_generic_MSG":
+            result = resize_hit_test(self, message, self._RESIZE_BORDER)
+            if result is not None:
+                return result
         return super().nativeEvent(eventType, message)
 
     def _apply_native_frame(self):
@@ -3743,6 +4041,13 @@ class PipelineBrowser(QMainWindow):
             self.preview_placeholder.deleteLater()
             self.preview_placeholder = None
 
+    def _clear_image_preview_column(self):
+        if self.image_preview_column is not None:
+            self.columns_layout.removeWidget(self.image_preview_column)
+            self.image_preview_column.setParent(None)
+            self.image_preview_column.deleteLater()
+            self.image_preview_column = None
+
     def add_column(self, directory: Path, depth: int, title: str | None = None):
         # `title` : impose un intitule (voir _open_status_folder, qui ouvre
         # un dossier in/over/out sans rapport avec ce que la profondeur
@@ -3755,10 +4060,14 @@ class PipelineBrowser(QMainWindow):
         column.selected.connect(self.on_selected)
         column.activated.connect(self.on_activated)
         self.columns.append(column)
-        # Une colonne fantome (voir PreviewColumn) peut occuper cet
-        # emplacement depuis la selection precedente : la retirer avant
-        # d'ajouter la vraie colonne, sinon celle-ci se retrouverait ajoutee
-        # APRES elle dans columns_layout (ordre visuel casse).
+        # La colonne fantome "Fichiers pour X" (voir PreviewColumn) peut
+        # occuper cet emplacement depuis la selection precedente : la
+        # retirer avant d'ajouter la vraie colonne, sinon celle-ci se
+        # retrouverait ajoutee APRES elle dans columns_layout (ordre visuel
+        # casse). image_preview_column, elle, n'est PAS retiree ici : c'est
+        # une colonne permanente qui doit rester juste avant celle qu'on
+        # ajoute (voir update_preview_stack, qui la reconstruit a la bonne
+        # position a chaque appel).
         self._clear_preview_placeholder()
         self.columns_layout.addWidget(column)
         self.update_active_column()
@@ -3808,19 +4117,25 @@ class PipelineBrowser(QMainWindow):
             column.set_active(i == last_selected)
 
     def update_preview_stack(self):
-        """Recalcule l'aperçu empile : un bloc (titre + image) par colonne a
-        vignettes (Projets, Sous-projet) actuellement selectionnee, dans
-        l'ordre de navigation.
+        """Recalcule l'aperçu empile : un bloc par colonne a vignettes
+        (Projets, Sous-projet) actuellement selectionnee, dans l'ordre de
+        navigation, reparti sur DEUX emplacements juste apres la derniere
+        colonne A VIGNETTES (donc avant Logiciels et tout ce qui suit) :
 
-        L'apercu n'apparait JAMAIS ailleurs que dans la colonne "Logiciels" :
-        si elle existe deja (vraie colonne), l'apercu s'y pose directement,
-        au-dessus de sa liste ; sinon (Sous-projet vient d'etre ouverte mais
-        pas encore selectionnee, donc "Logiciels" n'existe pas pour de bon)
-        une colonne fantome a sa place (voir PreviewColumn) le porte a la
-        place, pour que l'image apparaisse des la selection du projet/
-        sous-projet sans attendre. Toute autre colonne (Contenu compris) est
-        systematiquement videe de son apercu."""
+        1. Les vignettes (voir _PreviewBlock) : colonne PERMANENTE
+           (image_preview_column), reconstruite ici a chaque fois a la
+           bonne position — il n'y a pas de "dossier" pour des images,
+           donc jamais de vraie colonne a cet endroit, contrairement a (2).
+        2. Le detail "Fichiers pour X" (voir _FilesPreviewBlock) : colonne
+           fantome (preview_placeholder) tant que "Logiciels" n'existe pas
+           encore pour de bon, puis directement dans cette colonne reelle
+           une fois ouverte, au-dessus de sa liste — exactement comme se
+           comportaient les vignettes avant que ce role soit separe.
+
+        Toute autre colonne (Contenu compris) est systematiquement videe
+        de son detail "Fichiers pour X"."""
         self._clear_preview_placeholder()
+        self._clear_image_preview_column()
         if not self.columns:
             return
         entries: list[tuple[str, QPixmap, Path, object]] = []
@@ -3838,19 +4153,54 @@ class PipelineBrowser(QMainWindow):
             if column is not target:
                 column.set_preview_stack([])
 
-        if target is not None:
-            target.set_preview_stack(entries)
+        if not entries:
+            if target is not None:
+                target.set_preview_stack([])
             return
 
-        if not entries or not self.columns[-1].has_thumbnails:
-            return
-        depth = len(self.columns)
-        title = COLUMN_LABELS[depth] if depth < len(COLUMN_LABELS) else "Contenu"
-        if title != "Logiciels":
-            return
-        self.preview_placeholder = PreviewColumn(title)
-        self.columns_layout.addWidget(self.preview_placeholder)
-        self.preview_placeholder.set_preview_stack(entries)
+        # Dossiers actuellement ouverts dans une colonne : sert a marquer
+        # "selectionnee" la ligne du detail "Fichiers pour X" dont le
+        # dossier est celui affiche juste apres (voir _FilesRow) — meme
+        # convention visuelle que la selection d'une liste classique.
+        open_dirs = frozenset(c.directory for c in self.columns)
+
+        # 1. Vignettes : juste APRES LA DERNIERE COLONNE A VIGNETTES
+        # (Sous-projet, sinon Projets), c'est-a-dire toujours AVANT
+        # "Logiciels" et tout ce qui peut suivre (REFERENCE, ...). Surtout
+        # pas len(self.columns) : cet indice pointe apres la derniere
+        # colonne REELLE, ce qui rejetait les images derriere Logiciels des
+        # que celle-ci existait, puis derriere chaque colonne ouverte
+        # ensuite — les colonnes paraissaient "toutes melangees". Les deux
+        # fantomes viennent d'etre retires (voir plus haut), donc a cet
+        # instant columns_layout contient exactement self.columns, dans
+        # l'ordre : l'indice de colonne vaut l'indice de layout.
+        anchor = max(i for i, c in enumerate(self.columns) if c.has_thumbnails)
+        self.image_preview_column = PreviewColumn("")
+        self.columns_layout.insertWidget(anchor + 1, self.image_preview_column)
+        self.image_preview_column.set_preview_stack(entries)
+
+        # 2. Detail "Fichiers pour X" : dans la vraie colonne Logiciels si
+        # elle existe deja (elle est deja a sa place dans le layout, apres
+        # les images grace a l'insertion ci-dessus), sinon dans une colonne
+        # fantome inseree JUSTE APRES LES IMAGES (anchor + 2), PAS ajoutee
+        # en fin (`addWidget`) : la fin du layout peut deja contenir une
+        # colonne ouverte depuis un dossier in/over/out (voir
+        # _open_status_folder) alors que Sous-projet n'a elle-meme aucune
+        # selection — self.columns[-1].has_thumbnails serait alors faux et
+        # ce fantome n'apparaissait plus du tout, remplace visuellement par
+        # cette colonne (verifie pixel par pixel) au lieu de rester affiche
+        # a cote comme le fait la vraie colonne Logiciels dans le meme cas
+        # de figure des qu'un sous-projet est selectionne. Ce fantome
+        # represente justement "Logiciels avant qu'elle existe pour de
+        # vrai" : il doit rester visible tant que target est None, quoi que
+        # la navigation ait ouvert plus loin.
+        if target is not None:
+            target.set_preview_stack(entries, open_dirs)
+        else:
+            self.preview_placeholder = PreviewColumn("Logiciels")
+            self.columns_layout.insertWidget(anchor + 2, self.preview_placeholder)
+            self.preview_placeholder.set_files_preview_stack(entries, open_dirs)
+
         bar = self.scroll.horizontalScrollBar()
         bar.setValue(bar.maximum())
 
@@ -3867,10 +4217,22 @@ class PipelineBrowser(QMainWindow):
         softs y sont montes) : seul ce qui vient APRES elle (une precedente
         navigation dans un dossier de statut, par exemple) est remplace. Si
         "Logiciels" n'existe pas encore (colonne fantome seulement, voir
-        PreviewColumn), rien a preserver : on coupe alors juste apres la
-        colonne Projets/Sous-projet elle-meme, comme avant."""
+        PreviewColumn), on coupe juste apres la DERNIERE colonne a
+        vignettes (Sous-projet si elle existe, sinon Projets) — PAS
+        `column_index` telle quelle : ce bloc in/over/out peut appartenir
+        au bloc empile de Projets alors que Sous-projet est deja
+        selectionnee a cote (voir update_preview_stack, meme colonne
+        d'images empilee pour les deux), et column_index pointerait alors
+        sur Projets — couper la a la place effacerait la colonne
+        Sous-projet elle-meme, pas seulement ce qui suivait le clic."""
         target = next((c for c in self.columns if c.column_title == "Logiciels"), None)
-        insert_index = self.columns.index(target) if target is not None else column_index
+        if target is not None:
+            insert_index = self.columns.index(target)
+        else:
+            insert_index = max(
+                (i for i, c in enumerate(self.columns) if c.has_thumbnails),
+                default=column_index,
+            )
         self.prune_after(insert_index)
         self.add_column(path, insert_index + 1, title=path.name.upper())
         self.update_active_column()
@@ -3987,7 +4349,9 @@ class PipelineBrowser(QMainWindow):
         self.root_field.setFont(role_font("info", 12, 400))
         for btn in (self.btn_browse, self.btn_reload, self.btn_last_place, self.btn_settings):
             btn.setFont(role_font("buttons", 11, 500))
+        for btn in (self.btn_browse, self.btn_reload, self.btn_last_place):
             btn.setStyleSheet(f"color: {role_color('buttons', '#c4cacf')};")
+        self.btn_settings.set_colors(role_color("buttons", "#c4cacf"), C["text"])
         self.synced_label.setFont(role_font("info2", 10, 400))
         self.synced_label.setStyleSheet(f"color: {role_color('info2', C['dim'])}; background: transparent;")
         self.path_label.setFont(role_font("info", 11, 400))
@@ -4025,12 +4389,16 @@ class PipelineBrowser(QMainWindow):
         )
         self.columns_host.setStyleSheet(f"#ColumnsHost {{ background: {C['void']}; }}")
         self.titlebar.setStyleSheet(f"#TitleBar {{ background: {C['app_bg']}; border-bottom: 1px solid {C['border']}; }}")
+        for btn in (self.titlebar.btn_min, self.titlebar.btn_max, self.titlebar.btn_close):
+            btn.set_colors(C["label"], C["text"])
         self.topbar.setStyleSheet(f"#TopBar {{ background: {C['topbar']}; border-bottom: 1px solid {C['border']}; }}")
         self.statusbar.setStyleSheet(f"#StatusBar {{ background: {C['chrome']}; border-top: 1px solid {C['border']}; }}")
         for column in self.columns:
             column.refresh_colors()
         if self.preview_placeholder is not None:
             self.preview_placeholder.refresh_colors()
+        if self.image_preview_column is not None:
+            self.image_preview_column.refresh_colors()
         self.detail.refresh_colors()
         self.refresh_chrome_fonts()
         # PAS de update_preview_stack() ici : le seul appelant
@@ -4047,7 +4415,7 @@ def apply_all_settings(settings: dict) -> None:
     N'a aucun effet visible tant qu'aucun refresh (refresh_all_columns,
     refresh_colors, refresh_chrome_fonts...) n'est rejoue par-dessus —
     voir PipelineBrowser._apply_settings et main() pour ces deux appelants."""
-    global WINDOW_RADIUS, BUTTON_RADIUS, HEADER_HEIGHT
+    global WINDOW_RADIUS, BUTTON_RADIUS, HEADER_HEIGHT, HEADER_PADDING
     global PREVIEW_IMAGE_PAD, PREVIEW_IMAGE_RADIUS
 
     for title, conf in settings.get("columns", {}).items():
@@ -4081,9 +4449,18 @@ def apply_all_settings(settings: dict) -> None:
     PREVIEW_IMAGE_RADIUS = settings.get("preview_radius", 0)
 
     HEADER_HEIGHT = settings.get("header_height", HEADER_HEIGHT)
+    HEADER_PADDING = settings.get("header_padding", HEADER_PADDING)
     WINDOW_RADIUS = settings.get("window_radius", WINDOW_RADIUS)
     BUTTON_RADIUS = settings.get("button_radius", BUTTON_RADIUS)
     set_button_radius(BUTTON_RADIUS)
+    set_button_frame(settings.get("button_frame", True))
+    set_input_frame(settings.get("input_frame", True))
+    set_input_radius(settings.get("input_radius", 0))
+    set_header_style(
+        settings.get("header_color", "skinN1"),
+        settings.get("header_radius", 0),
+        settings.get("header_edges") or {"top": False, "right": False, "bottom": True, "left": False},
+    )
     set_ui_scale(settings.get("ui_scale", 100))
 
     for key, hexval in (settings.get("colors") or {}).items():
