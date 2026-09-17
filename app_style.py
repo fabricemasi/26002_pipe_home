@@ -40,6 +40,7 @@ C = {
     "border_soft":   "#303539",
     "line":          "#3a3f44",
     "sel_idle":      "#2e3338",
+    "row_idle":      "#0d0f11",
     "hover":         "#232729",
     "accent":        "#3f6f9f",
     "accent_text":   "#eef2f5",
@@ -59,6 +60,14 @@ C = {
     "mark_file_bd":  "#454b50",
     "scroll":        "#35393d",
     "scroll_hover":  "#464b50",
+    # Utilisees uniquement par les tableaux "fermes" de la fenetre de
+    # parametres (Polices/Entetes/Geometrie — voir settings_window._sync_dynamic_M) :
+    # l'appli principale n'a encore aucun tableau standard a ce jour (voir
+    # set_table_radius plus bas), mais ces 2 couleurs suivent deja le meme
+    # mecanisme reglable que le reste de C, pretes pour le jour ou elle en
+    # aura un.
+    "table_head":    "#1b1e21",
+    "table_row":     "#181b1d",
 }
 
 # ==========================================================================
@@ -68,6 +77,7 @@ C = {
 _SANS = None
 _MONO = None
 _NAME = None
+_CODE = None
 
 
 def sans_family() -> str:
@@ -112,6 +122,18 @@ def name_family() -> str:
     return _NAME
 
 
+def code_family() -> str:
+    """Police dediee au role "Code" (voir ROLE_BASE_KIND) — Consolas
+    explicitement demandee par l'utilisateur (pas une detection parmi
+    plusieurs candidates comme mono_family : ce role doit rester CETTE
+    police precise), avec un repli neutre si elle n'est pas installee sur
+    la machine."""
+    global _CODE
+    if _CODE is None:
+        _CODE = "Consolas" if "Consolas" in set(QFontDatabase.families()) else mono_family()
+    return _CODE
+
+
 _ALL_FAMILIES: list[str] | None = None
 
 
@@ -129,14 +151,19 @@ def installed_font_families() -> list[str]:
 
 
 SMOOTHING_CHOICES = ("current", "previous", "none")
+# Intitules demandes par l'utilisateur pour le selecteur par police de la
+# fenetre de parametres (voir settings_window._SimpleFontTable) : "current"
+# (sans hinting, lissage complet) / "previous" (hinting natif Windows,
+# intermediaire) / "none" (anti-aliasing desactive) — voir font() pour le
+# detail technique de chaque niveau.
 SMOOTHING_LABELS = {
-    "current": "Lissage actuel",
-    "previous": "Lissage precedent",
-    "none": "Pas de lissage",
+    "current": "Tres lissee",
+    "previous": "Un peu",
+    "none": "Pas du tout",
 }
-# Intitules courts (3 positions) demandes pour la fenetre de parametres :
-# memes cles que SMOOTHING_CHOICES, juste un libelle plus compact.
-SMOOTHING_LABELS_SHORT = {"current": "Haut", "previous": "Moyen", "none": "Sans"}
+# Intitules courts (retenus pour la colonne "Lissage", plus etroite qu'un
+# _Row classique) — memes cles que SMOOTHING_CHOICES.
+SMOOTHING_LABELS_SHORT = SMOOTHING_LABELS
 
 # ==========================================================================
 # Echelle generale de l'interface (fenetre de parametres > General > Scale) :
@@ -220,6 +247,7 @@ ROLE_BASE_KIND = {
     "buttons": "sans",
     "titles": "sans",
     "colhead": "sans",
+    "code": "code",
 }
 
 _ROLE_DEFAULTS = {
@@ -234,20 +262,24 @@ _ROLE_DEFAULTS = {
 # "colhead"  -> Entete de colonnes
 # "info"     -> Informations diverses / invites
 # "info2"    -> Informations diverses / invites (2)
+# "code"     -> Police "Code" (voir code_family) — pas encore consommee
+#               ailleurs dans l'appli, ajoutee sur demande de l'utilisateur
+#               (meme principe que "table_head"/"table_row" en leur temps :
+#               reglage prepare avant son premier usage reel).
 _ROLE_OVERRIDES: dict[str, dict] = {
     role: dict(_ROLE_DEFAULTS)
-    for role in ("app", "titles", "files", "folders", "info", "info2", "buttons", "colhead")
+    for role in ("app", "titles", "files", "folders", "info", "info2", "buttons", "colhead", "code")
 }
 
 
 def set_role_font(role: str, family: str, size: int, bold: bool,
                    smoothing: str = "current", color: str = "", custom: bool = True) -> None:
     """Enregistre la surcharge typographique d'un role : 'app', 'titles',
-    'files', 'folders', 'buttons', 'colhead', 'info' ou 'info2'. `custom`
-    (True par defaut : un appel explicite vaut personnalisation) distingue
-    "jamais touche dans la fenetre de parametres" (taille/gras ignores,
-    chaque appelant garde sa propre taille/graisse par defaut — voir
-    role_font) de "personnalise, meme en laissant la police sur
+    'files', 'folders', 'buttons', 'colhead', 'info', 'info2' ou 'code'.
+    `custom` (True par defaut : un appel explicite vaut personnalisation)
+    distingue "jamais touche dans la fenetre de parametres" (taille/gras
+    ignores, chaque appelant garde sa propre taille/graisse par defaut —
+    voir role_font) de "personnalise, meme en laissant la police sur
     Automatique" (la famille reste auto-detectee, mais taille/gras suivent
     desormais l'utilisateur). `smoothing` et `color` s'appliquent eux
     toujours independamment, meme sans personnalisation."""
@@ -262,6 +294,8 @@ def _base_family_for(role: str) -> str:
     kind = ROLE_BASE_KIND.get(role, "sans")
     if kind == "mono":
         return mono_family()
+    if kind == "code":
+        return code_family()
     if kind == "name":
         return name_family()
     return sans_family()
@@ -323,6 +357,7 @@ COLOR_FIELDS: list[tuple[str, str, str]] = [
     ("border_soft", "Bordure des champs", "Contour des champs de saisie"),
     ("line", "Ligne", "Filets separateurs internes aux colonnes"),
     ("sel_idle", "Selection (colonne inactive)", "Ligne selectionnee hors focus"),
+    ("row_idle", "Ligne non selectionnee", "Fond des lignes Type/Projets/Sous-projet au repos"),
     ("hover", "Survol de ligne", "Retour au survol de la souris"),
     ("accent", "Couleur d'accent", "Selection active, boutons principaux"),
     ("accent_text", "Texte sur accent", "Texte au-dessus de la couleur d'accent"),
@@ -342,6 +377,8 @@ COLOR_FIELDS: list[tuple[str, str, str]] = [
     ("mark_file_bd", "Marqueur fichier (contour)", ""),
     ("scroll", "Ascenseur", ""),
     ("scroll_hover", "Ascenseur (survol)", ""),
+    ("table_head", "Fond entete de tableau", "Bandeau titre des tableaux (fenetre de parametres)"),
+    ("table_row", "Fond de tableau", "Lignes des tableaux (fenetre de parametres) — toutes les lignes, sans variation"),
 ]
 
 
@@ -359,11 +396,28 @@ _BUTTON_RADIUS = 0
 _BUTTON_FRAME = True
 _INPUT_RADIUS = 0
 _INPUT_FRAME = True
+_TABLE_RADIUS = 0
 
 
 def set_button_radius(px: int) -> None:
     global _BUTTON_RADIUS
     _BUTTON_RADIUS = max(0, int(px))
+
+
+def get_button_radius() -> int:
+    """Rayon BOUTON actuellement applique a l'appli principale (voir
+    set_button_radius) — sert a la fenetre de parametres pour que ses
+    propres boutons peints a la main (popup couleur, voir _Btn) restent
+    visuellement coherents avec les vrais boutons de l'appli plutot que
+    de rester a angle droit par defaut (voir la remarque de
+    l'utilisateur, capture annotee a l'appui)."""
+    return _BUTTON_RADIUS
+
+
+def get_input_radius() -> int:
+    """Meme chose que get_button_radius, pour le rayon ZONE DE SAISIE
+    (QLineEdit)."""
+    return _INPUT_RADIUS
 
 
 def set_button_frame(on: bool) -> None:
@@ -386,67 +440,244 @@ def set_input_frame(on: bool) -> None:
     _INPUT_FRAME = bool(on)
 
 
+def set_table_radius(px: int) -> None:
+    """Rayon des coins des tableaux standard (QTableWidget/QTableView, style
+    global — pas les tableaux peints a la main de la fenetre de parametres,
+    qui suivent la meme valeur mais via leur propre palette M, voir
+    settings_window._TableFrame). Fenetre de parametres > Geometrie >
+    Tableaux. L'appli principale n'a encore aucun tableau standard a ce
+    jour : ce reglage est prepare pour le jour ou elle en aura un, voir la
+    remarque de l'utilisateur."""
+    global _TABLE_RADIUS
+    _TABLE_RADIUS = max(0, int(px))
+
+
+_COLUMN_GAP = 0
+
+
+def set_column_gap(px: int) -> None:
+    """Distance (px) entre 2 colonnes adjacentes du navigateur principal
+    (voir pipeline_browser.PipelineBrowser.columns_layout.setSpacing) —
+    Fenetre de parametres > Colonnes > Distance entre colonnes. 0 par
+    defaut (comportement inchange : colonnes deja collees jusqu'ici).
+
+    PAS de plancher a 0 (max(0, ...) ici avant) : -1 doit rester possible
+    (voir settings_window, slider borne a -1) — chaque colonne a deja son
+    propre filet de separation de 1px, un espacement de -1 les superpose
+    au lieu de les cumuler en un filet de 2px visible — voir la remarque
+    de l'utilisateur, "de maniere a ce que les bordures ne se cumulent
+    pas"."""
+    global _COLUMN_GAP
+    _COLUMN_GAP = max(-1, int(px))
+
+
+def column_gap() -> int:
+    return _COLUMN_GAP
+
+
+def column_seam_border() -> str:
+    """Regle QSS du filet GAUCHE de l'inspecteur (DetailPanel/
+    DetailHeaderOuter) — SEUL cote conditionnel : masque (aucun filet) des
+    que Distance entre colonnes <= 0 (colonnes/inspecteur colles, aucun
+    espace reel entre eux), pour qu'un SEUL filet reste visible a cette
+    frontiere au lieu de 2 cumules en un trait de 2px — voir la remarque
+    de l'utilisateur, "je veux que les deux bordures qui se chevauchent
+    n'en forment qu'une seule".
+
+    Column/PreviewColumn.border-right, EUX, restent TOUJOURS peints (1px
+    solid, jamais conditionnels — pas d'appel a cette fonction) : c'est ce
+    filet-la, unique et inconditionnel, qui reste visible comme LA seule
+    ligne de la frontiere une fois celui-ci masque. Entre 2 colonnes
+    NORMALES (Type/Projets/etc, ni l'une ni l'autre n'a de border-left),
+    aucun probleme de cumul n'existe de toute facon — rien a masquer la.
+
+    > 0 (vrai espace entre les 2) : les 2 filets redeviennent utiles
+    (l'inspecteur n'est plus colle a rien, un filet a lui tout seul
+    l'encadre a nouveau) — remis a leur valeur normale des que
+    _COLUMN_GAP redevient positif.
+
+    PAS un vrai chevauchement geometrique (essaye d'abord, voir git —
+    QSpacerItem negatif entre l'ascenseur (addStretch) et l'inspecteur) :
+    ABANDONNE, l'ascenseur qui absorbe l'espace disponible ANNULE
+    MATHEMATIQUEMENT tout espacement negatif place apres lui des que la
+    fenetre est plus large que le contenu (le cas courant) — la position
+    de l'inspecteur ne depend alors QUE de (largeur fenetre - largeur
+    inspecteur), jamais de cet espacement, quoi qu'il vaille ; verifie
+    directement, l'inspecteur finissait meme plus loin qu'avant dans ce
+    cas (voir la remarque de l'utilisateur, "les colonnes s'ecartent de
+    quelques pixels plutot que de se chevaucher"). Masquer ce filet est
+    fiable QUELLE QUE SOIT la largeur de la fenetre, contrairement a un
+    chevauchement geometrique."""
+    return "none" if _COLUMN_GAP <= 0 else f"1px solid {C['border']}"
+
+
+_COLUMNS_RESIZABLE = True
+
+
+def set_columns_resizable(on: bool) -> None:
+    """Colonnes agrandissables a la main (glisser la bordure droite, voir
+    pipeline_browser._Column._in_resize_zone) — Fenetre de parametres >
+    Tableaux > Colonnes dimensionnables. True par defaut (comportement
+    inchange : ce glisser existait deja, ce reglage permet juste de le
+    desactiver)."""
+    global _COLUMNS_RESIZABLE
+    _COLUMNS_RESIZABLE = bool(on)
+
+
+def columns_resizable() -> bool:
+    return _COLUMNS_RESIZABLE
+
+
 # ==========================================================================
-# Palette semantique a 8 cles, utilisee par la fenetre de parametres (page
-# "Couleurs", 2 colonnes x 4) et par la resolution de la couleur d'entete
+# Palette semantique (11 cles), utilisee par la fenetre de parametres (page
+# "Couleurs", 2 colonnes) et par la resolution de la couleur d'entete
 # ci-dessous : chaque "slot" semantique renvoie vers UNE cle reelle de C.
-# "selCur" et "button" pointent tous deux vers "accent" — le reste de
+# "skinAccent" et "selCur" pointent tous deux vers "accent" — le reste de
 # l'appli n'a qu'une seule couleur d'accent, a la fois pour la selection
 # active ET les boutons principaux (voir la note de "accent" dans
 # COLOR_FIELDS ci-dessus) : les deux pastilles de la fenetre de parametres
 # restent donc volontairement synchronisees plutot que d'introduire une
-# distinction qui n'existe nulle part ailleurs dans l'appli.
+# distinction qui n'existe nulle part ailleurs dans l'appli. Pastille
+# "Bouton" supprimee (remarque de l'utilisateur, capture annotee a
+# l'appui, "supprimer bouton ... sera : skin-accent") : "skinAccent"
+# reprend seule ce role, "accent" gardant une seule couleur d'accent pour
+# toute l'appli comme avant.
 # ==========================================================================
 
 SEMANTIC_COLOR_SLOTS: list[tuple[str, str, str]] = [
-    # Reamenage suite a la remarque de l'utilisateur (capture annotee de
-    # l'APPLI, pas de la fenetre de parametres) : les 3 "Skin secondaire
-    # niveau X" (chrome/border/detail_bg) sont retires de la grille — ils
-    # restent appliques (voir DEFAULT_SETTINGS["colors"] / apply_all_settings)
-    # mais ne sont plus editables ici, remplaces par des noms qui
-    # correspondent a de vraies zones identifiees sur la capture :
-    #   - "Fond" (ex "Skin principale") = C["window"], le fond visible
-    #     au-dela de la derniere colonne (CentralFrame) ;
-    #   - "Skin principale niveau 1" = C["topbar"], PARTAGE entre la barre
-    #     du haut (#TopBar) et le panneau d'apercu (PreviewColumn) ;
-    #   - "Skin principale niveau 2" = C["void"], le fond des colonnes de
-    #     liste (#ColumnsHost) ;
+    # Mapping zone-par-zone, fixe suite a la remarque de l'utilisateur
+    # (nouvelle capture annotee de l'APPLI, chaque zone pointee par une
+    # fleche) — remplace le mapping precedent, qui melangeait plusieurs de
+    # ces zones a tort :
+    #   - "Fond" = C["window"], SEULEMENT l'espace realement vide au-dela de
+    #     la derniere colonne (#ColumnsHost) — plus le fond des colonnes
+    #     elles-memes (voir "Skin principale niveau 2" plus bas) ;
+    #   - "Barre de navigation" = C["app_bg"], la barre de titre maison tout
+    #     en haut (#TitleBar) qui sert aussi a deplacer la fenetre (voir
+    #     TitleBar.mousePressEvent) — jusqu'ici fixee, sans reglage expose ;
+    #   - "Skin principale niveau 1" = C["topbar"], la barre ROOT/Parcourir
+    #     juste en dessous (#TopBar) SEULE : le panneau d'apercu
+    #     (PreviewColumn) ne la partage plus, voir "niveau 2" ;
+    #   - "Skin principale niveau 2" = C["void"], le fond propre de CHAQUE
+    #     colonne (liste QListWidget, voir build_stylesheet) ET du panneau
+    #     d'apercu (PreviewColumn, sous ses vignettes) ET de l'inspecteur
+    #     (DetailPanel, sous ses champs) — un seul ton de "vide" partage par
+    #     tout ce qui affiche du contenu, quelle que soit sa nature ;
     #   - "Zone de saisie" = C["well"], le fond des champs de texte (ex :
     #     le champ ROOT) ;
     #   - "Ligne" (nouveau reglage, voir C["line"]) = les filets separateurs
     #     internes aux colonnes (paint_thumbnail_row, sep_h/sep_v), qui
-    #     utilisaient C["border"] jusqu'ici (pas de reglage dedie).
-    ("fond", "window", "Fond"),
-    ("skinN1", "topbar", "Skin principale niveau 1"),
-    ("skinN2", "void", "Skin principale niveau 2"),
+    #     utilisaient C["border"] jusqu'ici (pas de reglage dedie) ;
+    #   - "Item non selectionne" (nouveau reglage, voir C["row_idle"]) = le
+    #     fond de CHAQUE ligne Type/Projets/Sous-projet au repos (ni
+    #     selectionnee ni survolee, voir RowDelegate.paint/paint_thumbnail_row)
+    #     — jusqu'ici transparente (aucun fond peint), valeur par defaut
+    #     identique a "Skin principale niveau 2" pour ne rien changer tant
+    #     que l'utilisateur ne la personnalise pas.
+    #
+    # Ordre fixe suite a une remarque de l'utilisateur (capture annotee de
+    # CETTE grille) : le "sens de lecture" qui compte pour cette liste est
+    # celui de l'AFFICHAGE (grille 2 colonnes remplie ligne par ligne, voir
+    # _ColorGrid.__init__/divmod(i, 2)) lu de HAUT EN BAS dans la colonne de
+    # GAUCHE d'abord, puis de haut en bas dans la colonne de DROITE — pas
+    # ligne par ligne de gauche a droite (erreur du premier essai, corrigee
+    # ici suite a la remarque de l'utilisateur). Les tuples ci-dessous sont
+    # donc ecrits dans l'ordre de la grille (2 par 2, une ligne a la fois),
+    # mais leur PROGRESSION logique (voir "skin - accent" plus bas) suit ce
+    # sens colonne-par-colonne : colonne de gauche = skinAccent, skinN1,
+    # skinN2, fond, saisie, ligne, border2 (7) ; colonne de droite = navbar,
+    # selCur, selDone, hover, itemIdle, tableHead, tableRow (7 autres).
+    #
+    # "skin - accent" ajoutee EN PREMIER de ce sens de lecture (remarque de
+    # l'utilisateur, capture annotee a l'appui : "ajouter une couleur
+    # skin-accent en premier item, tous les autres seront decales en
+    # fonction du sens de lecture") — tout le reste decale d'un cran dans CE
+    # sens colonne-par-colonne, ce qui fait deborder l'ancien dernier de la
+    # colonne de gauche ("navbar") en tete de la colonne de droite. Meme cle
+    # reelle "accent" que "Item - sélectionné-focus" (selCur) : voir la
+    # remarque de tete de liste.
+    ("skinAccent", "accent", "skin - accent"),
+    ("navbar", "app_bg", "Barre de navigation"),
+    ("skinN1", "topbar", "skin - niveau1"),
+    ("selCur", "accent", "Item - sélectionné-focus"),
+    ("skinN2", "void", "skin - niveau2"),
+    ("selDone", "sel_idle", "Item - sélectionné"),
+    ("fond", "window", "skin - fond"),
+    ("hover", "hover", "Item - survol"),
     ("saisie", "well", "Zone de saisie"),
-    ("ligne", "line", "Ligne"),
-    ("selCur", "accent", "Selection en cours"),
-    ("selDone", "sel_idle", "Selectionne"),
-    ("hover", "hover", "Survol"),
-    ("button", "accent", "Bouton"),
+    ("itemIdle", "row_idle", "Item - non sélectionné"),
+    ("ligne", "line", "Bordures niveau 1"),
+    ("tableHead", "table_head", "Tableau - entête"),
+    # Nouvelle pastille demandee par l'utilisateur ("Bordures niveau 2, a
+    # creer") : expose C["border"] (deja une cle reelle existante — les
+    # "Bordures et separateurs" generaux, voir COLOR_FIELDS plus haut, deja
+    # persistee mais jusqu'ici absente de CETTE grille) plutot que d'ajouter
+    # une cle entierement nouvelle a C — meme role que "Bordures niveau 1"
+    # (C["line"]) juste au-dessus, mais l'AUTRE tier de bordure deja
+    # distinct dans l'appli.
+    ("border2", "border", "Bordures niveau 2"),
+    # Derniere pastille : concerne UNIQUEMENT la fenetre de parametres
+    # elle-meme (ses propres tableaux "fermes" Polices/Entetes/Geometrie,
+    # voir settings_window._sync_dynamic_M) — l'appli principale n'a pas
+    # encore de tableau standard a proprement parler (voir set_table_radius),
+    # donc elle n'a aucun effet visible ailleurs, y compris si choisie
+    # (improbable mais sans consequence) comme source de la couleur d'entete
+    # de colonne.
+    ("tableRow", "table_row", "Tableau - fond"),
 ]
 _SEMANTIC_TO_REAL = {slot: real for slot, real, _ in SEMANTIC_COLOR_SLOTS}
 
 _HEADER_COLOR_SLOT = "skinN1"
-_HEADER_RADIUS = 0
-_HEADER_EDGES = {"top": False, "right": False, "bottom": True, "left": False}
+_HEADER_CORNERS = ("top_left", "top_right", "bottom_right", "bottom_left")
+_HEADER_RADIUS = {k: 0 for k in _HEADER_CORNERS}
+_HEADER_BORDER_ENABLED = {"top": False, "right": False, "bottom": True, "left": False}
+_HEADER_BORDER = {"top": "", "right": "", "bottom": "", "left": ""}   # "" = pas encore personnalise, retombe sur C['border']
+_HEADER_BORDER_THICKNESS = 1
 
 
-def set_header_style(color_slot: str, radius: int, edges: dict) -> None:
+def _coerce_header_radius(value) -> dict:
+    """Meme convention que settings_window._coerce_corner_radius (int
+    unique, retro-compatible, OU dict {"top_left": int, ...} — un rayon PAR
+    COIN, voir settings_window._CornerRadiusField/la remarque de
+    l'utilisateur, "dans tous les parametres de coins arrondis, je veux
+    exactement le meme fonctionnement que les padding")."""
+    if isinstance(value, dict):
+        return {k: max(0, int(value.get(k, 0))) for k in _HEADER_CORNERS}
+    v = max(0, int(value)) if value is not None else 0
+    return {k: v for k in _HEADER_CORNERS}
+
+
+def set_header_style(color_slot: str, radius, border_enabled: dict, border_colors: dict | None = None,
+                      border_thickness: int = 1) -> None:
     """Reglages de l'entete de colonne (et de l'inspecteur, voir header_qss)
-    pilotes par la fenetre de parametres > Entetes : quelle pastille
-    semantique alimente le fond, le rayon des angles, et quels cotes
-    dessiner un filet 1px (couleur "border", la meme partout — seule la
-    presence/absence de chaque cote est reglable, pas sa couleur propre)."""
-    global _HEADER_COLOR_SLOT, _HEADER_RADIUS, _HEADER_EDGES
-    _HEADER_COLOR_SLOT = color_slot if color_slot in _SEMANTIC_TO_REAL else "skinN1"
-    _HEADER_RADIUS = max(0, int(radius))
-    _HEADER_EDGES = {k: bool(edges.get(k, False)) for k in ("top", "right", "bottom", "left")}
+    pilotes par la fenetre de parametres > Colonnes > Entetes : quelle
+    pastille semantique alimente le fond (OU une couleur PERSONNALISEE, un
+    hex direct "#rrggbb" — voir settings_window._HeaderColorField, "je veux
+    pouvoir personnaliser la couleur"), un rayon PAR COIN (voir
+    _coerce_header_radius), et la bordure — un interrupteur PAR COTE
+    (border_enabled) + une couleur INDEPENDANTE par cote (border_colors) +
+    une epaisseur partagee (border_thickness) — voir settings_window.
+    _ToggleSideColorsField, MEME reglage que Colonnes > Bordure (voir la
+    remarque de l'utilisateur, "je veux exactement les memes parametre de
+    controle que celui des colonnes")."""
+    global _HEADER_COLOR_SLOT, _HEADER_RADIUS, _HEADER_BORDER_ENABLED, _HEADER_BORDER, _HEADER_BORDER_THICKNESS
+    is_custom_hex = isinstance(color_slot, str) and color_slot.startswith("#")
+    _HEADER_COLOR_SLOT = color_slot if (is_custom_hex or color_slot in _SEMANTIC_TO_REAL) else "skinN1"
+    _HEADER_RADIUS = _coerce_header_radius(radius)
+    _HEADER_BORDER_ENABLED = {k: bool(border_enabled.get(k, False)) for k in ("top", "right", "bottom", "left")}
+    border_colors = border_colors or {}
+    _HEADER_BORDER = {k: str(border_colors.get(k) or "") for k in ("top", "right", "bottom", "left")}
+    _HEADER_BORDER_THICKNESS = max(0, int(border_thickness))
 
 
 def header_bg_hex() -> str:
+    if _HEADER_COLOR_SLOT.startswith("#"):
+        return _HEADER_COLOR_SLOT
     return C.get(_SEMANTIC_TO_REAL.get(_HEADER_COLOR_SLOT, "chrome"), C["chrome"])
+
+
+def header_border_color(side: str) -> str:
+    return _HEADER_BORDER.get(side) or C["border"]
 
 
 def header_qss(object_name: str) -> str:
@@ -459,12 +690,187 @@ def header_qss(object_name: str) -> str:
     — HEADER_PADDING ne doit inset que ce fond configurable, jamais cette
     limite de panneau)."""
     def edge(name: str) -> str:
-        return f"1px solid {C['border']}" if _HEADER_EDGES.get(name) else "none"
+        # "0px solid transparent", PAS le mot-cle "none" (voir column_frame_
+        # qss, MEME raison — le moteur QSS de Qt peut alors carrement
+        # ignorer border-radius pour le FOND, le laissant deborder carre au-
+        # dela du coin arrondi sur un cote sans bordure).
+        if _HEADER_BORDER_THICKNESS <= 0 or not _HEADER_BORDER_ENABLED.get(name):
+            return "0px solid transparent"
+        return f"{_HEADER_BORDER_THICKNESS}px solid {header_border_color(name)}"
+    # QSS/CSS accepte "border-radius: TL TR BR BL" (4 valeurs, MEME ordre
+    # que _HEADER_CORNERS) — un rayon PAR COIN, voir set_header_style/
+    # settings_window._CornerRadiusField.
+    radius_qss = " ".join(f"{_HEADER_RADIUS[k]}px" for k in _HEADER_CORNERS)
     return (
-        f"#{object_name} {{ background: {header_bg_hex()}; border-radius: {_HEADER_RADIUS}px; "
+        f"#{object_name} {{ background: {header_bg_hex()}; border-radius: {radius_qss}; "
         f"border-top: {edge('top')}; border-right: {edge('right')}; "
         f"border-bottom: {edge('bottom')}; border-left: {edge('left')}; }}"
     )
+
+
+# ==========================================================================
+# Style de colonne — settings_window._section_headers ("Colonnes" dans
+# l'onglet General) APPLIQUE pour de vrai a TOUTES les colonnes (voir
+# pipeline_browser.Column/RowDelegate) — contrairement a une 1ere version,
+# qui ne le cablait QUE sur la colonne "Type" (voir la remarque de
+# l'utilisateur, "je veux que tu en fasse de meme pour toute les colonnes
+# de l'appli. les settings doivent refletter a 100% ce qui se passe dans
+# l'appli"). Colonnes > Type peut en outre SURCHARGER individuellement
+# chaque parametre pour elle-meme (toggle par ligne, voir settings_window.
+# _build_column_type_page) : `style_for(title)` renvoie deja la valeur
+# EFFECTIVE (surchargee si activee pour "Type", sinon la generale) —
+# resolue une seule fois par pipeline_browser.apply_all_settings, pas ici.
+# ==========================================================================
+
+_GENERAL_COLUMN_STYLE: dict = {}
+_TYPE_COLUMN_STYLE: dict = {}
+
+
+def set_general_column_style(style: dict) -> None:
+    """Style EFFECTIF (general, sans aucune surcharge) applique a TOUTE
+    colonne AUTRE que "Type" — voir set_type_column_style ci-dessous pour
+    celle-ci, seule a pouvoir surcharger individuellement."""
+    global _GENERAL_COLUMN_STYLE
+    _GENERAL_COLUMN_STYLE = dict(style)
+
+
+def set_type_column_style(style: dict) -> None:
+    global _TYPE_COLUMN_STYLE
+    _TYPE_COLUMN_STYLE = dict(style)
+
+
+def type_column_style() -> dict:
+    return _TYPE_COLUMN_STYLE
+
+
+def column_style_for(title: str) -> dict:
+    """Style EFFECTIF d'UNE colonne precise, quel que soit son titre — voir
+    Column.refresh_colors/refresh_header/_column_padding, qui l'appellent
+    tous avec le titre de LEUR colonne plutot que de choisir eux-memes
+    entre general/Type."""
+    return _TYPE_COLUMN_STYLE if title == "Type" else _GENERAL_COLUMN_STYLE
+
+
+def resolve_color_ref(value, fallback: str = "") -> str:
+    """Meme convention que settings_window._resolve_color_value ("#rrggbb"
+    direct OU reference "@<slot>" a une pastille semantique) mais resolue
+    ici contre la palette REELLE de l'appli (`C`, deja tenue a jour par
+    set_color) — pas de dict "colors" separe a faire suivre, contrairement
+    a la fenetre de parametres (qui doit aussi suivre une palette LIVE
+    pendant un glisser, voir _apply_column_preview)."""
+    if isinstance(value, str) and value.startswith("@"):
+        return C.get(_SEMANTIC_TO_REAL.get(value[1:], "chrome"), C["chrome"])
+    return value or fallback or C["border"]
+
+
+def _column_header_bg_hex(style: dict) -> str:
+    slot = style.get("header_color", "skinN1")
+    if isinstance(slot, str) and slot.startswith("#"):
+        return slot
+    return C.get(_SEMANTIC_TO_REAL.get(slot, "chrome"), C["chrome"])
+
+
+def column_header_qss(object_name: str, title: str) -> str:
+    """Meme construction que header_qss ci-dessus, mais a partir du style
+    EFFECTIF de CETTE colonne (voir column_style_for) plutot que des
+    globals _HEADER_* partages a l'ancienne — voir Column.refresh_colors,
+    appele pour TOUTE colonne desormais (general ou surcharge Type).
+
+    Rayon propre de l'entete UNIQUEMENT (header_radius) — plus de
+    "nibbling" (agrandissement des coins hauts au rayon de la colonne) :
+    ancien palliatif, ecrit AVANT que pipeline_browser.Column.card ne
+    decoupe REELEMENT (voir _RoundedCornersEffect) tout son contenu
+    (entete ET liste compris) a la silhouette exacte du rayon de la
+    colonne. Le rognage visuel est donc deja garanti par ce decoupage —
+    forcer EN PLUS le rayon PROPRE de l'entete a suivre celui de la
+    colonne ne faisait plus que gonfler artificiellement sa courbure,
+    meme quand header_radius est explicitement regle a 0 — voir la
+    remarque de l'utilisateur, capture a l'appui, "quand je regle le
+    padding de l'entete a 0, je me retrouve avec des bordures radius
+    monstrueux alors qu'il est a 0 dans les settings".
+
+    REVENU sur ce point (nibbling reintroduit, voir _nibble_top_corners
+    ci-dessous) : le decoupage de secours evoque plus haut
+    (_RoundedCornersEffect sur pipeline_browser.Column._content) s'est
+    avere NE PAS recouper fiablement l'entete dans certaines conditions
+    (bordure de colonne fine, QGraphicsEffect dont le rendu ne se
+    reflete pas toujours a l'ecran malgre un radius mis a jour) — voir
+    la remarque de l'utilisateur, capture a l'appui, "la bordure
+    disparait completement dans l'arrondi de l'angle". Nibbler ICI EN
+    PLUS (redondant mais fiable, header_fill peint alors son propre coin
+    rond) evite de dependre uniquement de ce mecanisme — SEULEMENT
+    quand header_padding<=0 (l'entete touche alors reellement le coin
+    de la colonne, voir plus bas) : la "monstruosite" rapportee a
+    l'epoque venait d'un nibbling applique SANS cette condition, pas du
+    principe lui-meme (deja verifie sans souci cote apercu des
+    settings, meme formule)."""
+    s = column_style_for(title)
+    radius = dict(_coerce_header_radius(s.get("header_radius", 0)))
+    if int(s.get("header_padding", 0)) <= 0:
+        column_radius = _coerce_header_radius(s.get("column_border_radius", 0))
+        radius["top_left"] = max(radius["top_left"], column_radius["top_left"])
+        radius["top_right"] = max(radius["top_right"], column_radius["top_right"])
+    enabled = s.get("header_border_enabled") or {}
+    colors = s.get("header_border") or {}
+    thickness = max(0, int(s.get("header_border_thickness", 1)))
+
+    def edge(name: str) -> str:
+        # "0px solid transparent", PAS "none" — voir column_frame_qss, meme
+        # raison (le fond deborde carre du coin arrondi sinon).
+        if thickness <= 0 or not enabled.get(name):
+            return "0px solid transparent"
+        return f"{thickness}px solid {resolve_color_ref(colors.get(name))}"
+
+    radius_qss = " ".join(f"{radius[k]}px" for k in _HEADER_CORNERS)
+    return (
+        f"#{object_name} {{ background: {_column_header_bg_hex(s)}; border-radius: {radius_qss}; "
+        f"border-top: {edge('top')}; border-right: {edge('right')}; "
+        f"border-bottom: {edge('bottom')}; border-left: {edge('left')}; }}"
+    )
+
+
+def column_frame_style(title: str, suppress_left: bool = False) -> dict:
+    """Cadre de la colonne elle-meme (Colonnes > Bordure/Rayon des angles
+    de bordure) — remplace, pour TOUTE colonne, le simple "border-right:
+    1px solid" code en dur jusqu'ici (voir Column.__init__/refresh_colors,
+    la remarque de l'utilisateur au sujet de cette decouverte : ce reglage
+    general n'etait jusqu'ici JAMAIS applique a l'appli reelle, seulement a
+    l'apercu de la fenetre de parametres).
+
+    Renvoie les valeurs BRUTES (radius/enabled/colors DEJA resolues/
+    thickness), PAS une chaine QSS : voir pipeline_browser._ColumnCard,
+    peinte a la main (QPainter, _paint_bordered_rect) — PAS de border-
+    radius QSS ici — pour que le masque de decoupe des enfants (voir
+    Column._update_card_mask) utilise EXACTEMENT la meme geometrie que ce
+    qui est reellement peint, plutot que de tenter de faire correspondre
+    2 moteurs de rendu differents (le style QSS de Qt, puis un chemin
+    arrondi maison pour le masque) — voir la remarque de l'utilisateur,
+    capture a l'appui, "le cadre n'enveloppe pas les bordures radius".
+
+    `suppress_left` (voir Column.refresh_colors, colonne PAS la premiere ET
+    "Distance entre colonnes" <= 0) — MEME regle que settings_window.
+    _ColumnPreview (has_left_neighbor) : quand 2 colonnes se touchent, un
+    SEUL filet reste visible a leur frontiere (celui de DROITE de la
+    colonne de GAUCHE) plutot que 2 cumules."""
+    s = column_style_for(title)
+    radius = _coerce_header_radius(s.get("column_border_radius", 0))
+    enabled = dict(s.get("column_border_enabled") or {})
+    if suppress_left:
+        enabled["left"] = False
+    thickness = max(0, int(s.get("column_border_thickness", 1)))
+    colors = {k: resolve_color_ref(v) for k, v in (s.get("column_border") or {}).items()}
+    return {"radius": radius, "enabled": enabled, "colors": colors, "thickness": thickness}
+
+
+def column_padding_for(title: str) -> dict:
+    """Padding EFFECTIF (voir settings_window._ColumnPreview.setPadding,
+    MEME comportement "carte flottante" — le fond+la bordure de la colonne
+    RETRECISSENT, revelant le fond de la fenetre tout autour, plutot qu'un
+    simple retrait de son contenu) de CETTE colonne — voir Column.card/
+    _refresh_card_margins."""
+    s = column_style_for(title)
+    pad = s.get("column_padding") or {}
+    return {side: max(0, int(pad.get(side, 0))) for side in ("top", "right", "bottom", "left")}
 
 
 # ==========================================================================
@@ -478,10 +884,16 @@ def build_stylesheet() -> str:
     previsualisation en direct de la fenetre de parametres fonctionne."""
     input_border = f"1px solid {C['border_soft']}" if _INPUT_FRAME else "none"
     button_border = f"1px solid {C['btn_border']}" if _BUTTON_FRAME else "none"
+    # QListWidget (Skin principale niveau 2 / void), PAS Fond (window) : le
+    # vide propre a chaque colonne de l'appli principale (QListWidget, seul
+    # usage de cette classe hors fenetre de parametres, voir Column) suit
+    # desormais sa propre couleur, distincte du fond genere au-dela de la
+    # derniere colonne (#ColumnsHost, voir PipelineBrowser) — voir la
+    # remarque de l'utilisateur, nouvelle capture annotee a l'appui.
     return f"""
 QWidget {{ background: {C['window']}; color: {C['text']}; }}
 QScrollArea, QScrollArea > QWidget > QWidget {{ background: {C['window']}; }}
-QListWidget {{ background: {C['window']}; border: none; outline: none; }}
+QListWidget {{ background: {C['void']}; border: none; outline: none; }}
 
 QLineEdit {{
     background: {C['well']};
@@ -506,6 +918,11 @@ QPushButton:pressed {{
     color: {C['accent_text']};
 }}
 
+QTableWidget, QTableView {{
+    border: 1px solid {C['border']};
+    border-radius: {_TABLE_RADIUS}px;
+}}
+
 QScrollBar:vertical, QScrollBar:horizontal {{ background: transparent; width: 9px; height: 9px; margin: 0; }}
 QScrollBar::handle {{ background: {C['scroll']}; min-height: 24px; min-width: 24px; }}
 QScrollBar::handle:hover {{ background: {C['scroll_hover']}; }}
@@ -519,6 +936,22 @@ QMenu::item:selected {{ background: {C['accent']}; color: {C['accent_text']}; }}
 
 
 STYLESHEET = build_stylesheet()
+
+# Cles de C reellement lues par build_stylesheet ci-dessus (a tenir a jour
+# avec elle) — sert a PipelineBrowser._apply_settings pour ne rebatir le
+# QSS global (app.setStyleSheet, ~100ms mesures sur une appli de taille
+# normale : le poste de loin le plus cher de tout le rafraichissement live
+# de la fenetre de parametres) que si une couleur qui compte VRAIMENT pour
+# lui a change — pas a chaque pixel du glisser d'une pastille QUELCONQUE
+# de la page Couleurs (la moitie des ~30 couleurs reglables, ex.
+# table_head/table_row/sel_idle/hover, n'apparaissent nulle part dans ce
+# QSS et n'ont donc aucune raison d'en forcer la reconstruction) — voir la
+# remarque de l'utilisateur sur la latence au glisser.
+STYLESHEET_COLOR_KEYS = (
+    "window", "text", "void", "well", "text_mono", "accent", "accent_text",
+    "btn", "btn_border", "btn_hover", "btn_hover_bd", "border", "border_soft",
+    "scroll", "scroll_hover", "chrome",
+)
 
 
 def apply_style(app) -> None:
@@ -566,7 +999,18 @@ def apply_dwm_frame(widget, radius: int, border_hex: str, resizable: bool = Fals
     pas a une boite de dialogue de taille fixe.
 
     Sans effet (silencieusement) hors Windows, ou sur Windows 10 et
-    anterieur ou ces attributs DWM n'existent pas."""
+    anterieur ou ces attributs DWM n'existent pas.
+
+    Les 2 DwmSetWindowAttribute plus bas (coin/couleur) forcent le
+    compositeur a recalculer tout le cadre de la fenetre — ~20ms mesures,
+    negligeable pour un appel isole mais couteux rejoue a chaque frame :
+    SettingsWindow rappelle cette fonction a CHAQUE glisser d'un slider de
+    couleur (voir _refresh_dynamic_colors), la plupart du temps avec un
+    radius/border_hex IDENTIQUES au dernier appel (seul un sous-ensemble
+    des couleurs reglables affecte reellement panel_border). D'ou ce
+    cache par widget (radius, border_hex) qui saute les deux appels natifs
+    quand rien n'a change depuis la derniere fois — voir la remarque de
+    l'utilisateur sur la latence au glisser."""
     if sys.platform != "win32":
         return
     try:
@@ -582,6 +1026,23 @@ def apply_dwm_frame(widget, radius: int, border_hex: str, resizable: bool = Fals
             wanted = style | WS_THICKFRAME | WS_MAXIMIZEBOX | WS_MINIMIZEBOX
             if wanted != style:
                 user32.SetWindowLongW(hwnd, GWL_STYLE, wanted)
+                # SANS CA : Windows garde en cache l'ancien frame tant qu'on
+                # ne le lui redemande pas explicitement — le bit WS_THICKFRAME
+                # ne devient reellement effectif (WM_NCHITTEST/curseur/
+                # glisser de redimensionnement) qu'apres un SetWindowPos avec
+                # SWP_FRAMECHANGED. Sans lui, le redimensionnement par les
+                # bords pouvait rester silencieusement mort au survol (voir
+                # la remarque de l'utilisateur : rien ne se passait du tout).
+                SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_FRAMECHANGED = 0x0002, 0x0001, 0x0004, 0x0020
+                user32.SetWindowPos(
+                    hwnd, 0, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
+                )
+        hexcolor = (border_hex or "").lstrip("#")
+        cache_key = (radius <= 0, hexcolor)
+        if getattr(widget, "_dwm_frame_cache", None) == cache_key:
+            return
+        widget._dwm_frame_cache = cache_key
         dwmapi = ctypes.windll.dwmapi
         DWMWA_WINDOW_CORNER_PREFERENCE = 33
         DWMWCP_DONOTROUND = 1
@@ -591,7 +1052,6 @@ def apply_dwm_frame(widget, radius: int, border_hex: str, resizable: bool = Fals
         dwmapi.DwmSetWindowAttribute(
             hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, ctypes.byref(pref), ctypes.sizeof(pref)
         )
-        hexcolor = (border_hex or "").lstrip("#")
         if len(hexcolor) == 6:
             r, g, b = (int(hexcolor[i:i + 2], 16) for i in (0, 2, 4))
             colorref = ctypes.c_uint32((b << 16) | (g << 8) | r)

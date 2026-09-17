@@ -44,8 +44,8 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import (
-    QByteArray, QEvent, QEventLoop, QMimeData, QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, QUrl,
-    Signal,
+    QByteArray, QEasingCurve, QEvent, QEventLoop, QMimeData, QObject, QParallelAnimationGroup, QPoint, QPointF,
+    QPropertyAnimation, QRect, QRectF, QSize, Qt, QTimer, QUrl, Signal,
 )
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
 from PySide6.QtMultimediaWidgets import QVideoWidget
@@ -55,6 +55,7 @@ from PySide6.QtGui import (
     QCursor,
     QDesktopServices,
     QDrag,
+    QFont,
     QFontMetrics,
     QImage,
     QImageReader,
@@ -72,6 +73,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QFrame,
+    QGraphicsEffect,
     QGridLayout,
     QHBoxLayout,
     QInputDialog,
@@ -115,8 +117,12 @@ except ImportError:
 
 from app_style import (
     C,
+    STYLESHEET_COLOR_KEYS,
     apply_dwm_frame,
     apply_style,
+    column_gap,
+    column_seam_border,
+    columns_resizable,
     font,
     header_qss,
     refresh_style,
@@ -127,14 +133,33 @@ from app_style import (
     set_button_frame,
     set_button_radius,
     set_color,
+    set_column_gap,
+    set_columns_resizable,
     set_header_style,
     set_input_frame,
     set_input_radius,
     set_role_font,
+    set_table_radius,
     set_ui_scale,
     start_native_move,
+    resolve_color_ref,
+    set_general_column_style,
+    set_type_column_style,
+    column_frame_style,
+    column_header_qss,
+    column_padding_for,
+    column_style_for,
+    type_column_style,
 )
-from settings_window import SettingsWindow, load_settings
+from settings_window import (
+    SettingsWindow,
+    load_settings,
+    _paint_bordered_rect,
+    _radius_dict,
+    _radius_any,
+    _radius_shrink,
+    _rounded_rect_path,
+)
 
 # ==========================================================================
 # Configuration
@@ -143,6 +168,13 @@ from settings_window import SettingsWindow, load_settings
 ROOT = Path(r"F:\PIPELINE")
 
 COLUMN_LABELS = ["Type", "Projets", "Sous-projet", "Logiciels", "Contenu"]
+
+# Colonnes repliables (voir Column.set_collapsed) : une fois Projet ET
+# Sous-projet choisis, ces trois colonnes de navigation perdent leur utilite
+# immediate (le contexte est fixe) et peuvent se replier en bandeau etroit,
+# avec une icone pour les redeplier a la demande (voir
+# PipelineBrowser._sync_collapse_state).
+COLLAPSIBLE_COLUMN_TITLES = {"Type", "Projets", "Sous-projet"}
 
 # Dossiers dont le contenu est remonte dans la colonne du parent.
 FLATTEN_FOLDERS = {"WORK"}
@@ -960,6 +992,36 @@ COLUMN_SETTINGS: dict[str, dict[str, int]] = {
     "Contenu":     {"width": 186, "height": 25, "plain_height": 20, "spacing": 0, "img_pad": 3, "img_radius": 0, "sep_h": True, "sep_v": True},
 }
 
+# Colonne "Type" > style de Colonnes/Entetes/Items (voir settings_window.
+# _section_headers, "Colonnes" dans l'onglet General) — cles EFFECTIVEMENT
+# resolues (general OU surcharge, voir SettingsWindow._build_column_type_
+# page/apply_all_settings ci-dessous) dans app_style.set_type_column_style,
+# lu par Column/RowDelegate (voir Column.refresh_colors/refresh_header,
+# RowDelegate._paint_type_row). "column_gap" est volontairement absent : un
+# espacement ENTRE colonnes n'a pas de sens pour une seule colonne.
+# Colonne/entete (fond/bordure/rayon/padding — voir app_style.column_frame_
+# qss/column_header_qss/column_padding_for) : desormais APPLIQUE a TOUTE
+# colonne (voir Column.refresh_colors/refresh_header), pas seulement "Type"
+# — voir la remarque de l'utilisateur, "je veux que tu en fasse de meme
+# pour toute les colonnes de l'appli. les settings doivent refletter a
+# 100% ce qui se passe dans l'appli". Les cles "item_*" (texte/selection
+# des LIGNES, voir RowDelegate._paint_type_row) restent elles PROPRES a
+# "Type" (rendu entierement different des autres colonnes, jamais demande
+# ailleurs) — d'ou ce sous-ensemble EXPLICITE, distinct de
+# COLUMN_TYPE_OVERRIDE_KEYS (qui, lui, couvre aussi ces cles "item_*").
+COLUMN_FRAME_KEYS = [
+    "header_height", "header_padding", "header_color", "header_radius",
+    "header_border_enabled", "header_border", "header_border_thickness",
+    "column_padding", "column_border_enabled", "column_border", "column_border_thickness", "column_border_radius",
+]
+
+COLUMN_TYPE_OVERRIDE_KEYS = COLUMN_FRAME_KEYS + [
+    "item_font_family", "item_color", "item_icon_enabled", "item_row_height", "item_row_spacing",
+    "item_text_padding", "item_selection_focus_color", "item_selection_unfocus_color", "item_hover_color",
+    "item_selection_padding", "item_selection_border_enabled", "item_selection_border",
+    "item_selection_radius", "item_selection_edge_border",
+]
+
 # Padding (sur les 4 cotes) et rayon appliques a la grande vignette carree de
 # l'apercu empile (voir _SquarePreviewImage) — distinct du padding par
 # colonne ci-dessus, qui lui ne concerne que les vignettes DANS les lignes
@@ -1343,6 +1405,14 @@ class RowDelegate(QStyledItemDelegate):
         self.color_dir = role_color("folders", C["text"])
         self.color_file = role_color("files", C["text_file"])
         self.color_meta = role_color("info", C["dim"])
+        # Colonne "Type" : police/couleur EFFECTIVES (Colonnes > Type >
+        # Texte, general ou surcharge — voir app_style.type_column_style),
+        # separees des roles ci-dessus qui restent partages par les autres
+        # colonnes.
+        s = type_column_style()
+        family = (s.get("item_font_family") or "").strip()
+        self.type_font = QFont(family, 10) if family else role_font("folders", 10, 400)
+        self.type_color = s.get("item_color", C["text"])
 
     def _has_preview(self, index) -> bool:
         """Version bon marche de _image_pixmap : dit si CETTE ligne
@@ -1383,6 +1453,21 @@ class RowDelegate(QStyledItemDelegate):
     def paint(self, painter: QPainter, option, index):
         title = self.column.column_title
         spacing = col_spacing(title)
+        if title == "Type":
+            # Rendu dedie (voir _paint_type_row) : icone toggle optionnelle
+            # + nom + pastille de selection arrondie (padding/bordure/rayon
+            # par cote) — le style de Colonnes > Type > Texte/Selection
+            # (general ou surcharge, voir app_style.type_column_style),
+            # PAS l'ancien marqueur carre + metadonnee des autres colonnes
+            # (voir la remarque de l'utilisateur, "je veux que tu appliques
+            # exactement le style de colonne (GENERAL/COLONNES) sur la
+            # colonne TYPE").
+            painter.save()
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            painter.setRenderHint(QPainter.TextAntialiasing, True)
+            self._paint_type_row(painter, option.rect.adjusted(0, 0, 0, -spacing), option, index)
+            painter.restore()
+            return
         image_pixmap = self._image_pixmap(index)
         if image_pixmap is not None:
             painter.save()
@@ -1417,9 +1502,14 @@ class RowDelegate(QStyledItemDelegate):
         elif hovered:
             bg = C["hover"]
         else:
-            bg = None
-        if bg:
-            painter.fillRect(rect, QColor(bg))
+            # "Item non selectionne" (voir SEMANTIC_COLOR_SLOTS) : chaque
+            # ligne au repos a desormais son propre fond, distinct du vide
+            # de la liste sous la derniere ligne (voir la remarque de
+            # l'utilisateur, nouvelle capture annotee a l'appui) — avant,
+            # aucun fond n'etait peint ici (transparent, laissant voir le
+            # fond de la liste directement).
+            bg = C["row_idle"]
+        painter.fillRect(rect, QColor(bg))
 
         # Marqueur : logo logiciel (colonne "Logiciels") si reconnu, sinon
         # carre 9x9 habituel.
@@ -1477,6 +1567,74 @@ class RowDelegate(QStyledItemDelegate):
 
         painter.restore()
 
+    def _paint_type_row(self, painter: QPainter, rect, option, index):
+        """Ligne de la colonne "Type" : icone toggle optionnelle + nom +
+        pastille de selection — meme rendu/memes reglages que l'apercu de
+        Colonnes > Type (voir settings_window._ItemPreviewRow, MEME
+        technique de bordure mitree, voir settings_window._paint_bordered_
+        rect, reutilisee ici telle quelle plutot que redupliquee)."""
+        s = type_column_style()
+        selected = bool(option.state & QStyle.State_Selected)
+        hovered = bool(option.state & QStyle.State_MouseOver)
+        active = self.column.is_active
+
+        # C["void"] (Skin - niveau 2), PAS C["row_idle"] : meme couleur que
+        # le fond de la colonne SOUS l'entete (voir column_frame_qss, bg_hex
+        # passe C["void"] aussi) — une ligne NON selectionnee doit se fondre
+        # avec l'espace vide de la colonne, pas trancher avec sa propre
+        # teinte — voir la remarque de l'utilisateur, "je veux que la
+        # couleur sous l'entete/sous les textes non selectionnes soient
+        # Skin - niveau 2".
+        painter.fillRect(rect, QColor(C["void"]))
+
+        icon_enabled = bool(s.get("item_icon_enabled", True))
+        text_padding = max(0, int(s.get("item_text_padding", 8)))
+        icon_x = rect.left() + text_padding
+        text_x = icon_x
+        if icon_enabled:
+            box = 14
+            box_y = rect.center().y() - box // 2
+            painter.setPen(QPen(QColor(role_color("dim", C["label"])), 1))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(icon_x, box_y, box - 1, box - 1)
+            text_x = icon_x + box + 8
+
+        sel_color = None
+        if selected:
+            sel_color = s.get("item_selection_focus_color", C["accent"]) if active \
+                else s.get("item_selection_unfocus_color", C["sel_idle"])
+        elif hovered:
+            sel_color = s.get("item_hover_color", C["hover"])
+
+        if sel_color:
+            pad = s.get("item_selection_padding") or {}
+            sel_rect = QRect(
+                rect.left() + max(0, int(pad.get("left", 0))),
+                rect.top() + max(0, int(pad.get("top", 0))),
+                rect.width() - max(0, int(pad.get("left", 0))) - max(0, int(pad.get("right", 0))),
+                rect.height() - max(0, int(pad.get("top", 0))) - max(0, int(pad.get("bottom", 0))),
+            )
+            border_enabled = dict(s.get("item_selection_border_enabled") or {})
+            border_colors = {
+                k: resolve_color_ref(v) for k, v in (s.get("item_selection_border") or {}).items()
+            }
+            edge_border = bool(s.get("item_selection_edge_border", True))
+            for side in ("left", "right"):
+                flush = max(0, int(pad.get(side, 0))) <= 0
+                if flush and not edge_border:
+                    border_enabled[side] = False
+            radius = _radius_dict(s.get("item_selection_radius", 0))
+            if sel_rect.width() > 0 and sel_rect.height() > 0:
+                painter.setRenderHint(QPainter.Antialiasing, _radius_any(radius))
+                _paint_bordered_rect(painter, sel_rect, radius, border_enabled, 1, border_colors, sel_color)
+
+        text_color = C["accent_text"] if (selected and active) else s.get("item_color", C["text"])
+        painter.setFont(self.type_font)
+        painter.setPen(QColor(text_color))
+        text_rect = QRect(text_x, rect.top(), rect.right() - text_x - text_padding, rect.height())
+        name = painter.fontMetrics().elidedText(index.data(Qt.DisplayRole), Qt.ElideMiddle, max(0, text_rect.width()))
+        painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, name)
+
 
 def paint_thumbnail_row(
     painter: QPainter, rect, pixmap: QPixmap, name: str, meta: str,
@@ -1496,9 +1654,12 @@ def paint_thumbnail_row(
     elif hovered:
         bg = C["hover"]
     else:
-        bg = None
-    if bg:
-        painter.fillRect(rect, QColor(bg))
+        # "Item non selectionne" (voir SEMANTIC_COLOR_SLOTS et la meme
+        # remarque dans RowDelegate.paint) : plus de transparent ici non
+        # plus, chaque carte de projet/sous-projet au repos a son propre
+        # fond desormais.
+        bg = C["row_idle"]
+    painter.fillRect(rect, QColor(bg))
 
     # Vignette carree a gauche, recadree en "cover". La zone reservee reste
     # carree (largeur = hauteur de ligne) ; le padding reduit l'image
@@ -1512,13 +1673,11 @@ def paint_thumbnail_row(
         sy = max(0, (scaled.height() - thumb_rect.height()) // 2)
         cropped = scaled.copy(sx, sy, min(thumb_rect.width(), scaled.width()), min(thumb_rect.height(), scaled.height()))
         # Fond du slot (visible sous l'image des que le padding > 0, ou que
-        # l'image ne remplit pas un carre parfait) : couleur de la ligne en
-        # survol/selection, sinon celle du fond DERRIERE le texte — c'est a
-        # dire le fond normal de la liste (C["window"], voir QListWidget
-        # dans app_style.build_stylesheet), pas la couleur du texte lui-meme
-        # (confusion du premier essai) ni un C["well"] fixe deconnecte du
-        # reste de la ligne.
-        painter.fillRect(slot_rect, QColor(bg or C["window"]))
+        # l'image ne remplit pas un carre parfait) : toujours `bg`, jamais
+        # transparent ni un C["well"]/C["window"] fixe deconnecte du reste
+        # de la ligne — `bg` couvre desormais tous les etats (accent/
+        # sel_idle/hover/row_idle, voir plus haut), donc toujours defini.
+        painter.fillRect(slot_rect, QColor(bg))
         # drawPixmap(rect, pixmap) plutot que drawPixmap(point, pixmap) : le
         # scaled()/copy() ci-dessus peut, par arrondi, rendre `cropped` 1px
         # plus petit que thumb_rect dans un sens — dessine au point, ce
@@ -1526,17 +1685,28 @@ def paint_thumbnail_row(
         # decalee de 1px). Dessiner dans le rectangle force l'image a le
         # remplir exactement, arrondi inclus.
         if radius > 0:
-            path = QPainterPath()
-            path.addRoundedRect(QRectF(thumb_rect), radius, radius)
-            painter.save()
-            # Antialiasing force ici (independamment du reglage du
-            # painter appelant, souvent coupe pour un rendu pixel-perfect
-            # ailleurs) : sans lui, les coins arrondis ressortaient
-            # crenelés/pas lisses.
-            painter.setRenderHint(QPainter.Antialiasing, True)
-            painter.setClipPath(path)
-            painter.drawPixmap(thumb_rect, cropped)
-            painter.restore()
+            # Masque construit a la main (REMPLISSAGE antialiase + composition
+            # DestinationIn), PAS un setClipPath direct sur `painter` : le
+            # moteur de rendu RASTER de Qt ne produit PAS un clip vraiment
+            # antialiase (meme avec le render hint Antialiasing actif, il
+            # retombe sur un masque quasi-binaire en interne) — voir la
+            # remarque de l'utilisateur, capture Colonnes/vignette a l'appui,
+            # "j'ai du mal a croire qu'il n'existe pas un autre algorithme
+            # pour faire les arrondis... regarde VSCode... admet qu'il y a un
+            # probleme" — MEME correctif que _RoundedCornersEffect.draw (voir
+            # sa docstring) : un REMPLISSAGE (fillPath), lui, est
+            # correctement antialiase par ce meme moteur, d'ou ce detour.
+            masked = QPixmap(thumb_rect.size())
+            masked.fill(Qt.transparent)
+            mp = QPainter(masked)
+            mp.setRenderHint(QPainter.Antialiasing, True)
+            mp.drawPixmap(QRect(0, 0, thumb_rect.width(), thumb_rect.height()), cropped)
+            mp.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+            mask_path = QPainterPath()
+            mask_path.addRoundedRect(QRectF(0, 0, thumb_rect.width(), thumb_rect.height()), radius, radius)
+            mp.fillPath(mask_path, Qt.white)
+            mp.end()
+            painter.drawPixmap(thumb_rect, masked)
         else:
             painter.drawPixmap(thumb_rect, cropped)
     # Couleur dediee "Ligne" (C["line"]), pas C["border"] (reserve aux
@@ -2022,10 +2192,27 @@ class _SquarePreviewImage(QLabel):
         p = QPainter(canvas)
         p.setRenderHint(QPainter.Antialiasing, True)
         if radius > 0:
+            # Masque construit a la main (fillPath + CompositionMode_
+            # DestinationIn), PAS un setClipPath direct : voir la docstring
+            # de _RoundedCornersEffect.draw (MEME correctif, MEME raison —
+            # setClipPath n'est pas vraiment antialiase sur le moteur
+            # raster de Qt, contrairement a un remplissage) — voir la
+            # remarque de l'utilisateur, capture de cette meme vignette a
+            # l'appui, "j'ai du mal a croire qu'il n'existe pas un autre
+            # algorithme... admet qu'il y a un probleme".
+            masked = QPixmap(inner, inner)
+            masked.fill(Qt.transparent)
+            mp = QPainter(masked)
+            mp.setRenderHint(QPainter.Antialiasing, True)
+            mp.drawPixmap(0, 0, cropped)
+            mp.setCompositionMode(QPainter.CompositionMode_DestinationIn)
             path = QPainterPath()
-            path.addRoundedRect(QRectF(pad, pad, inner, inner), radius, radius)
-            p.setClipPath(path)
-        p.drawPixmap(pad, pad, cropped)
+            path.addRoundedRect(QRectF(0, 0, inner, inner), radius, radius)
+            mp.fillPath(path, Qt.white)
+            mp.end()
+            p.drawPixmap(pad, pad, masked)
+        else:
+            p.drawPixmap(pad, pad, cropped)
         p.end()
         self.setPixmap(canvas)
 
@@ -2249,6 +2436,48 @@ class _FilesPreviewBlock(QWidget):
         self.setFixedHeight(height)
 
 
+class _ColumnStyleBorderOverlay(QWidget):
+    """Fine couche transparente, toujours AU-DESSUS des autres enfants (voir
+    _PreviewBlock/_EmptyPreviewBlock, raise_ee a chaque redimensionnement) :
+    peint SEULEMENT la bordure/le rayon "style colonne" (voir
+    _paint_column_style_border) PAR-DESSUS le contenu deja peint (l'image
+    bord a bord y compris) — un paintEvent directement sur le widget parent
+    serait, lui, peint AVANT ses enfants (l'ordre normal de composition
+    Qt : parent, puis enfants par-dessus), donc recouvert par l'image
+    plutot que visible par-dessus elle."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setStyleSheet("background: transparent;")
+
+    def paintEvent(self, event):
+        _paint_column_style_border(self)
+
+
+def _paint_column_style_border(widget: QWidget):
+    """Peint, PAR-DESSUS le contenu deja affiche de `widget`, le MEME cadre
+    (bordure/rayon, PAS le fond — deja peint par le style-sheet du widget)
+    que celui des vraies colonnes (voir app_style.column_frame_style,
+    style GENERAL — ni Projets ni Sous-projet ni le bloc vide ci-dessous ne
+    sont "Type", column_style_for renvoie donc toujours le meme style
+    general quel que soit le titre passe) — voir la remarque de
+    l'utilisateur, "je veux les trois colonnes (avec style predefini dans
+    les settings) les unes sur les autres, formant a elles 3 une seule
+    colonne" : chaque bloc empile (_PreviewBlock/_EmptyPreviewBlock) doit
+    avoir l'air d'une colonne a lui seul, meme si les 3 vivent DANS une
+    seule vraie colonne (PreviewColumn). scaled() sur rayon/epaisseur :
+    meme raison que Column.refresh_colors (coherence a l'echelle
+    d'interface)."""
+    frame = column_frame_style("Sous-projet")
+    radius = {k: scaled(v, 0) for k, v in frame["radius"].items()}
+    thickness = scaled(frame["thickness"], 0)
+    painter = QPainter(widget)
+    painter.setRenderHint(QPainter.Antialiasing, _radius_any(radius))
+    _paint_bordered_rect(painter, widget.rect(), radius, frame["enabled"], thickness, frame["colors"], None)
+    painter.end()
+
+
 class _PreviewBlock(QWidget):
     """Un niveau d'aperçu empile : une rangee d'indicateurs in/over/out, une
     grande barre de titre « affiche » (nom du projet/sous-projet), suivies
@@ -2342,6 +2571,152 @@ class _PreviewBlock(QWidget):
         # (grand vide au-dessus du titre, avant l'image).
         self.setFixedHeight(PREVIEW_BLOCK_EXTRA_HEIGHT + width)
 
+        # Style "colonne" (bordure/rayon des settings, voir
+        # _paint_column_style_border) par-dessus tout le bloc — voir
+        # _ColumnStyleBorderOverlay, la remarque de l'utilisateur.
+        self._border_overlay = _ColumnStyleBorderOverlay(self)
+        self._border_overlay.setGeometry(self.rect())
+        self._border_overlay.raise_()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._border_overlay.setGeometry(self.rect())
+        self._border_overlay.raise_()
+
+
+class _EmptyPreviewBlock(QWidget):
+    """3e bloc, TOUJOURS empile apres les vignettes de Projets/Sous-projet
+    (voir PreviewColumn.set_preview_stack) — vide pour le moment, voir la
+    remarque de l'utilisateur, "sous ces deux blocs on doit egalement
+    avoir une colonne (vide pour le moment)". Meme style "colonne" que
+    _PreviewBlock (voir _paint_column_style_border) : ensemble, les 3
+    blocs doivent avoir l'air de 3 colonnes empilees, meme si les 3 vivent
+    dans la seule vraie colonne fantome des vignettes (PreviewColumn)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Meme raison que _PreviewBlock (WA_StyledBackground indispensable
+        # sur un widget ENFANT pour que son style-sheet de fond s'applique).
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet(f"background: {C['chrome']};")
+        self.setFixedHeight(PREVIEW_HEADER_HEIGHT)
+        self._border_overlay = _ColumnStyleBorderOverlay(self)
+        self._border_overlay.setGeometry(self.rect())
+        self._border_overlay.raise_()
+
+    def refresh_colors(self):
+        self.setStyleSheet(f"background: {C['chrome']};")
+        self._border_overlay.update()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._border_overlay.setGeometry(self.rect())
+        self._border_overlay.raise_()
+
+
+class _RoundedCornersEffect(QGraphicsEffect):
+    """Decoupe self.card (fond + TOUS ses enfants, entete/liste compris) a
+    la silhouette de son rayon d'angle, AVEC anti-aliasing — remplace
+    Column._update_card_mask/QWidget.setMask() : un QRegion est un
+    decoupage BINAIRE (pixel dedans/dehors, jamais de demi-teinte), ce qui
+    rendait les coins arrondis visiblement crenelés/en escalier — voir la
+    remarque de l'utilisateur, capture a l'appui, "les arrondis sont
+    degueulasse, ils ne sont pas lisses". Technique standard Qt pour un
+    coin arrondi lisse sur un widget composite : peindre le widget (et ses
+    enfants) dans un pixmap hors-ecran (sourcePixmap), puis le recomposer
+    ICI a travers un QPainterPath arrondi avec Antialiasing actif — la
+    MEME geometrie que celle reellement peinte par _ColumnCard.paintEvent
+    (_rounded_rect_path), pour rester coherent avec le fond/la bordure."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._radius: dict = {}
+
+    def setRadius(self, radius: dict):
+        self._radius = radius
+        self.update()
+
+    def draw(self, painter: QPainter):
+        """QPainter.setClipPath (1er essai, voir git blame) NE PRODUIT PAS
+        d'arrondi vraiment antialiase sur le moteur de rendu RASTER de Qt
+        (celui utilise ici, PAS OpenGL) : un clip y retombe sur un masque
+        BINAIRE en interne, meme render hint Antialiasing actif — voir la
+        remarque de l'utilisateur, comparaison a l'appui (VSCode/Electron,
+        qui compose ses coins arrondis via le GPU, PAS ce chemin), "j'ai du
+        mal a croire qu'il n'existe pas un autre algorithme... regarde le
+        screen, il s'agit de vscode... admet qu'il y a un probleme". Fix :
+        construire le masque a la main via un REMPLISSAGE (fillPath, PAS un
+        clip — le remplissage, lui, est correctement antialiase par le
+        moteur raster) d'un pixmap ARGB transparent, puis composer ce
+        pixmap source AU TRAVERS de ce masque via CompositionMode_
+        DestinationIn (l'alpha du masque, deja lisse, multiplie celui de
+        l'image source) — technique Qt standard pour un decoupage
+        VRAIMENT antialiase, contrairement a un simple clip path."""
+        offset = QPoint()
+        pixmap = self.sourcePixmap(Qt.LogicalCoordinates, offset)
+        if pixmap.isNull():
+            return
+        dpr = pixmap.devicePixelRatio() or 1.0
+        w = int(round(pixmap.width() / dpr))
+        h = int(round(pixmap.height() / dpr))
+        # PAS de marge elargie ici (essaye puis abandonne — voir git blame,
+        # "la bordure disparait completement dans l'arrondi") : cette
+        # meme classe sert AUSSI a self._content_effect (voir Column.
+        # _update_card_mask), dont le rayon (RETRECI, inner_radius) doit
+        # rester EXACT — l'elargir laissait l'entete/la liste (coins
+        # carres) deborder PAR-DESSUS l'anneau de la bordure exactement
+        # dans la courbe, la ou l'entete est peinte SANS son propre rayon
+        # (voir column_header_qss, "plus de nibbling... le rognage visuel
+        # est deja garanti par ce decoupage") — recouvrant entierement la
+        # bordure a cet endroit precis. self._card_effect, lui, n'a de
+        # toute facon plus besoin d'etre actif des qu'une bordure existe
+        # (voir _update_card_mask, setEnabled) : plus rien ici a compenser
+        # par une marge.
+        path = _rounded_rect_path(QRect(0, 0, w, h), self._radius)
+        masked = QPixmap(pixmap.size())
+        masked.setDevicePixelRatio(dpr)
+        masked.fill(Qt.transparent)
+        mp = QPainter(masked)
+        mp.setRenderHint(QPainter.Antialiasing, True)
+        mp.drawPixmap(0, 0, pixmap)
+        mp.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+        mp.fillPath(path, Qt.white)
+        mp.end()
+        painter.drawPixmap(offset, masked)
+
+
+class _ColumnCard(QWidget):
+    """Porte le fond/la bordure REELS d'une colonne (voir Column.card) —
+    peinte a la main (QPainter, _paint_bordered_rect, MEME technique que
+    settings_window._ColumnPreview) plutot que via border-radius QSS : la
+    QSS et le masque de decoupe des enfants (voir Column._update_card_mask)
+    utilisaient chacun leur PROPRE geometrie de coin arrondi (le moteur de
+    style de Qt d'un cote, un chemin arrondi maison de l'autre), jamais
+    parfaitement identiques — la bordure ne "enveloppait" alors pas
+    exactement le masque — voir la remarque de l'utilisateur, capture a
+    l'appui, "le cadre n'enveloppe pas les bordures radius". Peindre ICI
+    avec la MEME fonction (_rounded_rect_path, via _paint_bordered_rect)
+    que celle qui calcule le masque garantit desormais une geometrie
+    identique au pixel pres."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._bg = "#000000"
+        self._radius: dict = {}
+        self._enabled: dict = {}
+        self._colors: dict = {}
+        self._thickness = 1
+
+    def setFrameStyle(self, bg: str, radius: dict, enabled: dict, colors: dict, thickness: int):
+        self._bg, self._radius, self._enabled, self._colors, self._thickness = bg, radius, enabled, colors, thickness
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, _radius_any(self._radius))
+        _paint_bordered_rect(p, self.rect(), self._radius, self._enabled, self._thickness, self._colors, self._bg)
+        p.end()
+
 
 # ==========================================================================
 # Colonne
@@ -2358,6 +2733,14 @@ class Column(QWidget):
         self.is_active = False
         self.column_title = title
         self.has_thumbnails = title in THUMBNAIL_COLUMN_LABELS
+        # Repli/depli (voir set_collapsed) : seules Type/Projets/Sous-projet
+        # sont concernees (voir COLLAPSIBLE_COLUMN_TITLES et
+        # PipelineBrowser._sync_collapse_state) — Logiciels/Contenu n'ont pas
+        # d'icone et ignorent silencieusement tout appel a set_collapsed.
+        self.collapsible = title in COLLAPSIBLE_COLUMN_TITLES
+        self.collapsed = False
+        self._expanded_width = None
+        self._width_anim = None
 
         self.title_label = QLabel(title)
         self.title_label.setFont(role_font("colhead", 10, 600, tracking=0.9, caps=True))
@@ -2385,8 +2768,10 @@ class Column(QWidget):
         header.setFixedHeight(scaled(HEADER_HEIGHT))
         self.header = header
         header_outer_layout = QVBoxLayout(header)
-        header_outer_layout.setContentsMargins(scaled(HEADER_PADDING), scaled(HEADER_PADDING),
-                                                scaled(HEADER_PADDING), scaled(HEADER_PADDING))
+        # minimum=0 (voir la docstring de scaled) : un padding regle a 0 doit
+        # rester 0, pas remonter a 1px apres arrondi.
+        header_outer_layout.setContentsMargins(scaled(HEADER_PADDING, 0), scaled(HEADER_PADDING, 0),
+                                                scaled(HEADER_PADDING, 0), scaled(HEADER_PADDING, 0))
         header_outer_layout.setSpacing(0)
 
         header_fill = QWidget()
@@ -2432,9 +2817,45 @@ class Column(QWidget):
         self.preview_layout.setSpacing(0)
         self.preview_container.hide()
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 1, 0)
-        layout.setSpacing(0)
+        # self.card : porte le fond/la bordure/le rayon REELS de la colonne
+        # (voir refresh_colors/app_style.column_frame_qss) — self, lui, ne
+        # sert plus qu'a reserver l'EMPLACEMENT plein (largeur allouee,
+        # cible du redimensionnement a la souris) et a inserer ce card en
+        # retrait de Padding px sur chaque cote (voir refresh_header/
+        # app_style.column_padding_for) : une "carte flottante" qui peut
+        # RETRECIR sans deplacer la frontiere de redimensionnement ni les
+        # colonnes voisines — voir la remarque de l'utilisateur, "je veux
+        # que le fond de la colonne se replie ... pour toutes les colonnes
+        # de l'appli".
+        self.card = _ColumnCard()
+        self.card.setObjectName("ColumnCard")
+        # Voir _RoundedCornersEffect : remplace setMask() (crenele, voir la
+        # remarque de l'utilisateur "les arrondis sont degueulasse, ils ne
+        # sont pas lisses") par un decoupage anti-aliase.
+        self._card_effect = _RoundedCornersEffect(self.card)
+        self.card.setGraphicsEffect(self._card_effect)
+
+        # self._content : porte l'entete/la liste, en retrait de la bordure
+        # (voir refresh_header, reserve()) DANS self.card — separe de
+        # self.card pour lui appliquer son PROPRE decoupage arrondi (voir
+        # self._content_effect ci-dessous, rayon RETRECI de l'epaisseur de
+        # bordure, _radius_shrink, meme calcul que le clip du FOND dans
+        # _paint_bordered_rect) : une simple marge DROITE/UNIFORME (voir
+        # reserve()) ne degage assez de place que le long des segments
+        # DROITS du cadre — a un COIN arrondi, l'anneau de la bordure
+        # plonge plus profondement vers le centre (jusqu'a `radius` px en
+        # diagonale) que cette marge (juste `thickness` px) ne le prevoit,
+        # laissant l'entete/la liste recouvrir le trace courbe de la
+        # bordure a chaque coin — voir la remarque de l'utilisateur,
+        # capture a l'appui, "il n'y a toujours pas de bordure dans les
+        # angles".
+        self._content = QWidget()
+        self._content.setStyleSheet("background: transparent;")
+        self._content_effect = _RoundedCornersEffect(self._content)
+        self._content.setGraphicsEffect(self._content_effect)
+        content_layout = QVBoxLayout(self._content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
         # L'en-tete (titre + compteur) est place APRES l'apercu empile : tant
         # que celui-ci est vide/masque (colonnes sans apercu, ou Logiciels
         # avant selection), il ne prend aucune place et l'en-tete reste
@@ -2446,9 +2867,9 @@ class Column(QWidget):
         # (indicateurs + titre), en ajouter un ici ne ferait que dupliquer
         # cette hauteur et decaler tout l'apercu vers le bas des qu'une
         # vraie colonne (avec liste) remplace la colonne fantome.
-        layout.addWidget(self.preview_container, 0)
-        layout.addWidget(header)
-        layout.addWidget(self.list, 1)
+        content_layout.addWidget(self.preview_container, 0)
+        content_layout.addWidget(header)
+        content_layout.addWidget(self.list, 1)
         # Espaceur de fin, initialement sans etirement (voir
         # set_preview_stack) : tant que la liste garde son facteur
         # d'etirement (pas d'apercu), il n'absorbe rien. Des que la liste est
@@ -2456,18 +2877,44 @@ class Column(QWidget):
         # l'espace en trop en fin de colonne — sinon Qt le rend quand meme a
         # la liste malgre son plafond, en la centrant dans l'espace qui lui
         # avait ete alloue au lieu de la laisser collee en haut, sous l'en-tete.
-        layout.addStretch(0)
+        content_layout.addStretch(0)
+
+        layout = QVBoxLayout(self.card)
+        layout.setContentsMargins(0, 0, 1, 0)   # voir refresh_header, qui l'ajuste a l'epaisseur de bordure
+        layout.setSpacing(0)
+        layout.addWidget(self._content)
         self._column_layout = layout
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)   # voir refresh_header, qui l'ajuste a Padding
+        outer_layout.setSpacing(0)
+        outer_layout.addWidget(self.card)
+        self._outer_layout = outer_layout
 
         self.setFixedWidth(col_width(title))
         self.setObjectName("Column")
-        self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setStyleSheet(f"#Column {{ border-right: 1px solid {C['border']}; }}")
+        # Transparent EXPLICITE (self ne peint plus rien lui-meme desormais,
+        # voir self.card ci-dessus) : sans lui, ce QWidget nu heriterait du
+        # fond OPAQUE par defaut de la feuille de style globale, masquant le
+        # fond de #ColumnsHost (voir PipelineBrowser.refresh_colors) la ou
+        # Padding fait justement RETRECIR self.card en dessous de la pleine
+        # largeur/hauteur de self.
+        self.setStyleSheet("#Column { background: transparent; }")
 
         # Redimensionnement par glisser-deposer sur la bordure droite.
         self._resizing = False
         self._resize_start_x = 0
         self._resize_start_width = 0
+        # Largeur choisie a la main par l'utilisateur (voir resize_update) —
+        # None tant qu'il n'a jamais redimensionne cette colonne. Sans ce
+        # suivi, refresh_all_columns() (rejouee a CHAQUE reglage touche
+        # dans Parametres, y compris juste pour previsualiser Colonnes >
+        # Padding/Bordure) reappliquait col_width(...), la largeur par
+        # DEFAUT, effacant instantanement tout redimensionnement manuel —
+        # voir la remarque de l'utilisateur, "quand je touche les valeurs
+        # des settings, la largeur de la colonne devient subitement toute
+        # petite".
+        self._user_width = None
         self.setMouseTracking(True)
         header.setMouseTracking(True)
         header.installEventFilter(self)
@@ -2479,12 +2926,65 @@ class Column(QWidget):
         # inaccessible chaque fois qu'une scrollbar est visible.
         self.list.verticalScrollBar().installEventFilter(self)
 
+        # Rejoue immediatement le style au-dessus (header_fill/le cadre de
+        # cette colonne, tous 2 fixes en dur juste plus haut) : necessaire
+        # pour la colonne "Type", dont le style EFFECTIF (general ou
+        # surcharge, voir app_style.type_column_style) peut deja differer
+        # du style partage par les autres colonnes des la construction.
+        self.refresh_header()
+        self.refresh_colors()
+
         self.refresh()
 
     def set_active(self, active: bool):
         if self.is_active != active:
             self.is_active = active
             self.list.viewport().update()
+
+    def set_collapsed(self, collapsed: bool, animate: bool = True):
+        """Replie entierement la colonne (largeur animee jusqu'a 0, voir
+        _animate_width) ou la redeploie a sa largeur precedente. Ignore
+        silencieusement les colonnes non repliables (voir `collapsible`,
+        pose a la construction) : PipelineBrowser peut appeler ceci sur
+        toutes ses colonnes sans avoir a filtrer lui-meme — pilote par
+        l'icone unique de la colonne des vignettes (voir
+        PipelineBrowser._toggle_project_columns), pas par une icone propre
+        a chaque colonne."""
+        if not self.collapsible or self.collapsed == collapsed:
+            return
+        self.collapsed = collapsed
+        if collapsed:
+            self._expanded_width = self.width()
+            target = 0
+        else:
+            target = self._expanded_width or self._user_width or col_width(self.column_title)
+        if animate:
+            self._animate_width(target)
+        else:
+            self.setFixedWidth(target)
+
+    def _animate_width(self, target_width: int, duration: int = 220):
+        """Anime la largeur (minimumWidth/maximumWidth, les deux proprietes
+        que setFixedWidth pose habituellement d'un coup) de la largeur
+        actuelle vers `target_width`. Les deux animations tournent en
+        parallele pour ne jamais laisser min > max (ou inversement) pendant
+        la transition, ce qui ferait clignoter/planter la mise en page."""
+        if getattr(self, "_width_anim", None) is not None:
+            self._width_anim.stop()
+        start_width = self.width()
+        group = QParallelAnimationGroup(self)
+        for prop in (b"minimumWidth", b"maximumWidth"):
+            anim = QPropertyAnimation(self, prop)
+            anim.setDuration(duration)
+            anim.setStartValue(start_width)
+            anim.setEndValue(target_width)
+            anim.setEasingCurve(QEasingCurve.InOutCubic)
+            group.addAnimation(anim)
+        # Garder la reference : sans elle, le GC Python peut detruire le
+        # groupe avant la fin de l'animation (Qt ne la garde pas vivante a
+        # notre place ici, contrairement a un parent QObject classique).
+        self._width_anim = group
+        group.start()
 
     def _list_content_height(self) -> int:
         total = sum(self.list.sizeHintForRow(i) for i in range(self.list.count()))
@@ -2573,6 +3073,13 @@ class Column(QWidget):
             self.refresh()
 
     def _in_resize_zone(self, x: int) -> bool:
+        # Une colonne repliee (largeur nulle, voir set_collapsed) ne se
+        # redimensionne pas a la main. columns_resizable() : Fenetre de
+        # parametres > Tableaux > Colonnes dimensionnables (voir
+        # app_style.set_columns_resizable) — desactive, ni le curseur ni le
+        # glisser ne s'activent plus sur cette bordure.
+        if self.collapsed or not columns_resizable():
+            return False
         return self.width() - COLUMN_RESIZE_MARGIN <= x <= self.width()
 
     @property
@@ -2588,9 +3095,11 @@ class Column(QWidget):
     def resize_update(self, global_x: int):
         delta = global_x - self._resize_start_x
         new_width = max(COLUMN_MIN_WIDTH, min(COLUMN_MAX_WIDTH, self._resize_start_width + delta))
+        self._user_width = new_width
         self.setFixedWidth(new_width)
         self.list.doItemsLayout()
         self._resize_preview_images()
+        self._update_card_mask()   # voir sa docstring — self.card change de largeur ici aussi
         _show_resize_width(self, new_width)
 
     def resize_end(self):
@@ -2616,6 +3125,45 @@ class Column(QWidget):
         elif etype == QEvent.Leave and not self._resizing:
             obj.unsetCursor()
         return False
+
+    # Gestionnaires DIRECTS sur self, EN PLUS de l'eventFilter ci-dessus
+    # (installe sur header/self.list.viewport()/sa scrollbar — voir
+    # __init__) : Padding (voir refresh_header/self._outer_layout) peut
+    # desormais retrecir self.card (et tout son contenu, header/liste
+    # compris) EN DECA du bord droit REEL de self — la zone de
+    # redimensionnement, elle, reste TOUJOURS a ce bord reel (largeur
+    # ALLOUEE, jamais retrecie par Padding, voir _in_resize_zone/self.
+    # width()). Sans ces 2 gestionnaires, cette bande (le "vide" du
+    # padding, visible entre le bord de la carte et le bord reel de la
+    # colonne) n'etait couverte par AUCUN widget enfant — donc par aucun
+    # eventFilter — rendant le redimensionnement tout simplement
+    # INACCESSIBLE a la souris des que Padding > 0 — voir la remarque de
+    # l'utilisateur, "il est impossible de redimensionner la colonne quand
+    # on commence a toucher aux settings".
+    def mouseMoveEvent(self, event):
+        if self._resizing:
+            self.resize_update(event.globalPosition().toPoint().x())
+            return
+        x = int(event.position().x())
+        self.setCursor(Qt.SizeHorCursor if self._in_resize_zone(x) else Qt.ArrowCursor)
+        super().mouseMoveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self._in_resize_zone(int(event.position().x())):
+            self.resize_begin(event.globalPosition().toPoint().x())
+            return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._resizing:
+            self.resize_end()
+            return
+        super().mouseReleaseEvent(event)
+
+    def leaveEvent(self, event):
+        if not self._resizing:
+            self.unsetCursor()
+        super().leaveEvent(event)
 
     def refresh(self):
         current = self.current_path()
@@ -2668,29 +3216,272 @@ class Column(QWidget):
         car un changement de couleur depuis la fenetre de parametres ne
         retouche pas les widgets deja construits (voir la remarque sur
         set_color dans app_style.py)."""
-        self.header_fill.setStyleSheet(header_qss("ColumnHeader"))
+        # Style APPLIQUE POUR DE VRAI a TOUTE colonne desormais (voir
+        # app_style.column_header_qss/column_frame_qss — le style general
+        # Colonnes/Entetes, "Type" seule pouvant le SURCHARGER depuis
+        # Colonnes > Type, voir SettingsWindow._build_column_type_page),
+        # pas seulement l'apercu de la fenetre de parametres comme avant —
+        # voir la remarque de l'utilisateur, "je veux que tu en fasse de
+        # meme pour toute les colonnes de l'appli. les settings doivent
+        # refletter a 100% ce qui se passe dans l'appli".
+        self.header_fill.setStyleSheet(column_header_qss("ColumnHeader", self.column_title))
         self.preview_container.setStyleSheet(f"border-bottom: 1px solid {C['border']};")
-        self.setStyleSheet(f"#Column {{ border-right: 1px solid {C['border']}; }}")
+        frame = column_frame_style(self.column_title, self._suppress_left())
+        # scaled() ICI, sur le MEME dict que celui repasse tel quel au
+        # masque (voir _update_card_mask, qui relit self.card._radius
+        # plutot que de recalculer independamment) : sans ca, peinture et
+        # masque pouvaient utiliser 2 rayons LEGEREMENT differents des que
+        # l'echelle d'interface (Application > Scale) n'est pas 100%.
+        scaled_radius = {k: scaled(v, 0) for k, v in frame["radius"].items()}
+        # scaled() sur l'epaisseur AUSSI (pas seulement le rayon ci-dessus) :
+        # refresh_header reserve deja scaled(border_thickness) comme marge
+        # pour cette bordure — la peindre ICI avec l'epaisseur BRUTE (non
+        # scaled) desaccordait les deux des que l'echelle d'interface
+        # (Application > Scale) n'est pas 100%, laissant un filet trop fin/
+        # epais par rapport a la marge qui lui est reservee.
+        self.card.setFrameStyle(
+            C["void"], scaled_radius, frame["enabled"], frame["colors"], scaled(frame["thickness"], 0))
+        self._update_card_mask()
         self.title_label.setStyleSheet(f"color: {role_color('colhead', C['header'])}; background: transparent;")
         self.count_label.setStyleSheet(f"color: {role_color('info', C['count'])}; background: transparent;")
+
+    def _suppress_left(self) -> bool:
+        """Cette colonne a-t-elle une AUTRE colonne immediatement a sa
+        gauche (pas la premiere de la rangee) ET les 2 cartes se touchent
+        VRAIMENT (aucun espace de layout — voir column_gap — ET aucun
+        padding sur le cote qui les separe, voir column_padding_for) ?
+        MEME regle que settings_window._ColumnPreview (has_left_neighbor)
+        — un SEUL filet reste visible a la frontiere entre 2 colonnes
+        collees (celui de DROITE de celle de gauche) plutot que 2 cumules.
+
+        Le Padding fait RETRECIR chaque carte (voir refresh_header/la
+        remarque "carte flottante") : des qu'il est actif d'un cote ou de
+        l'autre, les 2 cartes ne se touchent PLUS reellement, meme a
+        column_gap() <= 0 — leurs 2 filets doivent alors REAPPARAITRE
+        (rien a fusionner, il n'y a plus de frontiere commune) — voir la
+        remarque de l'utilisateur, "quand j'ai un padding entre deux
+        colonnes, c'est comme si les colonnes etaient espacees, donc les
+        bordures doivent reapparaitre".
+
+        indexOf() (pas un compteur maintenu a la main) : lu directement
+        dans columns_layout, toujours a jour quel que soit l'ordre
+        d'ajout/repli/depli des colonnes. Utilise par refresh_colors
+        (border-left EFFECTIVEMENT peint) ET refresh_header (la marge qui
+        lui est reservee ET le padding gauche annule, voir plus bas —
+        doivent toujours s'accorder)."""
+        parent_layout = self._containing_layout()
+        if parent_layout is None:
+            return False
+        idx = parent_layout.indexOf(self)
+        if idx <= 0 or column_gap() > 0:
+            return False
+        if column_padding_for(self.column_title)["left"] > 0:
+            return False
+        prev_item = parent_layout.itemAt(idx - 1)
+        prev_widget = prev_item.widget() if prev_item is not None else None
+        if isinstance(prev_widget, Column) and column_padding_for(prev_widget.column_title)["right"] > 0:
+            return False
+        return True
+
+    def _containing_layout(self):
+        """Le VRAI layout qui contient directement ce widget (columns_layout,
+        cote PipelineBrowser) — PAS self.parentWidget().layout(), qui ne
+        renvoie que le layout de PLUS HAUT NIVEAU du widget parent.
+        columns_layout est un QHBoxLayout imbrique (ajoute au layout
+        englobant via addLayout(), jamais lui-meme le layout direct d'un
+        widget) : parentWidget().layout() renvoyait donc TOUJOURS ce layout
+        englobant, ou self n'a jamais ete ajoute directement, faisant
+        systematiquement echouer indexOf(self) (-1 en permanence) — donc
+        _suppress_left() ne detectait JAMAIS de voisine de gauche, meme
+        colonnes collees. Voir la remarque de l'utilisateur, "la distance
+        entre les colonnes est toujours deux fois plus importante que la
+        valeur de padding" : le padding gauche n'etait donc jamais
+        supprime."""
+        parent = self.parentWidget()
+        if parent is None or parent.layout() is None:
+            return None
+
+        def search(layout):
+            for i in range(layout.count()):
+                item = layout.itemAt(i)
+                if item.widget() is self:
+                    return layout
+                sub_layout = item.layout()
+                if sub_layout is not None:
+                    found = search(sub_layout)
+                    if found is not None:
+                        return found
+            return None
+
+        return search(parent.layout())
 
     def refresh_header(self):
         """Reapplique hauteur/padding/police de l'entete (voir HEADER_HEIGHT/
         HEADER_PADDING, role 'colhead') — reglable en direct depuis
         Parametres > Entetes. HEADER_PADDING est la marge de header (voir
         __init__) : l'espace entre le fond colore (header_fill) et les
-        bords de la colonne, pas la marge du texte a l'interieur du fond."""
-        self.header.setFixedHeight(scaled(HEADER_HEIGHT))
-        pad = scaled(HEADER_PADDING)
+        bords de la colonne, pas la marge du texte a l'interieur du fond.
+
+        Style EFFECTIF de CETTE colonne (voir app_style.column_style_for —
+        general, ou surcharge Colonnes > Type pour "Type") plutot que les
+        globals HEADER_HEIGHT/HEADER_PADDING partages a l'ancienne."""
+        s = column_style_for(self.column_title)
+        height = int(s.get("header_height", HEADER_HEIGHT))
+        padding = int(s.get("header_padding", HEADER_PADDING))
+        self.header.setFixedHeight(scaled(height))
+        pad = scaled(padding, 0)   # 0 = valeur reglee valide (voir scaled)
         self.header.layout().setContentsMargins(pad, pad, pad, pad)
         self.title_label.setFont(role_font("colhead", 10, 600, tracking=0.9, caps=True))
         self.count_label.setFont(role_font("info", 10, 400))
+        # Bordure du CADRE : reserve, sur CHAQUE cote EFFECTIVEMENT peint
+        # (voir column_frame_qss/_suppress_left — meme regle ICI pour le
+        # cote gauche), la meme epaisseur que celle reellement dessinee la
+        # — sinon le contenu (liste/entete, colle a self.card sans marge)
+        # recouvrirait le filet, cote par cote — voir _TableFrame dans
+        # settings_window.py, meme necessite/meme raison, deja documentee
+        # la-bas. 1er essai : UNE seule marge, a droite (l'ancien filet
+        # unique code en dur) — insuffisant des que les 4 cotes peuvent
+        # etre actives independamment, voir la remarque de l'utilisateur,
+        # "quand je met une valeur de padding, il n'y a pas de bordure sur
+        # tous les cotes de la colonne" (le filet HAUT/GAUCHE/BAS restait
+        # bien peint par la QSS, mais aussitot recouvert par l'entete/la
+        # liste, qui n'en reservaient pas la place).
+        border_thickness = max(0, int(s.get("column_border_thickness", 1)))
+        enabled = s.get("column_border_enabled") or {}
+        suppress_left = self._suppress_left()
+
+        def reserve(side_enabled: bool) -> int:
+            return border_thickness if side_enabled else 0
+
+        self._column_layout.setContentsMargins(
+            scaled(reserve(bool(enabled.get("left", True)) and not suppress_left), 0),
+            scaled(reserve(bool(enabled.get("top", True))), 0),
+            scaled(reserve(bool(enabled.get("right", True))), 0),
+            scaled(reserve(bool(enabled.get("bottom", True))), 0),
+        )
+        # Padding de la colonne, PAR COTE (voir settings_window.
+        # _ColumnPreview.setPadding/Colonnes > Colonnes > Padding) : fait
+        # RETRECIR self.card (fond + bordure) de ce nombre de px sur chaque
+        # cote choisi, PAS un simple retrait de son contenu — voir la
+        # remarque de l'utilisateur, "je veux que le fond de la colonne se
+        # replie". Cote GAUCHE mis a 0 si cette colonne est COLLEE a une
+        # voisine (meme regle que _suppress_left pour la bordure) : sinon
+        # l'ecart VISIBLE entre 2 colonnes collees cumulait le padding
+        # DROIT de celle de gauche ET le padding GAUCHE de celle de
+        # droite — le double de la valeur reglee — voir la remarque de
+        # l'utilisateur, "la distance entre 2 colonnes doit etre la valeur
+        # du padding et non celle du padding*2".
+        col_pad = dict(column_padding_for(self.column_title))
+        if self._suppress_left():
+            col_pad["left"] = 0
+        self._outer_layout.setContentsMargins(
+            scaled(col_pad["left"], 0), scaled(col_pad["top"], 0),
+            scaled(col_pad["right"], 0), scaled(col_pad["bottom"], 0),
+        )
+        self._update_card_mask()
+
+    def _update_card_mask(self):
+        """Decoupe VRAIMENT self.card (fond + TOUS ses enfants — entete ET
+        liste) a la silhouette EXACTE de son rayon d'angle — voir la
+        remarque de l'utilisateur, capture a l'appui, "le fond et l'entete
+        passent toujours devant la bordure de la colonne" : reserver une
+        marge DROITE (voir refresh_header) ne protege que les segments
+        DROITS des bords, jamais la zone COURBE d'un coin — l'entete
+        (coins hauts) ET la liste (coins bas, ses propres lignes restant
+        toujours des rectangles PLEINS, sans rayon) y debordaient donc
+        encore des que column_border_radius > 0. Qt ne clippe jamais
+        automatiquement des enfants au rayon QSS de leur parent — voir
+        _TableFrame dans settings_window.py, qui avait DEJA essaye puis
+        ABANDONNE un masque pour cette meme raison : un decoupage BINAIRE,
+        non anti-aliase, degrade le rendu du coin arrondi lui-meme. Ce
+        compromis reste neanmoins prefere ICI (une seule silhouette
+        exterieure, generalement grande, contre de nombreux petits coins de
+        ligne pour _TableFrame) plutot que de laisser la bordure invisible
+        — voir la meme remarque de l'utilisateur, qui persiste malgre 2
+        correctifs precedents (reserve de marge, "0px solid transparent")
+        insuffisants a eux seuls."""
+        # self.card._radius (deja SCALE, voir refresh_colors) — PAS
+        # recalcule independamment ici : garantit le MEME rayon que celui
+        # reellement peint (voir _ColumnCard.paintEvent/la docstring de
+        # cette classe), plutot que 2 sources qui pourraient diverger.
+        # activate() FORCE la resolution immediate du layout (largeur/
+        # hauteur de self.card) : setContentsMargins()/setFixedWidth()
+        # n'appliquent la nouvelle geometrie qu'au PROCHAIN cycle de
+        # peinture (activation PARESSEUSE de Qt) — sans ce forçage,
+        # self.card.rect() ci-dessous pouvait encore renvoyer l'ANCIENNE
+        # taille au moment ou le masque est calcule, produisant un masque
+        # decale/trop grand par rapport a ce qui est reellement peint —
+        # voir la remarque de l'utilisateur, capture a l'appui, "les
+        # arrondis ne sont pas du tout recouvert par la bordure".
+        self._outer_layout.activate()
+        radius = _radius_dict(self.card._radius)
+        self._card_effect.setRadius(radius)
+        # Desactive CE decoupage-ci des qu'une bordure existe (thickness>0) :
+        # dans ce cas, _ColumnCard.paintEvent peint DEJA fond+bordure
+        # exactement dans le silhouette voulu (voir _paint_bordered_rect,
+        # qui a son PROPRE antialiasing sur le trait), et self._content est
+        # DEJA reduit plus etroit par _content_effect ci-dessous (donc
+        # jamais debordant) — ce masque-ci n'a plus RIEN a proteger, il ne
+        # fait plus que reappliquer une 2e passe d'antialiasing PAR-DESSUS
+        # celle, deja correcte, du trait — exactement au MEME rayon, donc
+        # sur les MEMES pixels de transition : les 2 alphas partiels se
+        # MULTIPLIENT plutot que de s'additionner, ce qui faisait carrement
+        # disparaitre la bordure dans la courbe — voir la remarque de
+        # l'utilisateur, capture a l'appui, "la bordure disparait
+        # completement dans l'arrondi de l'angle". Reste ACTIF quand il n'y
+        # a PAS de bordure (thickness<=0) : LA, _content_effect est lui-meme
+        # desactive (voir plus bas) et ce masque-ci redevient le SEUL a
+        # empecher l'entete/la liste (coins carres) de deborder du fond
+        # arrondi.
+        self._card_effect.setEnabled(self.card._thickness <= 0)
+        # self._content (entete+liste) : decoupe a un rayon RETRECI de
+        # l'epaisseur de bordure REELLEMENT peinte (self.card._thickness,
+        # deja scaled — voir refresh_colors) — MEME formule que le clip du
+        # FOND dans _paint_bordered_rect (_radius_shrink(radius, thickness))
+        # — pour rester en retrait de l'anneau de la bordure jusque dans
+        # les coins, pas seulement le long des segments droits (voir
+        # reserve()/la docstring de self._content ci-dessus)."""
+        # +1px de MARGE SUPPLEMENTAIRE (au-dela du strict inner_radius
+        # geometrique) : self._content (coins CARRES, jamais son propre
+        # rayon — voir column_header_qss, "le rognage visuel est deja
+        # garanti par ce decoupage") est un ENFANT peint PAR-DESSUS
+        # self.card (Z-order Qt normal) — a epaisseur de bordure FAIBLE
+        # (1px), le bord antialiase de CE decoupage (inner_radius) et celui,
+        # deja antialiase, du trait de bordure (juste 1px plus loin, a
+        # `radius`) tombent quasiment sur LES MEMES pixels : le contenu,
+        # AU-DESSUS, y "mangeait" alors la bordure au lieu de s'arreter
+        # juste avant elle — voir la remarque de l'utilisateur, capture a
+        # l'appui, "la bordure disparait completement dans l'arrondi de
+        # l'angle". Cette marge laisse un peu d'air entre les 2 contours
+        # pour que la bordure garde une zone a elle, sans concurrence.
+        inner_radius = _radius_shrink(radius, self.card._thickness + 1)
+        self._content_effect.setRadius(_radius_dict(inner_radius))
+        # Desactive ce 2e decoupage des qu'il n'a plus rien a proteger
+        # (aucune bordure reellement peinte, thickness<=0) : inner_radius
+        # egale alors radius au chiffre pres, donc self._content (deja a
+        # l'interieur du silhouette de self.card, qui l'enveloppe ET tous
+        # ses enfants dans SA PROPRE passe d'antialiasing via _card_effect)
+        # n'a plus besoin d'etre roule une 2e fois — un 2e QGraphicsEffect,
+        # rasterise dans SA PROPRE pixmap hors-ecran independante, ne
+        # retombe JAMAIS EXACTEMENT sur les memes pixels que le 1er (chaque
+        # passe d'antialiasing calcule sa propre couverture sous-pixel) :
+        # 2 arrondis quasi identiques mais jamais superposables au pixel
+        # pres laissaient un lisere visible a chaque coin — voir la
+        # remarque de l'utilisateur, "je veux que le lissage de l'arrondi
+        # soit parfait ce qui est loin d'etre le cas". Toujours REACTIVE
+        # des qu'une bordure existe a nouveau (thickness>0) : LA, le rayon
+        # interieur retrecit vraiment et reste indispensable (voir la
+        # docstring de self._content plus haut, "l'entete/la liste
+        # recouvrait le trace courbe de la bordure a chaque coin").
+        self._content_effect.setEnabled(self.card._thickness > 0)
 
     def _fit_width_to_content(self):
         """Elargit automatiquement la colonne si son contenu (nom le plus
         long, metadonnee) ne rentre pas dans la largeur actuelle. Ne retrecit
         jamais une colonne deja assez large (y compris redimensionnee a la
         main par l'utilisateur)."""
+        if self.collapsed:
+            return
         needed = self._content_min_width()
         if needed > self.width():
             self.setFixedWidth(min(COLUMN_MAX_WIDTH, needed))
@@ -3088,9 +3879,11 @@ class PreviewColumn(QWidget):
 
     Pas d'en-tete ici dans les deux cas : ni "Logiciels" (n'a de sens
     qu'une fois la colonne reellement ouverte), ni de titre pour les
-    vignettes (qui n'ont jamais eu de colonne dediee avant elles)."""
+    vignettes (qui n'ont jamais eu de colonne dediee avant elles) —
+    exception : `on_toggle` (voir plus bas), une simple icone flottante,
+    pas un vrai bandeau d'en-tete."""
 
-    def __init__(self, title: str, parent=None):
+    def __init__(self, title: str, parent=None, on_toggle=None):
         super().__init__(parent)
         self.column_title = title
         self.has_thumbnails = False
@@ -3105,6 +3898,33 @@ class PreviewColumn(QWidget):
         layout.addLayout(self.preview_layout)
         layout.addStretch(1)
 
+        # Icone de repli/depli de Type/Projets/Sous-projet (voir
+        # PipelineBrowser._toggle_project_columns) : seulement sur la
+        # colonne PERMANENTE des vignettes (image_preview_column), pas sur
+        # le fantome "Logiciels" — c'est la colonne des images qui reste
+        # visible juste apres ces trois-la, l'endroit naturel pour l'icone
+        # qui les concerne. Flottante (enfant direct de `self`, HORS de
+        # `layout`) plutot que dans un bandeau propre : elle se superpose
+        # au coin superieur gauche du premier bloc empile (voir _raise_
+        # dans set_preview_stack, qui la remet au-dessus a chaque
+        # reconstruction des blocs), pas alignee a cote.
+        self.toggle_btn = None
+        if on_toggle is not None:
+            self.toggle_btn = IconButton(
+                "dchevron_right", role_color("buttons", "#c4cacf"), C["text"], parent=self
+            )
+            self.toggle_btn.setFixedSize(scaled(22), scaled(22))
+            self.toggle_btn.setCursor(Qt.ArrowCursor)
+            self.toggle_btn.setFlat(True)
+            self.toggle_btn.setToolTip("Replier Type/Projets/Sous-projet")
+            self.toggle_btn.setStyleSheet(
+                "QPushButton { background: rgba(15, 17, 20, 150); border: none; border-radius: 4px; }"
+                "QPushButton:hover { background: rgba(15, 17, 20, 210); }"
+            )
+            self.toggle_btn.clicked.connect(on_toggle)
+            self.toggle_btn.move(scaled(8), scaled(8))
+            self.toggle_btn.raise_()
+
         # Cette colonne fantome occupe la place de "Logiciels" : sa largeur
         # suit donc le meme reglage.
         self.setFixedWidth(col_width("Logiciels"))
@@ -3114,19 +3934,36 @@ class PreviewColumn(QWidget):
         # avec "#Column" l'aurait aussi impose aux vraies colonnes.
         self.setObjectName("PreviewColumn")
         self.setAttribute(Qt.WA_StyledBackground, True)
-        # Fond = C["topbar"], PAS C["void"] : ce panneau d'apercu partage
-        # desormais le meme reglage que la barre du haut ("Skin principale
-        # niveau 1", voir SEMANTIC_COLOR_SLOTS dans app_style.py) — remarque
-        # de l'utilisateur, capture annotee de l'appli a l'appui. C["void"]
-        # reste reserve au fond des colonnes de liste (ColumnsHost, "Skin
-        # principale niveau 2").
+        # Fond = C["void"] ("Skin principale niveau 2") : deux blocs bien
+        # distincts dans cette colonne fantome (voir la remarque de
+        # l'utilisateur, nouvelle capture annotee a l'appui) — le bloc
+        # "affiche" empile (_PreviewBlock/_FilesPreviewBlock, son propre
+        # fond C["chrome"]) au-dessus, puis cet espace encore vide en
+        # attendant d'autres elements, colore comme le fond de n'importe
+        # quelle colonne (voir aussi build_stylesheet : QListWidget partage
+        # desormais ce meme C["void"]).
         self.setStyleSheet(
-            f"#PreviewColumn {{ background: {C['topbar']}; border-right: 1px solid {C['border']}; }}"
+            f"#PreviewColumn {{ background: {C['void']}; border-right: 1px solid {C['border']}; }}"
         )
 
     def refresh_colors(self):
         self.setStyleSheet(
-            f"#PreviewColumn {{ background: {C['topbar']}; border-right: 1px solid {C['border']}; }}"
+            f"#PreviewColumn {{ background: {C['void']}; border-right: 1px solid {C['border']}; }}"
+        )
+        if self.toggle_btn is not None:
+            self.toggle_btn.set_colors(role_color("buttons", "#c4cacf"), C["text"])
+
+    def set_toggle_state(self, collapsed: bool):
+        """Met a jour l'icone (voir __init__, `on_toggle`) apres un repli/
+        depli de Type/Projets/Sous-projet declenche depuis ailleurs (par
+        exemple automatiquement, voir PipelineBrowser._sync_collapse_state)
+        — sans effet si cette instance n'a pas d'icone (fantome
+        "Logiciels")."""
+        if self.toggle_btn is None:
+            return
+        self.toggle_btn.set_kind("dchevron_left" if collapsed else "dchevron_right")
+        self.toggle_btn.setToolTip(
+            "Deplier Type/Projets/Sous-projet" if collapsed else "Replier Type/Projets/Sous-projet"
         )
 
     def set_preview_stack(self, entries: list[tuple[str, QPixmap, Path, object]]):
@@ -3140,6 +3977,16 @@ class PreviewColumn(QWidget):
         width = self.width() - 1
         for title, pixmap, path, open_status in entries:
             self.preview_layout.addWidget(_PreviewBlock(title, pixmap, width, path, open_status))
+        # 3e bloc TOUJOURS ajoute, vide pour le moment (voir _EmptyPreviewBlock,
+        # la remarque de l'utilisateur, "sous ces deux blocs on doit egalement
+        # avoir une colonne (vide pour le moment)").
+        self.preview_layout.addWidget(_EmptyPreviewBlock())
+        # Les blocs qu'on vient d'ajouter sont, par defaut, empiles PAR-DESSUS
+        # l'icone flottante (creee avant eux, voir __init__) : la remonter au
+        # premier plan a chaque reconstruction, sinon elle disparait derriere
+        # le premier bloc des que set_preview_stack est rappelee.
+        if self.toggle_btn is not None:
+            self.toggle_btn.raise_()
 
     def set_files_preview_stack(self, entries: list[tuple[str, QPixmap, Path, object]],
                                 open_dirs: frozenset = frozenset()):
@@ -3205,7 +4052,12 @@ class DetailPanel(QWidget):
         # laissant voir la couleur du widget en dessous (d'ou le "mauvais"
         # fond signale ici).
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setStyleSheet(f"#DetailPanel {{ background: {C['detail_bg']}; border-left: 1px solid {C['border']}; }}")
+        # C["void"] ("Skin principale niveau 2"), PAS C["detail_bg"] :
+        # l'inspecteur est desormais coherent avec le fond des colonnes/du
+        # panneau d'apercu (voir la remarque de l'utilisateur, nouvelle
+        # capture annotee a l'appui) — C["detail_bg"] reste dans le fichier
+        # de reglages (voir DEFAULT_SETTINGS) mais n'est plus lu ici.
+        self.setStyleSheet(f"#DetailPanel {{ background: {C['void']}; border-left: {column_seam_border()}; }}")
         # Largeur fixe par defaut (et non un stretch qui la ferait grandir
         # avec la fenetre) : un inspecteur qui s'etire jusqu'a occuper tout
         # l'espace restant laisse un vide enorme autour de son contenu des
@@ -3235,10 +4087,10 @@ class DetailPanel(QWidget):
         header = QWidget()
         header.setObjectName("DetailHeaderOuter")
         header.setFixedHeight(scaled(HEADER_HEIGHT))
-        header.setStyleSheet(f"#DetailHeaderOuter {{ border-left: 1px solid {C['border']}; }}")
+        header.setStyleSheet(f"#DetailHeaderOuter {{ border-left: {column_seam_border()}; }}")
         self.header = header
         header_outer_layout = QVBoxLayout(header)
-        pad = scaled(HEADER_PADDING)
+        pad = scaled(HEADER_PADDING, 0)   # 0 = valeur reglee valide (voir scaled)
         header_outer_layout.setContentsMargins(pad, pad, pad, pad)
         header_outer_layout.setSpacing(0)
 
@@ -3253,6 +4105,7 @@ class DetailPanel(QWidget):
         self.badge.setFont(role_font("info", 9, 600, tracking=0.6, caps=True))
         self.badge.setStyleSheet(f"color: {role_color('info', C['dim'])}; background: transparent;")
         header_layout = QHBoxLayout(header_fill)
+        self._header_layout = header_layout
         header_layout.setContentsMargins(10, 0, 10, 0)
         header_layout.addWidget(self.header_title)
         header_layout.addStretch(1)
@@ -3331,6 +4184,7 @@ class DetailPanel(QWidget):
         grid.setColumnStretch(1, 1)
 
         content = QVBoxLayout()
+        self._content_layout = content
         content.setContentsMargins(16, 14, 16, 14)
         content.setSpacing(8)
         content.addWidget(self.name)
@@ -3346,6 +4200,23 @@ class DetailPanel(QWidget):
         layout.addWidget(header)
         layout.addLayout(content, 1)
         self.clear()
+        self.refresh_seam_margin()
+
+    def refresh_seam_margin(self):
+        """Distance entre colonnes <= 0 (voir app_style.column_seam_border,
+        qui masque alors le filet GAUCHE de l'inspecteur) : sans
+        compensation, le contenu (en-tete ET "content" — nom/apercu/
+        details) garde sa marge de gauche INCHANGEE alors que le filet qui
+        occupait visuellement une partie de cet espace a disparu — elle
+        parait alors 1px plus large qu'avant, ce qui se voit (voir la
+        remarque de l'utilisateur, "les elements a l'interieur se
+        retrouvent avec un espace trop important de 1px"). Retire donc 1px
+        a CETTE marge, cote gauche uniquement, pour garder le meme rythme
+        visuel qu'avec le filet — remis a sa valeur normale des que le
+        filet redevient visible (distance > 0)."""
+        shrink = 1 if column_gap() <= 0 else 0
+        self._header_layout.setContentsMargins(max(0, 10 - shrink), 0, 10, 0)
+        self._content_layout.setContentsMargins(max(0, 16 - shrink), 14, 16, 14)
 
     # -- redimensionnement par glisser-deposer sur la bordure gauche,
     # comme n'importe quelle colonne (voir Column.resize_begin/update/end) --
@@ -3417,7 +4288,7 @@ class DetailPanel(QWidget):
         ce panneau, contrairement aux colonnes, n'est pas reconstruit par
         PipelineBrowser.reload() apres un changement de reglages."""
         self.header.setFixedHeight(scaled(HEADER_HEIGHT))
-        pad = scaled(HEADER_PADDING)
+        pad = scaled(HEADER_PADDING, 0)   # 0 = valeur reglee valide (voir scaled)
         self.header.layout().setContentsMargins(pad, pad, pad, pad)
         self.header_title.setFont(role_font("colhead", 10, 600, tracking=0.9, caps=True))
         self.header_title.setStyleSheet(f"color: {role_color('colhead', C['header'])}; background: transparent;")
@@ -3435,10 +4306,11 @@ class DetailPanel(QWidget):
     def refresh_colors(self):
         """Reapplique les couleurs fixees a la construction (voir la remarque
         sur refresh_colors dans Column) apres un changement de couleur."""
-        self.setStyleSheet(f"#DetailPanel {{ background: {C['detail_bg']}; border-left: 1px solid {C['border']}; }}")
-        self.header.setStyleSheet(f"#DetailHeaderOuter {{ border-left: 1px solid {C['border']}; }}")
+        self.setStyleSheet(f"#DetailPanel {{ background: {C['void']}; border-left: {column_seam_border()}; }}")
+        self.header.setStyleSheet(f"#DetailHeaderOuter {{ border-left: {column_seam_border()}; }}")
         self.header_fill.setStyleSheet(header_qss("DetailHeader"))
         self.well.setStyleSheet(f"background: {C['well']}; border: 1px solid #282c30;")
+        self.refresh_seam_margin()
         self.refresh_fonts(True if not self.values["kind"].text() else self.values["kind"].text() == "Dossier")
 
     def resizeEvent(self, event):
@@ -3606,6 +4478,10 @@ class IconButton(QPushButton):
         self._hover_color = hover_color
         self.update()
 
+    def set_kind(self, kind: str):
+        self._kind = kind
+        self.update()
+
     def paintEvent(self, event):
         super().paintEvent(event)
         painter = QPainter(self)
@@ -3635,6 +4511,17 @@ class IconButton(QPushButton):
                 x2 = cx + math.cos(ang) * r
                 y2 = cy + math.sin(ang) * r
                 painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+        elif self._kind in ("dchevron_left", "dchevron_right"):
+            # Repli/depli de Type/Projets/Sous-projet (voir
+            # Column.set_collapsed) : double chevron ("«"/"»") pointant vers
+            # la gauche ("replier") ou la droite ("deplier") — deux chevrons
+            # simples, decales horizontalement.
+            sign = -1 if self._kind == "dchevron_left" else 1
+            ss = s * 0.95
+            for offset in (-ss * 0.85, ss * 0.85):
+                ox = cx + offset
+                painter.drawLine(QPointF(ox + sign * ss * 0.5, cy - ss), QPointF(ox - sign * ss * 0.5, cy))
+                painter.drawLine(QPointF(ox - sign * ss * 0.5, cy), QPointF(ox + sign * ss * 0.5, cy + ss))
         painter.end()
 
 
@@ -3750,6 +4637,36 @@ class TitleBar(QWidget):
 # Fenetre principale
 # ==========================================================================
 
+class _DebugCornerSquare(QWidget):
+    """Carre de demonstration 200x200, centre dans la fenetre, fond 'Skin -
+    niveau 2' (C['void']), bordure 1px 'skin accent' (C['accent']), rayon
+    6px — demande explicitement par l'utilisateur pour verifier isolement
+    le lissage des coins arrondis (voir _paint_bordered_rect/la remarque de
+    l'utilisateur sur la bordure qui disparaissait dans l'arrondi), sans le
+    bruit du reste de l'interface (en-tete, liste...) autour."""
+
+    _SIZE = 200
+    _RADIUS = 6
+    _THICKNESS = 1
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(self._SIZE, self._SIZE)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        radius = _radius_dict(self._RADIUS)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        _paint_bordered_rect(
+            p, self.rect(), radius,
+            {"top": True, "right": True, "bottom": True, "left": True}, self._THICKNESS,
+            {"top": C["accent"], "right": C["accent"], "bottom": C["accent"], "left": C["accent"]},
+            C["void"],
+        )
+        p.end()
+
+
 class PipelineBrowser(QMainWindow):
 
     def __init__(self, root: Path):
@@ -3771,11 +4688,31 @@ class PipelineBrowser(QMainWindow):
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.resize(1280, 620)
         self.columns: list[Column] = []
+        # Etat courant (unique source de verite, voir _sync_collapse_state/
+        # _toggle_project_columns) de repli de Type/Projets/Sous-projet, et
+        # icone associee sur la colonne des vignettes (voir
+        # PreviewColumn.set_toggle_state).
+        self._project_columns_collapsed = False
+        # Tant que ce drapeau est vrai, la prochaine fois que Sous-projet
+        # obtient une selection declenche le repli automatique une fois
+        # (voir _sync_collapse_state) — desarme par un repli/depli manuel
+        # (icone) pour ne pas annuler le choix de l'utilisateur tant que la
+        # selection reste la meme, puis rearme des que Sous-projet perd sa
+        # selection (retour en arriere).
+        self._auto_collapse_armed = True
         self.preview_placeholder: PreviewColumn | None = None
         # Colonne permanente des vignettes (voir _PreviewBlock) : separee de
         # "Logiciels" (qui ne montre plus que le detail "Fichiers pour X",
         # voir _FilesPreviewBlock) — jamais remplacee par une vraie colonne,
-        # contrairement a preview_placeholder ci-dessus.
+        # contrairement a preview_placeholder ci-dessus. Les blocs qu'elle
+        # empile (Projets, Sous-projet, + 1 bloc vide, voir _PreviewBlock/
+        # _EmptyPreviewBlock) sont chacun peints avec le MEME cadre
+        # (fond/bordure/rayon) que les vraies colonnes (voir app_style.
+        # column_frame_style/settings_window._paint_bordered_rect) — voir la
+        # remarque de l'utilisateur, "je veux les trois colonnes (avec style
+        # predefini dans les settings) les unes sur les autres, formant a
+        # elles 3 une seule colonne" : 3 blocs au style de colonne, empiles
+        # DANS une seule vraie colonne (celle-ci), pas 3 colonnes separees.
         self.image_preview_column: PreviewColumn | None = None
         # Cle (couleurs + rayon des boutons) du dernier _apply_settings :
         # sert a ne reconstruire la feuille de style globale (voir
@@ -3850,18 +4787,34 @@ class PipelineBrowser(QMainWindow):
         # --- zone des colonnes ---
         self.columns_layout = QHBoxLayout()
         self.columns_layout.setContentsMargins(0, 0, 0, 0)
-        self.columns_layout.setSpacing(0)
+        # column_gap() (pas 0 en dur) : lit deja la valeur persistee (voir
+        # apply_all_settings, appele par main() AVANT la construction de
+        # cette fenetre) — Fenetre de parametres > Colonnes > Distance
+        # entre colonnes, voir la remarque de l'utilisateur. max(0, ...) :
+        # column_gap() peut valoir -1 (voir set_column_gap/la remarque de
+        # l'utilisateur, "que les bordures ne se cumulent pas"), mais
+        # QBoxLayout.setSpacing() n'accepte PAS un espacement reellement
+        # negatif — verifie directement, TOUTE valeur negative y retombe
+        # silencieusement sur l'espacement du STYLE (6px ici, pire qu'un
+        # simple 0) plutot que -1px reel. L'effet "-1" (filet non cumule)
+        # passe donc par column_seam_border() (voir ses appels dans Column/
+        # PreviewColumn/DetailPanel), pas par un espacement negatif ici.
+        self.columns_layout.setSpacing(scaled(max(0, column_gap()), 0))
 
         self.detail = DetailPanel()
 
         # objectName + selecteur ID : le fond au-dela de la derniere colonne
         # (l'espace que la colonne Inspecteur, desormais a largeur fixe, ne
-        # comble plus) doit avoir le meme ton sombre "de vide" que dans la
-        # maquette html plutot que la couleur generale des colonnes.
+        # comble plus) est C["window"] ("Fond") — DISTINCT du fond de chaque
+        # colonne/panneau (C["void"], peint par chacun sur lui-meme, voir
+        # Column/PreviewColumn/DetailPanel), qui ne depend plus de ce widget
+        # pour son propre "vide" — voir la remarque de l'utilisateur,
+        # nouvelle capture annotee a l'appui (auparavant les deux etaient
+        # confondus dans le meme C["void"]).
         columns_host = QWidget()
         self.columns_host = columns_host
         columns_host.setObjectName("ColumnsHost")
-        columns_host.setStyleSheet(f"#ColumnsHost {{ background: {C['void']}; }}")
+        columns_host.setStyleSheet(f"#ColumnsHost {{ background: {C['window']}; }}")
         host_layout = QHBoxLayout(columns_host)
         host_layout.setContentsMargins(0, 0, 0, 0)
         host_layout.setSpacing(0)
@@ -3944,6 +4897,27 @@ class PipelineBrowser(QMainWindow):
         self._apply_native_frame()
 
         self._restore_window_state()
+
+        # Carre de demonstration (voir _DebugCornerSquare) : flottant
+        # au-dessus de `central` (pas dedans, pour rester centre sur TOUTE
+        # la fenetre plutot que sur la seule zone des colonnes), recentre a
+        # chaque redimensionnement (voir resizeEvent).
+        self._debug_square = _DebugCornerSquare(central)
+        self._debug_square.raise_()
+        self._center_debug_square()
+
+    def _center_debug_square(self):
+        sq = getattr(self, "_debug_square", None)
+        if sq is None:
+            return
+        sq.move(
+            (self.centralWidget().width() - sq.width()) // 2,
+            (self.centralWidget().height() - sq.height()) // 2,
+        )
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._center_debug_square()
 
     def _restore_window_state(self):
         """Reapplique la position/taille de fenetre au moment de la derniere
@@ -4029,10 +5003,13 @@ class PipelineBrowser(QMainWindow):
             self.path_label.setText(f"Introuvable : {root}")
             self.synced_label.setText("")
             return
+        self._project_columns_collapsed = False
+        self._auto_collapse_armed = True
         self.add_column(root, 0)
         self.path_label.setText(str(root))
         self.synced_label.setText(datetime.now().strftime("scan %H:%M:%S"))
         self.update_preview_stack()
+        self._sync_collapse_state()
 
     def _clear_preview_placeholder(self):
         if self.preview_placeholder is not None:
@@ -4070,6 +5047,19 @@ class PipelineBrowser(QMainWindow):
         # position a chaque appel).
         self._clear_preview_placeholder()
         self.columns_layout.addWidget(column)
+        # _suppress_left() (voir Column._containing_layout) a besoin que la
+        # colonne soit DEJA dans columns_layout pour detecter correctement
+        # sa voisine de gauche — au moment de Column.__init__ (donc de son
+        # 1er refresh_header()/refresh_colors(), voir plus haut), elle n'a
+        # encore AUCUN parent, _suppress_left() y renvoie donc TOUJOURS
+        # False, figeant a tort un padding/bordure gauche PLEIN (jamais
+        # supprime) pour toute colonne qui n'est pourtant PAS la premiere
+        # de la rangee — voir la remarque de l'utilisateur, "la distance
+        # entre deux colonnes est toujours deux fois plus grande que la
+        # valeur du padding" : rejouer les 2 ICI, une fois REELLEMENT
+        # inseree, recalcule enfin la bonne valeur.
+        column.refresh_header()
+        column.refresh_colors()
         self.update_active_column()
         bar = self.scroll.horizontalScrollBar()
         bar.setValue(bar.maximum())
@@ -4093,7 +5083,19 @@ class PipelineBrowser(QMainWindow):
         des colonnes a vignettes, a chaque cran de slider n'apporterait
         rien et coute cher sur un partage reseau)."""
         for column in self.columns:
-            column.setFixedWidth(col_width(column.column_title))
+            # Une colonne repliee (voir Column.set_collapsed) garde une
+            # largeur nulle : col_width(...) est la largeur DEPLOYEE, la
+            # reappliquer ici la ferait rebondir a pleine largeur a chaque
+            # glisser-deposer/reglage sans que column.collapsed n'ait change.
+            # Largeur choisie a la main (voir Column._user_width) prioritaire
+            # sur col_width(...) : sinon repasser sur N'IMPORTE quel reglage
+            # (y compris Colonnes > Padding/Bordure, rejoue a chaque cran de
+            # slider pour la previsualisation en direct) ecrasait aussitot
+            # tout redimensionnement manuel par la largeur par defaut.
+            if not column.collapsed:
+                column.setFixedWidth(column._user_width or col_width(column.column_title))
+            else:
+                column.setFixedWidth(0)
             column.refresh_header()
             column.list.setUniformItemSizes(column.has_thumbnails)
             delegate = column.list.itemDelegate()
@@ -4126,6 +5128,13 @@ class PipelineBrowser(QMainWindow):
            (image_preview_column), reconstruite ici a chaque fois a la
            bonne position — il n'y a pas de "dossier" pour des images,
            donc jamais de vraie colonne a cet endroit, contrairement a (2).
+           Chaque bloc empile (Projets, Sous-projet, + 1 bloc vide) y est
+           peint avec le MEME cadre (fond/bordure/rayon) que les vraies
+           colonnes (voir _PreviewBlock/_EmptyPreviewBlock, la remarque de
+           l'utilisateur, "je veux les trois colonnes (avec style predefini
+           dans les settings) les unes sur les autres, formant a elles 3
+           une seule colonne") — 3 blocs au style colonne, empiles DANS
+           cette seule vraie colonne fantome, pas 3 colonnes separees.
         2. Le detail "Fichiers pour X" (voir _FilesPreviewBlock) : colonne
            fantome (preview_placeholder) tant que "Logiciels" n'existe pas
            encore pour de bon, puis directement dans cette colonne reelle
@@ -4175,7 +5184,8 @@ class PipelineBrowser(QMainWindow):
         # instant columns_layout contient exactement self.columns, dans
         # l'ordre : l'indice de colonne vaut l'indice de layout.
         anchor = max(i for i, c in enumerate(self.columns) if c.has_thumbnails)
-        self.image_preview_column = PreviewColumn("")
+        self.image_preview_column = PreviewColumn("", on_toggle=self._toggle_project_columns)
+        self.image_preview_column.set_toggle_state(self._project_columns_collapsed)
         self.columns_layout.insertWidget(anchor + 1, self.image_preview_column)
         self.image_preview_column.set_preview_stack(entries)
 
@@ -4237,6 +5247,7 @@ class PipelineBrowser(QMainWindow):
         self.add_column(path, insert_index + 1, title=path.name.upper())
         self.update_active_column()
         self.update_preview_stack()
+        self._sync_collapse_state()
 
     def on_selected(self, column: Column, path: Path | None):
         index = self.columns.index(column)
@@ -4245,6 +5256,7 @@ class PipelineBrowser(QMainWindow):
             self.detail.clear()
             self.update_active_column()
             self.update_preview_stack()
+            self._sync_collapse_state()
             return
         self.path_label.setText(str(path))
         self.detail.show_path(path)
@@ -4257,6 +5269,46 @@ class PipelineBrowser(QMainWindow):
             self.add_column(child_dir, depth)
         self.update_active_column()
         self.update_preview_stack()
+        self._sync_collapse_state()
+
+    def _sync_collapse_state(self):
+        """Replie automatiquement Type/Projets/Sous-projet (voir
+        COLLAPSIBLE_COLUMN_TITLES) des que Projet ET Sous-projet sont
+        choisis (la colonne "Sous-projet" a une selection) : ce contexte
+        devient fixe, ces colonnes de navigation n'ont plus besoin de rester
+        deployees. Ne force ce repli qu'UNE fois par selection (voir
+        _auto_collapse_armed) : un depli manuel ensuite (icone sur la
+        colonne des vignettes) n'est pas systematiquement annule tant que
+        la selection reste la meme. Redeploie tout automatiquement des que
+        la selection de Sous-projet est perdue (retour en arriere dans la
+        navigation), pour laisser le choix a nouveau visible, et rearme
+        alors le repli automatique pour la prochaine selection."""
+        sous_projet = next((c for c in self.columns if c.column_title == "Sous-projet"), None)
+        has_selection = sous_projet is not None and sous_projet.current_path() is not None
+        if not has_selection:
+            self._auto_collapse_armed = True
+            if self._project_columns_collapsed:
+                self._apply_project_columns_collapsed(False)
+        elif self._auto_collapse_armed and not self._project_columns_collapsed:
+            self._apply_project_columns_collapsed(True)
+            self._auto_collapse_armed = False
+
+    def _toggle_project_columns(self):
+        """Reagit a l'icone unique portee par la colonne des vignettes
+        (voir PreviewColumn/update_preview_stack) : bascule Type/Projets/
+        Sous-projet, et desarme le repli automatique pour que ce choix
+        manuel ne soit pas aussitot ecrase par _sync_collapse_state tant
+        que la selection de Sous-projet ne change pas."""
+        self._apply_project_columns_collapsed(not self._project_columns_collapsed)
+        self._auto_collapse_armed = False
+
+    def _apply_project_columns_collapsed(self, collapsed: bool):
+        self._project_columns_collapsed = collapsed
+        for c in self.columns:
+            if c.column_title in COLLAPSIBLE_COLUMN_TITLES:
+                c.set_collapsed(collapsed)
+        if self.image_preview_column is not None:
+            self.image_preview_column.set_toggle_state(collapsed)
 
     def on_activated(self, path: Path):
         open_path(path)
@@ -4307,6 +5359,12 @@ class PipelineBrowser(QMainWindow):
         lieu que si la racine elle-meme a change, ce qui invalide de toute
         facon le chemin courant."""
         apply_all_settings(settings)
+        # column_gap() : apply_all_settings vient de le mettre a jour (voir
+        # set_column_gap ci-dessus), mais c'est un global — encore besoin
+        # de le repercuter ICI sur l'instance reelle de columns_layout,
+        # comme refresh_all_columns le fait deja pour la largeur/hauteur
+        # des colonnes.
+        self.columns_layout.setSpacing(scaled(max(0, column_gap()), 0))
         if settings["root_path"] != self.root_field.text():
             self.root_field.setText(settings["root_path"])
             self.reload()
@@ -4315,11 +5373,21 @@ class PipelineBrowser(QMainWindow):
         # app.setStyleSheet (dans refresh_colors -> refresh_style) repolit
         # TOUS les widgets de TOUTES les fenetres de l'appli — le poste le
         # plus cher, et de loin, de tout ce rafraichissement. Un slider qui
-        # ne touche ni aux couleurs ni au rayon des boutons (largeur de
-        # colonne, echelle, hauteur d'entete...) n'a aucune raison de le
-        # declencher a chaque cran : seule une vraie difference sur ces deux
-        # points force la reconstruction complete de la feuille de style.
-        style_key = (json.dumps(settings.get("colors", {}), sort_keys=True), settings.get("button_radius"))
+        # ne touche ni aux couleurs, ni au cadre/rayon des boutons, ni au
+        # cadre/rayon des zones de saisie, ni au rayon des tableaux (largeur
+        # de colonne, echelle, hauteur d'entete...) n'a aucune raison de le
+        # declencher a chaque cran : seule une vraie difference sur ces
+        # points (les seuls que build_stylesheet lit reellement) force la
+        # reconstruction complete de la feuille de style.
+        colors = settings.get("colors") or {}
+        style_key = (
+            tuple(colors.get(k, C[k]) for k in STYLESHEET_COLOR_KEYS),
+            settings.get("button_radius"),
+            settings.get("button_frame"),
+            settings.get("input_radius"),
+            settings.get("input_frame"),
+            settings.get("table_radius"),
+        )
         rebuild_stylesheet = style_key != self._last_style_key
         self._last_style_key = style_key
         self.refresh_colors(rebuild_stylesheet=rebuild_stylesheet)
@@ -4376,9 +5444,11 @@ class PipelineBrowser(QMainWindow):
 
         rebuild_stylesheet=False saute uniquement le app.setStyleSheet
         global (repolissage de TOUS les widgets de l'appli, tres couteux) :
-        a utiliser quand on sait que ni les couleurs ni le rayon des
-        boutons n'ont bouge (voir _apply_settings), le reste de cette
-        methode restant assez leger pour tourner a chaque rafraichissement."""
+        a utiliser quand on sait qu'aucune des valeurs lues par
+        build_stylesheet (couleurs, cadre/rayon des boutons, cadre/rayon des
+        zones de saisie, rayon des tableaux) n'a bouge (voir _apply_settings),
+        le reste de cette methode restant assez leger pour tourner a chaque
+        rafraichissement."""
         if rebuild_stylesheet:
             app = QApplication.instance()
             if app is not None:
@@ -4387,7 +5457,7 @@ class PipelineBrowser(QMainWindow):
             f"#CentralFrame {{ background: {C['window']}; border: 1px solid {C['border']}; "
             f"border-radius: {WINDOW_RADIUS}px; }}"
         )
-        self.columns_host.setStyleSheet(f"#ColumnsHost {{ background: {C['void']}; }}")
+        self.columns_host.setStyleSheet(f"#ColumnsHost {{ background: {C['window']}; }}")
         self.titlebar.setStyleSheet(f"#TitleBar {{ background: {C['app_bg']}; border-bottom: 1px solid {C['border']}; }}")
         for btn in (self.titlebar.btn_min, self.titlebar.btn_max, self.titlebar.btn_close):
             btn.set_colors(C["label"], C["text"])
@@ -4456,15 +5526,53 @@ def apply_all_settings(settings: dict) -> None:
     set_button_frame(settings.get("button_frame", True))
     set_input_frame(settings.get("input_frame", True))
     set_input_radius(settings.get("input_radius", 0))
+    set_table_radius(settings.get("table_radius", 0))
+    set_columns_resizable(settings.get("columns_resizable", True))
+    set_column_gap(settings.get("column_gap", 0))
     set_header_style(
         settings.get("header_color", "skinN1"),
         settings.get("header_radius", 0),
-        settings.get("header_edges") or {"top": False, "right": False, "bottom": True, "left": False},
+        # header_border_enabled (nouveau nom) ; header_edges (ancien nom,
+        # meme format dict {cote: bool}) en repli pour les presets deja
+        # sauvegardes avant ce renommage — voir la remarque de
+        # l'utilisateur, "renomme le parametre 'cadre des entetes' ->
+        # 'Bordure'".
+        settings.get("header_border_enabled") or settings.get("header_edges")
+        or {"top": False, "right": False, "bottom": True, "left": False},
+        settings.get("header_border") or {},
+        settings.get("header_border_thickness", 1),
     )
     set_ui_scale(settings.get("ui_scale", 100))
 
     for key, hexval in (settings.get("colors") or {}).items():
         set_color(key, hexval)
+
+    # Style de colonne GENERAL (voir COLUMN_FRAME_KEYS/app_style.
+    # set_general_column_style) : applique tel quel a TOUTE colonne sauf
+    # "Type" (qui, elle, peut le SURCHARGER individuellement, voir plus
+    # bas) — voir la remarque de l'utilisateur, "je veux que tu en fasse
+    # de meme pour toute les colonnes de l'appli". APRES la boucle
+    # set_color() ci-dessus, dont depend resolve_color_ref (les couleurs
+    # "@<slot>" de Bordure se resolvent contre la palette live, pas
+    # l'ancienne).
+    set_general_column_style({key: settings.get(key) for key in COLUMN_FRAME_KEYS})
+
+    # Colonne "Type" > style EFFECTIF (voir COLUMN_TYPE_OVERRIDE_KEYS/
+    # app_style.set_type_column_style) : la valeur GENERALE de chaque cle,
+    # sauf si Colonnes > Type l'a explicitement surchargee (voir
+    # SettingsWindow._build_column_type_page, un toggle par ligne).
+    overrides = settings.get("column_type_overrides") or {}
+    override_enabled = settings.get("column_type_override_enabled") or {}
+    type_style = {
+        key: (overrides[key] if override_enabled.get(key) and key in overrides else settings.get(key))
+        for key in COLUMN_TYPE_OVERRIDE_KEYS
+    }
+    set_type_column_style(type_style)
+    # sizeHint (voir RowDelegate.sizeHint/col_plain_height/col_spacing) lit
+    # deja COLUMN_SETTINGS["Type"] — y ecrire la hauteur/l'espacement de
+    # ligne EFFECTIFS evite un 2e chemin de lecture rien que pour ca.
+    COLUMN_SETTINGS["Type"]["height"] = int(type_style.get("item_row_height") or COLUMN_SETTINGS["Type"]["height"])
+    COLUMN_SETTINGS["Type"]["spacing"] = max(0, int(type_style.get("item_row_spacing") or 0))
 
     header_family = (settings.get("header_font_family") or "").strip()
     if header_family:
@@ -4482,6 +5590,7 @@ def apply_all_settings(settings: dict) -> None:
         ("colhead", "font_colhead"),
         ("info", "font_info"),
         ("info2", "font_info2"),
+        ("code", "font_code"),
     ):
         conf = settings.get(key) or {}
         set_role_font(
