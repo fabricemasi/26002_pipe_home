@@ -271,6 +271,26 @@ _ROLE_OVERRIDES: dict[str, dict] = {
     for role in ("app", "titles", "files", "folders", "info", "info2", "buttons", "colhead", "code")
 }
 
+# Colonnes > Type > Texte > Police (voir settings_window._section_items) :
+# "polices du soft" — les 5 roles DEJA regles dans Polices principales,
+# proposees comme raccourcis dans le meme selecteur que les polices
+# SYSTEME (voir installed_font_families) — voir la remarque de
+# l'utilisateur, "je veux avoir le choix entre les polices du soft et les
+# polices systeme" (clarifiee : "les polices qui se trouvent dans la
+# section polices principales"). Cle = role (voir role_font), valeur =
+# libelle AFFICHE dans le selecteur ET valeur STOCKEE telle quelle dans
+# item_font_family (pas de prefixe "@" : ces libellles ne risquent pas de
+# collisionner avec un vrai nom de police systeme) — pipeline_browser.py
+# fait la RESOLUTION inverse (libelle -> role -> role_font(...).family())
+# au moment de peindre le texte.
+ITEM_FONT_ROLE_LABELS = {
+    "app": "Police principale",
+    "info": "Police informations",
+    "titles": "Police principale titres",
+    "files": "Police fichiers",
+    "code": "Police code",
+}
+
 
 def set_role_font(role: str, family: str, size: int, bold: bool,
                    smoothing: str = "current", color: str = "", custom: bool = True) -> None:
@@ -382,6 +402,37 @@ COLOR_FIELDS: list[tuple[str, str, str]] = [
 ]
 
 
+def _hex_to_rgb(hexval: str) -> tuple[int, int, int]:
+    """Composantes (R, G, B) 0-255 d'un "#rrggbb" OU "#aarrggbb" (alpha en
+    tete, voir _hex_to_alpha ci-dessous/la remarque de l'utilisateur, "un
+    parametre de transparence des couleurs dans le selecteur") — retombe
+    sur noir pour une entree absente/mal formee, jamais une exception
+    (source de donnees parfois EXTERNE, voir C/settings.json). Source
+    UNIQUE (auparavant dupliquee independamment dans pipeline_browser.py
+    ET settings_window.py, avec une garde differente entre les 2 copies —
+    voir la remarque de l'utilisateur, "clean le code")."""
+    h = (hexval or "#000000").lstrip("#")
+    if len(h) == 8:
+        h = h[2:]   # AARRGGBB -> RRGGBB (alpha gere a part, voir _hex_to_alpha)
+    if len(h) != 6:
+        h = "000000"
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _hex_to_alpha(hexval: str) -> int:
+    """Canal alpha 0-255 d'un "#aarrggbb" (255 = opaque, PAR DEFAUT pour
+    tout "#rrggbb" a 6 chiffres — retro-compatible, aucune couleur
+    existante n'est transparente tant qu'elle n'est pas explicitement
+    reglee) — voir _hex_to_rgb, MEME convention."""
+    h = (hexval or "").lstrip("#")
+    if len(h) == 8:
+        try:
+            return max(0, min(255, int(h[0:2], 16)))
+        except ValueError:
+            return 255
+    return 255
+
+
 def set_color(key: str, hex_value: str) -> None:
     """Modifie une couleur de l'interface (cle de C) en direct. N'affecte
     par elle-meme que les widgets construits APRES l'appel — voir
@@ -475,42 +526,6 @@ def column_gap() -> int:
     return _COLUMN_GAP
 
 
-def column_seam_border() -> str:
-    """Regle QSS du filet GAUCHE de l'inspecteur (DetailPanel/
-    DetailHeaderOuter) — SEUL cote conditionnel : masque (aucun filet) des
-    que Distance entre colonnes <= 0 (colonnes/inspecteur colles, aucun
-    espace reel entre eux), pour qu'un SEUL filet reste visible a cette
-    frontiere au lieu de 2 cumules en un trait de 2px — voir la remarque
-    de l'utilisateur, "je veux que les deux bordures qui se chevauchent
-    n'en forment qu'une seule".
-
-    Column/PreviewColumn.border-right, EUX, restent TOUJOURS peints (1px
-    solid, jamais conditionnels — pas d'appel a cette fonction) : c'est ce
-    filet-la, unique et inconditionnel, qui reste visible comme LA seule
-    ligne de la frontiere une fois celui-ci masque. Entre 2 colonnes
-    NORMALES (Type/Projets/etc, ni l'une ni l'autre n'a de border-left),
-    aucun probleme de cumul n'existe de toute facon — rien a masquer la.
-
-    > 0 (vrai espace entre les 2) : les 2 filets redeviennent utiles
-    (l'inspecteur n'est plus colle a rien, un filet a lui tout seul
-    l'encadre a nouveau) — remis a leur valeur normale des que
-    _COLUMN_GAP redevient positif.
-
-    PAS un vrai chevauchement geometrique (essaye d'abord, voir git —
-    QSpacerItem negatif entre l'ascenseur (addStretch) et l'inspecteur) :
-    ABANDONNE, l'ascenseur qui absorbe l'espace disponible ANNULE
-    MATHEMATIQUEMENT tout espacement negatif place apres lui des que la
-    fenetre est plus large que le contenu (le cas courant) — la position
-    de l'inspecteur ne depend alors QUE de (largeur fenetre - largeur
-    inspecteur), jamais de cet espacement, quoi qu'il vaille ; verifie
-    directement, l'inspecteur finissait meme plus loin qu'avant dans ce
-    cas (voir la remarque de l'utilisateur, "les colonnes s'ecartent de
-    quelques pixels plutot que de se chevaucher"). Masquer ce filet est
-    fiable QUELLE QUE SOIT la largeur de la fenetre, contrairement a un
-    chevauchement geometrique."""
-    return "none" if _COLUMN_GAP <= 0 else f"1px solid {C['border']}"
-
-
 _COLUMNS_RESIZABLE = True
 
 
@@ -565,12 +580,13 @@ SEMANTIC_COLOR_SLOTS: list[tuple[str, str, str]] = [
     #     tout ce qui affiche du contenu, quelle que soit sa nature ;
     #   - "Zone de saisie" = C["well"], le fond des champs de texte (ex :
     #     le champ ROOT) ;
-    #   - "Ligne" (nouveau reglage, voir C["line"]) = les filets separateurs
-    #     internes aux colonnes (paint_thumbnail_row, sep_h/sep_v), qui
-    #     utilisaient C["border"] jusqu'ici (pas de reglage dedie) ;
+    #   - "Ligne" (nouveau reglage, voir C["line"]) = le filet separateur
+    #     optionnel entre les lignes d'une colonne (voir item_row_border_*/
+    #     pipeline_browser._paint_row_border), qui utilisait C["border"]
+    #     jusqu'ici (pas de reglage dedie) ;
     #   - "Item non selectionne" (nouveau reglage, voir C["row_idle"]) = le
     #     fond de CHAQUE ligne Type/Projets/Sous-projet au repos (ni
-    #     selectionnee ni survolee, voir RowDelegate.paint/paint_thumbnail_row)
+    #     selectionnee ni survolee, voir pipeline_browser._paint_unified_row)
     #     — jusqu'ici transparente (aucun fond peint), valeur par defaut
     #     identique a "Skin principale niveau 2" pour ne rien changer tant
     #     que l'utilisateur ne la personnalise pas.
@@ -697,15 +713,98 @@ def header_qss(object_name: str) -> str:
         if _HEADER_BORDER_THICKNESS <= 0 or not _HEADER_BORDER_ENABLED.get(name):
             return "0px solid transparent"
         return f"{_HEADER_BORDER_THICKNESS}px solid {header_border_color(name)}"
-    # QSS/CSS accepte "border-radius: TL TR BR BL" (4 valeurs, MEME ordre
-    # que _HEADER_CORNERS) — un rayon PAR COIN, voir set_header_style/
-    # settings_window._CornerRadiusField.
-    radius_qss = " ".join(f"{_HEADER_RADIUS[k]}px" for k in _HEADER_CORNERS)
+    # PAS le raccourci CSS "border-radius: TL TR BR BL" (4 valeurs) : Qt ne
+    # le supporte PAS (contrairement a un navigateur) — verifie directement
+    # (2 boites identiques sauf ceci, l'une au raccourci 4-valeurs reste
+    # CARREE, l'autre aux 4 proprietes separees arrondit bien SEULEMENT le
+    # coin voulu) — voir la remarque de l'utilisateur, capture a l'appui,
+    # "quand on bouge un slider, il affecte plusieurs cotes" : Qt ignore
+    # silencieusement la regle entiere des qu'elle porte plus d'une valeur,
+    # ne laissant plus par defaut QUE le rayon du DERNIER "border-radius"
+    # a une seule valeur encore valide ailleurs dans la feuille de style —
+    # d'ou l'impression qu'UN seul cran de slider deplacait TOUS les
+    # coins a la fois. Les 4 proprietes PAR COIN, elles, sont individuellement
+    # bien supportees.
+    radius_qss = (
+        f"border-top-left-radius: {_HEADER_RADIUS['top_left']}px; "
+        f"border-top-right-radius: {_HEADER_RADIUS['top_right']}px; "
+        f"border-bottom-right-radius: {_HEADER_RADIUS['bottom_right']}px; "
+        f"border-bottom-left-radius: {_HEADER_RADIUS['bottom_left']}px;"
+    )
     return (
-        f"#{object_name} {{ background: {header_bg_hex()}; border-radius: {radius_qss}; "
+        f"#{object_name} {{ background: {header_bg_hex()}; {radius_qss} "
         f"border-top: {edge('top')}; border-right: {edge('right')}; "
         f"border-bottom: {edge('bottom')}; border-left: {edge('left')}; }}"
     )
+
+
+# Cles de reglage "Colonnes/Entetes/Texte/Image/Selection" resolvables PAR
+# TITRE de colonne (voir set_column_style/column_style_for ci-dessous,
+# pipeline_browser.apply_all_settings, settings_window._build_column_
+# override_page) — SOURCE UNIQUE partagee par pipeline_browser.py ET
+# settings_window.py (auparavant maintenue independamment dans chacun des
+# 2 fichiers, avec un risque de divergence a chaque nouvelle cle — voir la
+# remarque de l'utilisateur, "clean le code"). COLUMN_FRAME_KEYS seul reste
+# utile a part (voir pipeline_browser.COLUMN_SETTINGS, remarque de tete) :
+# cadre/entete, applique a TOUTE colonne, alors que le reste de
+# COLUMN_TYPE_OVERRIDE_KEYS (texte/selection/image des LIGNES) ne concerne
+# que les 3 colonnes surchargeables (Type/Projets/Sous-projet).
+COLUMN_FRAME_KEYS = [
+    "header_visible", "header_height", "header_padding", "header_color", "header_radius",
+    "header_border_enabled", "header_border", "header_border_thickness",
+    "column_padding", "column_border_enabled", "column_border", "column_border_thickness", "column_border_radius",
+    "column_bg_color",
+]
+
+# Titre "virtuel" de la colonne fantome de l'apercu image empile (voir
+# pipeline_browser.PreviewColumn/PipelineBrowser.image_preview_column) —
+# le gros apercu qui apparait une fois une selection faite dans Projets/
+# Sous-projet, PAS ces 2 colonnes elles-memes — voir la remarque de
+# l'utilisateur, "je ne sais pas comment les appeler quand je te demande
+# de les modifier", d'ou ce nom/cette cle — "Focus" (renomme depuis
+# "Aperçu", voir la remarque de l'utilisateur, "change la tab APERCU pour
+# FOCUS stp, ca parle plus" — a changer ici SEUL si un autre nom est
+# prefere, tout le reste — onglet, en-tete affiche ET resolution de style
+# dans les 2 fichiers — en depend). Definie ici (pas dans pipeline_
+# browser.py) : settings_window.py en a besoin aussi, pour son propre
+# onglet de surcharge (voir SettingsWindow._build_columns_page).
+PREVIEW_STACK_TITLE = "Focus"
+
+COLUMN_TYPE_OVERRIDE_KEYS = COLUMN_FRAME_KEYS + [
+    "item_font_family", "item_font_size", "item_font_bold", "item_color",
+    "item_antialias_override_enabled", "item_antialias_override",
+    "item_icon_enabled", "item_row_height", "item_row_spacing", "item_column_width", "item_header_gap",
+    "item_text_padding", "item_selection_focus_color", "item_selection_unfocus_color", "item_hover_color",
+    "item_idle_color",
+    "item_selection_padding", "item_selection_border_enabled", "item_selection_border",
+    "item_selection_radius", "item_selection_edge_border",
+    "item_row_border_enabled", "item_row_border_color", "item_row_border_thickness",
+    "item_image_padding", "item_image_border_enabled", "item_image_border",
+    "item_image_border_thickness", "item_image_radius", "item_image_ratio",
+    # Colonnes > Apercu (voir pipeline_browser.PreviewColumn/_PreviewBlock/
+    # PREVIEW_STACK_TITLE) — SPECIFIQUES a cette colonne, jamais exposees
+    # ni partagees ailleurs (contrairement aux cles item_* ci-dessus,
+    # communes a Type/Projets/Sous-projet/Logiciels/Contenu) : incluses
+    # ici quand meme pour que column_style_for(PREVIEW_STACK_TITLE) les
+    # resolve par le MEME mecanisme general/surcharge, sans code separe —
+    # voir la remarque de l'utilisateur, "je veux une section image ...
+    # zone titre ... bouton repliement". "preview_padding"/"preview_radius"
+    # (dicts, 4 cotes/4 coins INDEPENDANTS — voir la remarque de
+    # l'utilisateur, "controle des paddings sur les 4 cotes comme partout
+    # ailleurs ... pareil pour les coins arrondis") remplacent les
+    # anciennes cles "preview_pad"/"preview_radius" (int uniforme).
+    "preview_padding", "preview_radius",
+    "preview_title_zone_height",
+    "preview_title_font_size", "preview_title_font_color",
+    "preview_title_font_family", "preview_title_font_smoothing_enabled", "preview_title_font_smoothing",
+    "preview_title_padding",
+    "preview_status_font_size", "preview_status_font_color", "preview_status_font_color_idle",
+    "preview_status_font_family", "preview_status_font_smoothing_enabled", "preview_status_font_smoothing",
+    "preview_status_padding",
+    "preview_toggle_width", "preview_toggle_height", "preview_toggle_bg_color",
+    "preview_toggle_border_enabled", "preview_toggle_border", "preview_toggle_border_thickness",
+    "preview_toggle_radius", "preview_toggle_x", "preview_toggle_y",
+]
 
 
 # ==========================================================================
@@ -723,24 +822,27 @@ def header_qss(object_name: str) -> str:
 # ==========================================================================
 
 _GENERAL_COLUMN_STYLE: dict = {}
-_TYPE_COLUMN_STYLE: dict = {}
+# Style EFFECTIF PAR titre reel de colonne (voir COLUMN_OVERRIDABLE_TITLES) —
+# generalise de l'ancien _TYPE_COLUMN_STYLE (un seul dict, "Type"
+# uniquement) pour couvrir aussi "Projets"/"Sous-projet" (voir la remarque
+# de l'utilisateur, "place ensuite cette meme section dans les onglets
+# projets et sous projets pour y controler les colonnes respectives").
+_COLUMN_STYLES: dict[str, dict] = {}
 
 
 def set_general_column_style(style: dict) -> None:
     """Style EFFECTIF (general, sans aucune surcharge) applique a TOUTE
-    colonne AUTRE que "Type" — voir set_type_column_style ci-dessous pour
-    celle-ci, seule a pouvoir surcharger individuellement."""
+    colonne SANS surcharge active — voir set_column_style ci-dessous pour
+    les colonnes qui en ont une."""
     global _GENERAL_COLUMN_STYLE
     _GENERAL_COLUMN_STYLE = dict(style)
 
 
-def set_type_column_style(style: dict) -> None:
-    global _TYPE_COLUMN_STYLE
-    _TYPE_COLUMN_STYLE = dict(style)
-
-
-def type_column_style() -> dict:
-    return _TYPE_COLUMN_STYLE
+def set_column_style(title: str, style: dict) -> None:
+    """Style EFFECTIF (general ou surcharge par ligne, voir
+    pipeline_browser.apply_all_settings) d'UNE colonne precise ("Type",
+    "Projets" ou "Sous-projet")."""
+    _COLUMN_STYLES[title] = dict(style)
 
 
 def column_style_for(title: str) -> dict:
@@ -748,7 +850,7 @@ def column_style_for(title: str) -> dict:
     Column.refresh_colors/refresh_header/_column_padding, qui l'appellent
     tous avec le titre de LEUR colonne plutot que de choisir eux-memes
     entre general/Type."""
-    return _TYPE_COLUMN_STYLE if title == "Type" else _GENERAL_COLUMN_STYLE
+    return _COLUMN_STYLES.get(title) or _GENERAL_COLUMN_STYLE
 
 
 def resolve_color_ref(value, fallback: str = "") -> str:
@@ -789,27 +891,15 @@ def column_header_qss(object_name: str, title: str) -> str:
     padding de l'entete a 0, je me retrouve avec des bordures radius
     monstrueux alors qu'il est a 0 dans les settings".
 
-    REVENU sur ce point (nibbling reintroduit, voir _nibble_top_corners
-    ci-dessous) : le decoupage de secours evoque plus haut
-    (_RoundedCornersEffect sur pipeline_browser.Column._content) s'est
-    avere NE PAS recouper fiablement l'entete dans certaines conditions
-    (bordure de colonne fine, QGraphicsEffect dont le rendu ne se
-    reflete pas toujours a l'ecran malgre un radius mis a jour) — voir
-    la remarque de l'utilisateur, capture a l'appui, "la bordure
-    disparait completement dans l'arrondi de l'angle". Nibbler ICI EN
-    PLUS (redondant mais fiable, header_fill peint alors son propre coin
-    rond) evite de dependre uniquement de ce mecanisme — SEULEMENT
-    quand header_padding<=0 (l'entete touche alors reellement le coin
-    de la colonne, voir plus bas) : la "monstruosite" rapportee a
-    l'epoque venait d'un nibbling applique SANS cette condition, pas du
-    principe lui-meme (deja verifie sans souci cote apercu des
-    settings, meme formule)."""
+    Un nibbling avait ete brievement reintroduit (voir git blame) pour
+    contourner un cas ou le decoupage ci-dessus ne recoupait pas
+    fiablement l'entete — REVENU EN ARRIERE sur demande explicite de
+    l'utilisateur : "je ne veux pas que le fait de mettre un arrondi sur
+    les colonnes affecte les arrondis des entetes (j'ai deja un
+    parametre pour ca)". Le rayon de l'entete suit donc a nouveau
+    UNIQUEMENT header_radius, jamais column_border_radius."""
     s = column_style_for(title)
     radius = dict(_coerce_header_radius(s.get("header_radius", 0)))
-    if int(s.get("header_padding", 0)) <= 0:
-        column_radius = _coerce_header_radius(s.get("column_border_radius", 0))
-        radius["top_left"] = max(radius["top_left"], column_radius["top_left"])
-        radius["top_right"] = max(radius["top_right"], column_radius["top_right"])
     enabled = s.get("header_border_enabled") or {}
     colors = s.get("header_border") or {}
     thickness = max(0, int(s.get("header_border_thickness", 1)))
@@ -821,9 +911,18 @@ def column_header_qss(object_name: str, title: str) -> str:
             return "0px solid transparent"
         return f"{thickness}px solid {resolve_color_ref(colors.get(name))}"
 
-    radius_qss = " ".join(f"{radius[k]}px" for k in _HEADER_CORNERS)
+    # PAS le raccourci CSS "border-radius: TL TR BR BL" — voir header_qss,
+    # MEME correctif/MEME raison (Qt ne le supporte pas, contrairement a un
+    # navigateur — verifie directement) : ces 4 proprietes SEPAREES le
+    # remplacent.
+    radius_qss = (
+        f"border-top-left-radius: {radius['top_left']}px; "
+        f"border-top-right-radius: {radius['top_right']}px; "
+        f"border-bottom-right-radius: {radius['bottom_right']}px; "
+        f"border-bottom-left-radius: {radius['bottom_left']}px;"
+    )
     return (
-        f"#{object_name} {{ background: {_column_header_bg_hex(s)}; border-radius: {radius_qss}; "
+        f"#{object_name} {{ background: {_column_header_bg_hex(s)}; {radius_qss} "
         f"border-top: {edge('top')}; border-right: {edge('right')}; "
         f"border-bottom: {edge('bottom')}; border-left: {edge('left')}; }}"
     )
@@ -859,7 +958,12 @@ def column_frame_style(title: str, suppress_left: bool = False) -> dict:
         enabled["left"] = False
     thickness = max(0, int(s.get("column_border_thickness", 1)))
     colors = {k: resolve_color_ref(v) for k, v in (s.get("column_border") or {}).items()}
-    return {"radius": radius, "enabled": enabled, "colors": colors, "thickness": thickness}
+    # "@skinN2" (= C["void"]) par defaut : comportement INCHANGE tant que
+    # l'utilisateur ne personnalise rien — voir la remarque de
+    # l'utilisateur, "dans la section general/colonne/colonne je veux un
+    # parametre couleur de fond".
+    bg = resolve_color_ref(s.get("column_bg_color", "@skinN2"))
+    return {"radius": radius, "enabled": enabled, "colors": colors, "thickness": thickness, "bg": bg}
 
 
 def column_padding_for(title: str) -> dict:
