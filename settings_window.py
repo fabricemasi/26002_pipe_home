@@ -41,6 +41,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import (
     QColor,
     QCursor,
+    QDoubleValidator,
     QFont,
     QGuiApplication,
     QIntValidator,
@@ -65,6 +66,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMenu,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -77,6 +79,7 @@ from app_style import (
     C,
     COLOR_FIELDS,
     COLUMN_TYPE_OVERRIDE_KEYS,
+    INSPECTOR_TITLE,
     PREVIEW_STACK_TITLE,
     SEMANTIC_COLOR_SLOTS,
     SMOOTHING_CHOICES,
@@ -257,6 +260,92 @@ def _sync_slider_style(settings: dict) -> None:
 
 
 # ==========================================================================
+# Section "TITRE" (voir SettingsWindow._section_titre) : police + retrait
+# (indentation) des titres de _Section/_SubSection de CETTE fenetre, par
+# niveau d'imbrication (1 = _Section, 2..5 = _SubSection a une profondeur
+# croissante) — voir la remarque de l'utilisateur, "je veux homogeneiser
+# les textes des sections et sous sections". Defauts = apparence INCHANGEE
+# (voir _Section/_SubSection avant ce reglage : 14/600 couleur section_title
+# niveau 1, 10/600 couleur group_title/group_note + 20px/40px de retrait
+# niveaux 2/3) ; niveaux 4/5 n'ont encore AUCUN site d'utilisation reel
+# (aucune sous-section n'est imbriquee aussi profond aujourd'hui) — reserves
+# pour une imbrication future, memes defauts que le niveau 3 mais un retrait
+# plus profond (60/80px).
+# ==========================================================================
+_TITLE_LEVEL_DEFAULTS: dict[int, dict] = {
+    1: {"font_family": "", "font_bold": True, "font_italic": False, "font_size": 14,
+        "font_smoothing_enabled": False, "font_smoothing": "current", "font_color": "#5f9bd0", "indent": 0},
+    2: {"font_family": "", "font_bold": True, "font_italic": False, "font_size": 10,
+        "font_smoothing_enabled": False, "font_smoothing": "current", "font_color": "#5d656b", "indent": 20},
+    3: {"font_family": "", "font_bold": True, "font_italic": False, "font_size": 10,
+        "font_smoothing_enabled": False, "font_smoothing": "current", "font_color": "#5d656b", "indent": 40},
+    4: {"font_family": "", "font_bold": True, "font_italic": False, "font_size": 10,
+        "font_smoothing_enabled": False, "font_smoothing": "current", "font_color": "#5d656b", "indent": 60},
+    5: {"font_family": "", "font_bold": True, "font_italic": False, "font_size": 10,
+        "font_smoothing_enabled": False, "font_smoothing": "current", "font_color": "#5d656b", "indent": 80},
+}
+_TITLE_LEVEL_STYLE: dict[int, dict] = {level: dict(vals) for level, vals in _TITLE_LEVEL_DEFAULTS.items()}
+
+
+def _sync_title_level_style(settings: dict) -> None:
+    colors = settings.get("colors") or {}
+    for level, defaults in _TITLE_LEVEL_DEFAULTS.items():
+        prefix = f"title_level{level}"
+        style = _TITLE_LEVEL_STYLE[level]
+        for key, default in defaults.items():
+            style[key] = settings.get(f"{prefix}_{key}", default)
+        # Resolu tout de suite en hex REEL (voir _resolve_color_value) —
+        # PAS conserve tel quel ("@<slot>") : _title_color n'a lui-meme
+        # aucun acces a la palette (fonction MODULE, pas methode), le
+        # laisser resoudre plus tard avec un dict VIDE retombait toujours
+        # sur le noir de repli — voir la remarque de l'utilisateur, "quand
+        # je selectionne une couleur app, elle apparait noire".
+        style["font_color"] = _resolve_color_value(style["font_color"], colors)
+
+
+def _title_font(level: int) -> QFont:
+    """Police EFFECTIVE d'un titre de _Section (niveau 1) / _SubSection
+    (niveau 2-5) — voir _TITLE_LEVEL_STYLE. Import de pipeline_browser
+    LOCAL (voir _SettingsTitleBar.__init__, meme raison) : evite un import
+    circulaire au chargement du module (pipeline_browser importe deja
+    settings_window)."""
+    import pipeline_browser as pb
+    style = _TITLE_LEVEL_STYLE.get(level) or _TITLE_LEVEL_DEFAULTS[3]
+    size = int(style.get("font_size", 10))
+    weight = 600 if style.get("font_bold", True) else 400
+    smoothing = style.get("font_smoothing", "current") if style.get("font_smoothing_enabled") else "current"
+    family = pb._resolve_font_family((style.get("font_family") or "").strip(), size, weight)
+    return pb.font(
+        size, weight, family=family, italic=bool(style.get("font_italic", False)),
+        smoothing=smoothing, tracking=(0.6 if level >= 2 else 0.0))
+
+
+def _title_color(level: int) -> str:
+    """Couleur DEJA resolue en hex (voir _sync_title_level_style, appelee
+    avant toute utilisation de cette fonction) — jamais un "@<slot>" brut
+    ici."""
+    style = _TITLE_LEVEL_STYLE.get(level) or _TITLE_LEVEL_DEFAULTS[3]
+    return style.get("font_color", "#d6d9dc")
+
+
+def _title_indent(level: int) -> int:
+    style = _TITLE_LEVEL_STYLE.get(level) or _TITLE_LEVEL_DEFAULTS[3]
+    return max(0, int(style.get("indent", 0)))
+
+
+def _subsection_left_margin(level: int) -> int:
+    """Marge GAUCHE reelle du bandeau d'une _SubSection de `level` — voir la
+    remarque de l'utilisateur, "pour les titres, une indentation a 0
+    correspond a etre au meme niveau que le titre 1" : un retrait de 0px
+    (General > TITRE > "Retrait titre niveau N") doit aligner le TEXTE de
+    cette sous-section sur le TEXTE du titre de _Section (niveau 1), pas sur
+    x=0 brut — or _Section et _SubSection n'ont pas le meme chevron/
+    espacement (16+10 vs 11+6), d'ou l'ecart fixe "9" ci-dessous pour
+    compenser cette difference AVANT d'ajouter le retrait configure."""
+    return _title_indent(1) + 9 + _title_indent(level)
+
+
+# ==========================================================================
 # Persistance — un seul emplacement (voir la remarque de tete de fichier :
 # le mode de sauvegarde a 4 positions de l'ancienne fenetre a disparu avec
 # la maquette, qui n'a qu'un reglage "Preset" ; le fichier actif reste celui
@@ -314,6 +403,18 @@ DEFAULT_COLUMNS: dict[str, dict[str, Any]] = {
 DEFAULT_SETTINGS: dict[str, Any] = {
     "root_path": r"F:\PIPELINE",
     "ui_scale": 100,
+    # Section "Application" (voir SettingsWindow._section_application) :
+    # repli automatique des colonnes de set (Type/Projets/niveaux
+    # configures) des que la chaine de navigation atteint le repertoire de
+    # travail — deja le comportement actuel par defaut (True), ce reglage
+    # permet juste de le desactiver (voir app_style.
+    # set_auto_collapse_set_columns/pipeline_browser._sync_collapse_state) —
+    # voir la remarque de l'utilisateur, "un toggle qui permet ou pas de
+    # rabattre les colonnes de set, une fois que l'on est sur l'espace de
+    # travail".
+    "auto_collapse_set_columns": True,
+    "application_omit_file_names": [],
+    "application_omit_extensions": [],
     "window_radius": 0,
     "header_visible": True,
     "header_height": 26,
@@ -390,6 +491,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "resize_badge_offset_x": 8,
     "resize_badge_offset_y": 8,
     "resize_badge_font_family": "",            # "" = police mono de l'appli (comportement INCHANGE)
+    "resize_badge_font_bold": True,             # True : poids 600 fige avant ce toggle, comportement INCHANGE
+    "resize_badge_font_italic": False,
+    "resize_badge_font_size": 11,
+    "resize_badge_font_smoothing_enabled": False,
+    "resize_badge_font_smoothing": "current",
     "resize_badge_text_color": "#d6d9dc",      # = ancien C['text'] code en dur, comportement INCHANGE
     "resize_badge_bg_color": "#202326",
     "resize_badge_border_enabled": {"top": True, "right": True, "bottom": True, "left": True},
@@ -412,6 +518,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "preview_title_font_size": 26,
     "preview_title_font_color": "#d6d9dc",
     "preview_title_font_family": "",
+    # True (pas False) : le titre etait TOUJOURS en gras avant l'ajout de ce
+    # toggle (poids fige a 700 en dur, voir pipeline_browser._build_preview_
+    # stack) — comportement par defaut INCHANGE.
+    "preview_title_font_bold": True,
+    "preview_title_font_italic": False,
     "preview_title_font_smoothing_enabled": False,
     "preview_title_font_smoothing": "current",
     "preview_title_padding_linked": True,
@@ -420,6 +531,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "preview_status_font_color": "#d6d9dc",
     "preview_status_font_color_idle": "#5f666b",
     "preview_status_font_family": "",
+    # True : meme raison que preview_title_font_bold (poids fige a 700
+    # avant ce toggle) — comportement par defaut INCHANGE.
+    "preview_status_font_bold": True,
+    "preview_status_font_italic": False,
     "preview_status_font_smoothing_enabled": False,
     "preview_status_font_smoothing": "current",
     "preview_status_padding_linked": True,
@@ -435,6 +550,15 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "preview_toggle_radius": 4,
     "preview_toggle_x": 8,
     "preview_toggle_y": 34,
+    "collapse_toggle_mode": "chevrons",
+    "detail_panel_width": 300,
+    "shortcut_font_family": "",
+    "shortcut_font_bold": False,
+    "shortcut_font_italic": False,
+    "shortcut_color": "#8fb4d5",
+    "shortcut_font_size": 11,
+    "shortcut_font_smoothing_enabled": False,
+    "shortcut_font_smoothing": "current",
     # Items texte des colonnes (voir SettingsWindow._section_items) — voir
     # la remarque de l'utilisateur, "ajoute un tableau pour les items
     # textes dans les colonnes". "" = police Systeme (meme convention que
@@ -451,6 +575,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # remarque de l'utilisateur, "pour les polices ... j'aimerais rajouter
     # une option pour mettre le texte en gras (toggle)".
     "item_font_bold": False,
+    "item_font_italic": False,
     "item_color": "#d6d9dc",
     # Lissage FORCE du texte des items (voir app_style.font, SMOOTHING_
     # CHOICES) — desactive par defaut (suit alors le lissage habituel,
@@ -460,6 +585,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "item_antialias_override": "current",
     "item_icon_enabled": True,
     "item_row_height": 25,
+    "item_icon_size": 0,
+    "item_icon_padding_left": 0,
     "item_row_spacing": 1,   # voir pipeline_browser.ROW_SPACING
     # Largeur par defaut d'une colonne (voir pipeline_browser.COLUMN_SETTINGS/
     # col_width/apply_all_settings) — reglage GENERAL, surchargeable PAR TITRE
@@ -537,6 +664,50 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # "toggle 1 pour bordure ou non au croisement entre la selection et le
     # bord de la colonne".
     "item_selection_edge_border": True,
+    # Non focus/Survol/Non selectionne (voir _section_headers, sous-
+    # sections dediees) : "clones" de Focus (les 4 memes cles ci-dessus,
+    # padding/bordure/rayon/bord de colonne), SAUF override explicite —
+    # False/vide par defaut (comportement INCHANGE, un etat non pousse
+    # herite integralement de Focus tant que son toggle reste OFF) — voir
+    # la remarque de l'utilisateur, "non focus survol et non selectionne
+    # sont des clones des focus (sauf la couleur) donc mets leur des
+    # toggles d'override".
+    "item_selection_unfocus_padding_override": False,
+    "item_selection_unfocus_padding": {},
+    "item_selection_unfocus_border_override": False,
+    "item_selection_unfocus_border_enabled": {"top": False, "right": False, "bottom": False, "left": False},
+    "item_selection_unfocus_border": {
+        "top": "#2c3034", "right": "#2c3034", "bottom": "#2c3034", "left": "#2c3034",
+    },
+    "item_selection_unfocus_radius_override": False,
+    "item_selection_unfocus_radius": 0,
+    "item_selection_unfocus_radius_linked": True,
+    "item_selection_unfocus_edge_border_override": False,
+    "item_selection_unfocus_edge_border": True,
+    "item_selection_hover_padding_override": False,
+    "item_selection_hover_padding": {},
+    "item_selection_hover_border_override": False,
+    "item_selection_hover_border_enabled": {"top": False, "right": False, "bottom": False, "left": False},
+    "item_selection_hover_border": {
+        "top": "#2c3034", "right": "#2c3034", "bottom": "#2c3034", "left": "#2c3034",
+    },
+    "item_selection_hover_radius_override": False,
+    "item_selection_hover_radius": 0,
+    "item_selection_hover_radius_linked": True,
+    "item_selection_hover_edge_border_override": False,
+    "item_selection_hover_edge_border": True,
+    "item_selection_idle_padding_override": False,
+    "item_selection_idle_padding": {},
+    "item_selection_idle_border_override": False,
+    "item_selection_idle_border_enabled": {"top": False, "right": False, "bottom": False, "left": False},
+    "item_selection_idle_border": {
+        "top": "#2c3034", "right": "#2c3034", "bottom": "#2c3034", "left": "#2c3034",
+    },
+    "item_selection_idle_radius_override": False,
+    "item_selection_idle_radius": 0,
+    "item_selection_idle_radius_linked": True,
+    "item_selection_idle_edge_border_override": False,
+    "item_selection_idle_edge_border": True,
     # Colonnes > Type (voir SettingsWindow._build_column_type_page) : vide
     # par defaut — AUCUNE ligne surchargee, la colonne "Type" suit alors
     # EXACTEMENT le style general ci-dessus (voir la remarque de
@@ -701,7 +872,87 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "font_info2": dict(_DEFAULT_FONT),      # fige
     "font_code": dict(_DEFAULT_FONT),
     "columns": json.loads(json.dumps(DEFAULT_COLUMNS)),   # fige
+    # Logiciels AJOUTES par l'utilisateur (voir SettingsWindow._section_
+    # logiciels, General > LOGICIEL, "+") — chaque entree {"key": nom
+    # normalise (alnum majuscule, voir pipeline_browser.software_icon_key),
+    # "label": nom saisi tel quel, affiche dans le tableau}. Les logiciels
+    # RECONNUS d'origine (pipeline_browser.SOFTWARE_ICONS) n'ont pas besoin
+    # d'y figurer, ils apparaissent toujours dans ce meme tableau.
+    "custom_softwares": [],
+    # Logiciels RECONNUS D'ORIGINE explicitement retires de la liste (voir
+    # SettingsWindow._delete_logiciel, bouton "Supprimer" sur une ligne
+    # d'origine) — simples cles (pipeline_browser.SOFTWARE_ICONS), pas des
+    # entrees completes comme custom_softwares : rien a afficher pour eux,
+    # juste a exclure/ne plus reconnaitre tant qu'ils ne sont pas re-
+    # ajoutes via "+ Ajouter un logiciel...".
+    "removed_softwares": [],
+    # Icone de niveaux (badge numerote, colonne "Projets" — voir
+    # SettingsWindow._build_column_override_page, Colonnes > Projets >
+    # Colonnes > "Icone de niveaux") — voir la remarque de l'utilisateur,
+    # "j'aimerais pouvoir controler l'aspect de cette petite icone".
+    "step_badge_width": 18,
+    "step_badge_height": 18,
+    "step_badge_border_enabled": {"top": False, "right": False, "bottom": False, "left": False},
+    "step_badge_border": {"top": "#2e343a", "right": "#2e343a", "bottom": "#2e343a", "left": "#2e343a"},
+    "step_badge_border_thickness": 1,
+    "step_badge_radius": 9,
+    "step_badge_radius_linked": True,
+    "step_badge_color_base2": "#5c6368",
+    "step_badge_color_base3": "#5c6368",
+    "step_badge_color_base4": "#3f6f9f",
+    "step_badge_color_base5": "#3f6f9f",
+    "step_badge_color_base6": "#d9822b",
+    # Couleur DEDIEE au badge "N" (voir pipeline_browser.project_step_count/
+    # _step_badge_color) — affiche quand le toggle "set" (ColumnConfigDialog)
+    # est desactive : ce projet n'a alors PLUS de nombre d'etapes a
+    # proprement parler (Type+Projets seulement, aucune limite au-dela), le
+    # badge numerote n'aurait donc aucun sens ici — voir la remarque de
+    # l'utilisateur, "quand set est desactive je veux que l'indicateur de
+    # base affiche N". DISTINCTE des bases 2-6 : sans ca, un projet "set
+    # desactive" etait indiscernable a l'oeil d'un vrai projet "base 2".
+    "step_badge_color_basen": "#5c6368",
+    # Couleur du TEXTE, une par base (PAS une seule globale) — voir la
+    # remarque de l'utilisateur, "enleve la couleur dans la ligne texte,
+    # et met un carre de couleur pour le texte au dessus des carres de
+    # couleur de fond ... la couleur du haut est pour le texte (pour
+    # chacune des bases) et la couleur du bas est pour le fond".
+    "step_badge_text_color_base2": "#eef2f5",
+    "step_badge_text_color_base3": "#eef2f5",
+    "step_badge_text_color_base4": "#eef2f5",
+    "step_badge_text_color_base5": "#eef2f5",
+    "step_badge_text_color_base6": "#eef2f5",
+    "step_badge_text_color_basen": "#eef2f5",
+    "step_badge_offset_x": 4,
+    "step_badge_offset_y": 0,
+    "step_badge_font_family": "",
+    "step_badge_font_bold": True,
+    "step_badge_font_smoothing_enabled": False,
+    "step_badge_font_smoothing": "current",
+    "step_badge_border_smoothing": True,
+    # Entetes de colonnes (voir SettingsWindow._section_headers) — voir la
+    # remarque de l'utilisateur, "ajoute un slider pour le padding droit
+    # des icones ... choix de la police + gras/regular + couleur".
+    "header_icon_right_padding": 0,
+    "header_font_family": "",
+    "header_font_bold": True,
+    "header_font_color": "#9aa1a7",
+    "header_font_size": 10,
+    "header_font_italic": False,
+    "header_font_antialias_override_enabled": False,
+    "header_font_antialias_override": "current",
+    # Preset applique AUTOMATIQUEMENT par-dessus pipeline_settings.json a
+    # chaque chargement (voir load_settings, General > Application) — "" =
+    # aucun (comportement INCHANGE, pipeline_settings.json seul fait foi).
+    "default_preset": "",
 }
+# Section "TITRE" (voir SettingsWindow._section_titre/_TITLE_LEVEL_DEFAULTS,
+# General > TITRE) : police/couleur/retrait des titres de _Section (niveau
+# 1) et _SubSection (niveaux 2-5) de CETTE fenetre — genere depuis les
+# MEMES defauts que _TITLE_LEVEL_STYLE (pas de duplication).
+for _title_level, _title_defaults in _TITLE_LEVEL_DEFAULTS.items():
+    for _title_key, _title_val in _title_defaults.items():
+        DEFAULT_SETTINGS[f"title_level{_title_level}_{_title_key}"] = _title_val
+del _title_level, _title_defaults, _title_key, _title_val
 
 
 def load_settings() -> dict[str, Any]:
@@ -734,6 +985,28 @@ def load_settings() -> dict[str, Any]:
             _merge(raw)
     except (OSError, ValueError):
         pass
+    # Preset par defaut (voir General > Application, DEFAULT_SETTINGS.
+    # default_preset) : applique PAR-DESSUS pipeline_settings.json a CHAQUE
+    # chargement (demarrage de l'appli ET ouverture de la fenetre de
+    # parametres, tous deux passent par cette fonction) — voir la remarque
+    # de l'utilisateur, "je veux un parametre preset par defaut". Silen-
+    # cieux si le preset nomme a depuis ete supprime/renomme (repli sur
+    # pipeline_settings.json seul, comme si aucun preset par defaut
+    # n'etait configure).
+    default_preset = settings.get("default_preset")
+    if default_preset:
+        presets = _load_presets()
+        if default_preset in presets:
+            _merge(presets[default_preset])
+            # "default_preset" fait lui-meme PARTIE des cles capturees par
+            # un preset (voir _current_values, "je veux que absolument
+            # tous les parametres soient enregistres dans les presets") —
+            # sans repli EXPLICITE ici, le _merge ci-dessus l'ecraserait
+            # avec la valeur qu'AVAIT ce preset AU MOMENT ou il a ete
+            # enregistre (typiquement vide), faisant "oublier" a l'appli,
+            # des ce premier chargement, LEQUEL preset par defaut vient
+            # justement d'etre applique.
+            settings["default_preset"] = default_preset
     return settings
 
 
@@ -746,6 +1019,10 @@ def save_settings(settings: dict[str, Any]) -> None:
 
 
 def _load_presets() -> dict[str, dict]:
+    """Tous les presets enregistres, {nom: reglages} — {} si le fichier est
+    absent/illisible/invalide (repli SILENCIEUX, meme convention que
+    load_layout_settings/load_project_columns cote pipeline_browser :
+    jamais bloquant)."""
     try:
         if _PRESETS_PATH.is_file():
             data = json.loads(_PRESETS_PATH.read_text(encoding="utf-8"))
@@ -1116,6 +1393,86 @@ class _SliderField(QWidget):
         self.slider.setValue(value)
 
 
+class _RatioSliderField(QWidget):
+    """Comme _SliderField, mais pour un ratio largeur/hauteur affiche
+    "1/<valeur decimale>" (voir Colonnes > Lignes > Apercu > Ratio, remarque
+    de l'utilisateur : "avant l'invite place le texte '1/' ... dans
+    l'invite on entre la valeur de largeur (par exemple 2.35) ce qui fait un
+    ratio de 1 pour 2.35"). Stockage INCHANGE (pourcentage entier, 100 = 1.0,
+    voir item_image_ratio) — seul l'AFFICHAGE devient decimal (value_pct/100,
+    2 decimales), la granularite du slider (pas de 1%) suffit deja pour 2
+    decimales."""
+
+    valueChanged = Signal(int)
+
+    def __init__(self, minimum: int, maximum: int, value_pct: int,
+                 slider_width: int = 170, box_width: int = 68, parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        prefix = QLabel("1/")
+        prefix.setFont(_qfont(11, 400, mono=True))
+        prefix.setStyleSheet(f"color: {M['unit']}; background: transparent;")
+        layout.addWidget(prefix)
+        self.slider = _MiniSlider(minimum, maximum, value_pct, slider_width)
+        self._radius = 0
+        self._min, self._max = minimum, maximum
+        self.box = box = QWidget()
+        box.setObjectName("SliderValueBox")
+        box.setAttribute(Qt.WA_StyledBackground, True)
+        box.setFixedSize(box_width, 25)
+        self._refresh_box_style()
+        box_l = QHBoxLayout(box)
+        box_l.setContentsMargins(7, 0, 7, 0)
+        box_l.setSpacing(4)
+        self.value_label = QLineEdit(self._format(value_pct))
+        self.value_label.setFont(_qfont(11, 400, mono=True))
+        self.value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.value_label.setFrame(False)
+        self.value_label.setValidator(QDoubleValidator(0.01, 99.99, 2, self.value_label))
+        self.value_label.setStyleSheet(f"background: transparent; border: none; padding: 0; color: {M['value_text']};")
+        self.value_label.editingFinished.connect(self._on_text_edited)
+        box_l.addWidget(self.value_label, 1)
+        layout.addWidget(self.slider)
+        layout.addWidget(box)
+        self.slider.valueChanged.connect(self._on_change)
+
+    @staticmethod
+    def _format(value_pct: int) -> str:
+        return f"{value_pct / 100:.2f}"
+
+    def _refresh_box_style(self):
+        self.box.setStyleSheet(
+            f"#SliderValueBox {{ background: {M['field_bg']}; border: 1px solid {M['field_border']}; "
+            f"border-radius: {self._radius}px; }}"
+        )
+
+    def setRadius(self, radius: int):
+        self._radius = max(0, int(radius))
+        self._refresh_box_style()
+
+    def _on_change(self, value_pct: int):
+        self.value_label.setText(self._format(value_pct))
+        self.valueChanged.emit(value_pct)
+
+    def _on_text_edited(self):
+        text = self.value_label.text().strip().replace(",", ".")
+        try:
+            value_pct = max(self._min, min(self._max, round(float(text) * 100)))
+        except ValueError:
+            value_pct = self.slider.value()
+        self.slider.setValue(value_pct)
+        self.value_label.setText(self._format(self.slider.value()))
+
+    def value(self) -> int:
+        return self.slider.value()
+
+    def setValue(self, value_pct: int):
+        self.slider.setValue(value_pct)
+        self.value_label.setText(self._format(value_pct))
+
+
 class _SteppedSliderField(QWidget):
     """Slider a positions FIXES (voir _MiniSlider, deja entier par nature —
     aucune valeur intermediaire possible) affichant un LIBELLE a cote plutot
@@ -1167,48 +1524,45 @@ _ITEM_FONT_SMOOTHING_STEPS = ("none", "previous", "current")
 
 
 class _OverrideSmoothingField(QWidget):
-    """Toggle "Forcer" + slider Lissage (3 crans, MEME widget/MEMES libelles
-    que Polices principales > Lissage, voir _SteppedSliderField/
-    _SMOOTHING_STEPS) — pour Colonnes > Texte > Lissage : par defaut (toggle
-    OFF) ce texte suit le lissage habituel de l'appli (comme avant ce
-    reglage), le toggle permet de le FORCER a un niveau independant — voir
-    la remarque de l'utilisateur, "toggle + override l'antialiasing"."""
+    """Slider Lissage a 3 crans (MEME widget/mecanique que Polices
+    principales > Lissage, voir _SteppedSliderField/_SMOOTHING_STEPS) —
+    pour Colonnes > Texte > Lissage. Le toggle "Forcer" a ete SUPPRIME (voir
+    la remarque de l'utilisateur, "il y a deux toggle pour le lissage,
+    supprime le premier qui ne sert a rien, et ne garde que celui a 3
+    positions") : le lissage choisi ici s'applique desormais TOUJOURS
+    (isChecked() renvoie donc toujours True, conserve seulement pour ne pas
+    casser les appelants qui persistent encore une cle "..._enabled").
+    Libelles des 3 crans : "0"/"1"/"2" (pas les noms descriptifs Fin/Moyen/
+    Brut) — voir la remarque de l'utilisateur. Titre "niveau de lissage"
+    centre AU-DESSUS du slider (voir la remarque de l'utilisateur, "place
+    un nouveau texte juste au dessus du toggle bien centre")."""
 
     changed = Signal()
 
     def __init__(self, enabled: bool, smoothing: str, parent=None):
         super().__init__(parent)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(14)
-        self.toggle = _Toggle(bool(enabled))
-        layout.addWidget(self.toggle)
-        labels = [SMOOTHING_LABELS_SHORT[key] for key in _ITEM_FONT_SMOOTHING_STEPS]
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(2)
+        title = QLabel("niveau de lissage")
+        title.setFont(_qfont(9, 400))
+        title.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        title.setAlignment(Qt.AlignHCenter)
+        outer.addWidget(title)
         step = _ITEM_FONT_SMOOTHING_STEPS.index(smoothing) if smoothing in _ITEM_FONT_SMOOTHING_STEPS else 2
-        self.slider = _SteppedSliderField(labels, step, slider_width=20, box_width=90)
-        layout.addWidget(self.slider)
-        self._refresh_enabled()
-        self.toggle.toggled.connect(self._on_toggle)
+        self.slider = _SteppedSliderField(["0", "1", "2"], step, slider_width=20, box_width=24)
+        outer.addWidget(self.slider, 0, Qt.AlignHCenter)
         self.slider.changed.connect(lambda _s: self.changed.emit())
 
-    def _on_toggle(self, _checked: bool):
-        self._refresh_enabled()
-        self.changed.emit()
-
-    def _refresh_enabled(self):
-        _set_dimmed(self.slider, not self.toggle.isChecked())
-
     def isChecked(self) -> bool:
-        return self.toggle.isChecked()
+        return True
 
     def smoothingValue(self) -> str:
         return _ITEM_FONT_SMOOTHING_STEPS[self.slider.value()]
 
     def setValue(self, enabled: bool, smoothing: str):
-        self.toggle.setChecked(bool(enabled))
         step = _ITEM_FONT_SMOOTHING_STEPS.index(smoothing) if smoothing in _ITEM_FONT_SMOOTHING_STEPS else 2
         self.slider.setValue(step)
-        self._refresh_enabled()
 
 
 class _RowBorderField(QWidget):
@@ -1338,6 +1692,18 @@ class _SelectField(QPushButton):
             self._value = value
             self._sync_text()
 
+    def setOptions(self, options: list[str]):
+        """Remplace la liste d'options EN PLACE (voir _open_menu, qui lit
+        `self._options` a chaque ouverture — pas besoin de reconstruire le
+        widget) : utilise par SettingsWindow._refresh_default_preset_
+        options pour que "Preset par defaut" reste a jour des qu'un preset
+        est cree/supprime/renomme, MEME fenetre encore ouverte — voir la
+        remarque de l'utilisateur sur la refonte des presets."""
+        self._options = list(options)
+        if self._value not in self._options and self._options:
+            self._value = self._options[0]
+            self._sync_text()
+
 
 class _FontSelectField(_SelectField):
     """Variante de _SelectField pour choisir une police : vraie liste
@@ -1429,27 +1795,77 @@ class _DualFontSelectField(QWidget):
         super().__init__(parent)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(20)
+        layout.setSpacing(6)
 
-        soft_options = list(ITEM_FONT_ROLE_LABELS.values())
-        is_soft = value in soft_options
-        self.soft_toggle = _Toggle(is_soft)
-        self.soft_field = _FontSelectField(soft_options, value if is_soft else soft_options[0], width=width)
-        layout.addWidget(self.soft_toggle)
-        layout.addWidget(self.soft_field)
+        # MEME systeme que le gabarit "couleur" compact (voir
+        # _CompactAppOrCustomColorField et la remarque de l'utilisateur,
+        # "c'est possible de faire la mm chose pour le choix des polices ?")
+        # : un toggle "app"/"sys" de PART ET D'AUTRE, libelle CENTRE
+        # au-dessus de chacun, et UN SEUL menu deroulant central (au lieu de
+        # 2 cote a cote, l'un grise) dont la liste d'options BASCULE selon
+        # le mode actif (voir _refresh_options) — memes valeurs stockees
+        # qu'avant (retro-compatible).
+        self._soft_options = list(ITEM_FONT_ROLE_LABELS.values())
+        self._system_options = ["Systeme"] + installed_font_families()
+        is_soft = value in self._soft_options
 
-        system_options = ["Systeme"] + installed_font_families()
-        self.system_toggle = _Toggle(not is_soft)
-        self.system_field = _FontSelectField(
-            system_options, value if not is_soft else "Systeme", width=width, auto_label="Systeme")
-        layout.addWidget(self.system_toggle)
-        layout.addWidget(self.system_field)
+        app_stack = QWidget()
+        app_stack.setStyleSheet("background: transparent;")
+        app_stack_l = QVBoxLayout(app_stack)
+        app_stack_l.setContentsMargins(0, 0, 0, 0)
+        app_stack_l.setSpacing(2)
+        app_label = QLabel("app")
+        app_label.setFont(_qfont(9, 400))
+        app_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        app_label.setAlignment(Qt.AlignHCenter)
+        app_stack_l.addWidget(app_label)
+        self.soft_toggle = _Toggle(is_soft, show_label=False)
+        app_stack_l.addWidget(self.soft_toggle, 0, Qt.AlignHCenter)
+        layout.addWidget(app_stack)
+
+        self.field = _FontSelectField(
+            self._soft_options if is_soft else self._system_options,
+            value if is_soft else (value or "Systeme"), width=width, auto_label="Systeme")
+        layout.addWidget(self.field)
+
+        sys_stack = QWidget()
+        sys_stack.setStyleSheet("background: transparent;")
+        sys_stack_l = QVBoxLayout(sys_stack)
+        sys_stack_l.setContentsMargins(0, 0, 0, 0)
+        sys_stack_l.setSpacing(2)
+        sys_label = QLabel("sys")
+        sys_label.setFont(_qfont(9, 400))
+        sys_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        sys_label.setAlignment(Qt.AlignHCenter)
+        sys_stack_l.addWidget(sys_label)
+        self.system_toggle = _Toggle(not is_soft, show_label=False)
+        sys_stack_l.addWidget(self.system_toggle, 0, Qt.AlignHCenter)
+        layout.addWidget(sys_stack)
+
+        # Derniere valeur connue de CHAQUE cote (voir _refresh_options) :
+        # rebasculer vers "app" doit retrouver le dernier role choisi, pas
+        # toujours retomber sur le 1er de la liste.
+        self._last_soft = value if is_soft else self._soft_options[0]
+        self._last_system = value if not is_soft else "Systeme"
 
         self.soft_toggle.toggled.connect(self._on_soft_toggled)
         self.system_toggle.toggled.connect(self._on_system_toggled)
-        self.soft_field.changed.connect(lambda _v: self.changed.emit())
-        self.system_field.changed.connect(lambda _v: self.changed.emit())
-        self._refresh_dim()
+        self.field.changed.connect(self._on_field_changed)
+
+    def _on_field_changed(self, value: str):
+        if self.soft_toggle.isChecked():
+            self._last_soft = value
+        else:
+            self._last_system = value
+        self.changed.emit()
+
+    def _refresh_options(self):
+        if self.soft_toggle.isChecked():
+            self.field.setOptions(self._soft_options)
+            self.field.setValue(self._last_soft)
+        else:
+            self.field.setOptions(self._system_options)
+            self.field.setValue(self._last_system)
 
     def _on_soft_toggled(self, checked: bool):
         if checked:
@@ -1462,7 +1878,7 @@ class _DualFontSelectField(QWidget):
             self.system_toggle.blockSignals(True)
             self.system_toggle.setChecked(True)
             self.system_toggle.blockSignals(False)
-        self._refresh_dim()
+        self._refresh_options()
         self.changed.emit()
 
     def _on_system_toggled(self, checked: bool):
@@ -1474,32 +1890,26 @@ class _DualFontSelectField(QWidget):
             self.soft_toggle.blockSignals(True)
             self.soft_toggle.setChecked(True)
             self.soft_toggle.blockSignals(False)
-        self._refresh_dim()
+        self._refresh_options()
         self.changed.emit()
 
-    def _refresh_dim(self):
-        _set_dimmed(self.soft_field, not self.soft_toggle.isChecked())
-        _set_dimmed(self.system_field, not self.system_toggle.isChecked())
-
     def value(self) -> str:
-        return self.soft_field.value() if self.soft_toggle.isChecked() else self.system_field.value()
+        return self.field.value()
 
     def setValue(self, value: str):
-        soft_options = list(ITEM_FONT_ROLE_LABELS.values())
-        is_soft = value in soft_options
+        is_soft = value in self._soft_options
         for toggle, checked in ((self.soft_toggle, is_soft), (self.system_toggle, not is_soft)):
             toggle.blockSignals(True)
             toggle.setChecked(checked)
             toggle.blockSignals(False)
         if is_soft:
-            self.soft_field.setValue(value)
+            self._last_soft = value
         else:
-            self.system_field.setValue(value or "Systeme")
-        self._refresh_dim()
+            self._last_system = value or "Systeme"
+        self._refresh_options()
 
     def setRadius(self, radius: int):
-        self.soft_field.setRadius(radius)
-        self.system_field.setRadius(radius)
+        self.field.setRadius(radius)
 
 
 # Style visuel de TOUS les _Toggle de cette fenetre (voir Toggles > Style,
@@ -3768,14 +4178,25 @@ class _Chevron(QWidget):
     replie — voir la remarque de l'utilisateur, capture a l'appui du style
     recherche."""
 
-    def __init__(self, size: int = 16, parent=None):
+    def __init__(self, size: int = 16, color: str | None = None, parent=None):
         super().__init__(parent)
         self._collapsed = False
+        # `color` (voir General > TITRE, la remarque de l'utilisateur, "je
+        # veux que la couleur des coches de deploiement des titre soient de
+        # la mm couleur que le titre") : suit desormais la couleur du titre
+        # PAR NIVEAU (voir _Section/_SubSection.__init__/_apply_title_
+        # level_style) au lieu du fixe M['section_title'] d'avant.
+        self._color = color or M["section_title"]
         self.setFixedSize(size, size)
 
     def setCollapsed(self, collapsed: bool):
         if collapsed != self._collapsed:
             self._collapsed = collapsed
+            self.update()
+
+    def setColor(self, color: str):
+        if color != self._color:
+            self._color = color
             self.update()
 
     def paintEvent(self, event):
@@ -3789,7 +4210,7 @@ class _Chevron(QWidget):
         # terrible" (crenele) signale par l'utilisateur.
         p.setRenderHint(QPainter.SmoothPixmapTransform, True)
         name = "chevron-droite" if self._collapsed else "chevron-bas"
-        pix = _tinted_svg_pixmap(name, self.width(), M["section_title"])
+        pix = _tinted_svg_pixmap(name, self.width(), self._color)
         p.drawPixmap(0, 0, pix)
         p.end()
 
@@ -3803,6 +4224,12 @@ class _Chevron(QWidget):
 # consecutifs, sans quoi ils se touchent litteralement.
 _SECTION_GAP_EXPANDED = 34
 _SECTION_GAP_COLLAPSED = 2
+# Espace AVANT la section "Logiciel" (voir SettingsWindow._section_logiciels)
+# — voir la remarque de l'utilisateur, "en derniere position mais avec un
+# espace plus important entre cette section et celle d'avant" : un simple
+# multiple de _SECTION_GAP_EXPANDED plutot qu'une constante independante,
+# pour rester coherent si ce dernier est un jour ajuste.
+_SECTION_GAP_EXPANDED_LOGICIEL = _SECTION_GAP_EXPANDED * 2
 
 
 class _SectionHeader(QWidget):
@@ -3848,6 +4275,22 @@ def _activate_layout_tree(widget: QWidget):
         lay.activate()
 
 
+# Fenetre de parametres EN COURS DE CONSTRUCTION (voir SettingsWindow.
+# __init__/_report_loading_step) : global, PAS un parametre a threader
+# dans les dizaines de call sites de _Section/_SubSection — chacune
+# rapporte ainsi AUTOMATIQUEMENT son propre titre a l'indicateur de
+# chargement de l'Inspecteur (voir _report_construction_step ci-dessous),
+# quel que soit le niveau d'imbrication (section OU sous-section) — voir
+# la remarque de l'utilisateur, "decris pas seulement les tabs mais
+# toutes les sections et sous sections aussi".
+_ACTIVE_LOADING_WINDOW = None
+
+
+def _report_construction_step(title: str, depth: int = 0):
+    if _ACTIVE_LOADING_WINDOW is not None:
+        _ACTIVE_LOADING_WINDOW._report_loading_step(title, depth=depth)
+
+
 class _Section(QWidget):
     """Section de la page : titre bleu petites capitales + note optionnelle,
     PAS de filet horizontal (la maquette n'en a pas ici, contrairement a
@@ -3865,6 +4308,7 @@ class _Section(QWidget):
 
     def __init__(self, title: str, note: str = "", parent=None):
         super().__init__(parent)
+        _report_construction_step(title)
         self._collapsed = False
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
@@ -3874,21 +4318,25 @@ class _Section(QWidget):
         head.setCursor(Qt.PointingHandCursor)
         head_l = QHBoxLayout(head)
         self._head_layout = head_l
-        # Marge du bas : espace le titre du corps quand il est visible —
-        # inutile repliee (le corps est masque, voir set_collapsed, qui la
-        # ramene alors a 0 pour ne rien laisser trainer sous le titre en
-        # plus du spaceur inter-sections, voir SettingsWindow._build_content).
-        head_l.setContentsMargins(0, 0, 0, 10)
+        # Retrait GAUCHE configurable (voir General > TITRE > "Retrait
+        # titre niveau 1", _title_indent) — voir la remarque de
+        # l'utilisateur, "je veux homogeneiser les textes des sections et
+        # sous sections". Marge du bas : espace le titre du corps quand il
+        # est visible — inutile repliee (le corps est masque, voir
+        # set_collapsed, qui la ramene alors a 0 pour ne rien laisser
+        # trainer sous le titre en plus du spaceur inter-sections, voir
+        # SettingsWindow._build_content).
+        self._title_indent = _title_indent(1)
+        head_l.setContentsMargins(self._title_indent, 0, 0, 10)
         head_l.setSpacing(10)
-        # Chevron peint (voir _Chevron) et titre agrandis, police de texte
-        # principal (Segoe UI, sans le petites-capitales/tracking d'origine,
-        # jugee trop discrete une fois le titre devenu cliquable — voir la
-        # remarque de l'utilisateur, capture a l'appui).
-        self._chevron = _Chevron(size=16)
+        # Chevron peint (voir _Chevron) — taille FIXE (pas de reglage
+        # dedie) ; le TEXTE (police/couleur) suit General > TITRE > "Police
+        # titre niveau 1" (voir _title_font/_title_color).
+        self._chevron = _Chevron(size=16, color=_title_color(1))
         head_l.addWidget(self._chevron)
-        name = QLabel(title.upper())
-        name.setFont(_qfont(14, 600))
-        name.setStyleSheet(f"color: {M['section_title']}; background: transparent;")
+        name = self._name_label = QLabel(title.upper())
+        name.setFont(_title_font(1))
+        name.setStyleSheet(f"color: {_title_color(1)}; background: transparent;")
         head_l.addWidget(name)
         if note:
             note_label = QLabel(note)
@@ -3901,7 +4349,13 @@ class _Section(QWidget):
 
         self._body = QWidget()
         self._body_layout = QVBoxLayout(self._body)
-        self._body_layout.setContentsMargins(0, 0, 0, 0)
+        # Retrait GAUCHE aligne sur le debut du TEXTE du titre (retrait +
+        # chevron + espacement, voir head_l ci-dessus) — voir la remarque de
+        # l'utilisateur, "les tableaux doivent commencer au meme niveau
+        # d'indentation que le titre de section ... correspondant" : sans
+        # cela, le contenu (tableaux compris) demarrait a 0, decale a
+        # gauche du titre au-dessus.
+        self._body_layout.setContentsMargins(self._title_indent + 16 + 10, 0, 0, 0)
         self._body_layout.setSpacing(0)
         self._layout.addWidget(self._body)
 
@@ -4003,14 +4457,26 @@ class _SubSection(QWidget):
 
     collapsedChanged = Signal(bool)
 
-    def __init__(self, title: str, indent: bool = False, parent=None):
+    def __init__(self, title: str, level: int = 2, parent=None):
         super().__init__(parent)
+        # depth = level-1 pour l'Inspecteur (voir _report_construction_step,
+        # "tab = 2 carac" par niveau, remarque de l'utilisateur, "incremente
+        # les differents niveaux de settings").
+        _report_construction_step(title, depth=max(1, level - 1))
         self._collapsed = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        self._indent = indent
+        # `level` (2 = sous-section de 1er niveau, 3 = imbriquee dans une
+        # AUTRE _SubSection, 4/5 reserves pour une imbrication plus
+        # profonde) — voir General > TITRE (_title_font/_title_color/
+        # _title_indent) : police, couleur ET retrait suivent TOUS ce
+        # reglage unique par niveau desormais — voir la remarque de
+        # l'utilisateur, "je veux homogeneiser les textes des sections et
+        # sous sections".
+        self._level = level
+        self._left_margin = _subsection_left_margin(level)
         head = self.head = _SectionHeader()
         head.setCursor(Qt.PointingHandCursor)
         head_l = QHBoxLayout(head)
@@ -4024,15 +4490,13 @@ class _SubSection(QWidget):
         # l'utilisateur, "base toi sur ce que tu avais fait sur les
         # sections" (une marge haute fixe de 14px restait telle quelle meme
         # repliee, contrairement a _Section).
-        head_l.setContentsMargins(20 if indent else 0, 0, 0, 6)
+        head_l.setContentsMargins(self._left_margin, 0, 0, 6)
         head_l.setSpacing(6)
-        self._chevron = _Chevron(size=11)
+        self._chevron = _Chevron(size=11, color=_title_color(level))
         head_l.addWidget(self._chevron)
-        label = QLabel(title.upper())
-        label.setFont(_qfont(10, 600, tracking=0.6))
-        label.setStyleSheet(
-            f"color: {M['group_title'] if not indent else M['group_note']}; background: transparent;"
-        )
+        label = self._name_label = QLabel(title.upper())
+        label.setFont(_title_font(level))
+        label.setStyleSheet(f"color: {_title_color(level)}; background: transparent;")
         head_l.addWidget(label)
         head_l.addStretch(1)
         head.clicked.connect(self.toggle)
@@ -4040,7 +4504,9 @@ class _SubSection(QWidget):
 
         self._body = QWidget()
         self._body_layout = QVBoxLayout(self._body)
-        self._body_layout.setContentsMargins(0, 0, 0, 0)
+        # MEME raison que _Section ci-dessus : retrait GAUCHE aligne sur le
+        # debut du TEXTE du titre (retrait du bandeau + chevron + espacement).
+        self._body_layout.setContentsMargins(self._left_margin + 11 + 6, 0, 0, 0)
         self._body_layout.setSpacing(0)
         layout.addWidget(self._body)
         self._refresh_chevron()
@@ -4066,7 +4532,7 @@ class _SubSection(QWidget):
             return
         self._collapsed = collapsed
         self._body.setVisible(not collapsed)
-        self._head_layout.setContentsMargins(20 if self._indent else 0, 0, 0, 0 if collapsed else 6)
+        self._head_layout.setContentsMargins(self._left_margin, 0, 0, 0 if collapsed else 6)
         self._refresh_chevron()
         self.refresh_layout()
         self.collapsedChanged.emit(collapsed)
@@ -4269,7 +4735,7 @@ def _set_dimmed(widget: QWidget, dimmed: bool) -> None:
     peints a la main comme _MiniSlider/_Toggle/les pastilles de couleur,
     qui ne suivent de toute facon PAS QPalette) — MEME technique deja
     utilisee par _CellPaddingField/_CornerRadiusField.setLinked, desormais
-    GENERALISEE a tout champ/bouton "grise" de cette fenetre (copy_btn,
+    GENERALISEE a tout champ/bouton "grise" de cette fenetre (le bouton "Copier" retire depuis, voir _build_linked_sides_toggle,
     pastilles de _SideColorsField, sliders d'_OverrideSmoothingField...) —
     voir la remarque de l'utilisateur ci-dessus. Reutilise le graphics
     effect deja pose sur ce widget s'il y en a un (evite d'en empiler un
@@ -4814,6 +5280,88 @@ def _table_cell(widget: QWidget, width: int, layout: QHBoxLayout, center: bool =
     return cell
 
 
+def _build_font_gabarit_row(
+    family_field: "_DualFontSelectField", bold_field: "_Toggle", height_field: "_SliderField",
+    smoothing_field: QWidget, color_field: QWidget, italic_field: "_Toggle | None" = None,
+) -> QWidget:
+    """GABARIT "police" (voir la remarque de l'utilisateur, "TOUTES LES
+    LIGNES POLICES ... a l'avenir toutes les lignes police que je te ferai
+    rajouter seront toutes basees sur ce gabarit sans que je te le
+    mentionne", puis capture d'ecran, "voici a quoi doit ressembler la
+    ligne police") : sur UNE seule ligne, dans cet ordre — police (app/
+    systeme, toggles SANS texte, deja integres a _DualFontSelectField) —
+    "gras" (texte AVANT le toggle, gras dans les 2 etats) — "italique"
+    (texte AVANT le toggle) — "Hauteur" (texte avant le slider) — lissage
+    — couleur COMPACTE ("app"/"sys", voir _CompactAppOrCustomColorField).
+    `italic_field` optionnel (retro-compatibilite : anciens appelants pas
+    encore migres)."""
+    row = QWidget()
+    row.setStyleSheet("background: transparent;")
+    row_l = QHBoxLayout(row)
+    row_l.setContentsMargins(0, 0, 0, 0)
+    row_l.setSpacing(14)
+    row_l.addWidget(family_field)
+    # "gras"/"italique" : texte REGULAR (pas gras — voir la remarque de
+    # l'utilisateur, "les deux doivent etre regular, je vois que tu en a
+    # mis un en gras"), colle a SON PROPRE toggle (espacement serre, meme
+    # principe que les toggles police 1/2 ci-dessus).
+    bold_pair = QWidget()
+    bold_pair.setStyleSheet("background: transparent;")
+    bold_pair_l = QHBoxLayout(bold_pair)
+    bold_pair_l.setContentsMargins(0, 0, 0, 0)
+    bold_pair_l.setSpacing(4)
+    bold_label = QLabel("gras")
+    bold_label.setFont(_qfont(11, 400))
+    bold_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+    bold_pair_l.addWidget(bold_label)
+    bold_pair_l.addWidget(bold_field)
+    row_l.addWidget(bold_pair)
+    if italic_field is not None:
+        italic_pair = QWidget()
+        italic_pair.setStyleSheet("background: transparent;")
+        italic_pair_l = QHBoxLayout(italic_pair)
+        italic_pair_l.setContentsMargins(0, 0, 0, 0)
+        italic_pair_l.setSpacing(4)
+        italic_label = QLabel("italique")
+        italic_label.setFont(_qfont(11, 400))
+        italic_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        italic_pair_l.addWidget(italic_label)
+        italic_pair_l.addWidget(italic_field)
+        row_l.addWidget(italic_pair)
+    height_label = QLabel("Hauteur")
+    height_label.setFont(_qfont(11, 400))
+    height_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+    row_l.addWidget(height_label)
+    row_l.addWidget(height_field)
+    row_l.addWidget(smoothing_field)
+    row_l.addWidget(color_field)
+    row_l.addStretch(1)
+    return row
+
+
+def _build_linked_sides_toggle(linked: bool, label: str = "lier les 4") -> tuple[QWidget, "_Toggle"]:
+    """GABARITS "arrondi des angles"/"bordures"/"padding" (voir la remarque
+    de l'utilisateur, "Toggle : texte 'lier les 4' avant le toggle et pour
+    les 2 etats") : le texte reste FIXE (pas de bascule "lie"/"libre" comme
+    avant), place AVANT le toggle — voir _Toggle, dont le libelle integre
+    est TOUJOURS peint a DROITE (show_label=False ici, le QLabel externe
+    fait office de libelle). Reutilise par _ToggleSideColorsField/
+    _CellPaddingField/_CornerRadiusField (un seul endroit a corriger pour
+    les 3)."""
+    row = QWidget()
+    row.setStyleSheet("background: transparent;")
+    row_l = QHBoxLayout(row)
+    row_l.setContentsMargins(0, 0, 0, 0)
+    row_l.setSpacing(8)
+    lbl = QLabel(label)
+    lbl.setFont(_qfont(11, 400))
+    lbl.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+    row_l.addWidget(lbl)
+    toggle = _Toggle(linked, show_label=False)
+    row_l.addWidget(toggle)
+    return row, toggle
+
+
 def _build_flat_table(
     rows: list[tuple[str, QWidget]],
 ) -> tuple[QWidget, list[tuple[QWidget, str, bool]], _FlatColumnResizer]:
@@ -4961,9 +5509,9 @@ def _build_override_flat_table(
 # rajoute une option dans les settings de base, elle se retrouve aussi
 # dans les options a overider". Ajouter une entree ICI suffit desormais a
 # la faire apparaitre aux deux endroits (widget General, widget+toggle
-# Colonnes > Type, cle de _COLUMN_TYPE_OVERRIDE_KEYS, attribut de
-# _TYPE_GENERAL_FIELD_ATTR, extraction _read_override_field_raw, seed au
-# chargement, connexion _mark_dirty, sauvegarde) SANS toucher chacun de
+# Colonnes > Type, attribut de _ITEM_TEXT_FIELD_ATTR, extraction
+# _read_override_field_raw, seed au chargement, connexion _mark_dirty,
+# sauvegarde) SANS toucher chacun de
 # ces endroits a la main — voir SettingsWindow._build_column_type_page/
 # __init__/_apply_values_to_controls/_current_values, plus bas, qui
 # bouclent tous sur cette liste. Ne couvre PAS les champs plus complexes
@@ -4988,7 +5536,15 @@ class _ItemFieldSpec:
         if self.kind == "toggle":
             return _Toggle(bool(seed), style_override="toggle1")
         if self.kind == "color":
-            return _AppOrCustomColorField(seed, colors, swatch_size=24, title=self.label)
+            # _CompactAppOrCustomColorField (pas la variante large) : ce
+            # champ est EMBARQUE dans la ligne "Police" du gabarit police
+            # (voir _build_font_gabarit_row/Colonnes > Lignes > Texte), donc
+            # partage la meme instance que sa reprise standalone dans
+            # Colonnes > Type/Projets/Sous-projet (_build_column_type_page,
+            # meme spec.make_field) — voir la remarque de l'utilisateur,
+            # capture d'ecran, "voici a quoi doit ressembler la ligne
+            # police".
+            return _CompactAppOrCustomColorField(seed, colors, swatch_size=20, title=self.label)
         raise ValueError(self.kind)
 
     def raw_value(self, widget):
@@ -5014,8 +5570,15 @@ class _ItemFieldSpec:
 
 _ITEM_TEXT_FIELD_SPECS = [
     _ItemFieldSpec("item_color", "Couleur", "color", "#d6d9dc"),
-    _ItemFieldSpec("item_icon_enabled", "Icone", "toggle", True),
+    # "Icone" (item_icon_enabled) retiree de cette liste (voir la remarque
+    # de l'utilisateur, "supprime la ligne Icone") — remplacee par le
+    # toggle PAR COLONNE "Afficher l'icone" du menu contextuel (voir
+    # Column._on_context_menu/_show_icon_override) ; la cle/le comportement
+    # (repli a True) restent INCHANGES, seule cette ligne de reglage
+    # GENERAL disparait.
     _ItemFieldSpec("item_row_height", "Hauteur de la ligne", "slider", 25, 14, 80),
+    _ItemFieldSpec("item_icon_size", "Taille de l'icone par defaut (0 = hauteur de ligne)", "slider", 0, 0, 128),
+    _ItemFieldSpec("item_icon_padding_left", "Padding gauche de l'icone", "slider", 0, 0, 64),
     _ItemFieldSpec("item_row_spacing", "Espacement entre les lignes", "slider", 1, 0, 20),
     _ItemFieldSpec("item_text_padding", "Padding du texte", "slider", 8, 0, 32),
     # "Bordure entre les lignes" (toggle + couleur + epaisseur) N'EST PAS
@@ -5025,75 +5588,19 @@ _ITEM_TEXT_FIELD_SPECS = [
     # que dans 3 champs separes comme le reste de ce registre suppose (1
     # cle = 1 widget) — geree a la main comme item_selection_border/
     # header_border (meme situation : 1 widget pour plusieurs cles), voir
-    # plus bas (_TYPE_GENERAL_FIELD_ATTR/_read_override_field_raw/
-    # _build_column_type_page/SettingsWindow.__init__).
+    # plus bas (_read_override_field_raw/_build_column_type_page/
+    # SettingsWindow.__init__).
 ]
 _ITEM_TEXT_FIELD_BY_KEY = {spec.key: spec for spec in _ITEM_TEXT_FIELD_SPECS}
-# Attribut General portant chaque champ (voir _TYPE_GENERAL_FIELD_ATTR
-# plus bas) — "item_icon_enabled" garde son ancien nom d'attribut
-# "item_icon_field" (pre-existant, reference ailleurs dans le fichier),
-# les autres suivent la convention "<cle>_field".
+# Attribut portant chaque champ GENERAL — "item_icon_enabled" garde son
+# ancien nom d'attribut "item_icon_field" (pre-existant, reference
+# ailleurs dans le fichier), les autres suivent la convention "<cle>_field".
 _ITEM_TEXT_FIELD_ATTR = {
     spec.key: ("item_icon_field" if spec.key == "item_icon_enabled" else f"{spec.key}_field")
     for spec in _ITEM_TEXT_FIELD_SPECS
 }
 
 
-# ==========================================================================
-# Colonnes > Type/Projets/Sous-projets — surcharge PARAMETRE PAR PARAMETRE
-# de la section "Colonnes" de l'onglet General (voir SettingsWindow.
-# _build_column_override_page/_section_headers) — cle de reglage ->
-# attribut du champ GENERAL correspondant (celui suivi quand le toggle de
-# la ligne est OFF, voir SettingsWindow._resolve_type_effective).
-# SOURCE UNIQUE partagee avec pipeline_browser.COLUMN_TYPE_OVERRIDE_KEYS
-# (voir app_style.COLUMN_TYPE_OVERRIDE_KEYS, importee ci-dessus) —
-# auparavant dupliquee independamment ici (settings_window ne peut pas
-# importer pipeline_browser, sens d'import inverse), avec un risque de
-# divergence a chaque nouvelle cle — voir la remarque de l'utilisateur,
-# "clean le code". Alias local `_COLUMN_TYPE_OVERRIDE_KEYS` conserve (nom
-# deja utilise partout plus bas dans ce fichier).
-# ==========================================================================
-
-_COLUMN_TYPE_OVERRIDE_KEYS = COLUMN_TYPE_OVERRIDE_KEYS
-
-_TYPE_GENERAL_FIELD_ATTR = {
-    "header_visible": "header_visible_field",
-    "header_height": "header_height_field",
-    "header_padding": "header_padding_field",
-    "header_color": "header_color_field",
-    "header_radius": "header_radius_field",
-    "header_border_enabled": "header_border_field",
-    "header_border": "header_border_field",
-    "header_border_thickness": "header_border_thickness_field",
-    "item_column_width": "item_column_width_field",
-    "column_padding": "column_padding_field",
-    "column_border_enabled": "column_border_field",
-    "column_border": "column_border_field",
-    "column_border_thickness": "column_border_thickness_field",
-    "column_border_radius": "column_border_radius_field",
-    "column_bg_color": "column_bg_color_field",
-    "item_font_family": "item_font_field",
-    "item_font_bold": "item_font_bold_field",
-    **_ITEM_TEXT_FIELD_ATTR,
-    "item_row_border_enabled": "item_row_border_field",
-    "item_row_border_color": "item_row_border_field",
-    "item_row_border_thickness": "item_row_border_field",
-    "item_image_padding": "item_image_padding_field",
-    "item_image_border_enabled": "item_image_border_field",
-    "item_image_border": "item_image_border_field",
-    "item_image_border_thickness": "item_image_border_thickness_field",
-    "item_image_radius": "item_image_radius_field",
-    "item_image_ratio": "item_image_ratio_field",
-    "item_selection_focus_color": "item_selection_focus_field",
-    "item_selection_unfocus_color": "item_selection_unfocus_field",
-    "item_hover_color": "item_hover_field",
-    "item_idle_color": "item_idle_field",
-    "item_selection_padding": "item_selection_padding_field",
-    "item_selection_border_enabled": "item_selection_border_field",
-    "item_selection_border": "item_selection_border_field",
-    "item_selection_radius": "item_selection_radius_field",
-    "item_selection_edge_border": "item_selection_edge_border_field",
-}
 
 # Cles dont le reglage LIE ("linked"/"libre", voir _CornerRadiusField/
 # _CellPaddingField) doit aussi etre suivi/persiste a part (voir
@@ -5101,6 +5608,9 @@ _TYPE_GENERAL_FIELD_ATTR = {
 _TYPE_LINKED_KEYS = (
     "header_radius", "column_padding", "column_border_radius", "item_selection_padding", "item_selection_radius",
     "item_image_padding", "item_image_radius",
+    "item_selection_unfocus_padding", "item_selection_unfocus_radius",
+    "item_selection_hover_padding", "item_selection_hover_radius",
+    "item_selection_idle_padding", "item_selection_idle_radius",
 )
 
 
@@ -5112,29 +5622,58 @@ def _read_override_field_raw(key: str, widget):
     l'autre selon l'etat du toggle de la ligne)."""
     if key in _ITEM_TEXT_FIELD_BY_KEY:
         return _ITEM_TEXT_FIELD_BY_KEY[key].raw_value(widget)
+    # "item_selection_<etat>_<champ>_override" (etat = unfocus/hover/idle) :
+    # PAS un champ propre, TOUJOURS True des que Type/Projets/Sous-projet
+    # surcharge le champ associe (voir _build_column_override_page, MEME
+    # toggle que "item_selection_<etat>_<champ>") — si CETTE colonne a sa
+    # propre valeur, elle doit evidemment s'appliquer, jamais retomber en
+    # silence sur Focus faute d'avoir aussi surcharge ce flag separement.
+    if key.startswith("item_selection_") and key.endswith("_override"):
+        return True
     if key == "item_row_border_enabled":
         return widget.enabledValue()
     if key == "item_row_border_color":
         return widget.colorValue()
     if key == "item_row_border_thickness":
         return widget.thicknessValue()
-    if key in ("header_radius", "column_border_radius", "item_selection_radius", "item_image_radius"):
+    # "item_selection_<etat>_radius"/"..._border_enabled"/"..._border"/
+    # "..._padding" (etat = unfocus/hover/idle, voir _build_column_
+    # override_page/build_state_override) — MEMES suffixes, memes widgets,
+    # que "item_selection_radius"/etc (Focus) ci-dessous : verifies par
+    # SUFFIXE plutot qu'enumeres un par un, pour rester automatiquement a
+    # jour avec build_state_override sans y revenir a chaque nouvel etat.
+    if key in ("header_radius", "column_border_radius", "item_image_radius") or (
+        key.startswith("item_selection_") and key.endswith("_radius")
+    ):
         return widget.cornersValue()
-    if key in ("header_border_enabled", "column_border_enabled", "item_selection_border_enabled",
-               "item_image_border_enabled"):
+    # "_edge_border" AVANT "_border_enabled"/"_border" ci-dessous (piege :
+    # "item_selection_<etat>_edge_border" se termine AUSSI par "_border",
+    # mais c'est un simple _Toggle, PAS un _ToggleSideColorsField — voir
+    # la branche isChecked() plus bas, DOIT rester prioritaire ici).
+    if key.startswith("item_selection_") and key.endswith("_edge_border"):
+        return widget.isChecked()
+    if key in ("header_border_enabled", "column_border_enabled", "item_image_border_enabled") or (
+        key.startswith("item_selection_") and key.endswith("_border_enabled")
+    ):
         return widget.sidesEnabledValue()
-    if key in ("header_border", "column_border", "item_selection_border", "item_image_border"):
+    if key in ("header_border", "column_border", "item_image_border") or (
+        key.startswith("item_selection_") and key.endswith("_border")
+    ):
         return widget.sidesValue()
-    if key in ("item_selection_padding", "column_padding", "item_image_padding"):
+    if key in ("column_padding", "item_image_padding") or (
+        key.startswith("item_selection_") and key.endswith("_padding")
+    ):
         return widget.sidesValue()
     if key == "header_color":
         return widget.value()
-    if key == "item_font_family":
+    if key in ("item_font_family", "header_font_family"):
         v = widget.value()
         return "" if v == "Systeme" else v
-    if key in ("item_selection_edge_border", "item_font_bold", "header_visible"):
+    if key == "item_font_bold" or key == "header_visible" or key == "header_font_bold":
         return widget.isChecked()
-    if key in ("item_selection_focus_color", "item_selection_unfocus_color", "item_hover_color"):
+    if key == "header_font_color" or (
+        key.startswith("item_selection_") and key.endswith("_color")
+    ):
         return widget.value()
     if key == "item_image_ratio":
         return widget.value() / 100.0   # slider en % (100 = 1.0, voir sa remarque de construction)
@@ -5565,29 +6104,18 @@ class _CornerRadiusField(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
-        self.toggle = _Toggle(linked, on_label="lie", off_label="libre")
+        # GABARIT "coins arrondis" (voir _build_linked_sides_toggle) : pas
+        # de bouton "Copier", toggle "lier les 4" AVANT le toggle.
+        toggle_row, self.toggle = _build_linked_sides_toggle(linked)
         self.toggle.toggled.connect(self._on_toggled)
-        layout.addWidget(self.toggle)
-        corner_names = {
-            "top_left": "Haut-Gauche", "top_right": "Haut-Droite",
-            "bottom_right": "Bas-Droite", "bottom_left": "Bas-Gauche",
-        }
-        leader_key, leader_letter = _CornerRadiusSliders._ORDER[0]
-        self.copy_btn = _Btn(
-            f"Copier {leader_letter} →", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=25)
-        others_full = [corner_names[k] for k in _CornerRadiusSliders._OTHERS]
-        self.copy_btn.setToolTip(f"Copier la valeur de {corner_names[leader_key]} sur {'/'.join(others_full)}")
-        layout.addWidget(self.copy_btn)
+        layout.addWidget(toggle_row)
         self.sides = _CornerRadiusSliders(corners, minimum, maximum)
         self.sides.changed.connect(self.changed.emit)
-        self.copy_btn.clicked.connect(self.sides.copyLeaderToOthers)
         layout.addWidget(self.sides)
         self.sides.setLinked(linked)
-        _set_dimmed(self.copy_btn, linked)
 
     def _on_toggled(self, checked: bool):
         self.sides.setLinked(checked)
-        _set_dimmed(self.copy_btn, checked)
         self.changed.emit()
 
     def isLinked(self) -> bool:
@@ -5600,7 +6128,6 @@ class _CornerRadiusField(QWidget):
         self.toggle.setChecked(linked)
         self.sides.setValue(corners)
         self.sides.setLinked(linked)
-        _set_dimmed(self.copy_btn, linked)
 
     def setRadius(self, radius: int):
         self.sides.setRadius(radius)
@@ -5634,20 +6161,38 @@ class _HeaderColorField(QWidget):
         self._popup: _ColorPickerPopup | None = None
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
 
-        self.btn = QPushButton()
-        self.btn.setFlat(True)
-        self.btn.setCursor(Qt.ArrowCursor)
-        self.btn.setFocusPolicy(Qt.NoFocus)
-        self.btn.setFixedHeight(25)
-        # Largeur fixe (280, meme calcul que les sliders de cette meme
-        # section — voir _section_headers) : sans elle, ce bouton ne se
-        # dimensionne que sur son propre texte et le controle entier ne
-        # s'aligne pas avec les autres lignes du tableau Entetes.
-        self.btn.setFixedWidth(280)
-        self.btn.clicked.connect(self._open_menu)
-        layout.addWidget(self.btn, 1)
+        # GABARIT "couleur" (voir _AppOrCustomColorField, MEME mecanique —
+        # seul le format de valeur differe ici : un nom de slot NU, pas
+        # "@<slot>", voir la remarque de tete de classe).
+        self._slot_options = sorted(SEMANTIC_COLOR_SLOTS, key=lambda t: t[2])
+        self._slot_to_label = {slot: label for slot, _real, label in self._slot_options}
+        self._label_to_slot = {label: slot for slot, _real, label in self._slot_options}
+        labels = [label for _slot, _real, label in self._slot_options]
+
+        is_custom = self._is_custom()
+
+        app_label = QLabel("Couleur application")
+        app_label.setFont(_qfont(10, 400))
+        app_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        layout.addWidget(app_label)
+        self.app_toggle = _Toggle(not is_custom, show_label=False)
+        layout.addWidget(self.app_toggle)
+        current_label = self._slot_to_label.get(self._value, labels[0]) if not is_custom else labels[0]
+        self.app_field = _SelectField(labels, current_label, width=170)
+        layout.addWidget(self.app_field)
+
+        system_label = QLabel("Couleur systeme")
+        system_label.setFont(_qfont(10, 400))
+        system_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        layout.addWidget(system_label)
+        self.system_toggle = _Toggle(is_custom, show_label=False)
+        layout.addWidget(self.system_toggle)
+        self.swatch = _ColorSwatchButton()
+        self.swatch.setFixedSize(24, 24)
+        self.swatch.clicked.connect(self._open_custom_picker)
+        layout.addWidget(self.swatch)
 
         self.hex_box = hex_box = QWidget()
         hex_box.setObjectName("HeaderHexBox")
@@ -5661,7 +6206,12 @@ class _HeaderColorField(QWidget):
         self.hex_label.setStyleSheet(f"color: {M['value_muted']}; background: transparent;")
         hex_l.addWidget(self.hex_label)
         layout.addWidget(hex_box)
+
+        self.app_toggle.toggled.connect(self._on_app_toggled)
+        self.system_toggle.toggled.connect(self._on_system_toggled)
+        self.app_field.changed.connect(self._on_app_field_changed)
         self._refresh_style()
+        self._refresh_dim()
         self._refresh()
 
     def _is_custom(self) -> bool:
@@ -5673,15 +6223,10 @@ class _HeaderColorField(QWidget):
         return self._colors.get(_SLOT_REAL.get(self._value, "chrome"), "#000000")
 
     def _refresh_style(self):
-        """Habillage (fond/bordure/coins) du bouton et de la boite hex — a
-        part de _refresh (contenu : icone/texte/valeur), pour pouvoir suivre
-        le slider Zones de saisie sans redemander la couleur courante (voir
+        """Habillage (fond/bordure/coins) de la boite hex — a part de
+        _refresh (contenu : couleur/valeur), pour pouvoir suivre le slider
+        Zones de saisie sans redemander la couleur courante (voir
         setRadius)."""
-        self.btn.setStyleSheet(
-            f"QPushButton {{ background: {M['field_bg']}; border: 1px solid {M['field_border']}; "
-            f"border-radius: {self._radius}px; text-align: left; padding: 0 8px; }}"
-            f"QPushButton:hover {{ border-color: {M['field_border_hover']}; }}"
-        )
         self.hex_box.setStyleSheet(
             f"#HeaderHexBox {{ background: {M['field_bg']}; border: 1px solid {M['field_border']}; "
             f"border-radius: {self._radius}px; }}"
@@ -5690,32 +6235,50 @@ class _HeaderColorField(QWidget):
     def setRadius(self, radius: int):
         self._radius = max(0, int(radius))
         self._refresh_style()
+        self.app_field.setRadius(radius)
+
+    def _refresh_dim(self):
+        _set_dimmed(self.app_field, not self.app_toggle.isChecked())
+        _set_dimmed(self.swatch, not self.system_toggle.isChecked())
 
     def _refresh(self):
         hexval = self._current_hex()
-        self.btn.setIcon(_solid_icon(hexval))
-        self.btn.setIconSize(self.btn.iconSize())
-        label = "Personnalisee" if self._is_custom() else _SLOT_LABELS.get(self._value, self._value)
-        self.btn.setText("  " + label + "  ▾")
+        self.swatch.setColorHex(hexval)
         self.hex_label.setText(hexval)
 
-    def _open_menu(self):
-        menu = QMenu(self)
-        menu.setFont(_qfont(11, 400))
-        menu.setStyleSheet(
-            f"QMenu {{ background: {M['toolbar_bg']}; border: 1px solid {M['field_border']}; "
-            f"border-radius: {self._radius}px; padding: 4px 0; }}"
-            f"QMenu::item {{ padding: 5px 16px; color: {M['value_fg']}; }}"
-            f"QMenu::item:selected {{ background: {M['accent']}; color: {M['accent_fg']}; }}"
-            f"QMenu::separator {{ background: {M['panel_border']}; height: 1px; margin: 4px 0; }}"
-        )
-        for slot, _real, label in SEMANTIC_COLOR_SLOTS:
-            action = menu.addAction(_solid_icon(self._colors.get(_SLOT_REAL[slot], "#000")), label)
-            action.triggered.connect(lambda _c=False, s=slot: self._select(s))
-        menu.addSeparator()
-        custom_action = menu.addAction("Personnalisee...")
-        custom_action.triggered.connect(self._open_custom_picker)
-        menu.exec(self.btn.mapToGlobal(QPoint(0, self.btn.height())))
+    def _on_app_toggled(self, checked: bool):
+        if checked:
+            self.system_toggle.blockSignals(True)
+            self.system_toggle.setChecked(False)
+            self.system_toggle.blockSignals(False)
+        elif not self.system_toggle.isChecked():
+            self.system_toggle.blockSignals(True)
+            self.system_toggle.setChecked(True)
+            self.system_toggle.blockSignals(False)
+        self._refresh_dim()
+        if checked:
+            self._select(self._label_to_slot[self.app_field.value()])
+        else:
+            self.changed.emit(self._value)
+
+    def _on_system_toggled(self, checked: bool):
+        if checked:
+            self.app_toggle.blockSignals(True)
+            self.app_toggle.setChecked(False)
+            self.app_toggle.blockSignals(False)
+            if not self._is_custom():
+                self._value = self._current_hex()
+                self._refresh()
+        elif not self.app_toggle.isChecked():
+            self.app_toggle.blockSignals(True)
+            self.app_toggle.setChecked(True)
+            self.app_toggle.blockSignals(False)
+        self._refresh_dim()
+        self.changed.emit(self._value)
+
+    def _on_app_field_changed(self, label: str):
+        if self.app_toggle.isChecked():
+            self._select(self._label_to_slot[label])
 
     def _select(self, slot: str):
         if slot != self._value:
@@ -5724,13 +6287,15 @@ class _HeaderColorField(QWidget):
             self.changed.emit(slot)
 
     def _open_custom_picker(self):
+        if not self.system_toggle.isChecked():
+            return
         self._before_pick = self._value
         popup = _ColorPickerPopup(self._current_hex(), "Couleur", self)
         self._popup = popup
         popup.colorChanged.connect(self._apply_custom_live)
         popup.committed.connect(self._apply_custom_live)
         popup.cancelled.connect(lambda: self._apply_custom_live(self._before_pick))
-        popup.show_near(self.btn)
+        popup.show_near(self.swatch)
 
     def _apply_custom_live(self, value: str):
         self._value = value
@@ -5754,6 +6319,16 @@ class _HeaderColorField(QWidget):
         chaque etape intermediaire."""
         self._value = value if (value in _SLOT_LABELS or value.startswith("#")) else "skinN1"
         self._colors = colors
+        is_custom = self._is_custom()
+        self.app_toggle.blockSignals(True)
+        self.system_toggle.blockSignals(True)
+        self.app_toggle.setChecked(not is_custom)
+        self.system_toggle.setChecked(is_custom)
+        self.app_toggle.blockSignals(False)
+        self.system_toggle.blockSignals(False)
+        if not is_custom and self._value in self._slot_to_label:
+            self.app_field.setValue(self._slot_to_label[self._value])
+        self._refresh_dim()
         self._refresh()
 
 
@@ -5762,690 +6337,6 @@ def _solid_icon(hex_value: str):
     pix = QPixmap(14, 14)
     pix.fill(QColor(hex_value))
     return QIcon(pix)
-
-
-class _ColumnPreviewHeaderFill(QWidget):
-    """Fond configurable de l'entete d'_ColumnPreview (Couleur/Arrondi/
-    Cadre des entetes) — peint a la main (QPainter, voir _paint_bordered_
-    rect) plutot que via border-radius en QSS : le moteur de style Qt
-    lisse assez mal les angles arrondis des bordures QSS (surtout a rayon
-    ou epaisseur variables), la ou _paint_bordered_rect (deja utilise pour
-    les cadres/coches de Toggles et les rails/selecteurs de Sliders) donne
-    un rendu net grace a l'antialiasing explicite de QPainter — voir la
-    remarque de l'utilisateur, "le lissage des border radius est tres
-    moyen, tu peux ameliorer ca ?"."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._bg = M["field_bg"]
-        self._radius = _radius_dict(0)
-        self._edges = {"top": False, "right": False, "bottom": False, "left": False}
-        self._border_colors = {k: M["panel_border"] for k in ("top", "right", "bottom", "left")}
-        self._thickness = 1
-        # Cotes GAUCHE/DROIT dont les 2 coins doivent tomber a 0, quel que
-        # soit `_radius` (colonnes collees, voir _ColumnPreview.
-        # _corner_radii/la remarque de l'utilisateur, "si deux colonnes
-        # sont cote a cote ... le rayon contre l'autre colonne doit etre a
-        # zero") — sinon le coin arrondi de l'entete depasserait du cadre
-        # exterieur, lui aussi aplati la a la meme frontiere.
-        self._flat_left = False
-        self._flat_right = False
-
-    def setStyle(self, bg: str, radius, edges: dict, border_colors: dict | None = None, thickness: int = 1):
-        self._bg = bg
-        # `radius` : int (retro-compatible) OU dict {"top_left": int, ...}
-        # (voir _radius_dict/_CornerRadiusField — un rayon PAR COIN, meme
-        # mecanique que le padding, voir la remarque de l'utilisateur,
-        # "dans tous les parametres de coins arrondis, je veux exactement
-        # le meme fonctionnement que les padding").
-        self._radius = _radius_dict(radius)
-        self._edges = {k: bool(edges.get(k, False)) for k in ("top", "right", "bottom", "left")}
-        border_colors = border_colors or {}
-        self._border_colors = {k: border_colors.get(k) or M["panel_border"] for k in ("top", "right", "bottom", "left")}
-        self._thickness = max(0, int(thickness))
-        self.update()
-
-    def setFlatSides(self, flat_left: bool, flat_right: bool):
-        if flat_left == self._flat_left and flat_right == self._flat_right:
-            return
-        self._flat_left, self._flat_right = flat_left, flat_right
-        self.update()
-
-    def _corner_radii(self) -> dict:
-        r = dict(self._radius)
-        if self._flat_left:
-            r["top_left"] = 0
-            r["bottom_left"] = 0
-        if self._flat_right:
-            r["top_right"] = 0
-            r["bottom_right"] = 0
-        return r
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        radius = self._corner_radii()
-        p.setRenderHint(QPainter.Antialiasing, _radius_any(radius))
-        _paint_bordered_rect(p, self.rect(), radius, self._edges, self._thickness, self._border_colors, self._bg)
-        p.end()
-
-
-class _ColumnPreview(QWidget):
-    """Apercu d'une colonne du navigateur principal (150x250 fixe, voir la
-    remarque de l'utilisateur — "deux colonnes cote a cote de 150px chacune
-    de large et 250px de hauteur") pour Colonnes > l'apercu au-dessus de
-    son tableau de reglages (voir _section_preview_wrap/SettingsWindow.
-    _section_headers) — reproduit la structure REELLE d'une colonne (voir
-    pipeline_browser.Column.__init__ : header_fill inset de header_padding
-    dans une bande de header_height, voir aussi app_style.header_qss) pour
-    suivre fidelement Hauteur/Padding/Couleur/Arrondi/Cadre des entetes EN
-    DIRECT plutot qu'une re-interpretation approximative.
-
-    Cadre exterieur ET header_fill (voir _ColumnPreviewHeaderFill) sont
-    tous les 2 peints a la main (paintEvent/QPainter), PAS via une
-    border-radius QSS — voir la remarque de l'utilisateur, "le lissage des
-    border radius est tres moyen"."""
-
-    _WIDTH = 150
-    _HEIGHT = 250
-
-    def __init__(self, title: str = "Type", count: str = "12", has_left_neighbor: bool = True,
-                 has_right_neighbor: bool = True, parent=None):
-        super().__init__(parent)
-        self.setObjectName("ColumnPreview")
-        # Transparent EXPLICITE (meme piege/correctif recurrent que
-        # _ItemPreviewRow etc. — voir son commentaire) : sans lui, ce
-        # QWidget nu heriterait du fond OPAQUE par defaut de la feuille de
-        # style globale, masquant le fond du PANNEAU derriere la colonne
-        # la ou Padding (voir setPadding) fait maintenant RETRECIR le fond
-        # peint de la colonne elle-meme (M['field_bg'], voir paintEvent) en
-        # dessous de la taille pleine de ce widget — voir la remarque de
-        # l'utilisateur, "je veux que le fond de la colonne se replie".
-        self.setStyleSheet("background: transparent;")
-        self._column_padding = {"top": 0, "right": 0, "bottom": 0, "left": 0}
-        # Fond de CETTE boite (voir paintEvent/setFillColor) : valeur de
-        # depart M['field_bg'] (chrome de LA FENETRE de parametres, sans
-        # rapport avec les couleurs REGLABLES de l'appli) — remplace des le
-        # 1er appel de SettingsWindow._apply_column_preview par la couleur
-        # LIVE reellement utilisee par la vraie colonne (C['void'], voir
-        # app_style.Column.refresh_colors/"skin - niveau2") — voir la
-        # remarque de l'utilisateur, "la couleur de fond de colonne est
-        # fausse dans l'apercu" : elle suivait jusqu'ici le theme de CETTE
-        # fenetre plutot que la palette Couleurs reglee par l'utilisateur.
-        self._fill_color = M["field_bg"]
-        # Fond DISTINCT du panneau qui l'entoure (M['well'], pas M['panel_
-        # bg']) + un filet tout autour : sans ca, le CORPS de la colonne
-        # (tout ce qui n'est pas la bande d'entete) se confondait
-        # entierement avec le fond de la section — l'apercu semblait vide
-        # (juste la bande d'entete, discrete par defaut) au lieu de montrer
-        # visiblement les dimensions/la forme d'une colonne — voir la
-        # remarque de l'utilisateur, "l'apercu ne fonctionne pas du tout".
-        #
-        # `has_left_neighbor` (False seulement pour la 1ere boite de la
-        # rangee, voir SettingsWindow._section_headers) : le filet GAUCHE ne
-        # se masque QUE si cette boite touche reellement une autre boite de
-        # ce cote (voir setSeamHidden) — meme principe que Column.
-        # _suppress_left()/DetailPanel._suppress_left() (pipeline_browser.py,
-        # meme mecanisme desormais pour les 2) : a chaque
-        # frontiere entre 2 boites voisines, un SEUL filet reste visible
-        # (celui de DROITE de la boite de gauche) plutot que 2 cumules —
-        # voir la remarque de l'utilisateur, "je veux que les deux
-        # bordures qui se chevauchent n'en forment qu'une seule". Le filet
-        # DROIT n'est JAMAIS masque ni sa marge compensee (une precedente
-        # version le faisait aussi cote droit "pour equilibrer les
-        # largeurs" : le filet droit restait bel et bien peint, mais
-        # header_fill s'etendait alors PAR-DESSUS lui, le rendant invisible
-        # pile a la hauteur de l'entete tout en le laissant visible plus
-        # bas dans le corps — voir la remarque de l'utilisateur, "pourquoi
-        # il n'y a pas de bordure entre les deux premieres entetes ?" —
-        # d'ou la regle stricte "seul le cote dont le filet DISPARAIT
-        # vraiment recupere de la marge").
-        #
-        # Sans voisine a gauche, la 1ere boite garde donc TOUJOURS ses 2
-        # filets (gauche ET droit) — voir la remarque de l'utilisateur, "du
-        # coup on perd la bordure a gauche de la premiere colonne" — alors
-        # que ses voisines fusionnees n'en gardent qu'un : ELARGIE de 1px
-        # (voir _refresh_frame) quand column_gap()<=0 pour compenser, afin
-        # que son bandeau colore reste quand meme aussi large que les
-        # leurs (meme largeur "de bordure a bordure") — voir la remarque de
-        # l'utilisateur, "la colonne 1 fait 148px de large ... alors que
-        # les autres font 149".
-        self._has_left_neighbor = has_left_neighbor
-        # `has_right_neighbor` (False seulement pour la DERNIERE boite de la
-        # rangee) : cote DROIT jamais masque (voir plus haut), mais ses 2
-        # coins doivent quand meme s'aplatir quand ce cote touche une autre
-        # boite (gap<=0) — voir _corner_radii/la remarque de l'utilisateur,
-        # "si deux colonnes sont cote a cote, a zero pixels d'intervalle,
-        # le rayon de bordure contre l'autre colonne doit etre a zero".
-        self._has_right_neighbor = has_right_neighbor
-        self._seam_active = False
-        # Bordure configurable (Colonnes > Bordure, voir _ToggleSideColorsField/
-        # setBorder) : valeurs de depart = l'ancien filet gris fixe codee en
-        # dur ici (M['panel_border']), pour ne rien changer visuellement tant
-        # que SettingsWindow._apply_column_preview n'a pas encore rejoue les
-        # reglages reels (1er appel, voir __init__ plus bas). enabled = dict
-        # {cote: bool} (pas un bool unique, voir la remarque de
-        # l'utilisateur, "un toggle par cote").
-        self._border_enabled = {k: True for k in ("top", "right", "bottom", "left")}
-        self._border_colors = {k: M["panel_border"] for k in ("top", "right", "bottom", "left")}
-        self._border_thickness = 1
-        self._border_radius = _radius_dict(0)
-        self._refresh_frame()
-        outer_layout = self._outer_layout = QVBoxLayout(self)
-        outer_layout.setSpacing(0)
-        self._refresh_content_margins()
-        # header_band (hauteur = header_height) > header_fill (inset de
-        # header_padding sur les 4 cotes) : MEME imbrication que la vraie
-        # colonne (voir header_outer_layout/header_fill dans Column).
-        self.header_band = QWidget()
-        self.header_band.setStyleSheet("background: transparent;")
-        self.header_band.setFixedHeight(26)
-        header_outer_layout = QHBoxLayout(self.header_band)
-        header_outer_layout.setContentsMargins(0, 0, 0, 0)
-        self.header_fill = _ColumnPreviewHeaderFill()
-        self.header_fill.setObjectName("ColumnPreviewHeader")
-        # Libelle + compteur, MEME disposition que le vrai header_layout
-        # d'une colonne (voir pipeline_browser.Column.__init__ : title_
-        # label a gauche, count_label a droite, marges 10/0/10/0) — voir la
-        # remarque de l'utilisateur, "ajoute les entetes de colonne dans
-        # l'apercu" (jusqu'ici juste une bande coloree, sans texte).
-        self.header_fill_layout = QHBoxLayout(self.header_fill)
-        self.header_fill_layout.setContentsMargins(10, 0, 10, 0)
-        header_fill_layout = self.header_fill_layout
-        self.title_label = QLabel(title.upper())
-        self.title_label.setFont(_qfont(10, 600, tracking=0.9))
-        self.title_label.setStyleSheet(f"color: {M['table_head_fg']}; background: transparent;")
-        header_fill_layout.addWidget(self.title_label)
-        header_fill_layout.addStretch(1)
-        self.count_label = QLabel(count)
-        self.count_label.setFont(_qfont(10, 400))
-        self.count_label.setStyleSheet(f"color: {M['value_muted']}; background: transparent;")
-        header_fill_layout.addWidget(self.count_label)
-        header_outer_layout.addWidget(self.header_fill)
-        outer_layout.addWidget(self.header_band)
-        # Espace REGLABLE avant le 1er item (voir setHeaderGap/Colonnes >
-        # Texte > "Espace avant le premier item") — MEME widget dedie que
-        # pipeline_browser.Column.header_gap_spacer (pas un padding sur le
-        # corps, qui prendrait le fond TRANSPARENT du corps plutot que
-        # celui de la colonne).
-        self.header_gap_spacer = QWidget()
-        self.header_gap_spacer.setStyleSheet("background: transparent;")
-        self.header_gap_spacer.setFixedHeight(0)
-        outer_layout.addWidget(self.header_gap_spacer)
-        # Corps : 4 lignes de demonstration (Normal/Survol/Selection en
-        # focus/Selection hors focus, voir _ItemPreviewRow) — l'apercu
-        # d'Items > Texte/Selection se fait ICI, sur les colonnes de
-        # demonstration DEJA existantes (Type/Projets/Sous-projet), plutot
-        # que sur un widget d'apercu separe — voir la remarque de
-        # l'utilisateur, "l'apercu doit se faire sur les colonnes deja
-        # existantes".
-        self.body = QWidget()
-        self.body.setStyleSheet("background: transparent;")
-        self.body_layout = QVBoxLayout(self.body)
-        self.body_layout.setContentsMargins(0, 0, 0, 0)
-        self.body_layout.setSpacing(0)
-        self.item_rows: list[_ItemPreviewRow] = []
-        for row_text in ("Normal.txt", "Survol.txt", "Selection (focus).txt", "Selection (hors focus).txt"):
-            row = _ItemPreviewRow(row_text)
-            self.body_layout.addWidget(row)
-            self.item_rows.append(row)
-        outer_layout.addWidget(self.body)
-        outer_layout.addStretch(1)
-        self._refresh_seam_margin()
-        self._refresh_header_flat_sides()
-
-    def refresh(self, height: int, padding: int, hexval: str, radius: int, edges: dict,
-                border_colors: dict | None = None, border_thickness: int = 1):
-        self.header_band.setFixedHeight(max(1, int(height)))
-        self._padding = max(0, int(padding))
-        self._refresh_seam_margin()
-        self.header_fill.setStyle(hexval, radius, edges, border_colors, border_thickness)
-
-    def setPadding(self, padding: dict):
-        """Colonnes > Colonnes > Padding, PAR COTE (voir _CellPaddingField
-        — meme widget que Tableaux > Padding des cellules/Items >
-        Selection > Padding du selecteur) — fait RETRECIR la colonne
-        ENTIERE (fond + bordure, pas seulement son contenu) de ce nombre
-        de px sur chaque cote choisi, revelant le fond du PANNEAU en
-        dessous tout autour (une "carte flottante" a l'interieur de
-        l'emplacement alloue a la colonne) — voir la remarque de
-        l'utilisateur, "je veux que les parametres de padding interviennent
-        sur la colonne en elle meme, pas son contenu ... je veux que le
-        fond de la colonne se replie" (PAS un simple retrait du CONTENU
-        dans un cadre reste a taille fixe, un 1er essai corrige suite a
-        cette remarque). Le cadre exterieur peint par paintEvent (voir
-        _corner_radii/setBorder) ET le contenu (bande d'entete + corps,
-        voir header_band/self.body, via self._outer_layout) suivent tous
-        les 2 ce MEME retrait — voir paintEvent, qui peint desormais sur
-        `self._padded_rect()`, plus sur `self.rect()`."""
-        # self._column_padding (PAS self._padding — deja pris par refresh()
-        # ci-dessus, l'INT du padding des ENTETES, lu par
-        # _refresh_seam_margin) : un dict, 4 cotes.
-        self._column_padding = {side: max(0, int(padding.get(side, 0))) for side in ("top", "right", "bottom", "left")}
-        self._refresh_content_margins()
-        self.update()
-
-    def _refresh_content_margins(self):
-        """Espace reserve, en PLUS du padding, entre le cadre EXTERIEUR
-        peint par paintEvent et le contenu (header_band + body, tous 2
-        a fond OPAQUE) — pour l'epaisseur de bordure REELLEMENT peinte sur
-        CE cote : sans ca, le contenu recouvrait le filet la ou il passe
-        DERRIERE lui (l'entete, notamment) alors que le padding le
-        revelait deja correctement tout autour — voir la remarque de
-        l'utilisateur, capture a l'appui, "pourquoi la bordure disparait
-        derriere l'entete". MEME necessite/MEME calcul (reserve()) que
-        pipeline_browser.Column.refresh_header, qui l'a deja pour la
-        vraie colonne — cote GAUCHE seul conditionne par le seam (voir
-        paintEvent, MEME regle : filet gauche non peint si fusionne avec
-        la voisine)."""
-        t = self._border_thickness
-
-        def reserve(side_on: bool) -> int:
-            return t if side_on else 0
-
-        left_on = self._border_enabled["left"] and not (self._seam_active and self._has_left_neighbor)
-        p = self._column_padding
-        self._outer_layout.setContentsMargins(
-            p["left"] + reserve(left_on), p["top"] + reserve(self._border_enabled["top"]),
-            p["right"] + reserve(self._border_enabled["right"]), p["bottom"] + reserve(self._border_enabled["bottom"]),
-        )
-
-    def _padded_rect(self) -> QRect:
-        p = self._column_padding
-        return self.rect().adjusted(p["left"], p["top"], -p["right"], -p["bottom"])
-
-    def setHeaderGap(self, gap: int):
-        self.header_gap_spacer.setFixedHeight(max(0, int(gap)))
-
-    def setItemStyle(self, *, font_family: str, color_hex: str, icon_enabled: bool, row_height: int,
-                      row_spacing: int, text_padding: int, hover_color: str, focus_color: str,
-                      unfocus_color: str, padding: dict, enabled: dict, colors: dict, radius: int,
-                      edge_border: bool, font_size: int = 10, smoothing: str | None = None, header_gap: int = 0):
-        """Items > Texte/Selection (voir SettingsWindow._apply_item_preview)
-        — voir sa remarque de tete de classe, "l'apercu doit se faire sur
-        les colonnes deja existentes" : les 4 lignes de demonstration
-        vivent ICI (self.item_rows), pas dans un widget d'apercu a part."""
-        self.setHeaderGap(header_gap)
-        self.body_layout.setSpacing(max(0, int(row_spacing)))
-        for row in self.item_rows:
-            row.setRowStyle(font_family, color_hex, icon_enabled, row_height, text_padding, font_size, smoothing)
-        sel_colors = (None, hover_color, focus_color, unfocus_color)
-        for row, sel_color in zip(self.item_rows, sel_colors):
-            row.setSelectionStyle(sel_color, padding, enabled, colors, radius, edge_border)
-        # 2 lignes selectionnees adjacentes (voir la remarque de
-        # l'utilisateur, "comme les lignes de colonne, quand deux lignes
-        # selectionnees sont cote a cote, la bordure entre les deux doit
-        # etre visible, et de la valeur d'epaisseur choisie (pas le
-        # double)") : leurs 2 pastilles ne se touchent VRAIMENT que sans
-        # espacement de ligne NI padding vertical (sinon un vrai espace les
-        # separe deja, rien a fusionner) — dans ce cas, celle du DESSUS
-        # garde son filet BAS (jamais masque, comme le filet DROIT
-        # d'_ColumnPreview entre 2 colonnes), celle du DESSOUS perd son
-        # filet HAUT (voir _ItemPreviewRow.setSeamTop) : un SEUL filet
-        # reste visible a la frontiere plutot que 2 cumules en 2x
-        # l'epaisseur choisie. LE RAYON, lui, s'aplatit des DEUX cotes
-        # (voir setSeamBottom en plus de setSeamTop) : contrairement au
-        # filet (ou UN seul suffit), un coin arrondi restant sur L'UN des 2
-        # laisserait un residu a la jointure meme si son filet est correct
-        # — voir la remarque de l'utilisateur, capture a l'appui, "le
-        # probleme des bordures qui apparaissent mal ... est toujours
-        # present".
-        touching = int(row_spacing) <= 0 and int(padding.get("top", 0)) <= 0 and int(padding.get("bottom", 0)) <= 0
-        for prev_row, row in zip(self.item_rows, self.item_rows[1:]):
-            seam = touching and prev_row._sel_color is not None and row._sel_color is not None
-            row.setSeamTop(seam)
-            prev_row.setSeamBottom(seam)
-
-    def setSeamHidden(self, hidden: bool):
-        """Distance entre colonnes > SettingsWindow._apply_column_preview :
-        masque (si `hidden`, et si has_left_neighbor — voir __init__) le
-        filet gauche — MEME comportement que le vrai navigateur (voir
-        pipeline_browser.Column._suppress_left/DetailPanel._suppress_left)."""
-        if hidden == self._seam_active:
-            return
-        self._seam_active = hidden
-        self._refresh_frame()
-        self._refresh_seam_margin()
-        self._refresh_header_flat_sides()
-        self._refresh_content_margins()
-
-    def _corner_radii(self) -> dict:
-        """Rayon PAR COIN du cadre exterieur : le(s) coin(s) du cote qui
-        touche reellement une autre boite (gap<=0 ET has_left_neighbor/
-        has_right_neighbor, voir __init__) retombent a 0 — voir la remarque
-        de l'utilisateur, "si deux colonnes sont cote a cote, a zero pixels
-        d'intervalle, le rayon de bordure contre l'autre colonne doit etre
-        a zero" (sinon le coin arrondi depasserait dans le filet unique de
-        la frontiere, ou laisserait un residu de fond visible a travers)."""
-        r = self._border_radius
-        flat_left = self._seam_active and self._has_left_neighbor
-        flat_right = self._seam_active and self._has_right_neighbor
-        return {
-            "top_left": 0 if flat_left else r["top_left"],
-            "bottom_left": 0 if flat_left else r["bottom_left"],
-            "top_right": 0 if flat_right else r["top_right"],
-            "bottom_right": 0 if flat_right else r["bottom_right"],
-        }
-
-    def _refresh_header_flat_sides(self):
-        """Repercute le meme aplatissement sur les coins du fond d'entete
-        (voir _ColumnPreviewHeaderFill.setFlatSides) ET des pastilles de
-        selection de chaque ligne (voir _ItemPreviewRow.setFlatSides) — sans
-        ca, l'entete ET/OU la selection garderaient un coin arrondi
-        depassant du cadre exterieur, lui, deja aplati a la meme frontiere
-        — voir la remarque de l'utilisateur, capture annotee a l'appui,
-        "les bordures ne se font pas tres bien de partout"."""
-        flat_left = self._seam_active and self._has_left_neighbor
-        flat_right = self._seam_active and self._has_right_neighbor
-        self.header_fill.setFlatSides(flat_left, flat_right)
-        for row in self.item_rows:
-            row.setFlatSides(flat_left, flat_right)
-
-    def _refresh_seam_margin(self):
-        """Quand le filet gauche est masque (voir setSeamHidden), Qt ne
-        recupere PAS automatiquement ce pixel pour le contenu interne. Le
-        filet qui disparait est celui peint par _refresh_frame sur `self`
-        (le cadre EXTERIEUR de l'apercu, colle contre header_band puisque
-        outer_layout n'a aucune marge) — c'est donc la marge GAUCHE de
-        header_band (= Padding des entetes, header_padding_field) qui doit
-        recuperer ce pixel, PAS celle de header_fill_layout (le texte
-        titre/compteur, imbrique un niveau plus profond, une frontiere
-        differente qui ne borde jamais le filet exterieur) — voir la
-        remarque de l'utilisateur, "il y a un espace entre l'entete et la
-        colonne precedente" (le meme fix que pipeline_browser.DetailPanel.
-        refresh_seam_margin, mais applique a la bonne marge cette fois).
-        La marge DROITE, elle, ne bouge JAMAIS : son filet ne disparait
-        jamais non plus (voir _refresh_frame) — la compenser quand meme
-        (une precedente version le faisait, "pour equilibrer les largeurs")
-        etendait header_fill PAR-DESSUS ce filet toujours peint, le
-        rendant invisible pile a la hauteur de l'entete tout en le
-        laissant visible plus bas dans le corps — voir la remarque de
-        l'utilisateur, "pourquoi il n'y a pas de bordure entre les deux
-        premieres entetes ?". Sans voisine a gauche (has_left_neighbor
-        False), le filet gauche ne disparait jamais non plus : c'est
-        _refresh_frame qui elargit alors la boite de 1px pour compenser,
-        pas cette marge — voir sa remarque."""
-        m = getattr(self, "_padding", 0)
-        left = max(0, m - 1) if (self._seam_active and self._has_left_neighbor) else m
-        self.header_band.layout().setContentsMargins(left, m, m, m)
-
-    def setBorder(self, enabled: dict, colors: dict, thickness: int = 1, radius=0):
-        """Colonnes > Bordure (voir _ToggleSideColorsField, MEME widget que
-        Toggles > Cadre/Coche > Bordure) : remplace le filet gris fixe
-        d'origine par un interrupteur PAR COTE (voir la remarque de
-        l'utilisateur, "au lieu d'avoir un seul toggle pour activer les
-        bordures, je veux un toggle par cote") + une couleur par cote +
-        epaisseur partagee + un rayon PAR COIN (voir _radius_dict/
-        _CornerRadiusField, meme mecanique que le padding — la remarque de
-        l'utilisateur, "dans tous les parametres de coins arrondis, je veux
-        exactement le meme fonctionnement que les padding (un par coin)")."""
-        self._border_enabled = {k: bool(enabled.get(k, True)) for k in ("top", "right", "bottom", "left")}
-        self._border_colors = {k: colors.get(k) or M["panel_border"] for k in ("top", "right", "bottom", "left")}
-        self._border_thickness = max(0, int(thickness))
-        self._border_radius = _radius_dict(radius)
-        self._refresh_content_margins()
-        self._refresh_frame()
-
-    def _refresh_frame(self):
-        # Sans voisine a gauche (1ere boite de la rangee), le filet gauche
-        # reste TOUJOURS peint (voir __init__, la remarque de l'utilisateur
-        # "on perd la bordure a gauche de la premiere colonne") : elle
-        # garde donc ses 2 filets alors que ses voisines fusionnees n'en
-        # gardent qu'un — ELARGIE de 1px ici (150 -> 151, uniquement quand
-        # column_gap()<=0) pour que son bandeau colore reste quand meme
-        # aussi large que le leur (header_band suit automatiquement, voir
-        # __init__ : il occupe toute la largeur de self via outer_layout,
-        # sans marge) — voir la remarque de l'utilisateur, "la colonne 1
-        # fait 148px de large ... alors que les autres font 149".
-        grow = 1 if (self._seam_active and not self._has_left_neighbor) else 0
-        self.setFixedSize(self._WIDTH + grow, self._HEIGHT)
-        self.update()
-
-    def setFillColor(self, hexval: str):
-        """Fond REEL de la colonne (voir __init__/paintEvent) — appele avec
-        la couleur LIVE C['void'] resolue (voir SettingsWindow.
-        _apply_column_preview) a chaque rafraichissement de l'apercu, pour
-        suivre la palette Couleurs reglee par l'utilisateur plutot qu'un
-        chrome fixe de cette fenetre."""
-        if hexval == self._fill_color:
-            return
-        self._fill_color = hexval
-        self.update()
-
-    def paintEvent(self, event):
-        """Cadre exterieur peint a la main (QPainter, voir _paint_bordered_
-        rect) plutot que via une border-radius QSS — voir la remarque de
-        l'utilisateur, "le lissage des border radius est tres moyen"."""
-        p = QPainter(self)
-        radius = self._corner_radii()
-        p.setRenderHint(QPainter.Antialiasing, _radius_any(radius))
-        sides = dict(self._border_enabled)
-        if self._seam_active and self._has_left_neighbor:
-            sides["left"] = False
-        _paint_bordered_rect(
-            p, self._padded_rect(), radius, sides, self._border_thickness,
-            self._border_colors, self._fill_color,
-        )
-        p.end()
-
-
-class _ItemPreviewRow(QWidget):
-    """Une ligne de la liste (icone optionnelle + texte) avec sa pastille de
-    selection (fond/bordure/rayon/padding, peinte a la main — QPainter, voir
-    _paint_bordered_rect) — utilisee par _ItemRowPreview pour demontrer les
-    4 etats (Normal/Survol/Selection en focus/Selection hors focus) de
-    Items > l'apercu, voir la remarque de l'utilisateur, "ajoute un tableau
-    pour les items textes dans les colonnes"."""
-
-    def __init__(self, text: str, parent=None):
-        super().__init__(parent)
-        # Fond transparent EXPLICITE : meme piege/correctif que
-        # _SidePaddingField (voir son commentaire) — sans lui, ce QWidget nu
-        # se voit quand meme peint d'un fond OPAQUE (le style sheet global
-        # de l'appli active WA_StyledBackground implicitement sur tout
-        # QWidget), masquant a la fois le fond de _ColumnPreview ENTRE les
-        # lignes (visible normalement au travers de "Espacement entre les
-        # lignes") ET le filet exterieur de la colonne (peint par le PARENT,
-        # _ColumnPreview.paintEvent, recouvert par cette ligne des qu'elle
-        # touche son bord gauche/droit) — voir la remarque de l'utilisateur,
-        # capture annotee a l'appui, "pourquoi la ligne ne va pas jusqu'au
-        # bout"/"pourquoi cet espace alors que le parametre 'distance entre
-        # les lignes' est a 0".
-        self.setStyleSheet("background: transparent;")
-        self._sel_color: str | None = None
-        self._sel_padding = {"top": 0, "right": 0, "bottom": 0, "left": 0}
-        self._sel_enabled = {"top": False, "right": False, "bottom": False, "left": False}
-        self._sel_colors = {k: M["panel_border"] for k in ("top", "right", "bottom", "left")}
-        self._sel_radius = _radius_dict(0)
-        self._edge_border = True
-        # Cotes GAUCHE/DROIT dont les 2 coins de la SELECTION doivent tomber
-        # a 0, quel que soit leur rayon regle (colonnes collees, voir
-        # _ColumnPreview._corner_radii/setFlatSides — MEME mecanique que le
-        # cadre exterieur et le fond d'entete) : sans ca, le rayon de la
-        # pastille de selection laisse un residu de fond visible NON
-        # colore au coin qui touche le filet unique fusionne entre 2
-        # colonnes — voir la remarque de l'utilisateur, capture annotee a
-        # l'appui, "les bordures ne se font pas tres bien de partout".
-        self._flat_left = False
-        self._flat_right = False
-        # Filet HAUT force a "none" quand cette ligne touche une AUTRE
-        # ligne selectionnee juste au-dessus (padding vertical a 0, voir
-        # _ColumnPreview.setItemStyle) — meme mecanique que le filet gauche
-        # d'_ColumnPreview lui-meme entre 2 colonnes collees (voir
-        # _refresh_frame/has_left_neighbor) : celle du DESSUS garde son
-        # filet BAS (jamais masque), celle du DESSOUS perd son filet HAUT,
-        # pour qu'un SEUL filet reste visible a la frontiere plutot que 2
-        # cumules — voir la remarque de l'utilisateur, "comme les lignes de
-        # colonne, quand deux lignes selectionnees sont cote a cote, la
-        # bordure entre les deux doit etre visible, et de la valeur
-        # d'epaisseur choisie (pas le double)".
-        self._seam_top = False
-        # Symetrique de _seam_top, cote de la ligne du DESSUS (voir
-        # setSeamBottom) : le FILET bas, lui, reste TOUJOURS peint (comme
-        # le filet droit d'_ColumnPreview entre 2 colonnes — un SEUL filet
-        # suffit), mais le RAYON bas doit lui aussi s'aplatir cote colle —
-        # sinon son propre coin arrondi (independant de celui, deja
-        # aplati, de la ligne du dessous) laisse un residu en triangle a
-        # la frontiere — voir la remarque de l'utilisateur, capture a
-        # l'appui, "le probleme des bordures qui apparaissent mal dans les
-        # textes selectionnes est toujours present".
-        self._seam_bottom = False
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 0, 8, 0)
-        layout.setSpacing(8)
-        self.icon_box = QWidget()
-        self.icon_box.setFixedSize(14, 14)
-        self.icon_box.setStyleSheet(f"background: transparent; border: 1px solid {M['label_dim']};")
-        layout.addWidget(self.icon_box)
-        self.label = QLabel(text)
-        self.label.setStyleSheet("background: transparent;")
-        layout.addWidget(self.label, 1)
-
-    def setRowStyle(self, font_family: str, color_hex: str, icon_enabled: bool, row_height: int, text_padding: int,
-                     font_size: int = 10, smoothing: str | None = None):
-        self.setFixedHeight(max(1, int(row_height)))
-        self.icon_box.setVisible(bool(icon_enabled))
-        size = max(1, int(font_size))
-        if font_family:
-            f = QFont(font_family)
-            f.setPixelSize(size)
-        else:
-            f = _qfont(size, 400)
-        # smoothing : MEME 3 niveaux/MEME technique que app_style.font (voir
-        # _OverrideSmoothingField) — duplique ici (pas d'appel a font(),
-        # qui choisirait aussi la FAMILLE auto si `font_family` est vide,
-        # deja geree juste au-dessus par _qfont) plutot que reimporter tout
-        # ce chemin pour ce seul aspect.
-        if smoothing == "previous":
-            f.setHintingPreference(QFont.HintingPreference.PreferDefaultHinting)
-        elif smoothing == "none":
-            f.setStyleStrategy(QFont.StyleStrategy.NoAntialias)
-        elif smoothing == "current":
-            f.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
-        self.label.setFont(f)
-        self.label.setStyleSheet(f"color: {color_hex}; background: transparent;")
-        pad = max(0, int(text_padding))
-        self.layout().setContentsMargins(pad, 0, pad, 0)
-
-    def setSelectionStyle(self, sel_color: str | None, padding: dict, enabled: dict, colors: dict,
-                           radius, edge_border: bool):
-        self._sel_color = sel_color
-        self._sel_padding = padding
-        self._sel_enabled = enabled
-        self._sel_colors = colors
-        self._sel_radius = _radius_dict(radius)
-        self._edge_border = edge_border
-        self.update()
-
-    def setSeamTop(self, seam_top: bool):
-        """Voir __init__ : masque le filet HAUT de la selection quand la
-        ligne au-dessus est ELLE AUSSI selectionnee et les touche (padding
-        vertical a 0) — appelee par _ColumnPreview.setItemStyle, jamais
-        directement depuis le tableau de reglages."""
-        seam_top = bool(seam_top)
-        if seam_top == self._seam_top:
-            return
-        self._seam_top = seam_top
-        self.update()
-
-    def setSeamBottom(self, seam_bottom: bool):
-        """Voir __init__ : aplatit (mais NE masque PAS son filet, qui reste
-        l'unique filet visible a cette frontiere) le RAYON bas de la
-        selection quand la ligne EN DESSOUS est ELLE AUSSI selectionnee et
-        la touche — appelee par _ColumnPreview.setItemStyle, jamais
-        directement depuis le tableau de reglages."""
-        seam_bottom = bool(seam_bottom)
-        if seam_bottom == self._seam_bottom:
-            return
-        self._seam_bottom = seam_bottom
-        self.update()
-
-    def setFlatSides(self, flat_left: bool, flat_right: bool):
-        """Voir __init__ : aplatit les 2 coins gauche (ou droit) de la
-        SELECTION quand ce cote touche le filet unique fusionne entre 2
-        colonnes — appelee par _ColumnPreview, jamais directement depuis le
-        tableau de reglages."""
-        flat_left, flat_right = bool(flat_left), bool(flat_right)
-        if flat_left == self._flat_left and flat_right == self._flat_right:
-            return
-        self._flat_left, self._flat_right = flat_left, flat_right
-        self.update()
-
-    def _effective_radius(self) -> dict:
-        """Aplatit un coin QUE si son cote touche VRAIMENT le filet fusionne
-        de la colonne (flat_left/flat_right, voir setFlatSides) ET que la
-        selection elle-meme est flush de ce cote (padding a 0) — sans cette
-        2e condition, un padding non nul (ex. "Padding du selecteur" G=7,
-        la selection inset, PAS collee au bord) aplatissait quand meme le
-        coin a tort : la boite du MILIEU (qui touche un filet fusionne des
-        2 cotes) se retrouvait entierement carree meme cote gauche, avec
-        7px d'espace bien visible avant le filet — voir la remarque de
-        l'utilisateur, capture a l'appui, "qu'est-ce que tu as fait avec
-        les angles ??"."""
-        r = dict(self._sel_radius)
-        pad = self._sel_padding
-        left_flush = max(0, int(pad.get("left", 0))) <= 0
-        right_flush = max(0, int(pad.get("right", 0))) <= 0
-        if self._flat_left and left_flush:
-            r["top_left"] = 0
-            r["bottom_left"] = 0
-        if self._flat_right and right_flush:
-            r["top_right"] = 0
-            r["bottom_right"] = 0
-        # Symetrique de flat_left/flat_right, mais pour la frontiere avec la
-        # ligne du dessus/dessous (voir setSeamTop/setSeamBottom) : LES 2
-        # cotes de la frontiere doivent aplatir leur rayon (pas seulement
-        # celui dont le filet disparait) — sinon un coin arrondi restant
-        # sur L'UN des 2 (meme si son filet, lui, est bien masque/garde
-        # correctement) laisse un residu en triangle a la jointure, voir la
-        # remarque de l'utilisateur, "le probleme des bordures qui
-        # apparaissent mal dans les textes selectionnes est toujours
-        # present".
-        if self._seam_top:
-            r["top_left"] = 0
-            r["top_right"] = 0
-        if self._seam_bottom:
-            r["bottom_left"] = 0
-            r["bottom_right"] = 0
-        return r
-
-    def paintEvent(self, event):
-        if self._sel_color:
-            p = QPainter(self)
-            rect = self.rect()
-            pad = self._sel_padding
-            sel_rect = QRect(
-                rect.left() + max(0, int(pad.get("left", 0))), rect.top() + max(0, int(pad.get("top", 0))),
-                rect.width() - max(0, int(pad.get("left", 0))) - max(0, int(pad.get("right", 0))),
-                rect.height() - max(0, int(pad.get("top", 0))) - max(0, int(pad.get("bottom", 0))),
-            )
-            # "Bordure au bord de la colonne" (`_edge_border`) ne concerne
-            # QUE gauche/droite — les 2 seuls cotes qui peuvent vraiment
-            # toucher le bord de la COLONNE (padding a 0 = filet colle au
-            # bord gauche/droit de la colonne) : un cote "a plat" LA ne
-            # garde son filet que si `edge_border` est actif — voir la
-            # remarque de l'utilisateur, "toggle 1 pour bordure ou non au
-            # croisement entre la selection et le bord de la colonne".
-            # Haut/bas, EUX, ne touchent jamais "le bord de la colonne" —
-            # juste la ligne voisine — et suivent donc TOUJOURS l'
-            # interrupteur par cote tel quel, quel que soit leur padding ;
-            # seule la fusion avec une ligne selectionnee adjacente (voir
-            # setSeamTop) peut masquer le HAUT — voir la remarque de
-            # l'utilisateur, capture a l'appui, "pour chaque ligne a
-            # selection, la bordure devrait apparaitre en bas et en haut
-            # ... et pas a droite" (elle disparaissait a tort en haut/bas
-            # aussi des que leur padding tombait a 0).
-            enabled = {side: bool(self._sel_enabled.get(side, False)) for side in ("top", "right", "bottom", "left")}
-            for side in ("left", "right"):
-                flush = max(0, int(pad.get(side, 0))) <= 0
-                if flush and not self._edge_border:
-                    enabled[side] = False
-            if self._seam_top:
-                enabled["top"] = False
-            radius = self._effective_radius()
-            p.setRenderHint(QPainter.Antialiasing, _radius_any(radius))
-            _paint_bordered_rect(p, sel_rect, radius, enabled, 1, self._sel_colors, self._sel_color)
-            p.end()
-        super().paintEvent(event)
 
 
 class _EdgeBar(QWidget):
@@ -6613,23 +6504,25 @@ class _HeaderEdgesField(QWidget):
 
 
 class _AppOrCustomColorField(QWidget):
-    """Pastille de couleur cliquable, choisissable PARMI les pastilles
-    semantiques de l'appli (comme _HeaderColorField, voir SEMANTIC_COLOR_
-    SLOTS) OU une couleur personnalisee (comme _ColorField, popup HSL/RVB/
-    hex) — utilisee par _SideColorsField (bordures de Toggles/Sliders) —
-    voir la remarque de l'utilisateur, "j'aimerais pouvoir avoir le choix
-    entre une couleur de l'application (skin principale niveau 1 ...) ou
-    des couleurs personnalisees".
-
-    Un seul clic ouvre un menu (les pastilles semantiques + "Personnalisee
-    ..." tout en bas, qui ouvre alors le popup HSL/RVB/hex habituel) —
-    pas de bascule separee "App/Personnalise" : le menu EST le choix.
+    """GABARIT "couleur" (voir la remarque de l'utilisateur, "TOUTES LES
+    LIGNES COULEUR ... Toggles pour choix de couleur Appli ou couleur
+    personnalisee. les textes des toggles doivent etre devant les toggles
+    correspondant et etre 'Couleur application' et 'Couleur systeme' ...
+    les items de la liste deroulante des couleurs applications devront
+    etre dans l'ordre alphabetique") — MEME mecanique exclusive que
+    _DualFontSelectField (app/systeme) transposee aux couleurs : toggle
+    "Couleur application" + liste deroulante des pastilles semantiques
+    (SEMANTIC_COLOR_SLOTS, triees par LABEL alphabetique pour l'affichage
+    seulement — la liste partagee elle-meme reste dans son ordre de
+    lecture 2 colonnes, voir sa remarque de tete dans app_style.py) OU
+    toggle "Couleur systeme" + pastille cliquable ouvrant le popup HSL/RVB/
+    hex habituel (_ColorPickerPopup) — utilisee par _SideColorsField
+    (bordures de Toggles/Sliders).
 
     Valeur stockee (voir value()/setValue()) : une chaine hex "#rrggbb"
-    (couleur personnalisee, format INCHANGE par rapport a l'ancien
-    _ColorField qu'elle remplace ici, retro-compatible avec les presets
-    existants) OU "@<slot>" (reference a une pastille semantique) — ce
-    prefixe "@" est le SEUL nouveau format possible."""
+    (couleur personnalisee) OU "@<slot>" (reference a une pastille
+    semantique) — format INCHANGE, retro-compatible avec les presets
+    existants."""
 
     changed = Signal(str)
 
@@ -6642,10 +6535,40 @@ class _AppOrCustomColorField(QWidget):
         self._popup: _ColorPickerPopup | None = None
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        self._slot_options = sorted(SEMANTIC_COLOR_SLOTS, key=lambda t: t[2])
+        self._slot_to_label = {slot: label for slot, _real, label in self._slot_options}
+        self._label_to_slot = {label: slot for slot, _real, label in self._slot_options}
+        labels = [label for _slot, _real, label in self._slot_options]
+
+        is_slot = value.startswith("@")
+
+        app_label = QLabel("Couleur application")
+        app_label.setFont(_qfont(10, 400))
+        app_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        layout.addWidget(app_label)
+        self.app_toggle = _Toggle(is_slot, show_label=False)
+        layout.addWidget(self.app_toggle)
+        current_label = self._slot_to_label.get(value[1:], labels[0]) if is_slot else labels[0]
+        self.app_field = _SelectField(labels, current_label, width=170)
+        layout.addWidget(self.app_field)
+
+        system_label = QLabel("Couleur systeme")
+        system_label.setFont(_qfont(10, 400))
+        system_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        layout.addWidget(system_label)
+        self.system_toggle = _Toggle(not is_slot, show_label=False)
+        layout.addWidget(self.system_toggle)
         self.swatch = _ColorSwatchButton()
         self.swatch.setFixedSize(swatch_size, swatch_size)
-        self.swatch.clicked.connect(self._open_menu)
+        self.swatch.clicked.connect(self._open_custom_picker)
         layout.addWidget(self.swatch)
+
+        self.app_toggle.toggled.connect(self._on_app_toggled)
+        self.system_toggle.toggled.connect(self._on_system_toggled)
+        self.app_field.changed.connect(self._on_app_field_changed)
+        self._refresh_dim()
         self._refresh()
 
     def _is_slot(self) -> bool:
@@ -6659,6 +6582,214 @@ class _AppOrCustomColorField(QWidget):
         self.swatch.setColorHex(hexval)
         self.swatch.setToolTip(_SLOT_LABELS.get(self._value[1:], hexval) if self._is_slot() else hexval)
 
+    def _refresh_dim(self):
+        _set_dimmed(self.app_field, not self.app_toggle.isChecked())
+        _set_dimmed(self.swatch, not self.system_toggle.isChecked())
+
+    def _on_app_toggled(self, checked: bool):
+        if checked:
+            self.system_toggle.blockSignals(True)
+            self.system_toggle.setChecked(False)
+            self.system_toggle.blockSignals(False)
+        elif not self.system_toggle.isChecked():
+            # Au moins l'un des 2 doit rester actif (voir _DualFontSelectField,
+            # MEME raison).
+            self.system_toggle.blockSignals(True)
+            self.system_toggle.setChecked(True)
+            self.system_toggle.blockSignals(False)
+        self._refresh_dim()
+        if checked:
+            self._select_slot(self._label_to_slot[self.app_field.value()])
+        else:
+            self.changed.emit(self._value)
+
+    def _on_system_toggled(self, checked: bool):
+        if checked:
+            self.app_toggle.blockSignals(True)
+            self.app_toggle.setChecked(False)
+            self.app_toggle.blockSignals(False)
+            if self._is_slot():
+                # Bascule vers "Couleur systeme" : fige la couleur RESOLUE
+                # courante comme point de depart personnalise (sinon la
+                # valeur stockee resterait une reference "@slot" alors que
+                # le toggle affiche desormais "systeme" — etat incoherent).
+                self._value = self._resolved_hex()
+                self._refresh()
+        elif not self.app_toggle.isChecked():
+            self.app_toggle.blockSignals(True)
+            self.app_toggle.setChecked(True)
+            self.app_toggle.blockSignals(False)
+        self._refresh_dim()
+        self.changed.emit(self._value)
+
+    def _on_app_field_changed(self, label: str):
+        if self.app_toggle.isChecked():
+            self._select_slot(self._label_to_slot[label])
+
+    def _select_slot(self, slot: str):
+        self._value = f"@{slot}"
+        self._refresh()
+        self.changed.emit(self._value)
+
+    def _open_custom_picker(self):
+        if not self.system_toggle.isChecked():
+            return
+        self._before_pick = self._value
+        popup = _ColorPickerPopup(self._resolved_hex(), self._title, self)
+        self._popup = popup
+        popup.colorChanged.connect(self._apply_custom_live)
+        popup.committed.connect(self._apply_custom_live)
+        popup.cancelled.connect(lambda: self._apply_custom_live(self._before_pick))
+        popup.show_near(self.swatch)
+
+    def _apply_custom_live(self, value: str):
+        self._value = value
+        self._refresh()
+        self.changed.emit(self._value)
+
+    def value(self) -> str:
+        return self._value
+
+    def setValue(self, value: str):
+        self._value = value
+        is_slot = value.startswith("@")
+        self.app_toggle.blockSignals(True)
+        self.system_toggle.blockSignals(True)
+        self.app_toggle.setChecked(is_slot)
+        self.system_toggle.setChecked(not is_slot)
+        self.app_toggle.blockSignals(False)
+        self.system_toggle.blockSignals(False)
+        if is_slot and value[1:] in self._slot_to_label:
+            self.app_field.setValue(self._slot_to_label[value[1:]])
+        self._refresh_dim()
+        self._refresh()
+
+    def refresh_colors(self, colors: dict):
+        """A appeler quand la page Couleurs change (voir SettingsWindow.
+        _on_colors_changed) : une pastille en mode "App" (voir _is_slot)
+        doit suivre EN DIRECT la couleur reelle de sa pastille semantique."""
+        self._colors = colors
+        self._refresh()
+
+
+class _CompactAppOrCustomColorField(QWidget):
+    """Variante COMPACTE de _AppOrCustomColorField, pour tenir DANS une
+    ligne "police" deja chargee (voir _build_font_gabarit_row et la
+    remarque de l'utilisateur, capture d'ecran a l'appui, "voici a quoi
+    doit ressembler la ligne police") : UNE seule pastille (pas de liste
+    deroulante, trop large ici) dont le CLIC ouvre le menu des pastilles
+    semantiques quand "app" est actif, ou directement le popup HSL/RVB/hex
+    quand "sys" est actif — libelles courts "app"/"sys" (pas "Couleur
+    application"/"Couleur systeme", trop long sur cette ligne), toggles
+    SANS libelle integre, places AVANT chacun. Meme format de valeur que
+    _AppOrCustomColorField ("#rrggbb" ou "@<slot>")."""
+
+    changed = Signal(str)
+
+    def __init__(self, value: str, colors: dict, swatch_size: int = 20, title: str = "Couleur", parent=None):
+        super().__init__(parent)
+        self._value = value
+        self._colors = colors
+        self._title = title
+        self._before_pick = value
+        self._popup: _ColorPickerPopup | None = None
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        # Libelle CENTRE AU-DESSUS de son toggle (voir la remarque de
+        # l'utilisateur, "pour les toggle de couleur, place leur texte
+        # correspondant bien centre au dessus du toggle") — remplace
+        # l'ancien libelle "avant" le toggle sur la meme ligne.
+        is_slot = value.startswith("@")
+        app_stack = QWidget()
+        app_stack.setStyleSheet("background: transparent;")
+        app_stack_l = QVBoxLayout(app_stack)
+        app_stack_l.setContentsMargins(0, 0, 0, 0)
+        app_stack_l.setSpacing(2)
+        app_label = QLabel("app")
+        app_label.setFont(_qfont(9, 400))
+        app_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        app_label.setAlignment(Qt.AlignHCenter)
+        app_stack_l.addWidget(app_label)
+        self.app_toggle = _Toggle(is_slot, show_label=False)
+        app_stack_l.addWidget(self.app_toggle, 0, Qt.AlignHCenter)
+        layout.addWidget(app_stack)
+
+        self.swatch = _ColorSwatchButton()
+        self.swatch.setFixedSize(swatch_size, swatch_size)
+        self.swatch.clicked.connect(self._on_swatch_clicked)
+        layout.addWidget(self.swatch)
+
+        sys_stack = QWidget()
+        sys_stack.setStyleSheet("background: transparent;")
+        sys_stack_l = QVBoxLayout(sys_stack)
+        sys_stack_l.setContentsMargins(0, 0, 0, 0)
+        sys_stack_l.setSpacing(2)
+        sys_label = QLabel("sys")
+        sys_label.setFont(_qfont(9, 400))
+        sys_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        sys_label.setAlignment(Qt.AlignHCenter)
+        sys_stack_l.addWidget(sys_label)
+        self.system_toggle = _Toggle(not is_slot, show_label=False)
+        sys_stack_l.addWidget(self.system_toggle, 0, Qt.AlignHCenter)
+        layout.addWidget(sys_stack)
+
+        self.app_toggle.toggled.connect(self._on_app_toggled)
+        self.system_toggle.toggled.connect(self._on_system_toggled)
+        self._refresh()
+
+    def _is_slot(self) -> bool:
+        return self._value.startswith("@")
+
+    def _resolved_hex(self) -> str:
+        return _resolve_color_value(self._value, self._colors)
+
+    def _refresh(self):
+        hexval = self._resolved_hex()
+        self.swatch.setColorHex(hexval)
+        self.swatch.setToolTip(_SLOT_LABELS.get(self._value[1:], hexval) if self._is_slot() else hexval)
+
+    def _on_app_toggled(self, checked: bool):
+        if checked:
+            self.system_toggle.blockSignals(True)
+            self.system_toggle.setChecked(False)
+            self.system_toggle.blockSignals(False)
+            if not self._is_slot():
+                # Bascule vers "app" depuis une couleur personnalisee (voir
+                # la remarque de l'utilisateur, "les couleurs applications
+                # ne fonctionnent pas") : sans ceci, la valeur restait
+                # figee sur l'ancien hex personnalise jusqu'a un clic
+                # SUPPLEMENTAIRE sur la pastille — bascule desormais tout
+                # de suite sur une pastille semantique par defaut (la 1ere
+                # par ordre alphabetique, MEME liste que _open_menu).
+                default_slot = sorted(SEMANTIC_COLOR_SLOTS, key=lambda t: t[2])[0][0]
+                self._select_slot(default_slot)
+        elif not self.system_toggle.isChecked():
+            self.system_toggle.blockSignals(True)
+            self.system_toggle.setChecked(True)
+            self.system_toggle.blockSignals(False)
+
+    def _on_system_toggled(self, checked: bool):
+        if checked:
+            self.app_toggle.blockSignals(True)
+            self.app_toggle.setChecked(False)
+            self.app_toggle.blockSignals(False)
+            if self._is_slot():
+                self._value = self._resolved_hex()
+                self._refresh()
+                self.changed.emit(self._value)
+        elif not self.app_toggle.isChecked():
+            self.app_toggle.blockSignals(True)
+            self.app_toggle.setChecked(True)
+            self.app_toggle.blockSignals(False)
+
+    def _on_swatch_clicked(self):
+        if self.app_toggle.isChecked():
+            self._open_menu()
+        else:
+            self._open_custom_picker()
+
     def _open_menu(self):
         menu = QMenu(self)
         menu.setFont(_qfont(11, 400))
@@ -6666,14 +6797,10 @@ class _AppOrCustomColorField(QWidget):
             f"QMenu {{ background: {M['toolbar_bg']}; border: 1px solid {M['field_border']}; padding: 4px 0; }}"
             f"QMenu::item {{ padding: 5px 16px; color: {M['value_fg']}; }}"
             f"QMenu::item:selected {{ background: {M['accent']}; color: {M['accent_fg']}; }}"
-            f"QMenu::separator {{ background: {M['panel_border']}; height: 1px; margin: 4px 0; }}"
         )
-        for slot, real, label in SEMANTIC_COLOR_SLOTS:
+        for slot, real, label in sorted(SEMANTIC_COLOR_SLOTS, key=lambda t: t[2]):
             action = menu.addAction(_solid_icon(self._colors.get(real, "#000")), label)
             action.triggered.connect(lambda _c=False, s=slot: self._select_slot(s))
-        menu.addSeparator()
-        custom_action = menu.addAction("Personnalisee...")
-        custom_action.triggered.connect(self._open_custom_picker)
         menu.exec(self.swatch.mapToGlobal(QPoint(0, self.swatch.height())))
 
     def _select_slot(self, slot: str):
@@ -6700,12 +6827,16 @@ class _AppOrCustomColorField(QWidget):
 
     def setValue(self, value: str):
         self._value = value
+        is_slot = value.startswith("@")
+        self.app_toggle.blockSignals(True)
+        self.system_toggle.blockSignals(True)
+        self.app_toggle.setChecked(is_slot)
+        self.system_toggle.setChecked(not is_slot)
+        self.app_toggle.blockSignals(False)
+        self.system_toggle.blockSignals(False)
         self._refresh()
 
     def refresh_colors(self, colors: dict):
-        """A appeler quand la page Couleurs change (voir SettingsWindow.
-        _on_colors_changed) : une pastille en mode "App" (voir _is_slot)
-        doit suivre EN DIRECT la couleur reelle de sa pastille semantique."""
         self._colors = colors
         self._refresh()
 
@@ -6742,10 +6873,13 @@ class _SideColorsField(QWidget):
     l'utilisateur, "quand les 4 cotes sont lies, et que l'on active la
     bordure du premier cote, les autres ne suivent pas").
 
-    Chaque pastille est un _AppOrCustomColorField (pas un simple
+    Chaque pastille est un _CompactAppOrCustomColorField (pas un simple
     _ColorField) : couleur PARMI les pastilles semantiques de l'appli OU
-    personnalisee — voir sa remarque de tete de classe et la remarque de
-    l'utilisateur."""
+    personnalisee, MEME systeme compact ("app"/"sys" de part et d'autre de
+    la pastille, texte centre AU-DESSUS de chaque toggle) que les lignes
+    "police" — voir la remarque de l'utilisateur, "pour les lignes
+    bordures, utilise le meme systeme que dans les textes pour le choix de
+    la couleur"."""
 
     changed = Signal()
 
@@ -6770,9 +6904,21 @@ class _SideColorsField(QWidget):
         self._linked = False
         enabled = enabled or {}
         self._enabled: dict[str, bool] = {key: bool(enabled.get(key, True)) for key, _ in self._ORDER}
-        self.fields: dict[str, _AppOrCustomColorField] = {}
+        self.fields: dict[str, _CompactAppOrCustomColorField] = {}
         self.side_checks: dict[str, _Toggle] = {}
-        for key, letter in self._ORDER:
+        for i, (key, letter) in enumerate(self._ORDER):
+            if i > 0:
+                # Ligne verticale entre chaque cote (voir la remarque de
+                # l'utilisateur, "est il possible de rajouter une ligne
+                # verticale qui separe les differents cote ? (de mm couleur
+                # que les bordures)") — meme couleur que la bordure elle-
+                # meme (M['field_border'], deja utilisee comme couleur de
+                # bordure de champ ailleurs dans cette fenetre).
+                sep = QFrame()
+                sep.setFrameShape(QFrame.VLine)
+                sep.setFixedWidth(1)
+                sep.setStyleSheet(f"background: {M['field_border']}; border: none;")
+                layout.addWidget(sep)
             wrap = QWidget()
             wrap.setStyleSheet("background: transparent;")
             wrap_l = QVBoxLayout(wrap)
@@ -6783,7 +6929,7 @@ class _SideColorsField(QWidget):
             check.toggled.connect(lambda on, k=key: self._on_side_enabled_changed(k, on))
             self.side_checks[key] = check
             wrap_l.addWidget(check, 0, Qt.AlignHCenter)
-            field = _AppOrCustomColorField(
+            field = _CompactAppOrCustomColorField(
                 sides.get(key, "#000000"), colors, swatch_size=20, title=f"Bordure {letter}")
             field.changed.connect(lambda _v, k=key: self._on_side_changed(k))
             self.fields[key] = field
@@ -6913,7 +7059,8 @@ class _ToggleSideColorsField(QWidget):
 
     changed = Signal()
 
-    def __init__(self, enabled: dict, sides: dict, colors: dict, parent=None):
+    def __init__(self, enabled: dict, sides: dict, colors: dict, parent=None,
+                 thickness_field: QWidget | None = None, thickness_label: str = "Epaisseur"):
         super().__init__(parent)
         # Fond transparent EXPLICITE : meme piege/correctif que
         # _SideColorsField ci-dessus (voir son commentaire) — voir la
@@ -6923,24 +7070,36 @@ class _ToggleSideColorsField(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
-        self.link_toggle = _Toggle(False, on_label="lie", off_label="libre")
+        # GABARIT "bordures" (voir _build_linked_sides_toggle) : pas de
+        # bouton "Copier", toggle "lier les 4" AVANT le toggle.
+        toggle_row, self.link_toggle = _build_linked_sides_toggle(False)
         self.link_toggle.toggled.connect(self._on_link_toggled)
-        layout.addWidget(self.link_toggle)
-        side_names = {"top": "Haut", "right": "Droite", "bottom": "Bas", "left": "Gauche"}
-        leader_key, leader_letter = _SideColorsField._ORDER[0]
-        self.copy_btn = _Btn(
-            f"Copier {leader_letter} →", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=25)
-        others_full = [side_names[k] for k in _SideColorsField._OTHERS]
-        self.copy_btn.setToolTip(f"Copier la valeur de {side_names[leader_key]} sur {'/'.join(others_full)}")
-        layout.addWidget(self.copy_btn)
+        layout.addWidget(toggle_row)
         self.sides = _SideColorsField(sides, colors, enabled)
         self.sides.changed.connect(self.changed.emit)
-        self.copy_btn.clicked.connect(self.sides.copyLeaderToOthers)
         layout.addWidget(self.sides)
+        # Epaisseur DESORMAIS DANS LA MEME ligne (voir la remarque de
+        # l'utilisateur, "un slider Epaisseur, avec texte 'Epaisseur' juste
+        # avant, et une invite de texte juste apres, indiquant en temps reel
+        # l'epaisseur en px") — le champ (_SliderField, deja construit par
+        # l'appelant, MEME attribut `self.xxx_border_thickness_field`
+        # partout ailleurs dans cette fenetre) est simplement DEPLACE ici,
+        # jamais recree : _current_values/_apply_values_to_controls/
+        # _apply_dropdown_radius continuent de le lire/l'ecrire SANS
+        # changement. `thickness_field=None` (repli) : garde l'ancien
+        # comportement (ligne separee, geree par l'appelant) pour tout site
+        # pas encore migre.
+        self.thickness_field = thickness_field
+        if thickness_field is not None:
+            thickness_label_w = QLabel(thickness_label)
+            thickness_label_w.setFont(_qfont(11, 400))
+            thickness_label_w.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+            layout.addWidget(thickness_label_w)
+            layout.addWidget(thickness_field)
+        layout.addStretch(1)
 
     def _on_link_toggled(self, checked: bool):
         self.sides.setLinked(checked)
-        _set_dimmed(self.copy_btn, checked)
         self.changed.emit()
 
     def sidesValue(self) -> dict[str, str]:
@@ -6954,7 +7113,8 @@ class _ToggleSideColorsField(QWidget):
         self.sides.setEnabledValue(enabled)
 
     def setRadius(self, radius: int):
-        self.copy_btn.setRadius(radius)
+        if self.thickness_field is not None:
+            self.thickness_field.setRadius(radius)
 
     def refresh_colors(self, colors: dict):
         """Voir _SideColorsField.refresh_colors, meme raison."""
@@ -7092,36 +7252,22 @@ class _CellPaddingField(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
-        self.toggle = _Toggle(linked, on_label="lie", off_label="libre")
-        self.toggle.toggled.connect(self._on_toggled)
-        layout.addWidget(self.toggle)
-        # Bouton "Copier" : transfert PONCTUEL du maitre (1er cote de
-        # `order`, voir copyLeaderToOthers) sur les autres, a cote du lien
-        # PERMANENT ci-dessus plutot qu'a sa place — desactive pendant que
-        # le lien est actif (les autres suivent deja le maitre en direct
-        # dans ce cas, le bouton n'aurait rien a faire) — voir la remarque
-        # de l'utilisateur. `order` (defaut : les 4 cotes, voir
-        # _SidePaddingField._ORDER) permet de n'exposer qu'un SOUS-ENSEMBLE
-        # de cotes — voir Colonnes > Apercu > Zone titre, "Titre -
-        # padding"/"Apercu des dossiers - padding".
+        # GABARIT "padding" (voir _build_linked_sides_toggle) : pas de
+        # bouton "Copier", toggle "lier les 4" AVANT le toggle. `order`
+        # (defaut : les 4 cotes, voir _SidePaddingField._ORDER) permet de
+        # n'exposer qu'un SOUS-ENSEMBLE de cotes — voir Colonnes > Apercu >
+        # Zone titre, "Titre - padding"/"Apercu des dossiers - padding".
         order = list(order) if order is not None else list(_SidePaddingField._ORDER)
-        side_names = {"top": "Haut", "right": "Droite", "bottom": "Bas", "left": "Gauche"}
-        leader_key, leader_letter = order[0]
-        self.copy_btn = _Btn(
-            f"Copier {leader_letter} →", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=25)
-        others_full = [side_names[k] for k, _ in order[1:]]
-        self.copy_btn.setToolTip(f"Copier la valeur de {side_names[leader_key]} sur {'/'.join(others_full)}")
-        layout.addWidget(self.copy_btn)
+        toggle_row, self.toggle = _build_linked_sides_toggle(linked)
+        self.toggle.toggled.connect(self._on_toggled)
+        layout.addWidget(toggle_row)
         self.sides = _SidePaddingField(sides, order=order)
         self.sides.changed.connect(self.changed.emit)
-        self.copy_btn.clicked.connect(self.sides.copyLeaderToOthers)
         layout.addWidget(self.sides)
         self.sides.setLinked(linked)
-        _set_dimmed(self.copy_btn, linked)
 
     def _on_toggled(self, checked: bool):
         self.sides.setLinked(checked)
-        _set_dimmed(self.copy_btn, checked)
         self.changed.emit()
 
     def isLinked(self) -> bool:
@@ -7134,27 +7280,24 @@ class _CellPaddingField(QWidget):
         self.toggle.setChecked(linked)
         self.sides.setValue(sides)
         self.sides.setLinked(linked)
-        _set_dimmed(self.copy_btn, linked)
 
     def setRadius(self, radius: int):
-        # copy_btn suit un AUTRE rayon (Geometrie > Boutons, voir
-        # SettingsWindow._apply_button_radius, ou il est aussi enregistre) —
-        # celui-ci ne concerne que les boites de valeur des sliders (voir
-        # _apply_dropdown_radius, qui appelle cette methode).
         self.sides.setRadius(radius)
 
 
 # ==========================================================================
-# Section "Geometrie" — table Element/Cadre/Coins arrondis, 3 lignes :
-# Fenetres (rayon seul, pas de cadre reglable — le filet du panneau
-# principal est structurel, voir #CentralFrame dans pipeline_browser.py),
-# Zones de saisie et Boutons (cadre actif/sans + rayon).
+# Section "Geometrie" — table Element/Cadre/Coins arrondis, 2 lignes :
+# Zones de saisie et Boutons (cadre actif/sans + rayon). "Fenetres" a
+# demenage dans Application (voir _section_application, self.window_
+# radius_toggle) — voir la remarque de l'utilisateur, "geometrie/fenetre :
+# deplace cette ligne dans general/application mais transforme le slider
+# en toggle".
 # ==========================================================================
 
 class _GeoTable(QWidget):
     changed = Signal()
 
-    def __init__(self, window_radius: int, input_frame: bool, input_radius: int,
+    def __init__(self, input_frame: bool, input_radius: int,
                  button_frame: bool, button_radius: int,
                  column_widths: list[int] | None = None, parent=None):
         super().__init__(parent)
@@ -7166,7 +7309,6 @@ class _GeoTable(QWidget):
         self.head = _table_header([("Element", 0), ("Cadre", 150), ("Coins arrondis", 246)])
         layout.addWidget(self.head)
 
-        self.window_radius_field = _SliderField(0, 24, window_radius, slider_width=140, box_width=58)
         self.input_frame_toggle = _Toggle(input_frame)
         self.input_radius_field = _SliderField(0, 16, input_radius, slider_width=140, box_width=58)
         self.button_frame_toggle = _Toggle(button_frame)
@@ -7176,7 +7318,6 @@ class _GeoTable(QWidget):
         # l'utilisateur, capture a l'appui) — voir SettingsWindow.
         # _section_tables/self.table_radius_field.
         rows = [
-            ("Fenetres", None, self.window_radius_field),
             ("Zones de saisie", self.input_frame_toggle, self.input_radius_field),
             ("Boutons", self.button_frame_toggle, self.button_radius_field),
         ]
@@ -7223,7 +7364,6 @@ class _GeoTable(QWidget):
 
     def value(self) -> dict[str, Any]:
         return {
-            "window_radius": self.window_radius_field.value(),
             "input_frame": self.input_frame_toggle.isChecked(),
             "input_radius": self.input_radius_field.value(),
             "button_frame": self.button_frame_toggle.isChecked(),
@@ -7415,9 +7555,21 @@ class _SettingsTitleBar(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 0, 0, 0)
         layout.setSpacing(9)
+        import pipeline_browser as pb
+
         dot = QLabel()
         dot.setFixedSize(9, 9)
-        dot.setStyleSheet(f"border: 1px solid {M['dot_border']}; background: transparent;")
+        # Icone perso (voir Settings > ICONES > General, UI_ICON_SETTINGS_
+        # GEAR) si l'utilisateur en a choisi une, sinon le carre neutre
+        # d'origine — voir la remarque de l'utilisateur, "cette icone sera
+        # aussi utilisee sur la fenetre de settings elle-meme avant le
+        # titre dans la barre de navigation".
+        custom_gear = pb.custom_ui_icon_pixmap(pb.UI_ICON_SETTINGS_GEAR, 9)
+        if custom_gear is not None:
+            dot.setPixmap(custom_gear)
+            dot.setStyleSheet("background: transparent;")
+        else:
+            dot.setStyleSheet(f"border: 1px solid {M['dot_border']}; background: transparent;")
         layout.addWidget(dot)
         title = QLabel("Parametres generaux")
         title.setFont(_qfont(11, 400))
@@ -7537,6 +7689,8 @@ class SettingsWindow(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        global _ACTIVE_LOADING_WINDOW
+        _ACTIVE_LOADING_WINDOW = self
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         # 1020 (largeur maquette) - 284 (panneau "Apercu en direct", supprime
@@ -7566,13 +7720,29 @@ class SettingsWindow(QDialog):
         self._original_settings = json.loads(json.dumps(self.settings))
         self._saved = False
         self._dirty = False
+        # Liste vivante des logiciels AJOUTES (voir _section_logiciels) —
+        # pas de "control" Qt unique ne peut porter une LISTE de longueur
+        # variable (contrairement au reste de _current_values()), gardee a
+        # part et re-injectee explicitement dans _current_values()/
+        # _apply_values_to_controls.
+        self._custom_softwares: list[dict] = [
+            dict(e) for e in self.settings.get("custom_softwares", []) if isinstance(e, dict) and e.get("key")
+        ]
+        self._removed_softwares: set = set(self.settings.get("removed_softwares", []))
         # Tableaux "fermes" SANS entete de colonnes (voir _build_flat_table)
         # — un _FlatColumnResizer par tableau, ajoute ici par chaque
         # _section_xxx qui en construit un : permet de tous les retrouver
         # d'un coup (voir _apply_columns_resizable, qui doit les activer/
         # desactiver comme les tableaux A entete).
         self._flat_resizers: list[_FlatColumnResizer] = []
-        self._current_preset = "Personnalise"
+        # Preset EN COURS D'UTILISATION (voir la remarque de l'utilisateur,
+        # "au lieu de personnalise en haut de la fenetre de settings, mets
+        # le preset en cours d'utilisation") : celui configure comme preset
+        # par defaut (voir load_settings/DEFAULT_SETTINGS.default_preset)
+        # s'il en existe un et qu'il a bien ete applique — "Personnalise"
+        # sinon (comportement INCHANGE, aucun preset par defaut configure).
+        default_preset = self.settings.get("default_preset")
+        self._current_preset = default_preset if default_preset in _load_presets() else "Personnalise"
         # AVANT toute construction de widget ci-dessous (_build_toolbar/
         # _build_content/_build_bottom_bar) : ces methodes lisent M au
         # moment ou elles construisent chaque widget, donc M doit deja
@@ -7586,6 +7756,11 @@ class SettingsWindow(QDialog):
         _sync_slider_style(self.settings)
         # Idem pour le style des toggles (Toggles > Style, voir _TOGGLE_STYLE).
         _sync_toggle_style(self.settings)
+        # Idem pour la police/couleur/retrait des titres de _Section/
+        # _SubSection (General > TITRE, voir _TITLE_LEVEL_STYLE) : chaque
+        # _Section/_SubSection construite plus bas doit deja lire le bon
+        # style des sa creation.
+        _sync_title_level_style(self.settings)
 
         # Voir la meme remarque dans l'ancienne fenetre : le rafraichissement
         # (previsualisation complete sur la fenetre principale) est lourd,
@@ -7595,6 +7770,28 @@ class SettingsWindow(QDialog):
         self._live_timer.setInterval(30)
         self._live_timer.setSingleShot(True)
         self._live_timer.timeout.connect(self._flush_live_apply)
+
+        # PERFORMANCES (voir la remarque de l'utilisateur, "il y a des
+        # problemes de performances quand on modifie les parametres des
+        # settings ... geometrie/zone de saisie, geometrie/boutons") :
+        # _apply_dropdown_radius/_apply_button_radius reappliquent un
+        # setStyleSheet sur des DIZAINES de widgets (voir leurs corps) —
+        # cable EN DIRECT sur valueChanged, un simple glisser de slider
+        # rejouait ce cout a CHAQUE pas intermediaire. Meme debounce 30ms
+        # que _live_timer ci-dessus, mais SEPARE (portee/semantique
+        # differente : celui-ci ne fait QUE re-styler des widgets DEJA
+        # construits, jamais emettre settingsChanged) — ne retient QUE la
+        # DERNIERE valeur en attente pendant un glisser.
+        self._dropdown_radius_pending: int | None = None
+        self._dropdown_radius_timer = QTimer(self)
+        self._dropdown_radius_timer.setInterval(30)
+        self._dropdown_radius_timer.setSingleShot(True)
+        self._dropdown_radius_timer.timeout.connect(self._flush_dropdown_radius)
+        self._button_radius_pending: int | None = None
+        self._button_radius_timer = QTimer(self)
+        self._button_radius_timer.setInterval(30)
+        self._button_radius_timer.setSingleShot(True)
+        self._button_radius_timer.timeout.connect(self._flush_button_radius)
 
         self.panel = panel = _PanelFrame(self)
         self._apply_panel_radius(int(self.settings.get("window_radius", 0)))
@@ -7626,6 +7823,8 @@ class SettingsWindow(QDialog):
 
         self._connect_live_updates()
         self._preview_now()
+        self._report_loading_step(None)
+        _ACTIVE_LOADING_WINDOW = None
 
     # -- barre d'outils (preset) --
 
@@ -7719,6 +7918,20 @@ class SettingsWindow(QDialog):
         dot_color = M["dirty_dot"] if self._dirty else M["clean_dot"]
         self.preset_dot.setStyleSheet(f"background: {dot_color};")
 
+    def _refresh_default_preset_options(self):
+        """Reconstruit les options de "Preset par defaut" (General >
+        Application) depuis _load_presets() A JOUR -- appelee apres CHAQUE
+        creation/suppression/renommage de preset (voir _save_preset_as/
+        _delete_preset/_rename_preset), et une fois a l'ouverture de la
+        fenetre. AVANT ce correctif, cette liste etait figee a l'ouverture
+        (voir _SelectField.setOptions, qui lit toujours la liste EN
+        DIRECT a chaque clic -- pas besoin de reconstruire le widget) :
+        creer ou supprimer un preset sans refermer la fenetre laissait
+        cette liste perimee -- voir la remarque de l'utilisateur sur la
+        refonte des presets."""
+        preset_names = ["(Aucun)"] + sorted(_load_presets().keys())
+        self.default_preset_field.setOptions(preset_names)
+
     def _open_preset_popup(self):
         """Liste des presets (voir _PresetListRow) : "+ Nouveau preset…" en
         tete (enregistre les valeurs courantes sous un nouveau nom), puis
@@ -7774,6 +7987,7 @@ class SettingsWindow(QDialog):
         if self._current_preset == name:
             self._current_preset = "Personnalise"
             self._sync_preset_box()
+        self._refresh_default_preset_options()
         popup.close()
         # Rouvre aussitot la liste a jour (sans le preset supprime) : plus
         # pratique que refermer purement et simplement si l'utilisateur
@@ -7795,15 +8009,22 @@ class SettingsWindow(QDialog):
 
     def _save_preset_as(self):
         name, ok = QInputDialog.getText(self, "Enregistrer sous", "Nom du preset :")
-        if not ok or not name.strip():
+        name = name.strip()
+        if not ok or not name:
             return
         presets = _load_presets()
-        presets[name.strip()] = self._current_values()
+        if name in presets and QMessageBox.question(
+            self, "Enregistrer sous", f'"{name}" existe deja. Le remplacer ?',
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+        presets[name] = self._current_values()
         _save_presets(presets)
-        self._current_preset = name.strip()
+        self._current_preset = name
         self._dirty = False
         self.titlebar.set_dirty(False)
         self._sync_preset_box()
+        self._refresh_default_preset_options()
 
     def _save_current_preset(self):
         """Bouton "Enregistrer" de la barre a outils : sauvegarde les
@@ -7830,6 +8051,7 @@ class SettingsWindow(QDialog):
             _save_presets(presets)
         self._current_preset = new_name
         self._sync_preset_box()
+        self._refresh_default_preset_options()
 
     def _apply_column_type_overrides_to_controls(self):
         """Reapplique Colonnes > Type/Projets/Sous-projets (voir
@@ -7839,10 +8061,80 @@ class SettingsWindow(QDialog):
         preset)."""
         if not hasattr(self, "_type_fields"):
             return
-        for title in ("Type", "Projets", "Sous-projet", PREVIEW_STACK_TITLE):
+        for title in (
+            "Type", "Projets", "Sous-projet", PREVIEW_STACK_TITLE,
+            "Logiciels", "IN", "OVER", "OUT", INSPECTOR_TITLE,
+        ):
             if title in self._type_fields:
                 self._apply_column_overrides_to_controls_for(title)
         self._apply_column_type_preview()
+
+    def _apply_selection_clone_values_to_controls(self):
+        """Reapplique les etats "clones" de Focus (Non focus/Survol/Non
+        selectionne, voir _build_selection_clone_subsection/
+        _selection_clone_values) depuis self.settings — champs EAGER
+        (onglet General), toujours construits, jamais de garde hasattr
+        necessaire ici (contrairement a _apply_step_badge_values_to_
+        controls, page "Projets" paresseuse)."""
+        for state in ("unfocus", "hover", "idle"):
+            getattr(self, f"item_selection_{state}_padding_toggle").setChecked(
+                bool(self.settings.get(f"item_selection_{state}_padding_override", False)))
+            getattr(self, f"item_selection_{state}_padding_field").setValue(
+                bool(self.settings.get(f"item_selection_{state}_padding_linked", False)),
+                self.settings.get(f"item_selection_{state}_padding") or {})
+            getattr(self, f"item_selection_{state}_border_toggle").setChecked(
+                bool(self.settings.get(f"item_selection_{state}_border_override", False)))
+            getattr(self, f"item_selection_{state}_border_field").setValue(
+                _coerce_side_enabled(self.settings.get(f"item_selection_{state}_border_enabled", False)),
+                self.settings.get(f"item_selection_{state}_border") or {})
+            getattr(self, f"item_selection_{state}_radius_toggle").setChecked(
+                bool(self.settings.get(f"item_selection_{state}_radius_override", False)))
+            getattr(self, f"item_selection_{state}_radius_field").setValue(
+                bool(self.settings.get(f"item_selection_{state}_radius_linked", True)),
+                _coerce_corner_radius(self.settings.get(f"item_selection_{state}_radius", 0)))
+            getattr(self, f"item_selection_{state}_edge_border_toggle").setChecked(
+                bool(self.settings.get(f"item_selection_{state}_edge_border_override", False)))
+            getattr(self, f"item_selection_{state}_edge_border_field").setChecked(
+                bool(self.settings.get(f"item_selection_{state}_edge_border", True)))
+
+    def _apply_step_badge_values_to_controls(self):
+        """Reapplique Colonnes > Projets > Colonnes > "Icone de niveaux"
+        (voir _build_column_override_page/_step_badge_values) depuis
+        self.settings — no-op si cette page (paresseuse, voir _on_columns_
+        tab_changed) n'a jamais ete visitee dans cette session (rien a
+        reappliquer : le prochain _build_column_override_page("Projets", ...)
+        la seedera de toute facon depuis self.settings, deja a jour ICI)."""
+        if not hasattr(self, "step_badge_width_field"):
+            return
+        self.step_badge_width_field.setValue(int(self.settings.get("step_badge_width", 18)))
+        self.step_badge_height_field.setValue(int(self.settings.get("step_badge_height", 18)))
+        self.step_badge_border_field.setValue(
+            _coerce_side_enabled(self.settings.get("step_badge_border_enabled", False)),
+            self.settings.get("step_badge_border") or {})
+        self.step_badge_border_thickness_field.setValue(int(self.settings.get("step_badge_border_thickness", 1)))
+        self.step_badge_radius_field.setValue(
+            bool(self.settings.get("step_badge_radius_linked", True)),
+            _coerce_corner_radius(self.settings.get("step_badge_radius", 9)))
+        self.step_badge_color_base2_field.setValue(self.settings.get("step_badge_color_base2", "#5c6368"))
+        self.step_badge_color_base3_field.setValue(self.settings.get("step_badge_color_base3", "#5c6368"))
+        self.step_badge_color_base4_field.setValue(self.settings.get("step_badge_color_base4", "#3f6f9f"))
+        self.step_badge_color_base5_field.setValue(self.settings.get("step_badge_color_base5", "#3f6f9f"))
+        self.step_badge_color_base6_field.setValue(self.settings.get("step_badge_color_base6", "#d9822b"))
+        self.step_badge_color_basen_field.setValue(self.settings.get("step_badge_color_basen", "#5c6368"))
+        self.step_badge_text_color_base2_field.setValue(self.settings.get("step_badge_text_color_base2", "#eef2f5"))
+        self.step_badge_text_color_base3_field.setValue(self.settings.get("step_badge_text_color_base3", "#eef2f5"))
+        self.step_badge_text_color_base4_field.setValue(self.settings.get("step_badge_text_color_base4", "#eef2f5"))
+        self.step_badge_text_color_base5_field.setValue(self.settings.get("step_badge_text_color_base5", "#eef2f5"))
+        self.step_badge_text_color_base6_field.setValue(self.settings.get("step_badge_text_color_base6", "#eef2f5"))
+        self.step_badge_text_color_basen_field.setValue(self.settings.get("step_badge_text_color_basen", "#eef2f5"))
+        self.step_badge_offset_x_field.setValue(int(self.settings.get("step_badge_offset_x", 4)))
+        self.step_badge_offset_y_field.setValue(int(self.settings.get("step_badge_offset_y", 0)))
+        self.step_badge_font_family_field.setValue(self.settings.get("step_badge_font_family") or "Systeme")
+        self.step_badge_font_bold_field.setChecked(bool(self.settings.get("step_badge_font_bold", True)))
+        self.step_badge_font_smoothing_field.setValue(
+            bool(self.settings.get("step_badge_font_smoothing_enabled", False)),
+            self.settings.get("step_badge_font_smoothing", "current"))
+        self.step_badge_border_smoothing_field.setChecked(bool(self.settings.get("step_badge_border_smoothing", True)))
 
     def _apply_column_overrides_to_controls_for(self, title: str):
         """Reapplique Colonnes > ... depuis self.settings, POUR LE TITRE
@@ -7896,11 +8188,12 @@ class SettingsWindow(QDialog):
         if "item_row_spacing" in f:
             f["item_row_spacing"].setValue(int(seed("item_row_spacing", 1)))
         # Texte/Image/Selection (item_*) : n'existent PAS pour
-        # PREVIEW_STACK_TITLE (voir _build_column_override_page, aucune de
-        # ces 3 sous-sections n'y est construite) — memes clefs absentes de
-        # `f` que pour Projets/Sous-projet, mais TOUTES d'un coup ici (pas
-        # de `if key in f` ligne par ligne comme au-dessus, plus simple).
-        if title != PREVIEW_STACK_TITLE:
+        # PREVIEW_STACK_TITLE/INSPECTOR_TITLE (voir _build_column_override_
+        # page, aucune de ces 3 sous-sections n'y est construite) — memes
+        # clefs absentes de `f` que pour Projets/Sous-projet, mais TOUTES
+        # d'un coup ici (pas de `if key in f` ligne par ligne comme au-
+        # dessus, plus simple).
+        if title not in (PREVIEW_STACK_TITLE, INSPECTOR_TITLE):
             f["item_row_border_enabled"].setValue(
                 bool(seed("item_row_border_enabled", False)),
                 seed("item_row_border_color", "@ligne"), int(seed("item_row_border_thickness", 1)))
@@ -7956,8 +8249,35 @@ class SettingsWindow(QDialog):
             data["header_border_enabled"] = data["header_edges"]
         self.settings.update(data)
 
+        for level in (1, 2, 3, 4, 5):
+            prefix = f"title_level{level}"
+            self.__dict__[f"{prefix}_font_family_field"].setValue(
+                self.settings.get(f"{prefix}_font_family") or "Systeme")
+            self.__dict__[f"{prefix}_font_bold_field"].setChecked(bool(self.settings.get(f"{prefix}_font_bold", True)))
+            self.__dict__[f"{prefix}_font_italic_field"].setChecked(
+                bool(self.settings.get(f"{prefix}_font_italic", False)))
+            self.__dict__[f"{prefix}_font_size_field"].setValue(int(self.settings.get(f"{prefix}_font_size", 10)))
+            self.__dict__[f"{prefix}_font_smoothing_field"].setValue(
+                bool(self.settings.get(f"{prefix}_font_smoothing_enabled", False)),
+                self.settings.get(f"{prefix}_font_smoothing", "current"))
+            self.__dict__[f"{prefix}_font_color_field"].setValue(self.settings.get(f"{prefix}_font_color", "#d6d9dc"))
+            self.__dict__[f"{prefix}_indent_field"].setValue(int(self.settings.get(f"{prefix}_indent", 0)))
+        self._apply_title_level_style()
+
+        self._custom_softwares = [
+            dict(e) for e in self.settings.get("custom_softwares", []) if isinstance(e, dict) and e.get("key")
+        ]
+        self._removed_softwares = set(self.settings.get("removed_softwares", []))
+        if hasattr(self, "_logiciels_section"):
+            self._rebuild_logiciels_table()
+
         self.root_field.setText(self.settings.get("root_path", DEFAULT_SETTINGS["root_path"]))
+        self.default_preset_field.setValue(self.settings.get("default_preset") or "(Aucun)")
         self.scale_field.setValue(int(self.settings.get("ui_scale", 100)))
+        self.auto_collapse_set_columns_field.setChecked(
+            bool(self.settings.get("auto_collapse_set_columns", True)))
+        self.omit_file_names_field.setText(self._format_omit_list(self.settings.get("application_omit_file_names")))
+        self.omit_extensions_field.setText(self._format_omit_list(self.settings.get("application_omit_extensions")))
         for key, entry in self.font_table.rows.items():
             conf = self.settings.get(key) or {}
             family = conf.get("family") or "Systeme"
@@ -7983,6 +8303,15 @@ class SettingsWindow(QDialog):
                                  default=False),
             self.settings.get("header_border") or {})
         self.header_border_thickness_field.setValue(int(self.settings.get("header_border_thickness", 1)))
+        self.header_icon_right_padding_field.setValue(int(self.settings.get("header_icon_right_padding", 0)))
+        self.header_font_family_field.setValue(self.settings.get("header_font_family") or "Systeme")
+        self.header_font_bold_field.setChecked(bool(self.settings.get("header_font_bold", True)))
+        self.header_font_italic_field.setChecked(bool(self.settings.get("header_font_italic", False)))
+        self.header_font_color_field.setValue(self.settings.get("header_font_color", "#9aa1a7"))
+        self.header_font_size_field.setValue(int(self.settings.get("header_font_size", 10)))
+        self.header_font_smoothing_field.setValue(
+            bool(self.settings.get("header_font_antialias_override_enabled", False)),
+            self.settings.get("header_font_antialias_override", "current"))
         self.item_column_width_field.setValue(int(self.settings.get("item_column_width", 180)))
         self.column_gap_field.setValue(max(0, int(self.settings.get("column_gap", 0))))
         self.column_padding_field.setValue(
@@ -8000,6 +8329,12 @@ class SettingsWindow(QDialog):
             int(self.settings.get("resize_badge_offset_x", 8)),
             int(self.settings.get("resize_badge_offset_y", 8)))
         self.resize_badge_font_field.setValue(self.settings.get("resize_badge_font_family") or "Systeme")
+        self.resize_badge_font_bold_field.setChecked(bool(self.settings.get("resize_badge_font_bold", True)))
+        self.resize_badge_font_italic_field.setChecked(bool(self.settings.get("resize_badge_font_italic", False)))
+        self.resize_badge_font_size_field.setValue(int(self.settings.get("resize_badge_font_size", 11)))
+        self.resize_badge_font_smoothing_field.setValue(
+            bool(self.settings.get("resize_badge_font_smoothing_enabled", False)),
+            self.settings.get("resize_badge_font_smoothing", "current"))
         self.resize_badge_text_color_field.setValue(self.settings.get("resize_badge_text_color", "#d6d9dc"))
         self.resize_badge_bg_color_field.setValue(self.settings.get("resize_badge_bg_color", "#202326"))
         self.resize_badge_border_field.setValue(
@@ -8012,6 +8347,7 @@ class SettingsWindow(QDialog):
         self.item_font_field.setValue(self.settings.get("item_font_family") or "Systeme")
         self.item_font_size_field.setValue(int(self.settings.get("item_font_size", 10)))
         self.item_font_bold_field.setChecked(bool(self.settings.get("item_font_bold", False)))
+        self.item_font_italic_field.setChecked(bool(self.settings.get("item_font_italic", False)))
         self.item_antialias_field.setValue(
             bool(self.settings.get("item_antialias_override_enabled", False)),
             self.settings.get("item_antialias_override", "current"))
@@ -8044,6 +8380,8 @@ class SettingsWindow(QDialog):
         self.preview_title_font_size_field.setValue(int(self.settings.get("preview_title_font_size", 26)))
         self.preview_title_font_color_field.setValue(self.settings.get("preview_title_font_color", "#d6d9dc"))
         self.preview_title_font_family_field.setValue(self.settings.get("preview_title_font_family") or "Systeme")
+        self.preview_title_font_bold_field.setChecked(bool(self.settings.get("preview_title_font_bold", True)))
+        self.preview_title_font_italic_field.setChecked(bool(self.settings.get("preview_title_font_italic", False)))
         self.preview_title_font_smoothing_field.setValue(
             bool(self.settings.get("preview_title_font_smoothing_enabled", False)),
             self.settings.get("preview_title_font_smoothing", "current"))
@@ -8055,6 +8393,8 @@ class SettingsWindow(QDialog):
         self.preview_status_font_color_idle_field.setValue(
             self.settings.get("preview_status_font_color_idle", "#5f666b"))
         self.preview_status_font_family_field.setValue(self.settings.get("preview_status_font_family") or "Systeme")
+        self.preview_status_font_bold_field.setChecked(bool(self.settings.get("preview_status_font_bold", True)))
+        self.preview_status_font_italic_field.setChecked(bool(self.settings.get("preview_status_font_italic", False)))
         self.preview_status_font_smoothing_field.setValue(
             bool(self.settings.get("preview_status_font_smoothing_enabled", False)),
             self.settings.get("preview_status_font_smoothing", "current"))
@@ -8072,6 +8412,14 @@ class SettingsWindow(QDialog):
         self.preview_toggle_radius_field.setValue(int(self.settings.get("preview_toggle_radius", 4)))
         self.preview_toggle_x_field.setValue(int(self.settings.get("preview_toggle_x", 8)))
         self.preview_toggle_y_field.setValue(int(self.settings.get("preview_toggle_y", 34)))
+        self.shortcut_font_family_field.setValue(self.settings.get("shortcut_font_family", "") or "Systeme")
+        self.shortcut_font_bold_field.setChecked(bool(self.settings.get("shortcut_font_bold", False)))
+        self.shortcut_font_italic_field.setChecked(bool(self.settings.get("shortcut_font_italic", False)))
+        self.shortcut_color_field.setValue(self.settings.get("shortcut_color", "#8fb4d5"))
+        self.shortcut_font_size_field.setValue(int(self.settings.get("shortcut_font_size", 11)))
+        self.shortcut_font_smoothing_field.setValue(
+            bool(self.settings.get("shortcut_font_smoothing_enabled", False)),
+            self.settings.get("shortcut_font_smoothing", "current"))
         self.item_selection_focus_field.setValue(self.settings.get("item_selection_focus_color", "#3f6f9f"))
         self.item_selection_unfocus_field.setValue(self.settings.get("item_selection_unfocus_color", "#2e3338"))
         self.item_hover_field.setValue(self.settings.get("item_hover_color", "#232729"))
@@ -8087,14 +8435,16 @@ class SettingsWindow(QDialog):
             bool(self.settings.get("item_selection_radius_linked", True)),
             _coerce_corner_radius(self.settings.get("item_selection_radius", 0)))
         self.item_selection_edge_border_field.setChecked(bool(self.settings.get("item_selection_edge_border", True)))
+        self._apply_selection_clone_values_to_controls()
         self._apply_column_type_overrides_to_controls()
+        self._apply_step_badge_values_to_controls()
         self.columns_resizable_toggle.setChecked(bool(self.settings.get("columns_resizable", True)))
         self.geo_table.head.setColumnWidths(self.settings.get("geo_table_columns") or [])
         self.font_table.head.setColumnWidths(self.settings.get("font_table_columns") or [])
         self.toggle_style_field.setValue(self.settings.get("toggle_style", "toggle1"))
         self._apply_toggle_shape_values("toggle1")
         self._apply_toggle_shape_values("toggle2")
-        self.geo_table.window_radius_field.setValue(int(self.settings.get("window_radius", 0)))
+        self.window_radius_toggle.setChecked(int(self.settings.get("window_radius", 0)) > 0)
         self.geo_table.input_frame_toggle.setChecked(bool(self.settings.get("input_frame", True)))
         self.geo_table.input_radius_field.setValue(int(self.settings.get("input_radius", 0)))
         self.geo_table.button_frame_toggle.setChecked(bool(self.settings.get("button_frame", True)))
@@ -8188,26 +8538,100 @@ class SettingsWindow(QDialog):
         subbar.setStyleSheet(f"background: {M['toolbar_bg']}; border-bottom: 1px solid {M['panel_border']};")
         subbar_l = QHBoxLayout(subbar)
         subbar_l.setContentsMargins(20, 0, 20, 0)
-        self._columns_tabs = _TabStrip(["Type", "Projets", "Sous-projets", PREVIEW_STACK_TITLE])
+        self._columns_tabs = _TabStrip([
+            "Type", "Projets", "INTERMEDIAIRE", PREVIEW_STACK_TITLE,
+            "Logiciels", "IN", "OVER", "OUT", INSPECTOR_TITLE,
+        ])
         subbar_l.addWidget(self._columns_tabs)
         layout.addWidget(subbar)
 
         self._columns_stack = QStackedWidget()
-        # "Sous-projets" (onglet, au pluriel) surcharge la colonne reelle
-        # "Sous-projet" (singulier, voir pipeline_browser.COLUMN_LABELS) —
+        # "INTERMEDIAIRE" (onglet, voir la remarque de l'utilisateur, "le
+        # tab sous projets doit maintenant se nommer 'INTERMEDIAIRE', et
+        # doit controler toutes les colonnes entre celle de projet et
+        # focus") surcharge la colonne reelle "Sous-projet" (cle de
+        # stockage INCHANGEE, voir pipeline_browser.COLUMN_LABELS/
+        # COLUMN_SETTINGS — aucune migration necessaire, les reglages/
+        # presets deja enregistres sous "Sous-projet" restent valides) —
         # real_title est la cle de stockage/le titre EFFECTIF de colonne,
-        # tab_title reste juste le libelle de l'onglet ci-dessus.
+        # tab_title reste juste le libelle de l'onglet ci-dessus. Cote
+        # pipeline_browser.py (voir Column.style_title/on_selected), CHAQUE
+        # niveau d'une chaine CONFIGUREE (nom quelconque, ex. "test1") suit
+        # desormais CETTE MEME cle de style "Sous-projet" plutot que de
+        # retomber sur le bucket generique "Contenu" — ce tab controle donc
+        # bien TOUTES les colonnes intermediaires, pas seulement l'ancienne
+        # "Sous-projet" legacy.
+        #
+        # Type/Projets/INTERMEDIAIRE : PARESSEUX, construits seulement a la
+        # premiere visite de leur propre sous-onglet (voir _on_columns_tab_
+        # changed) — voir la remarque de l'utilisateur, "peux tu optimiser
+        # l'ouverture des settings ?". Mesure (cProfile) : ces 3 pages (un
+        # JEU COMPLET de tableaux Colonnes/Entetes/Texte/Selection chacune)
+        # totalisent ~1.35s des ~4s que prenait la construction COMPLETE de
+        # cette fenetre, payes a CHAQUE ouverture meme quand cet onglet
+        # n'est jamais consulte dans la session. _current_values()/
+        # _apply_column_type_overrides_to_controls geraient deja ce cas
+        # (voir hasattr(self, "_type_fields")/_column_override_values).
+        #
         # PREVIEW_STACK_TITLE (voir sa remarque de tete dans app_style.py) :
         # meme cle pour l'onglet ET le titre reel, cette colonne fantome
         # n'ayant jamais eu de "vrai" nom avant elle — voir la remarque de
         # l'utilisateur, "je veux les overrides dans les settings aussi".
-        self._columns_stack.addWidget(self._build_column_override_page("Type", "Type"))
-        self._columns_stack.addWidget(self._build_column_override_page("Projets", "Projets"))
-        self._columns_stack.addWidget(self._build_column_override_page("Sous-projets", "Sous-projet"))
+        # Reste construite ICI, EAGER (pas dans la liste ci-dessous) :
+        # contrairement aux 3 autres, ses champs (self.preview_padding_
+        # field...) sont references SANS garde par _connect_live_updates/
+        # _current_values (voir leurs docstrings) — les differer aurait
+        # demande de re-cabler ces references, pour un gain marginal (une
+        # seule page sur 4).
+        # Cle = index ABSOLU dans _columns_tabs/_columns_stack (PAS une
+        # liste positionnelle 0..N-1 contigue) : PREVIEW_STACK_TITLE
+        # (index 3) reste construit EAGER (voir plus bas, sans entree ici)
+        # entre les 3 premiers onglets PARESSEUX et les 5 nouveaux ajoutes
+        # APRES lui (Logiciels/IN/OVER/OUT/Inspecteur, voir la remarque de
+        # l'utilisateur, "ajoute la colonne logiciels dans les settings,
+        # ainsi que in over et out, puis la colonne inspecteur") — un dict
+        # gere ce "trou" a l'index 3 sans complication, contrairement a une
+        # liste positionnelle qui supposait TOUS les onglets PARESSEUX
+        # contigus a partir de 0.
+        self._columns_subpage_specs = {
+            0: ("Type", "Type"),
+            1: ("Projets", "Projets"),
+            2: ("INTERMEDIAIRE", "Sous-projet"),
+            4: ("Logiciels", "Logiciels"),
+            5: ("IN", "IN"),
+            6: ("OVER", "OVER"),
+            7: ("OUT", "OUT"),
+            8: (INSPECTOR_TITLE, INSPECTOR_TITLE),
+        }
+        self._columns_subpage_built: set[int] = set()
+        for idx in range(3):
+            tab_title, _real_title = self._columns_subpage_specs[idx]
+            self._columns_stack.addWidget(self._build_column_placeholder_page(tab_title))
         self._columns_stack.addWidget(self._build_column_override_page(PREVIEW_STACK_TITLE, PREVIEW_STACK_TITLE))
-        self._columns_tabs.changed.connect(self._columns_stack.setCurrentIndex)
+        for idx in range(4, 9):
+            tab_title, _real_title = self._columns_subpage_specs[idx]
+            self._columns_stack.addWidget(self._build_column_placeholder_page(tab_title))
+        self._columns_tabs.changed.connect(self._on_columns_tab_changed)
+        # `_TabStrip` n'emet `changed` que sur un CLIC : le sous-onglet visible
+        # par defaut a l'ouverture (index 0 = Type) restait donc sur son
+        # placeholder "Aucun reglage" tant qu'on ne cliquait pas ailleurs puis
+        # revenait — voir la remarque de l'utilisateur, "j'ai un message comme
+        # quoi il n'y a pas de parametres pour la colonne type". Construire
+        # explicitement la page reellement affichee au demarrage.
+        self._on_columns_tab_changed(self._columns_tabs._index)
         layout.addWidget(self._columns_stack, 1)
         return page
+
+    def _on_columns_tab_changed(self, index: int):
+        spec = self._columns_subpage_specs.get(index)
+        if spec is not None and index not in self._columns_subpage_built:
+            self._columns_subpage_built.add(index)
+            tab_title, real_title = spec
+            placeholder = self._columns_stack.widget(index)
+            self._columns_stack.removeWidget(placeholder)
+            placeholder.deleteLater()
+            self._columns_stack.insertWidget(index, self._build_column_override_page(tab_title, real_title))
+        self._columns_stack.setCurrentIndex(index)
 
     def _build_column_placeholder_page(self, title: str) -> QWidget:
         """Page vide (plus utilisee par _build_columns_page depuis que
@@ -8389,7 +8813,7 @@ class SettingsWindow(QDialog):
         ]
         columns_frame, _columns_row_meta, columns_resizer = _build_override_flat_table(columns_rows)
         self._flat_resizers.append(columns_resizer)
-        columns_sub = _SubSection("Colonnes", indent=True)
+        columns_sub = _SubSection("Colonnes", level=2)
         columns_sub.add(columns_frame)
 
         # -- Entetes --
@@ -8426,6 +8850,33 @@ class SettingsWindow(QDialog):
             0, 8, int(seed("header_border_thickness", 1)), slider_width=200, box_width=68)
         fields["header_border_thickness"] = border_thickness_field
 
+        # Padding droit des icones + police/gras/couleur/hauteur du titre
+        # (voir SettingsWindow._section_headers, ajoutes cote GENERAL) —
+        # voir la remarque de l'utilisateur, "mets a jour egalement les
+        # colonnes overidees ... avec tous les nouveaux parametres de
+        # general".
+        icon_padding_toggle = make_toggle("header_icon_right_padding")
+        icon_padding_field = _SliderField(
+            0, 40, int(seed("header_icon_right_padding", 0)), slider_width=200, box_width=68)
+        fields["header_icon_right_padding"] = icon_padding_field
+
+        font_family_toggle = make_toggle("header_font_family")
+        font_family_field = _DualFontSelectField(seed("header_font_family", "") or "Systeme", width=130)
+        fields["header_font_family"] = font_family_field
+
+        font_bold_toggle = make_toggle("header_font_bold")
+        font_bold_field = _Toggle(bool(seed("header_font_bold", True)), style_override="toggle1")
+        fields["header_font_bold"] = font_bold_field
+
+        font_color_toggle = make_toggle("header_font_color")
+        font_color_field = _AppOrCustomColorField(
+            seed("header_font_color", "#9aa1a7"), self.settings["colors"], swatch_size=24, title="Couleur du titre")
+        fields["header_font_color"] = font_color_field
+
+        font_size_toggle = make_toggle("header_font_size")
+        font_size_field = _SliderField(6, 24, int(seed("header_font_size", 10)), slider_width=200, box_width=68)
+        fields["header_font_size"] = font_size_field
+
         headers_frame, _headers_row_meta, headers_resizer = _build_override_flat_table([
             ("Afficher", visible_field, visible_toggle),
             ("Hauteur des entetes", height_field, height_toggle),
@@ -8434,22 +8885,28 @@ class SettingsWindow(QDialog):
             ("Arrondi des angles", radius_field, radius_toggle),
             ("Bordure", border_field, border_toggle),
             ("Epaisseur de bordure", border_thickness_field, border_thickness_toggle),
+            ("Padding droit des icones", icon_padding_field, icon_padding_toggle),
+            ("Police du titre", font_family_field, font_family_toggle),
+            ("Gras du titre", font_bold_field, font_bold_toggle),
+            ("Couleur du titre", font_color_field, font_color_toggle),
+            ("Hauteur de police du titre", font_size_field, font_size_toggle),
         ])
         self._flat_resizers.append(headers_resizer)
-        headers_sub = _SubSection("Entetes", indent=True)
+        headers_sub = _SubSection("Entetes", level=2)
         headers_sub.add(headers_frame)
 
         # Texte/Image/Selection (item_* : rendu par LIGNE, voir
         # pipeline_browser._paint_unified_row) n'ont aucun sens pour
         # PREVIEW_STACK_TITLE (pas une colonne a lignes — voir
         # pipeline_browser.PreviewColumn, empile des _PreviewBlock, pas un
-        # RowDelegate) : seuls Colonnes/Entetes s'y appliquent, comme
-        # Logiciels/Contenu qui n'ont eux non plus aucun onglet de
-        # surcharge — voir la remarque de l'utilisateur, "je veux les
-        # overrides dans les settings aussi" (a propos de cette colonne
-        # precisement).
+        # RowDelegate) : seuls Colonnes/Entetes s'y appliquent. INSPECTOR_
+        # TITLE (voir pipeline_browser.DetailPanel) : MEME raison, ce n'est
+        # pas non plus une colonne a lignes (aucun item_row_*/item_image_*/
+        # item_selection_* n'y a de sens) — voir la remarque de
+        # l'utilisateur, "ajoute ... la colonne inspecteur" (dans les
+        # settings, Colonnes/Entetes seulement, comme Focus).
         text_sub = image_sub = selection_sub = title_zone_sub = toggle_sub = None
-        if real_title != PREVIEW_STACK_TITLE:
+        if real_title not in (PREVIEW_STACK_TITLE, INSPECTOR_TITLE):
             # -- Texte --
             text_rows = []
             if real_title == "Type":
@@ -8508,7 +8965,7 @@ class SettingsWindow(QDialog):
 
             text_frame, _text_row_meta, text_resizer = _build_override_flat_table(text_rows)
             self._flat_resizers.append(text_resizer)
-            text_sub = _SubSection("Texte", indent=True)
+            text_sub = _SubSection("Texte", level=2)
             text_sub.add(text_frame)
 
             # -- Image (voir General ci-dessus, MEME 4 champs) --
@@ -8548,29 +9005,19 @@ class SettingsWindow(QDialog):
                 ("Ratio (largeur/hauteur)", img_ratio_field, img_ratio_toggle),
             ])
             self._flat_resizers.append(image_resizer)
-            image_sub = _SubSection("Image", indent=True)
+            image_sub = _SubSection("Image", level=2)
             image_sub.add(image_frame)
 
-            # -- Selection --
+            # -- Selection -- (voir General > Colonnes > Selection, MEME
+            # structure a 4 sous-sections Focus/Non focus/Survol/Non
+            # selectionne — voir la remarque de l'utilisateur, "mets a
+            # jour egalement les colonnes overidees ... avec tous les
+            # nouveaux parametres de general" puis "les parametres de
+            # colonnes ne sont pas a jour, selectionfocus ...").
             focus_toggle = make_toggle("item_selection_focus_color")
             focus_field = _ColorField(
                 seed("item_selection_focus_color", "#3f6f9f"), swatch_size=24, title="Selection (focus)")
             fields["item_selection_focus_color"] = focus_field
-
-            unfocus_toggle = make_toggle("item_selection_unfocus_color")
-            unfocus_field = _ColorField(
-                seed("item_selection_unfocus_color", "#2e3338"), swatch_size=24, title="Selection (hors focus)")
-            fields["item_selection_unfocus_color"] = unfocus_field
-
-            hover_toggle = make_toggle("item_hover_color")
-            hover_field = _ColorField(seed("item_hover_color", "#232729"), swatch_size=24, title="Survol")
-            fields["item_hover_color"] = hover_field
-
-            idle_toggle = make_toggle("item_idle_color")
-            idle_field = _AppOrCustomColorField(
-                seed("item_idle_color", "@itemIdle"), self.settings["colors"],
-                swatch_size=24, title="Couleur non selectionnee")
-            fields["item_idle_color"] = idle_field
 
             sel_padding_toggle = make_toggle("item_selection_padding")
             sel_padding_field = _CellPaddingField(
@@ -8594,20 +9041,91 @@ class SettingsWindow(QDialog):
             edge_border_field = _Toggle(bool(seed("item_selection_edge_border", True)), style_override="toggle1")
             fields["item_selection_edge_border"] = edge_border_field
 
-            selection_frame, _selection_row_meta, selection_resizer = _build_override_flat_table([
-                ("Couleur de selection en focus", focus_field, focus_toggle),
-                ("Couleur de selection non focus", unfocus_field, unfocus_toggle),
-                ("Couleur de survol", hover_field, hover_toggle),
-                ("Couleur non selectionnee", idle_field, idle_toggle),
+            focus_frame, _focus_row_meta, focus_resizer = _build_override_flat_table([
+                ("Couleur", focus_field, focus_toggle),
                 ("Padding du selecteur", sel_padding_field, sel_padding_toggle),
                 ("Bordures du selecteur", sel_border_field, sel_border_toggle),
                 ("Arrondi des coins de la selection", sel_radius_field, sel_radius_toggle),
                 ("Bordure au bord de la colonne", edge_border_field, edge_border_toggle),
             ])
-            self._flat_resizers.append(selection_resizer)
-            selection_sub = _SubSection("Selection", indent=True)
-            selection_sub.add(selection_frame)
-        else:
+            self._flat_resizers.append(focus_resizer)
+            focus_selection_sub = _SubSection("Focus", level=3)
+            focus_selection_sub.add(focus_frame)
+
+            def build_state_override(state: str, sub_title: str, color_key: str, color_default, use_app_color: bool):
+                if use_app_color:
+                    color_field = _AppOrCustomColorField(
+                        seed(color_key, color_default), self.settings["colors"], swatch_size=24, title=sub_title)
+                else:
+                    color_field = _ColorField(seed(color_key, color_default), swatch_size=24, title=sub_title)
+                color_toggle = make_toggle(color_key)
+                fields[color_key] = color_field
+
+                padding_key = f"item_selection_{state}_padding"
+                padding_override_key = f"{padding_key}_override"
+                padding_toggle = make_toggle(padding_key, padding_override_key)
+                padding_field = _CellPaddingField(
+                    linked(padding_key), seed(padding_key, {}) or {})
+                fields[padding_key] = padding_field
+                fields[padding_override_key] = padding_field
+
+                border_key = f"item_selection_{state}_border"
+                border_enabled_key = f"{border_key}_enabled"
+                border_override_key = f"{border_key}_override"
+                border_toggle = make_toggle(border_enabled_key, border_key, border_override_key)
+                border_field = _ToggleSideColorsField(
+                    _coerce_side_enabled(seed(border_enabled_key, False)),
+                    seed(border_key, {}) or {}, self.settings["colors"])
+                fields[border_enabled_key] = border_field
+                fields[border_key] = border_field
+                fields[border_override_key] = border_field
+
+                radius_key = f"item_selection_{state}_radius"
+                radius_override_key = f"{radius_key}_override"
+                radius_toggle = make_toggle(radius_key, radius_override_key)
+                radius_field = _CornerRadiusField(
+                    linked(radius_key), _coerce_corner_radius(seed(radius_key, 0)), maximum=20)
+                fields[radius_key] = radius_field
+                fields[radius_override_key] = radius_field
+
+                edge_key = f"item_selection_{state}_edge_border"
+                edge_override_key = f"{edge_key}_override"
+                edge_toggle = make_toggle(edge_key, edge_override_key)
+                edge_field = _Toggle(bool(seed(edge_key, True)), style_override="toggle1")
+                fields[edge_key] = edge_field
+                fields[edge_override_key] = edge_field
+
+                state_frame, _state_row_meta, state_resizer = _build_override_flat_table([
+                    ("Couleur", color_field, color_toggle),
+                    ("Padding du selecteur", padding_field, padding_toggle),
+                    ("Bordures du selecteur", border_field, border_toggle),
+                    ("Arrondi des coins de la selection", radius_field, radius_toggle),
+                    ("Bordure au bord de la colonne", edge_field, edge_toggle),
+                ])
+                self._flat_resizers.append(state_resizer)
+                state_sub = _SubSection(sub_title, level=3)
+                state_sub.add(state_frame)
+                return state_sub
+
+            unfocus_selection_sub = build_state_override(
+                "unfocus", "Non focus", "item_selection_unfocus_color", "#2e3338", False)
+            hover_selection_sub = build_state_override(
+                "hover", "Survol", "item_hover_color", "#232729", False)
+            idle_selection_sub = build_state_override(
+                "idle", "Non selectionne", "item_idle_color", "@itemIdle", True)
+
+            selection_group_wrap = QWidget()
+            selection_group_wrap.setStyleSheet("background: transparent;")
+            selection_group_wrap_l = QVBoxLayout(selection_group_wrap)
+            selection_group_wrap_l.setContentsMargins(0, 0, 0, 0)
+            _stack_subsections(
+                selection_group_wrap_l,
+                [focus_selection_sub, unfocus_selection_sub, hover_selection_sub, idle_selection_sub])
+            selection_sub = _SubSection("Selection", level=2)
+            selection_sub.add(selection_group_wrap)
+            for sub in (focus_selection_sub, unfocus_selection_sub, hover_selection_sub, idle_selection_sub):
+                sub.collapsedChanged.connect(selection_sub.refresh_layout)
+        elif real_title == PREVIEW_STACK_TITLE:
             # Colonnes > Apercu (PREVIEW_STACK_TITLE) — 3 sous-sections
             # PROPRES a cette colonne (jamais partagees/surchargeables
             # ailleurs, contrairement a Colonnes/Entetes ci-dessus) : pas
@@ -8671,7 +9189,7 @@ class SettingsWindow(QDialog):
             image_wrap_l.setSpacing(10)
             image_wrap_l.addWidget(preview_image_frame)
             image_wrap_l.addWidget(preview_ratio_frame)
-            image_sub = _SubSection("Image", indent=True)
+            image_sub = _SubSection("Image", level=2)
             image_sub.add(image_wrap)
 
             # -- Zone titre -- (plus de "Fond" dedie ici : voir Colonnes >
@@ -8682,9 +9200,9 @@ class SettingsWindow(QDialog):
                 20, 120, int(self.settings.get("preview_title_zone_height", 52)), slider_width=170, box_width=68)
             self.preview_title_font_size_field = _SliderField(
                 8, 48, int(self.settings.get("preview_title_font_size", 26)), slider_width=170, box_width=68)
-            self.preview_title_font_color_field = _AppOrCustomColorField(
+            self.preview_title_font_color_field = _CompactAppOrCustomColorField(
                 self.settings.get("preview_title_font_color", "#d6d9dc"), self.settings["colors"],
-                swatch_size=24, title="Couleur du titre")
+                swatch_size=20, title="Couleur du titre")
             # Choix de police (police du soft ou police systeme, voir
             # _DualFontSelectField/pipeline_browser._resolve_font_family) —
             # voir la remarque de l'utilisateur, "je veux le choix de la
@@ -8692,12 +9210,20 @@ class SettingsWindow(QDialog):
             # appli ou polices systeme)".
             self.preview_title_font_family_field = _DualFontSelectField(
                 self.settings.get("preview_title_font_family") or "Systeme", width=150)
+            self.preview_title_font_bold_field = _Toggle(
+                bool(self.settings.get("preview_title_font_bold", True)), show_label=False)
+            self.preview_title_font_italic_field = _Toggle(
+                bool(self.settings.get("preview_title_font_italic", False)), show_label=False)
             # Lissage (voir _OverrideSmoothingField/Colonnes > Texte >
             # Lissage, MEME widget) — voir la remarque de l'utilisateur,
             # "ajoute les niveaux de lissage sur les lignes des polices".
             self.preview_title_font_smoothing_field = _OverrideSmoothingField(
                 bool(self.settings.get("preview_title_font_smoothing_enabled", False)),
                 self.settings.get("preview_title_font_smoothing", "current"))
+            preview_title_font_row = _build_font_gabarit_row(
+                self.preview_title_font_family_field, self.preview_title_font_bold_field,
+                self.preview_title_font_size_field, self.preview_title_font_smoothing_field,
+                self.preview_title_font_color_field, italic_field=self.preview_title_font_italic_field)
             # "Titre - padding" : sans le cote Droite/"D" — voir la remarque
             # de l'utilisateur, "titre - padding : supprime padding D".
             self.preview_title_padding_field = _CellPaddingField(
@@ -8705,18 +9231,18 @@ class SettingsWindow(QDialog):
                 order=[("left", "G"), ("top", "H"), ("bottom", "B")])
             self.preview_status_font_size_field = _SliderField(
                 6, 24, int(self.settings.get("preview_status_font_size", 10)), slider_width=170, box_width=68)
-            self.preview_status_font_color_field = _AppOrCustomColorField(
+            self.preview_status_font_color_field = _CompactAppOrCustomColorField(
                 self.settings.get("preview_status_font_color", "#d6d9dc"), self.settings["colors"],
-                swatch_size=24, title="Couleur (apercu dossiers)")
+                swatch_size=20, title="Couleur (apercu dossiers)")
             # "Non selectionne" (etat VIDE d'un indicateur in/over/out,
             # voir _StatusLabel `idle_color` — jusqu'ici fige sur C["dim"])
             # — MEME ligne que "Apercu des dossiers - couleur" ci-dessus
             # (l'etat ACTIF), voir la remarque de l'utilisateur, "ajoute
             # une couleur : non selectionne, sur la meme ligne que apercu
             # des dossiers - couleur".
-            self.preview_status_font_color_idle_field = _AppOrCustomColorField(
+            self.preview_status_font_color_idle_field = _CompactAppOrCustomColorField(
                 self.settings.get("preview_status_font_color_idle", "#5f666b"), self.settings["colors"],
-                swatch_size=24, title="Non selectionne")
+                swatch_size=20, title="Non selectionne")
             status_colors_row = QWidget()
             status_colors_row.setStyleSheet("background: transparent;")
             status_colors_row_l = QHBoxLayout(status_colors_row)
@@ -8726,10 +9252,18 @@ class SettingsWindow(QDialog):
             status_colors_row_l.addWidget(self.preview_status_font_color_idle_field)
             self.preview_status_font_family_field = _DualFontSelectField(
                 self.settings.get("preview_status_font_family") or "Systeme", width=150)
+            self.preview_status_font_bold_field = _Toggle(
+                bool(self.settings.get("preview_status_font_bold", True)), show_label=False)
+            self.preview_status_font_italic_field = _Toggle(
+                bool(self.settings.get("preview_status_font_italic", False)), show_label=False)
             # Lissage (voir _OverrideSmoothingField ci-dessus, meme raison).
             self.preview_status_font_smoothing_field = _OverrideSmoothingField(
                 bool(self.settings.get("preview_status_font_smoothing_enabled", False)),
                 self.settings.get("preview_status_font_smoothing", "current"))
+            preview_status_font_row = _build_font_gabarit_row(
+                self.preview_status_font_family_field, self.preview_status_font_bold_field,
+                self.preview_status_font_size_field, self.preview_status_font_smoothing_field,
+                status_colors_row, italic_field=self.preview_status_font_italic_field)
             # "Apercu des dossiers - padding" : sans les cotes Gauche/"G" et
             # Bas/"B" — voir la remarque de l'utilisateur, "apercu des
             # dossiers - padding : supprime padding G et B".
@@ -8739,19 +9273,13 @@ class SettingsWindow(QDialog):
 
             title_zone_frame, _title_zone_row_meta, title_zone_resizer = _build_flat_table([
                 ("Hauteur", self.preview_title_zone_height_field),
-                ("Titre - police", self.preview_title_font_family_field),
-                ("Titre - taille", self.preview_title_font_size_field),
-                ("Titre - couleur", self.preview_title_font_color_field),
-                ("Titre - lissage", self.preview_title_font_smoothing_field),
+                ("Titre - police", preview_title_font_row),
                 ("Titre - padding", self.preview_title_padding_field),
-                ("Apercu des dossiers - police", self.preview_status_font_family_field),
-                ("Apercu des dossiers - taille", self.preview_status_font_size_field),
-                ("Apercu des dossiers - couleur", status_colors_row),
-                ("Apercu des dossiers - lissage", self.preview_status_font_smoothing_field),
+                ("Apercu des dossiers - police", preview_status_font_row),
                 ("Apercu des dossiers - padding", self.preview_status_padding_field),
             ])
             self._flat_resizers.append(title_zone_resizer)
-            title_zone_sub = _SubSection("Zone titre", indent=True)
+            title_zone_sub = _SubSection("Zone titre", level=2)
             title_zone_sub.add(title_zone_frame)
 
             # -- Bouton repliement --
@@ -8762,11 +9290,12 @@ class SettingsWindow(QDialog):
             self.preview_toggle_bg_field = _AppOrCustomColorField(
                 self.settings.get("preview_toggle_bg_color", "#960f1114"), self.settings["colors"],
                 swatch_size=24, title="Fond du bouton")
+            self.preview_toggle_border_thickness_field = _SliderField(
+                0, 8, int(self.settings.get("preview_toggle_border_thickness", 1)), slider_width=140, box_width=54)
             self.preview_toggle_border_field = _ToggleSideColorsField(
                 _coerce_side_enabled(self.settings.get("preview_toggle_border_enabled", False)),
-                self.settings.get("preview_toggle_border") or {}, self.settings["colors"])
-            self.preview_toggle_border_thickness_field = _SliderField(
-                0, 8, int(self.settings.get("preview_toggle_border_thickness", 1)), slider_width=170, box_width=68)
+                self.settings.get("preview_toggle_border") or {}, self.settings["colors"],
+                thickness_field=self.preview_toggle_border_thickness_field)
             self.preview_toggle_radius_field = _SliderField(
                 0, 30, int(self.settings.get("preview_toggle_radius", 4)), slider_width=170, box_width=68)
             # Position EXPLICITE (X/Y depuis le coin superieur GAUCHE de la
@@ -8789,18 +9318,240 @@ class SettingsWindow(QDialog):
             toggle_pos_row_l.addWidget(self.preview_toggle_x_field)
             toggle_pos_row_l.addWidget(self.preview_toggle_y_field)
 
+            # Icone/Chevrons (voir la remarque de l'utilisateur, "je veux
+            # que dans les settings (colonne/focus/colonnes/bouton de
+            # repliement tu ajoute une ligne icone, et que tu laisse le
+            # choix entre icone ou chevrons comme actuellement") — "Icone"
+            # utilise UI_ICON_COLLAPSE_TOGGLE (Settings > ICONES > General)
+            # si l'utilisateur en a choisi une, sinon les chevrons restent
+            # affiches meme si "Icone" est selectionne (voir IconButton.
+            # _custom_icon_pixmap).
+            self.collapse_toggle_mode_field = _SelectField(
+                ["Chevrons", "Icone"],
+                "Icone" if self.settings.get("collapse_toggle_mode", "chevrons") == "icone" else "Chevrons",
+                width=170)
+
             toggle_frame, _toggle_row_meta, toggle_resizer = _build_flat_table([
                 ("Largeur du bouton", self.preview_toggle_width_field),
                 ("Hauteur du bouton", self.preview_toggle_height_field),
                 ("Couleur de fond", self.preview_toggle_bg_field),
                 ("Bordure", self.preview_toggle_border_field),
-                ("Epaisseur de bordure", self.preview_toggle_border_thickness_field),
                 ("Rayon des angles", self.preview_toggle_radius_field),
                 ("Position X/Y", toggle_pos_row),
+                ("Icone", self.collapse_toggle_mode_field),
             ])
             self._flat_resizers.append(toggle_resizer)
-            toggle_sub = _SubSection("Bouton repliement", indent=True)
+            toggle_sub = _SubSection("Bouton repliement", level=2)
             toggle_sub.add(toggle_frame)
+
+        # Icone de niveaux (badge numerote, voir pipeline_browser.
+        # _step_badge_rect/_step_badge_color/ProjectTileDelegate.paint) —
+        # SEULEMENT sur "Projets" (seule colonne a l'afficher) : champs
+        # PLATS branches directement sur self.settings, comme Colonnes >
+        # Apercu ci-dessus (rien a "surcharger", cette colonne est la
+        # SEULE a lire ces cles) — voir la remarque de l'utilisateur,
+        # "j'aimerais pouvoir controler l'aspect de cette petite icone
+        # (endroit : colonnes / projets / colonnes)".
+        step_badge_sub = None
+        if real_title == "Projets":
+            self.step_badge_width_field = _SliderField(
+                8, 60, int(self.settings.get("step_badge_width", 18)), slider_width=170, box_width=68)
+            self.step_badge_height_field = _SliderField(
+                8, 60, int(self.settings.get("step_badge_height", 18)), slider_width=170, box_width=68)
+            step_badge_size_row = QWidget()
+            step_badge_size_row.setStyleSheet("background: transparent;")
+            step_badge_size_row_l = QHBoxLayout(step_badge_size_row)
+            step_badge_size_row_l.setContentsMargins(0, 0, 0, 0)
+            step_badge_size_row_l.setSpacing(14)
+            step_badge_size_row_l.addWidget(self.step_badge_width_field)
+            step_badge_size_row_l.addWidget(self.step_badge_height_field)
+
+            self.step_badge_border_thickness_field = _SliderField(
+                0, 8, int(self.settings.get("step_badge_border_thickness", 1)), slider_width=140, box_width=54)
+            self.step_badge_border_field = _ToggleSideColorsField(
+                _coerce_side_enabled(self.settings.get("step_badge_border_enabled", False)),
+                self.settings.get("step_badge_border") or {}, self.settings["colors"],
+                thickness_field=self.step_badge_border_thickness_field)
+
+            self.step_badge_radius_field = _CornerRadiusField(
+                bool(self.settings.get("step_badge_radius_linked", True)),
+                _coerce_corner_radius(self.settings.get("step_badge_radius", 9)))
+
+            # 5 paires de couleurs (texte au-dessus, fond en dessous), une
+            # par palier (base 2 a 6, voir pipeline_browser._step_badge_
+            # color/_step_badge_text_color) — voir la remarque de
+            # l'utilisateur, "enleve la couleur dans la ligne texte, et met
+            # un carre de couleur pour le texte au dessus des carres de
+            # couleur de fond. De cette maniere la couleur du haut est
+            # pour le texte (pour chacune des bases) et la couleur du bas
+            # est pour le fond".
+            self.step_badge_text_color_base2_field = _CompactAppOrCustomColorField(
+                self.settings.get("step_badge_text_color_base2", "#eef2f5"), self.settings["colors"],
+                swatch_size=20, title="Texte - Base 2")
+            self.step_badge_text_color_base3_field = _CompactAppOrCustomColorField(
+                self.settings.get("step_badge_text_color_base3", "#eef2f5"), self.settings["colors"],
+                swatch_size=20, title="Texte - Base 3")
+            self.step_badge_text_color_base4_field = _CompactAppOrCustomColorField(
+                self.settings.get("step_badge_text_color_base4", "#eef2f5"), self.settings["colors"],
+                swatch_size=20, title="Texte - Base 4")
+            self.step_badge_text_color_base5_field = _CompactAppOrCustomColorField(
+                self.settings.get("step_badge_text_color_base5", "#eef2f5"), self.settings["colors"],
+                swatch_size=20, title="Texte - Base 5")
+            self.step_badge_text_color_base6_field = _CompactAppOrCustomColorField(
+                self.settings.get("step_badge_text_color_base6", "#eef2f5"), self.settings["colors"],
+                swatch_size=20, title="Texte - Base 6")
+            self.step_badge_color_base2_field = _CompactAppOrCustomColorField(
+                self.settings.get("step_badge_color_base2", "#5c6368"), self.settings["colors"],
+                swatch_size=24, title="Fond - Base 2")
+            self.step_badge_color_base3_field = _CompactAppOrCustomColorField(
+                self.settings.get("step_badge_color_base3", "#5c6368"), self.settings["colors"],
+                swatch_size=24, title="Fond - Base 3")
+            self.step_badge_color_base4_field = _CompactAppOrCustomColorField(
+                self.settings.get("step_badge_color_base4", "#3f6f9f"), self.settings["colors"],
+                swatch_size=24, title="Fond - Base 4")
+            self.step_badge_color_base5_field = _CompactAppOrCustomColorField(
+                self.settings.get("step_badge_color_base5", "#3f6f9f"), self.settings["colors"],
+                swatch_size=24, title="Fond - Base 5")
+            self.step_badge_color_base6_field = _CompactAppOrCustomColorField(
+                self.settings.get("step_badge_color_base6", "#d9822b"), self.settings["colors"],
+                swatch_size=24, title="Fond - Base 6")
+            # Paire DEDIEE au badge "N" (voir DEFAULT_SETTINGS, sa remarque
+            # de tete) — affiche a la place du numero quand le toggle "set"
+            # (ColumnConfigDialog) est desactive pour un projet.
+            self.step_badge_text_color_basen_field = _CompactAppOrCustomColorField(
+                self.settings.get("step_badge_text_color_basen", "#eef2f5"), self.settings["colors"],
+                swatch_size=20, title="Texte - Base N")
+            self.step_badge_color_basen_field = _CompactAppOrCustomColorField(
+                self.settings.get("step_badge_color_basen", "#5c6368"), self.settings["colors"],
+                swatch_size=24, title="Fond - Base N")
+            step_badge_colors_row = QWidget()
+            step_badge_colors_row.setStyleSheet("background: transparent;")
+            step_badge_colors_row_l = QHBoxLayout(step_badge_colors_row)
+            step_badge_colors_row_l.setContentsMargins(0, 0, 0, 0)
+            step_badge_colors_row_l.setSpacing(10)
+            # Numero de base AU-DESSUS de chaque paire (voir la remarque de
+            # l'utilisateur, "couleur de fond : place les numeros de base
+            # juste au-dessus des couleurs") : le "title" de
+            # _AppOrCustomColorField n'est visible qu'en infobulle, jamais
+            # affiche a l'ecran — un QLabel DEDIE, empile dans une petite
+            # colonne AVEC la pastille TEXTE puis la pastille FOND.
+            for n, text_f, bg_f in (
+                (2, self.step_badge_text_color_base2_field, self.step_badge_color_base2_field),
+                (3, self.step_badge_text_color_base3_field, self.step_badge_color_base3_field),
+                (4, self.step_badge_text_color_base4_field, self.step_badge_color_base4_field),
+                (5, self.step_badge_text_color_base5_field, self.step_badge_color_base5_field),
+                (6, self.step_badge_text_color_base6_field, self.step_badge_color_base6_field),
+                ("N", self.step_badge_text_color_basen_field, self.step_badge_color_basen_field),
+            ):
+                # Separateur vertical AVANT chaque paire, y compris la
+                # toute premiere (voir _SideColorsField, MEME widget/MEME
+                # couleur — "est il possible de rajouter une ligne
+                # verticale qui separe" — ici demande explicitement AVANT
+                # ET entre, voir la remarque de l'utilisateur, "ajoute des
+                # separateurs (bordures) avant et entre les couleurs de
+                # colonnes/projets/colonnes/icone de niveaux").
+                sep = QFrame()
+                sep.setFrameShape(QFrame.VLine)
+                sep.setFixedWidth(1)
+                sep.setStyleSheet(f"background: {M['field_border']}; border: none;")
+                step_badge_colors_row_l.addWidget(sep)
+                cell = QWidget()
+                cell.setStyleSheet("background: transparent;")
+                cell_l = QVBoxLayout(cell)
+                cell_l.setContentsMargins(0, 0, 0, 0)
+                cell_l.setSpacing(4)
+                cell_l.setAlignment(Qt.AlignHCenter)
+                num_label = QLabel(str(n))
+                num_label.setFont(_qfont(10, 600, mono=True))
+                num_label.setAlignment(Qt.AlignHCenter)
+                num_label.setStyleSheet(f"color: {M['group_note']}; background: transparent;")
+                cell_l.addWidget(num_label)
+                cell_l.addWidget(text_f)
+                cell_l.addWidget(bg_f)
+                step_badge_colors_row_l.addWidget(cell)
+
+            # Bornes NEGATIVES (pas seulement 0-200) : voir la remarque de
+            # l'utilisateur, "je veux que l'icone des niveaux puisse aussi
+            # monter (valeur negative peut etre ?)" — une position H/V
+            # negative deplace le badge AU-DELA de son ancre par defaut
+            # (voir _step_badge_rect), donc vers le haut/la gauche.
+            self.step_badge_offset_x_field = _SliderField(
+                -100, 200, int(self.settings.get("step_badge_offset_x", 4)), slider_width=170, box_width=68)
+            self.step_badge_offset_y_field = _SliderField(
+                -100, 200, int(self.settings.get("step_badge_offset_y", 0)), slider_width=170, box_width=68)
+            step_badge_pos_row = QWidget()
+            step_badge_pos_row.setStyleSheet("background: transparent;")
+            step_badge_pos_row_l = QHBoxLayout(step_badge_pos_row)
+            step_badge_pos_row_l.setContentsMargins(0, 0, 0, 0)
+            step_badge_pos_row_l.setSpacing(14)
+            step_badge_pos_row_l.addWidget(self.step_badge_offset_x_field)
+            step_badge_pos_row_l.addWidget(self.step_badge_offset_y_field)
+
+            # Police/gras/lissage du numero (PAS la couleur : voir plus
+            # haut, une couleur de texte PAR BASE juste au-dessus de la
+            # couleur de fond correspondante, voir la remarque de
+            # l'utilisateur, "enleve la couleur dans la ligne texte") —
+            # lissage AJOUTE sur cette meme ligne (voir la remarque de
+            # l'utilisateur, "dans la ligne police, ajoute le slider des
+            # lissage de police") — MEME widget que Colonnes > Texte >
+            # Lissage (_OverrideSmoothingField).
+            self.step_badge_font_family_field = _DualFontSelectField(
+                self.settings.get("step_badge_font_family") or "Systeme", width=130)
+            self.step_badge_font_bold_field = _Toggle(bool(self.settings.get("step_badge_font_bold", True)))
+            self.step_badge_font_smoothing_field = _OverrideSmoothingField(
+                bool(self.settings.get("step_badge_font_smoothing_enabled", False)),
+                self.settings.get("step_badge_font_smoothing", "current"))
+            step_badge_font_row = QWidget()
+            step_badge_font_row.setStyleSheet("background: transparent;")
+            step_badge_font_row_l = QHBoxLayout(step_badge_font_row)
+            step_badge_font_row_l.setContentsMargins(0, 0, 0, 0)
+            step_badge_font_row_l.setSpacing(14)
+            step_badge_font_row_l.addWidget(self.step_badge_font_family_field)
+            step_badge_font_row_l.addWidget(self.step_badge_font_bold_field)
+            step_badge_font_row_l.addWidget(self.step_badge_font_smoothing_field)
+
+            # Lissage (antialiasing) du TRAIT de bordure lui-meme (PAS le
+            # texte, voir la remarque de l'utilisateur, "antialiasing du
+            # contour de la bordure") — actif par defaut (comportement
+            # INCHANGE, le trait etait deja toujours lisse jusqu'ici).
+            self.step_badge_border_smoothing_field = _Toggle(
+                bool(self.settings.get("step_badge_border_smoothing", True)))
+
+            step_badge_frame, _step_badge_row_meta, step_badge_resizer = _build_flat_table([
+                ("Largeur / hauteur", step_badge_size_row),
+                ("Bordure", self.step_badge_border_field),
+                ("Lissage de la bordure", self.step_badge_border_smoothing_field),
+                ("Rayon des angles", self.step_badge_radius_field),
+                ("Couleurs de fond (base 2 a 6, et N)", step_badge_colors_row),
+                ("Police / gras / lissage du numero", step_badge_font_row),
+                ("Position H/V", step_badge_pos_row),
+            ])
+            self._flat_resizers.append(step_badge_resizer)
+            step_badge_sub = _SubSection("Icone de niveaux", level=2)
+            step_badge_sub.add(step_badge_frame)
+
+            # _mark_dirty CABLE ICI (pas dans _connect_live_updates, appelee
+            # UNE FOIS dans __init__ AVANT que cette page "Projets" — desormais
+            # PARESSEUSE, voir _on_columns_tab_changed — ait forcement ete
+            # construite) : ces champs n'existent parfois pas encore a ce
+            # moment-la, une connexion tentee la-bas y leverait
+            # AttributeError.
+            for sig in (
+                self.step_badge_width_field.valueChanged, self.step_badge_height_field.valueChanged,
+                self.step_badge_border_field.changed, self.step_badge_border_thickness_field.valueChanged,
+                self.step_badge_radius_field.changed,
+                self.step_badge_color_base2_field.changed, self.step_badge_color_base3_field.changed,
+                self.step_badge_color_base4_field.changed, self.step_badge_color_base5_field.changed,
+                self.step_badge_color_base6_field.changed, self.step_badge_color_basen_field.changed,
+                self.step_badge_text_color_base2_field.changed, self.step_badge_text_color_base3_field.changed,
+                self.step_badge_text_color_base4_field.changed, self.step_badge_text_color_base5_field.changed,
+                self.step_badge_text_color_base6_field.changed, self.step_badge_text_color_basen_field.changed,
+                self.step_badge_offset_x_field.valueChanged, self.step_badge_offset_y_field.valueChanged,
+                self.step_badge_font_family_field.changed, self.step_badge_font_smoothing_field.changed,
+            ):
+                sig.connect(self._mark_dirty)
+            self.step_badge_font_bold_field.toggled.connect(self._mark_dirty)
+            self.step_badge_border_smoothing_field.toggled.connect(self._mark_dirty)
 
         # Les 4 sous-groupes empiles ENSEMBLE, espacement ADAPTATIF uniforme
         # entre chacun (voir _stack_subsections/la remarque de l'utilisateur,
@@ -8819,7 +9570,10 @@ class SettingsWindow(QDialog):
         # ci-dessous, pour ne garder qu'UN SEUL endroit a mettre a jour si
         # d'autres sous-sections deviennent un jour elles aussi optionnelles.
         all_subs = [
-            s for s in (columns_sub, headers_sub, text_sub, image_sub, selection_sub, title_zone_sub, toggle_sub)
+            s for s in (
+                columns_sub, headers_sub, text_sub, image_sub, selection_sub,
+                title_zone_sub, toggle_sub, step_badge_sub,
+            )
             if s is not None
         ]
         _stack_subsections(subsections_wrap_l, all_subs)
@@ -8860,85 +9614,58 @@ class SettingsWindow(QDialog):
                     break
         for sig in signals:
             sig.connect(self._mark_dirty)
-            sig.connect(self._apply_column_type_preview)
+            sig.connect(self._schedule_column_type_preview)
         self._apply_column_type_preview()
 
-    def _resolve_type_effective(self, key: str, title: str = "Type"):
-        """Valeur EFFECTIVE (brute, voir _read_override_field_raw) d'une
-        cle Colonnes > Type/Projets/Sous-projets POUR CETTE colonne : celle
-        de SON PROPRE champ si le toggle de la ligne est ON, sinon celle du
-        champ GENERAL correspondant (voir _TYPE_GENERAL_FIELD_ATTR — cette
-        table reste UNIQUE, partagee par les 3 colonnes, puisque le champ
-        GENERAL de repli est toujours le meme quel que soit le titre) —
-        repli final sur self.settings si le champ general n'existe pas
-        encore (fenetre en cours de construction)."""
-        toggle = self._type_toggles.get(title, {}).get(key)
-        fields = self._type_fields.get(title, {})
-        if toggle is not None and toggle.isChecked() and key in fields:
-            return _read_override_field_raw(key, fields[key])
-        general_widget = getattr(self, _TYPE_GENERAL_FIELD_ATTR.get(key, ""), None)
-        if general_widget is not None:
-            return _read_override_field_raw(key, general_widget)
-        return self.settings.get(key)
+    def _schedule_column_type_preview(self, *_args):
+        """Regroupe les changements rapproches sur Colonnes > Type/Projets/
+        Sous-projets (voir _connect_column_type_overrides/
+        _column_type_preview_timer, construit dans _connect_live_updates) —
+        MEME principe que _schedule_colors_changed pour la page Couleurs :
+        un glisser de slider emet valueChanged a CHAQUE pixel, rejouer
+        _apply_column_type_preview() a ce rythme (boucle sur ~20 cles x 3
+        colonnes) provoquait la lenteur ressentie au glisser. Repli direct
+        (sans timer) si appele AVANT que celui-ci existe encore (tout debut
+        de la construction de la fenetre, voir _connect_column_type_overrides
+        appelee depuis _build_column_override_page, EN AMONT de
+        _connect_live_updates qui construit le timer)."""
+        timer = getattr(self, "_column_type_preview_timer", None)
+        if timer is None:
+            self._apply_column_type_preview()
+            return
+        if not timer.isActive():
+            timer.start()
 
     def _apply_column_type_preview(self, *_args):
-        """Rejoue, sur les boites de l'apercu Colonnes (onglet General, voir
-        _section_headers/self.column_previews, index 0/1/2 = Type/Projets/
-        Sous-projet), le style EFFECTIF de Colonnes > Type/Projets/Sous-
-        projets (general ou surcharge par ligne, voir
-        _resolve_type_effective) — meme principe/memes methodes que
-        _apply_column_preview/_apply_item_preview, mais valeur par valeur
-        plutot qu'un seul jeu de reglages partage. Sans effet tant
-        qu'aucune page Colonnes > ... n'a encore construit self._type_
-        toggles (voir son appel a _connect_column_type_overrides, avant que
-        self.column_previews existe meme — garde en tete de methode)."""
-        if not hasattr(self, "_type_toggles") or not getattr(self, "column_previews", None):
-            return
-        live_colors = dict(self.settings["colors"])
-        live_colors.update(self.color_grid.value())
-
-        def hexval(value) -> str:
-            if isinstance(value, str) and value.startswith("#"):
-                return value
-            return live_colors.get(_SLOT_REAL.get(value, "chrome"), "#000000")
-
-        def colors_of(d: dict) -> dict:
-            return {k: _resolve_color_value(v, live_colors) for k, v in (d or {}).items()}
-
-        for title, preview in zip(("Type", "Projets", "Sous-projet"), self.column_previews):
-            if title not in self._type_toggles:
-                continue
-            vals = {key: self._resolve_type_effective(key, title) for key in _COLUMN_TYPE_OVERRIDE_KEYS}
-            preview.refresh(
-                int(vals["header_height"]), int(vals["header_padding"]), hexval(vals["header_color"]),
-                _radius_dict(vals["header_radius"]),
-                vals["header_border_enabled"],
-                colors_of(vals["header_border"]), int(vals["header_border_thickness"]),
-            )
-            preview.setBorder(
-                vals["column_border_enabled"], colors_of(vals["column_border"]),
-                int(vals["column_border_thickness"]), vals["column_border_radius"],
-            )
-            preview.setPadding(vals["column_padding"])
-            font_family = vals["item_font_family"] or ""
-            preview.setItemStyle(
-                font_family=font_family,
-                color_hex=vals["item_color"],
-                icon_enabled=bool(vals["item_icon_enabled"]),
-                row_height=int(vals["item_row_height"]),
-                row_spacing=int(vals["item_row_spacing"]),
-                text_padding=int(vals["item_text_padding"]),
-                hover_color=vals["item_hover_color"],
-                focus_color=vals["item_selection_focus_color"],
-                unfocus_color=vals["item_selection_unfocus_color"],
-                padding=vals["item_selection_padding"],
-                enabled=vals["item_selection_border_enabled"],
-                colors=colors_of(vals["item_selection_border"]),
-                radius=vals["item_selection_radius"],
-                edge_border=bool(vals["item_selection_edge_border"]),
-            )
+        """No-op — aperçus de colonnes SUPPRIMES, voir _apply_column_preview
+        (MEME raison, meme gardee que pour les dizaines de signaux deja
+        connectes, y compris _column_type_preview_timer/
+        _schedule_column_type_preview)."""
+        return
 
     # -- contenu (sections) --
+
+    def _report_loading_step(self, label: str | None, depth: int = 0):
+        """Reporte l'etape de construction EN COURS dans le "puits" (carre
+        sombre) de l'Inspecteur de la fenetre principale (voir DetailPanel.
+        show_loading_step/clear_loading_step) — `None` restaure son
+        apparence normale (fin de construction). Sans effet si la fenetre
+        principale n'a pas encore de panneau Inspecteur (tests headless
+        construisant SettingsWindow seule, sans parent) — voir la remarque
+        de l'utilisateur, "peux tu faire une sorte d'animation dans le
+        champ apercu de l'inspecteur et afficher tous les elements que tu
+        charges en temps reel". `processEvents()` (pas juste setText) :
+        cette fenetre est construite de façon SYNCHRONE, sans jamais rendre
+        la main a la boucle d'evenements entre 2 sections — sans lui, rien
+        ne se peindrait avant la toute derniere section, l'indicateur
+        resterait fige."""
+        detail = getattr(self.parent(), "detail", None)
+        if detail is not None:
+            if label is not None:
+                detail.show_loading_step(label, depth=depth)
+            else:
+                detail.clear_loading_step()
+        QApplication.processEvents()
 
     def _build_content(self) -> QWidget:
         # _NoSqueezeScrollArea (pas QScrollArea nu) : la fenetre reste
@@ -8962,16 +9689,22 @@ class SettingsWindow(QDialog):
         # variable) apres chaque section (sauf la derniere), dont la
         # hauteur suit collapsedChanged (voir _SECTION_GAP_*).
         layout.setSpacing(0)
-        sections = [
-            self._section_application(),
-            self._section_fonts(),
-            self._section_colors(),
-            self._section_geometry(),
-            self._section_headers(),
-            self._section_tables(),
-            self._section_toggles(),
-            self._section_slider(),
+        # Construite SECTION PAR SECTION (pas un seul literal de liste,
+        # toutes evaluees d'un coup) : chaque _Section/_SubSection construite
+        # ICI (et a l'interieur, a N'IMPORTE quel niveau d'imbrication) se
+        # rapporte D'ELLE-MEME, en TEMPS REEL, au "puits" de l'Inspecteur
+        # (voir _Section.__init__/_SubSection.__init__/_report_construction_
+        # step, _ACTIVE_LOADING_WINDOW) — voir la remarque de l'utilisateur,
+        # "la fenetre de settings est toujours tres longue a charger ...
+        # decris pas seulement les tabs mais toutes les sections et sous
+        # sections aussi".
+        section_builders = [
+            self._section_titre, self._section_application, self._section_fonts, self._section_colors,
+            self._section_geometry, self._section_headers, self._section_tables,
+            self._section_toggles, self._section_slider, self._section_icones,
+            self._section_raccourci,
         ]
+        sections = [builder() for builder in section_builders]
         # TOUTES repliees par defaut a l'ouverture, "Application" y compris
         # — voir la remarque de l'utilisateur, "je veux que toutes les
         # sections (y compris sous sections) soient repliees a l'ouverture
@@ -8985,11 +9718,17 @@ class SettingsWindow(QDialog):
             layout.addWidget(section)
             if i == len(sections) - 1:
                 continue
+            # Gap plus grand juste avant "Logiciel" (derniere section, voir
+            # _SECTION_GAP_EXPANDED_LOGICIEL) — voir la remarque de
+            # l'utilisateur.
+            gap_expanded = (
+                _SECTION_GAP_EXPANDED_LOGICIEL if i == len(sections) - 2 else _SECTION_GAP_EXPANDED
+            )
             spacer = QWidget()
-            spacer.setFixedHeight(_SECTION_GAP_COLLAPSED if section.is_collapsed() else _SECTION_GAP_EXPANDED)
+            spacer.setFixedHeight(_SECTION_GAP_COLLAPSED if section.is_collapsed() else gap_expanded)
             section.collapsedChanged.connect(
-                lambda collapsed, s=spacer: s.setFixedHeight(
-                    _SECTION_GAP_COLLAPSED if collapsed else _SECTION_GAP_EXPANDED
+                lambda collapsed, s=spacer, g=gap_expanded: s.setFixedHeight(
+                    _SECTION_GAP_COLLAPSED if collapsed else g
                 )
             )
             layout.addWidget(spacer)
@@ -9001,6 +9740,99 @@ class SettingsWindow(QDialog):
         layout.addStretch(1)
         scroller.setWidget(inner)
         return scroller
+
+    def _section_titre(self) -> _Section:
+        """Section TITRE (voir _TITLE_LEVEL_STYLE/_title_font/_title_color/
+        _title_indent) : police (GABARIT "police", voir
+        _build_font_gabarit_row) + retrait (indentation, en px) des titres
+        de _Section (niveau 1) et _SubSection (niveaux 2 a 5, profondeur
+        d'imbrication croissante) de CETTE fenetre — voir la remarque de
+        l'utilisateur, "je veux homogeneiser les textes des sections et
+        sous sections"."""
+        section = _Section("TITRE")
+        rows: list[tuple[str, QWidget]] = []
+        for level in (1, 2, 3, 4, 5):
+            prefix = f"title_level{level}"
+            family_field = _DualFontSelectField(
+                self.settings.get(f"{prefix}_font_family") or "Systeme", width=150)
+            bold_field = _Toggle(
+                bool(self.settings.get(f"{prefix}_font_bold", True)), style_override="toggle1", show_label=False)
+            italic_field = _Toggle(
+                bool(self.settings.get(f"{prefix}_font_italic", False)), show_label=False)
+            size_field = _SliderField(
+                6, 32, int(self.settings.get(f"{prefix}_font_size", 10)), slider_width=110, box_width=54)
+            smoothing_field = _OverrideSmoothingField(
+                bool(self.settings.get(f"{prefix}_font_smoothing_enabled", False)),
+                self.settings.get(f"{prefix}_font_smoothing", "current"))
+            color_field = _CompactAppOrCustomColorField(
+                self.settings.get(f"{prefix}_font_color", "#d6d9dc"), self.settings["colors"],
+                swatch_size=20, title=f"Couleur titre niveau {level}")
+            indent_field = _SliderField(
+                0, 120, int(self.settings.get(f"{prefix}_indent", 0)), slider_width=200, box_width=68)
+            setattr(self, f"{prefix}_font_family_field", family_field)
+            setattr(self, f"{prefix}_font_bold_field", bold_field)
+            setattr(self, f"{prefix}_font_italic_field", italic_field)
+            setattr(self, f"{prefix}_font_size_field", size_field)
+            setattr(self, f"{prefix}_font_smoothing_field", smoothing_field)
+            setattr(self, f"{prefix}_font_color_field", color_field)
+            setattr(self, f"{prefix}_indent_field", indent_field)
+            row_widget = _build_font_gabarit_row(
+                family_field, bold_field, size_field, smoothing_field, color_field, italic_field=italic_field)
+            rows.append((f"Police titre niveau {level}", row_widget))
+            rows.append((f"Retrait titre niveau {level} (indentation)", indent_field))
+        frame, self._titre_row_meta, resizer = _build_flat_table(rows)
+        self._flat_resizers.append(resizer)
+        self.titre_table_frame = frame
+        section.add(frame)
+        return section
+
+    def _current_title_level_values(self) -> dict:
+        """Valeurs COURANTES (widgets, pas self.settings) des 5 niveaux de
+        TITRE — voir _apply_title_level_style, qui les fusionne par-dessus
+        self.settings pour une previsualisation en direct SANS attendre
+        Enregistrer."""
+        out: dict[str, Any] = {}
+        for level in (1, 2, 3, 4, 5):
+            prefix = f"title_level{level}"
+            family_field = getattr(self, f"{prefix}_font_family_field")
+            out[f"{prefix}_font_family"] = "" if family_field.value() == "Systeme" else family_field.value()
+            out[f"{prefix}_font_bold"] = getattr(self, f"{prefix}_font_bold_field").isChecked()
+            out[f"{prefix}_font_italic"] = getattr(self, f"{prefix}_font_italic_field").isChecked()
+            out[f"{prefix}_font_size"] = getattr(self, f"{prefix}_font_size_field").value()
+            smoothing_field = getattr(self, f"{prefix}_font_smoothing_field")
+            out[f"{prefix}_font_smoothing_enabled"] = smoothing_field.isChecked()
+            out[f"{prefix}_font_smoothing"] = smoothing_field.smoothingValue()
+            out[f"{prefix}_font_color"] = getattr(self, f"{prefix}_font_color_field").value()
+            out[f"{prefix}_indent"] = getattr(self, f"{prefix}_indent_field").value()
+        return out
+
+    def _apply_title_level_style(self, *_args):
+        """Rejoue _TITLE_LEVEL_STYLE avec les valeurs COURANTES des widgets
+        (voir _current_title_level_values) puis restyle TOUTES les _Section/
+        _SubSection DEJA construites de cette fenetre — meme necessite que
+        _on_colors_changed/_apply_slider_style (widgets DEJA a l'ecran, pas
+        seulement les prochains construits)."""
+        merged = dict(self.settings)
+        merged.update(self._current_title_level_values())
+        _sync_title_level_style(merged)
+        for section in self.findChildren(_Section):
+            section._name_label.setFont(_title_font(1))
+            section._name_label.setStyleSheet(f"color: {_title_color(1)}; background: transparent;")
+            section._chevron.setColor(_title_color(1))
+            indent = _title_indent(1)
+            section._title_indent = indent
+            section._head_layout.setContentsMargins(indent, 0, 0, 0 if section._collapsed else 10)
+            section._body_layout.setContentsMargins(indent + 16 + 10, 0, 0, 0)
+        for sub in self.findChildren(_SubSection):
+            level = sub._level
+            sub._name_label.setFont(_title_font(level))
+            sub._name_label.setStyleSheet(f"color: {_title_color(level)}; background: transparent;")
+            sub._chevron.setColor(_title_color(level))
+            indent = _subsection_left_margin(level)
+            sub._left_margin = indent
+            sub._head_layout.setContentsMargins(indent, 0, 0, 0 if sub._collapsed else 6)
+            sub._body_layout.setContentsMargins(indent + 11 + 6, 0, 0, 0)
+        self._mark_dirty()
 
     def _section_application(self) -> _Section:
         section = _Section("Application")
@@ -9029,17 +9861,84 @@ class SettingsWindow(QDialog):
         root_row_l.addWidget(self.root_field)
         root_row_l.addWidget(browse_btn)
 
+        # Preset par defaut (voir load_settings/DEFAULT_SETTINGS.
+        # default_preset) : applique AUTOMATIQUEMENT par-dessus pipeline_
+        # settings.json a chaque demarrage de l'appli ET ouverture de cette
+        # fenetre — voir la remarque de l'utilisateur, "dans general/
+        # application, sous racine par defaut, je veux un parametre preset
+        # par defaut, avec menu deroulant de tous les presets". "(Aucun)" =
+        # comportement INCHANGE, pipeline_settings.json seul fait foi.
+        preset_names = ["(Aucun)"] + sorted(_load_presets().keys())
+        self.default_preset_field = _SelectField(
+            preset_names, self.settings.get("default_preset") or "(Aucun)", width=268)
+
         self.scale_field = _SliderField(50, 200, int(self.settings["ui_scale"]), "%", slider_width=280, box_width=68)
+
+        # Repli automatique des colonnes de set (voir DEFAULT_SETTINGS.
+        # auto_collapse_set_columns/app_style.set_auto_collapse_set_columns/
+        # pipeline_browser._sync_collapse_state) — voir la remarque de
+        # l'utilisateur, "un toggle qui permet ou pas de rabattre les
+        # colonnes de set, une fois que l'on est sur l'espace de travail".
+        self.auto_collapse_set_columns_field = _Toggle(
+            bool(self.settings.get("auto_collapse_set_columns", True)))
+
+        self.omit_file_names_field = QLineEdit()
+        self.omit_file_names_field.setFixedHeight(25)
+        self.omit_file_names_field.setPlaceholderText("ex. Thumbs.db, .DS_Store")
+        self.omit_file_names_field.setToolTip(
+            "Noms exacts de fichiers, séparés par des virgules, points-virgules ou retours à la ligne.")
+        self.omit_file_names_field.setText(self._format_omit_list(self.settings.get("application_omit_file_names")))
+        self.omit_extensions_field = QLineEdit()
+        self.omit_extensions_field.setFixedHeight(25)
+        self.omit_extensions_field.setPlaceholderText("ex. tmp, bak, psd")
+        self.omit_extensions_field.setToolTip(
+            "Extensions à masquer (avec ou sans point), séparées par des virgules, points-virgules ou retours à la ligne.")
+        self.omit_extensions_field.setText(self._format_omit_list(self.settings.get("application_omit_extensions")))
+        self._refresh_omit_fields_style()
+        self.omit_filters_table, _omit_filters_meta, omit_filters_resizer = _build_flat_table([
+            ("Noms de fichiers", self.omit_file_names_field),
+            ("Extensions", self.omit_extensions_field),
+        ])
+        self._flat_resizers.append(omit_filters_resizer)
+        omit_filters_section = _SubSection("Fichiers et extensions à omettre", level=2)
+        omit_filters_section.add(self.omit_filters_table)
+
+        # "Coins arrondi" (ex-Geometrie > Fenetres, un slider de rayon, puis
+        # "Fenetre" une fois deplacee ici) — voir la remarque de
+        # l'utilisateur, "geometrie/fenetre : deplace cette ligne dans
+        # general/application mais transforme le slider en toggle", puis
+        # "fenetre : renommer 'Coins arrondi'. Placer le toggle avant le
+        # texte" : simple on/off (voir _window_radius_value, rayon fixe
+        # _WINDOW_RADIUS_ON quand actif), toggle SANS libelle integre —
+        # place ici AVANT un QLabel dedie, plutot que la colonne "libelle
+        # a gauche / controle a droite" habituelle du tableau.
+        self.window_radius_toggle = _Toggle(int(self.settings.get("window_radius", 0)) > 0, show_label=False)
+        window_radius_row = QWidget()
+        window_radius_row.setStyleSheet("background: transparent;")
+        window_radius_row_l = QHBoxLayout(window_radius_row)
+        window_radius_row_l.setContentsMargins(0, 0, 0, 0)
+        window_radius_row_l.setSpacing(8)
+        window_radius_row_l.addWidget(self.window_radius_toggle)
+        window_radius_label = QLabel("Coins arrondi")
+        window_radius_label.setFont(_qfont(12, 400))
+        window_radius_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        window_radius_row_l.addWidget(window_radius_label)
+        window_radius_row_l.addStretch(1)
 
         # Tableau ferme (voir _build_flat_table — meme technique que
         # Colonnes/Sliders) plutot que 2 _Row nues, pour rester coherent
         # avec le reste de la fenetre — voir la remarque de l'utilisateur.
         self.app_table_frame, self._app_table_row_meta, resizer = _build_flat_table([
             ("Racine par defaut", root_row),
+            ("Preset par defaut", self.default_preset_field),
             ("Scale interface", self.scale_field),
+            ("Replier les colonnes de set une fois l'espace de travail atteint",
+             self.auto_collapse_set_columns_field),
+            ("", window_radius_row),
         ])
         self._flat_resizers.append(resizer)
         section.add(self.app_table_frame)
+        section.add(omit_filters_section)
         return section
 
     def _section_fonts(self) -> _Section:
@@ -9054,42 +9953,70 @@ class SettingsWindow(QDialog):
         section.add(self.color_grid)
         return section
 
+    def _build_selection_clone_subsection(
+        self, state: str, title: str, color_label: str, color_field: QWidget
+    ) -> _SubSection:
+        """Sous-section "Non focus"/"Survol"/"Non selectionne" (voir
+        _section_headers, la remarque de l'utilisateur, "non focus survol
+        et non selectionne sont des clones des focus (sauf la couleur)
+        donc mets leur des toggles d'override exactement comme dans
+        colonnes/projets/colonnes") : SA PROPRE couleur (`color_field`,
+        deja construit par l'appelant, jamais un override — chaque etat a
+        toujours eu sa propre couleur) + 4 parametres CLONES de Focus
+        (padding/bordure/rayon/bord de colonne), chacun avec un toggle
+        d'override — memes widgets que Focus, MEME mecanique de toggle que
+        _build_override_flat_table (Colonnes > Type/Projets/Sous-projets).
+        Champs stockes sur `self` comme `item_selection_<state>_<key>_
+        field`/`_toggle`, lus par _current_values/_apply_values_to_controls."""
+        def make_toggle(key: str) -> _Toggle:
+            toggle = _Toggle(
+                bool(self.settings.get(f"item_selection_{state}_{key}_override", False)), style_override="toggle1")
+            setattr(self, f"item_selection_{state}_{key}_toggle", toggle)
+            return toggle
+
+        padding_toggle = make_toggle("padding")
+        padding_field = _CellPaddingField(
+            bool(self.settings.get(f"item_selection_{state}_padding_linked", False)),
+            self.settings.get(f"item_selection_{state}_padding") or {})
+        setattr(self, f"item_selection_{state}_padding_field", padding_field)
+
+        border_toggle = make_toggle("border")
+        border_field = _ToggleSideColorsField(
+            _coerce_side_enabled(self.settings.get(f"item_selection_{state}_border_enabled", False)),
+            self.settings.get(f"item_selection_{state}_border") or {}, self.settings["colors"])
+        setattr(self, f"item_selection_{state}_border_field", border_field)
+
+        radius_toggle = make_toggle("radius")
+        radius_field = _CornerRadiusField(
+            bool(self.settings.get(f"item_selection_{state}_radius_linked", True)),
+            _coerce_corner_radius(self.settings.get(f"item_selection_{state}_radius", 0)), maximum=20)
+        setattr(self, f"item_selection_{state}_radius_field", radius_field)
+
+        edge_toggle = make_toggle("edge_border")
+        edge_field = _Toggle(
+            bool(self.settings.get(f"item_selection_{state}_edge_border", True)), style_override="toggle1")
+        setattr(self, f"item_selection_{state}_edge_border_field", edge_field)
+
+        color_frame, color_row_meta, color_resizer = _build_flat_table([(color_label, color_field)])
+        self._flat_resizers.append(color_resizer)
+        setattr(self, f"item_selection_{state}_color_frame", color_frame)
+
+        override_frame, override_row_meta, override_resizer = _build_override_flat_table([
+            ("Padding du selecteur", padding_field, padding_toggle),
+            ("Bordures du selecteur", border_field, border_toggle),
+            ("Arrondi des coins de la selection", radius_field, radius_toggle),
+            ("Bordure au bord de la colonne", edge_field, edge_toggle),
+        ])
+        self._flat_resizers.append(override_resizer)
+        setattr(self, f"item_selection_{state}_override_frame", override_frame)
+
+        sub = _SubSection(title, level=3)
+        sub.add(color_frame)
+        sub.add(override_frame)
+        return sub
+
     def _section_headers(self) -> _Section:
         section = _Section("Colonnes")
-        # Apercu de l'element concerne par la section, centre (voir
-        # _section_preview_wrap/la remarque de l'utilisateur, "fait deux
-        # colonnes cote a cote de 150px chacune de large et 250px de
-        # hauteur") — voir _ColumnPreview/_apply_column_preview, qui les
-        # tient a jour EN DIRECT (Hauteur/Padding/Couleur/Arrondi/Cadre des
-        # entetes/Distance entre colonnes).
-        preview_row = QWidget()
-        preview_row.setStyleSheet("background: transparent;")
-        self.column_preview_row_l = QHBoxLayout(preview_row)
-        self.column_preview_row_l.setContentsMargins(0, 0, 0, 0)
-        # Chaque boite masque son propre filet GAUCHE quand column_gap()<=0
-        # (voir _ColumnPreview/pipeline_browser.Column._suppress_left,
-        # DetailPanel._suppress_left suit desormais la MEME regle) : un SEUL
-        # filet reste visible a chaque frontiere collee (celui de DROITE de la boite de
-        # gauche) plutot que 2 cumules OU aucun — voir la remarque de
-        # l'utilisateur, "je veux que les deux bordures qui se chevauchent
-        # n'en forment qu'une seule". Trois boites (Type/Projets/Sous-
-        # projet, voir la remarque de l'utilisateur, "rajoute une troisieme
-        # colonne") ; has_left_neighbor=False seulement sur la 1ere (aucune
-        # boite a sa gauche — voir _ColumnPreview, la remarque de
-        # l'utilisateur, "on perd la bordure a gauche de la premiere
-        # colonne"), has_right_neighbor=False seulement sur la derniere
-        # (aucune boite a sa droite — voir _ColumnPreview._corner_radii, la
-        # remarque de l'utilisateur, "si deux colonnes sont cote a cote ...
-        # le rayon de bordure contre l'autre colonne doit etre a zero").
-        self.column_previews = [
-            _ColumnPreview("Type", "12", has_left_neighbor=False),
-            _ColumnPreview("Projets", "4"),
-            _ColumnPreview("Sous-projet", "7", has_right_neighbor=False),
-        ]
-        for preview in self.column_previews:
-            self.column_preview_row_l.addWidget(preview)
-        section.add(_section_preview_wrap(preview_row))
-
         # Afficher/masquer l'entete entierement (voir pipeline_browser.
         # Column/DetailPanel/PreviewColumn.refresh_header, header.setVisible)
         # — voir la remarque de l'utilisateur, "je veux aussi une option
@@ -9116,12 +10043,46 @@ class SettingsWindow(QDialog):
         # entetes' -> 'Bordure' ... je veux exactement les memes parametre
         # de controle que celui des colonnes" (remplace _HeaderEdgesField,
         # une seule couleur partagee + simple on/off par cote).
+        self.header_border_thickness_field = _SliderField(
+            0, 8, int(self.settings.get("header_border_thickness", 1)), slider_width=140, box_width=54)
         self.header_border_field = _ToggleSideColorsField(
             _coerce_side_enabled(self.settings.get("header_border_enabled")
                                   or self.settings.get("header_edges") or {}, default=False),
-            self.settings.get("header_border") or {}, self.settings["colors"])
-        self.header_border_thickness_field = _SliderField(
-            0, 8, int(self.settings.get("header_border_thickness", 1)), slider_width=280, box_width=68)
+            self.settings.get("header_border") or {}, self.settings["colors"],
+            thickness_field=self.header_border_thickness_field)
+        # Padding droit des icones dans la barre des entetes (voir
+        # Column.__init__, bouton punaise — pipeline_browser._pin_icon_
+        # pixmap) : espace reserve entre l'icone et le bord droit de
+        # l'entete — voir la remarque de l'utilisateur, "ajoute un slider
+        # pour le padding droit des icones dans la barre des entetes".
+        self.header_icon_right_padding_field = _SliderField(
+            0, 40, int(self.settings.get("header_icon_right_padding", 0)), slider_width=280, box_width=68)
+        # Police/gras/couleur du TITRE de l'entete (voir Column.title_label)
+        # — MEME trio que partout ailleurs — voir la remarque de
+        # l'utilisateur, "ajoute : choix de la police (entre systeme et
+        # app) + gras ou regular et couleur (sur la mm ligne)".
+        self.header_font_family_field = _DualFontSelectField(
+            self.settings.get("header_font_family") or "Systeme", width=130)
+        self.header_font_bold_field = _Toggle(
+            bool(self.settings.get("header_font_bold", True)), show_label=False)
+        self.header_font_italic_field = _Toggle(
+            bool(self.settings.get("header_font_italic", False)), show_label=False)
+        self.header_font_color_field = _CompactAppOrCustomColorField(
+            self.settings.get("header_font_color", "#9aa1a7"), self.settings["colors"],
+            swatch_size=20, title="Couleur du titre")
+        # Hauteur (taille) de la police, AJOUTEE sur cette meme ligne — voir
+        # la remarque de l'utilisateur, "pour la police dans les entetes
+        # ajoute aussi sur la ligne des polices, la hauteur des polices".
+        self.header_font_size_field = _SliderField(
+            6, 24, int(self.settings.get("header_font_size", 10)), slider_width=110, box_width=54)
+        # Lissage (GABARIT "police") — absent jusqu'ici de cette ligne.
+        self.header_font_smoothing_field = _OverrideSmoothingField(
+            bool(self.settings.get("header_font_antialias_override_enabled", False)),
+            self.settings.get("header_font_antialias_override", "current"))
+        header_font_row = _build_font_gabarit_row(
+            self.header_font_family_field, self.header_font_bold_field, self.header_font_size_field,
+            self.header_font_smoothing_field, self.header_font_color_field,
+            italic_field=self.header_font_italic_field)
         # Distance entre colonnes (voir app_style.set_column_gap/
         # pipeline_browser.PipelineBrowser.columns_layout) — voir la
         # remarque de l'utilisateur, "ajoute un parametre 'distance entre
@@ -9162,11 +10123,12 @@ class SettingsWindow(QDialog):
         # l'utilisateur, "ajoute une valeur de bordure radius, la largeur de
         # bordure") — meme paire de reglages que Toggles > Cadre > Epaisseur
         # de bordure/Rayon des angles.
+        self.column_border_thickness_field = _SliderField(
+            0, 8, int(self.settings.get("column_border_thickness", 1)), slider_width=140, box_width=54)
         self.column_border_field = _ToggleSideColorsField(
             _coerce_side_enabled(self.settings.get("column_border_enabled", True)),
-            self.settings.get("column_border") or {}, self.settings["colors"])
-        self.column_border_thickness_field = _SliderField(
-            0, 8, int(self.settings.get("column_border_thickness", 1)), slider_width=280, box_width=68)
+            self.settings.get("column_border") or {}, self.settings["colors"],
+            thickness_field=self.column_border_thickness_field)
         self.column_border_radius_field = _CornerRadiusField(
             bool(self.settings.get("column_border_radius_linked", True)),
             _coerce_corner_radius(self.settings.get("column_border_radius", 0)), maximum=20)
@@ -9196,12 +10158,11 @@ class SettingsWindow(QDialog):
             ("Padding", self.column_padding_field),
             ("Couleur de fond", self.column_bg_color_field),
             ("Bordure", self.column_border_field),
-            ("Epaisseur de bordure", self.column_border_thickness_field),
             ("Rayon des angles de bordure", self.column_border_radius_field),
         ])
         self._flat_resizers.append(columns_resizer)
         self.columns_table_frame = columns_frame
-        columns_sub = _SubSection("Colonnes", indent=True)
+        columns_sub = _SubSection("Colonnes", level=2)
         columns_sub.add(columns_frame)
         columns_sub.collapsedChanged.connect(section.refresh_min_height)
 
@@ -9226,33 +10187,45 @@ class SettingsWindow(QDialog):
         # (couleurs app ou personnalisees)".
         self.resize_badge_font_field = _DualFontSelectField(
             self.settings.get("resize_badge_font_family") or "Systeme", width=150)
-        self.resize_badge_text_color_field = _AppOrCustomColorField(
+        self.resize_badge_font_bold_field = _Toggle(
+            bool(self.settings.get("resize_badge_font_bold", True)), show_label=False)
+        self.resize_badge_font_italic_field = _Toggle(
+            bool(self.settings.get("resize_badge_font_italic", False)), show_label=False)
+        self.resize_badge_font_size_field = _SliderField(
+            6, 24, int(self.settings.get("resize_badge_font_size", 11)), slider_width=110, box_width=54)
+        self.resize_badge_font_smoothing_field = _OverrideSmoothingField(
+            bool(self.settings.get("resize_badge_font_smoothing_enabled", False)),
+            self.settings.get("resize_badge_font_smoothing", "current"))
+        self.resize_badge_text_color_field = _CompactAppOrCustomColorField(
             self.settings.get("resize_badge_text_color", "#d6d9dc"), self.settings["colors"],
-            swatch_size=24, title="Texte du cadre de redimensionnement")
+            swatch_size=20, title="Texte du cadre de redimensionnement")
+        resize_badge_font_row = _build_font_gabarit_row(
+            self.resize_badge_font_field, self.resize_badge_font_bold_field, self.resize_badge_font_size_field,
+            self.resize_badge_font_smoothing_field, self.resize_badge_text_color_field,
+            italic_field=self.resize_badge_font_italic_field)
         self.resize_badge_bg_color_field = _AppOrCustomColorField(
             self.settings.get("resize_badge_bg_color", "#202326"), self.settings["colors"],
             swatch_size=24, title="Fond du cadre de redimensionnement")
+        self.resize_badge_border_thickness_field = _SliderField(
+            0, 8, int(self.settings.get("resize_badge_border_thickness", 1)), slider_width=140, box_width=54)
         self.resize_badge_border_field = _ToggleSideColorsField(
             _coerce_side_enabled(self.settings.get("resize_badge_border_enabled", True)),
-            self.settings.get("resize_badge_border") or {}, self.settings["colors"])
-        self.resize_badge_border_thickness_field = _SliderField(
-            0, 8, int(self.settings.get("resize_badge_border_thickness", 1)), slider_width=280, box_width=68)
+            self.settings.get("resize_badge_border") or {}, self.settings["colors"],
+            thickness_field=self.resize_badge_border_thickness_field)
         self.resize_badge_border_radius_field = _CornerRadiusField(
             bool(self.settings.get("resize_badge_border_radius_linked", True)),
             _coerce_corner_radius(self.settings.get("resize_badge_border_radius", 4)), maximum=20)
 
         resize_badge_frame, self._resize_badge_table_row_meta, resize_badge_resizer = _build_flat_table([
             ("Position", self.resize_badge_position_field),
-            ("Police", self.resize_badge_font_field),
-            ("Couleur", self.resize_badge_text_color_field),
+            ("Police", resize_badge_font_row),
             ("Couleur de fond", self.resize_badge_bg_color_field),
             ("Bordure", self.resize_badge_border_field),
-            ("Epaisseur de bordure", self.resize_badge_border_thickness_field),
             ("Rayon des angles", self.resize_badge_border_radius_field),
         ])
         self._flat_resizers.append(resize_badge_resizer)
         self.resize_badge_table_frame = resize_badge_frame
-        resize_badge_sub = _SubSection("Cadre de redimensionnement", indent=True)
+        resize_badge_sub = _SubSection("Encart", level=2)
         resize_badge_sub.add(resize_badge_frame)
         resize_badge_sub.collapsedChanged.connect(section.refresh_min_height)
 
@@ -9263,11 +10236,12 @@ class SettingsWindow(QDialog):
             ("Couleur des entetes", self.header_color_field),
             ("Arrondi des angles", self.header_radius_field),
             ("Bordure", self.header_border_field),
-            ("Epaisseur de bordure", self.header_border_thickness_field),
+            ("Padding droit des icones", self.header_icon_right_padding_field),
+            ("Police / gras / couleur / hauteur du titre", header_font_row),
         ])
         self._flat_resizers.append(headers_resizer)
         self.headers_table_frame = headers_frame
-        headers_sub = _SubSection("Entetes", indent=True)
+        headers_sub = _SubSection("Entetes", level=2)
         headers_sub.add(headers_frame)
         headers_sub.collapsedChanged.connect(section.refresh_min_height)
 
@@ -9303,7 +10277,13 @@ class SettingsWindow(QDialog):
         # remarque de l'utilisateur, "j'aimerais rajouter une option pour
         # mettre le texte en gras (toggle)".
         self.item_font_bold_field = _Toggle(
-            bool(self.settings.get("item_font_bold", False)), style_override="toggle1")
+            bool(self.settings.get("item_font_bold", False)), style_override="toggle1", show_label=False)
+        # Italique (GABARIT "police", voir _build_font_gabarit_row et la
+        # remarque de l'utilisateur, capture d'ecran, "voici a quoi doit
+        # ressembler la ligne police" — ajoute "italique" a cote de
+        # "gras").
+        self.item_font_italic_field = _Toggle(
+            bool(self.settings.get("item_font_italic", False)), style_override="toggle1", show_label=False)
         # Toggle "Forcer" + slider Lissage (voir _OverrideSmoothingField) :
         # par defaut suit le lissage habituel de l'appli, le toggle permet
         # de le forcer independamment pour ce texte — voir la remarque de
@@ -9327,6 +10307,9 @@ class SettingsWindow(QDialog):
         # bordure"/"Epaisseur de bordure" (voir la remarque de
         # l'utilisateur, "rajoute une option pour ajouter une bordure entre
         # les lignes avec choix de la couleur ... et de l'epaisseur").
+        # Index : 0 Couleur, 1 Hauteur de la ligne, 2 Taille de l'icone,
+        # 3 Padding gauche de l'icone, 4 Espacement entre les lignes,
+        # 5 Padding du texte.
         item_text_rows = []
         for spec in _ITEM_TEXT_FIELD_SPECS:
             field = spec.make_field(self.settings.get(spec.key, spec.default), self.settings["colors"], slider_width=200)
@@ -9345,85 +10328,109 @@ class SettingsWindow(QDialog):
             self.settings["colors"],
         )
 
-        text_frame, self._item_text_row_meta, text_resizer = _build_flat_table([
-            ("Police", self.item_font_field),
-            ("Taille", self.item_font_size_field),
-            ("Gras", self.item_font_bold_field),
-            ("Lissage", self.item_antialias_field),
-            *item_text_rows[:2],  # Couleur, Icone
-            *item_text_rows[2:4],  # Hauteur de la ligne, Espacement entre les lignes
+        # Ex-sous-section unique "Texte", desormais scindee en 4 sous-
+        # sous-sections IMBRIQUEES dans "Lignes" (voir la remarque de
+        # l'utilisateur, "renomme la 'lignes' et fait 4 sous sections" —
+        # meme mecanique de 2e niveau que Colonnes > Selection ci-dessous).
+
+        # 1) "Lignes" : hauteur, espacement, espace avant le 1er item,
+        # bordure entre les lignes.
+        lines_frame, self._item_lines_row_meta, lines_resizer = _build_flat_table([
+            ("Hauteur de ligne", item_text_rows[1][1]),
+            ("Espacement entre les lignes", item_text_rows[4][1]),
             ("Espace avant le premier item", self.item_header_gap_field),
-            item_text_rows[4],  # Padding du texte
             ("Bordure entre les lignes", self.item_row_border_field),
+        ])
+        self._flat_resizers.append(lines_resizer)
+        self.item_lines_frame = lines_frame
+        lines_2nd_sub = _SubSection("Lignes", level=3)
+        lines_2nd_sub.add(lines_frame)
+
+        # 2) "Texte" : gabarit "police" (voir _build_font_gabarit_row) +
+        # "Padding gauche" (ex-"Padding du texte", item_text_padding).
+        item_police_row = _build_font_gabarit_row(
+            self.item_font_field, self.item_font_bold_field, self.item_font_size_field,
+            self.item_antialias_field, item_text_rows[0][1], italic_field=self.item_font_italic_field)
+        text_frame, self._item_text_row_meta, text_resizer = _build_flat_table([
+            ("Police", item_police_row),
+            ("Padding gauche", item_text_rows[5][1]),
         ])
         self._flat_resizers.append(text_resizer)
         self.item_text_frame = text_frame
-        text_sub = _SubSection("Texte", indent=True)
-        text_sub.add(text_frame)
-        text_sub.collapsedChanged.connect(section.refresh_min_height)
+        text_2nd_sub = _SubSection("Texte", level=3)
+        text_2nd_sub.add(text_frame)
 
-        # Sous-section "Image" (voir la remarque de l'utilisateur, "ajoute
-        # une sous section image ... padding de l'image (4 cotes comme les
-        # autres sections) ... bordure de l'image (4 cotes, couleur,
-        # epaisseur comme les sections precedentes) ... corner radius de
-        # l'image (4 coins comme les autres sections)") : MEMES widgets/
-        # meme table que Colonnes ci-dessus (Padding/Bordure/Epaisseur/
-        # Rayon), appliques a l'image de ligne (apercu personnalise sur
-        # "Type", vignette sur Projets/Sous-projet/Logiciels/Contenu — voir
-        # pipeline_browser._paint_row_image).
+        # 3) "Icone" : taille par defaut + padding gauche.
+        icon_frame, self._item_icon_row_meta, icon_resizer = _build_flat_table([
+            ("Taille de l'icone par defaut (0 = hauteur de la ligne)", item_text_rows[2][1]),
+            ("Padding gauche", item_text_rows[3][1]),
+        ])
+        self._flat_resizers.append(icon_resizer)
+        self.item_icon_frame = icon_frame
+        icon_2nd_sub = _SubSection("Icone", level=3)
+        icon_2nd_sub.add(icon_frame)
+
+        # 4) "Apercu" — ex-sous-section "Image" (voir la remarque de
+        # l'utilisateur, "ajoute une sous section image ... padding de
+        # l'image ... bordure de l'image ... corner radius de l'image"),
+        # CONTENU INCHANGE, seul le ratio devient un affichage "1/<valeur>"
+        # (voir _RatioSliderField) au lieu d'un pourcentage brut — voir la
+        # remarque de l'utilisateur, "avant l'invite place le texte '1/'
+        # ... dans l'invite on entre la valeur de largeur (par exemple
+        # 2.35)".
         self.item_image_padding_field = _CellPaddingField(
             bool(self.settings.get("item_image_padding_linked", True)),
             self.settings.get("item_image_padding") or {},
         )
+        self.item_image_border_thickness_field = _SliderField(
+            0, 8, int(self.settings.get("item_image_border_thickness", 1)), slider_width=140, box_width=54)
         self.item_image_border_field = _ToggleSideColorsField(
             _coerce_side_enabled(self.settings.get("item_image_border_enabled", False)),
-            self.settings.get("item_image_border") or {}, self.settings["colors"])
-        self.item_image_border_thickness_field = _SliderField(
-            0, 8, int(self.settings.get("item_image_border_thickness", 1)), slider_width=200, box_width=68)
+            self.settings.get("item_image_border") or {}, self.settings["colors"],
+            thickness_field=self.item_image_border_thickness_field)
         self.item_image_radius_field = _CornerRadiusField(
             bool(self.settings.get("item_image_radius_linked", True)),
             _coerce_corner_radius(self.settings.get("item_image_radius", 0)), maximum=20)
-        # Ratio largeur/hauteur (voir pipeline_browser._paint_unified_row,
-        # item_image_ratio) — stocke en % (100 = 1.0 = carre, comportement
-        # INCHANGE par defaut) : le seul type de champ numerique disponible
-        # ici est un slider ENTIER (_SliderField) — voir la remarque de
-        # l'utilisateur, "je veux une section ratio, qui correspond au
-        # ratio entre la hauteur et la largeur. Plus le chiffre est grand
-        # et plus l'image est allongee horizontalement".
-        self.item_image_ratio_field = _SliderField(
+        self.item_image_ratio_field = _RatioSliderField(
             20, 500, int(round(float(self.settings.get("item_image_ratio", 1.0)) * 100)),
-            unit="%", slider_width=200, box_width=68)
+            slider_width=200, box_width=68)
 
         image_frame, self._item_image_row_meta, image_resizer = _build_flat_table([
             ("Padding", self.item_image_padding_field),
             ("Bordure", self.item_image_border_field),
-            ("Epaisseur de bordure", self.item_image_border_thickness_field),
             ("Rayon des angles", self.item_image_radius_field),
             ("Ratio (largeur/hauteur)", self.item_image_ratio_field),
         ])
         self._flat_resizers.append(image_resizer)
         self.item_image_frame = image_frame
-        image_sub = _SubSection("Image", indent=True)
-        image_sub.add(image_frame)
-        image_sub.collapsedChanged.connect(section.refresh_min_height)
+        apercu_2nd_sub = _SubSection("Apercu", level=3)
+        apercu_2nd_sub.add(image_frame)
 
+        # Empilage des 4 sous-sous-sections DANS "Lignes" (meme mecanique
+        # que Colonnes > Selection > Focus/Non focus/Survol/Non
+        # selectionne).
+        lines_group_wrap = QWidget()
+        lines_group_wrap.setStyleSheet("background: transparent;")
+        lines_group_wrap_l = QVBoxLayout(lines_group_wrap)
+        lines_group_wrap_l.setContentsMargins(0, 0, 0, 0)
+        _stack_subsections(
+            lines_group_wrap_l, [lines_2nd_sub, text_2nd_sub, icon_2nd_sub, apercu_2nd_sub])
+        text_sub = _SubSection("Lignes", level=2)
+        text_sub.add(lines_group_wrap)
+        text_sub.collapsedChanged.connect(section.refresh_min_height)
+        for sub in (lines_2nd_sub, text_2nd_sub, icon_2nd_sub, apercu_2nd_sub):
+            sub.collapsedChanged.connect(text_sub.refresh_layout)
+
+        # "Focus" : la BASE (voir pipeline_browser._paint_unified_row,
+        # `_shape`) — Non focus/Survol/Non selectionne EN HERITENT SAUF
+        # override explicite (voir _build_selection_clone_subsection plus
+        # bas) — voir la remarque de l'utilisateur, "fais 4 sous sections,
+        # focus, non focus, survol et non selectionne ... non focus survol
+        # et non selectionne sont des clones des focus (sauf la couleur)
+        # donc mets leur des toggles d'override exactement comme dans
+        # colonnes/projets/colonnes".
         self.item_selection_focus_field = _ColorField(
             self.settings.get("item_selection_focus_color", "#3f6f9f"), swatch_size=24, title="Selection (focus)")
-        self.item_selection_unfocus_field = _ColorField(
-            self.settings.get("item_selection_unfocus_color", "#2e3338"), swatch_size=24, title="Selection (hors focus)")
-        self.item_hover_field = _ColorField(
-            self.settings.get("item_hover_color", "#232729"), swatch_size=24, title="Survol")
-        # _AppOrCustomColorField (PAS _ColorField) : par defaut "@itemIdle"
-        # (voir DEFAULT_SETTINGS.item_idle_color), une reference a la
-        # pastille "Item - non selectionne" plutot qu'un hex fige, pour
-        # rester exactement le fond actuel des lignes tant que l'utilisateur
-        # ne personnalise pas — voir la remarque de l'utilisateur, "ajoute une
-        # couleur (sous couleur de survol) qui represente la couleur non
-        # selectionnee ... un fond sur les items non selectionnes, de la
-        # meme forme que les divers selections".
-        self.item_idle_field = _AppOrCustomColorField(
-            self.settings.get("item_idle_color", "@itemIdle"), self.settings["colors"],
-            swatch_size=24, title="Couleur non selectionnee")
         # MEME widget que Tableaux > Padding des cellules (voir la remarque
         # de l'utilisateur, "padding du selecteur (4 sliders identique aux
         # tableaux)").
@@ -9444,34 +10451,75 @@ class SettingsWindow(QDialog):
         self.item_selection_edge_border_field = _Toggle(
             bool(self.settings.get("item_selection_edge_border", True)), style_override="toggle1")
 
-        selection_frame, self._item_selection_row_meta, selection_resizer = _build_flat_table([
-            ("Couleur de selection en focus", self.item_selection_focus_field),
-            ("Couleur de selection non focus", self.item_selection_unfocus_field),
-            ("Couleur de survol", self.item_hover_field),
-            ("Couleur non selectionnee", self.item_idle_field),
+        focus_frame, self._item_selection_row_meta, focus_resizer = _build_flat_table([
+            ("Couleur", self.item_selection_focus_field),
             ("Padding du selecteur", self.item_selection_padding_field),
             ("Bordures du selecteur", self.item_selection_border_field),
             ("Arrondi des coins de la selection", self.item_selection_radius_field),
             ("Bordure au bord de la colonne", self.item_selection_edge_border_field),
         ])
-        self._flat_resizers.append(selection_resizer)
-        self.item_selection_frame = selection_frame
-        selection_sub = _SubSection("Selection", indent=True)
-        selection_sub.add(selection_frame)
-        selection_sub.collapsedChanged.connect(section.refresh_min_height)
+        self._flat_resizers.append(focus_resizer)
+        self.item_selection_frame = focus_frame
+        focus_selection_sub = _SubSection("Focus", level=3)
+        focus_selection_sub.add(focus_frame)
+        focus_selection_sub.collapsedChanged.connect(section.refresh_min_height)
 
-        # Les 4 sous-groupes empiles ENSEMBLE (pas 2 paires separees comme
-        # avant), espacement ADAPTATIF UNIFORME entre chacun (voir
-        # _stack_subsections/la remarque de l'utilisateur, "je veux que tu
-        # normalises l'espacement entre les sections ... comme tu l'avais
-        # fait pour les sections").
+        self.item_selection_unfocus_field = _ColorField(
+            self.settings.get("item_selection_unfocus_color", "#2e3338"), swatch_size=24, title="Selection (hors focus)")
+        unfocus_selection_sub = self._build_selection_clone_subsection(
+            "unfocus", "Non focus", "Couleur", self.item_selection_unfocus_field)
+        unfocus_selection_sub.collapsedChanged.connect(section.refresh_min_height)
+
+        self.item_hover_field = _ColorField(
+            self.settings.get("item_hover_color", "#232729"), swatch_size=24, title="Survol")
+        hover_selection_sub = self._build_selection_clone_subsection(
+            "hover", "Survol", "Couleur", self.item_hover_field)
+        hover_selection_sub.collapsedChanged.connect(section.refresh_min_height)
+
+        # _AppOrCustomColorField (PAS _ColorField) : par defaut "@itemIdle"
+        # (voir DEFAULT_SETTINGS.item_idle_color), une reference a la
+        # pastille "Item - non selectionne" plutot qu'un hex fige, pour
+        # rester exactement le fond actuel des lignes tant que l'utilisateur
+        # ne personnalise pas — voir la remarque de l'utilisateur, "ajoute une
+        # couleur (sous couleur de survol) qui represente la couleur non
+        # selectionnee ... un fond sur les items non selectionnes, de la
+        # meme forme que les divers selections".
+        self.item_idle_field = _AppOrCustomColorField(
+            self.settings.get("item_idle_color", "@itemIdle"), self.settings["colors"],
+            swatch_size=24, title="Couleur non selectionnee")
+        idle_selection_sub = self._build_selection_clone_subsection(
+            "idle", "Non selectionne", "Couleur", self.item_idle_field)
+        idle_selection_sub.collapsedChanged.connect(section.refresh_min_height)
+
+        # Focus/Non focus/Survol/Non selectionne : sous-sections de 2e
+        # niveau, IMBRIQUEES dans une sous-section "Selection" (PAS des
+        # sous-sections de 1er niveau, cote a cote de Texte/Image) — voir
+        # la remarque de l'utilisateur, "les sous sections selections
+        # doivent etre des sous sections de general/colonnes/selection".
+        selection_group_wrap = QWidget()
+        selection_group_wrap.setStyleSheet("background: transparent;")
+        selection_group_wrap_l = QVBoxLayout(selection_group_wrap)
+        selection_group_wrap_l.setContentsMargins(0, 0, 0, 0)
+        _stack_subsections(
+            selection_group_wrap_l,
+            [focus_selection_sub, unfocus_selection_sub, hover_selection_sub, idle_selection_sub])
+        selection_sub = _SubSection("Selection", level=2)
+        selection_sub.add(selection_group_wrap)
+        selection_sub.collapsedChanged.connect(section.refresh_min_height)
+        for sub in (focus_selection_sub, unfocus_selection_sub, hover_selection_sub, idle_selection_sub):
+            sub.collapsedChanged.connect(selection_sub.refresh_layout)
+
+        # Les sous-groupes empiles ENSEMBLE, espacement ADAPTATIF UNIFORME
+        # entre chacun (voir _stack_subsections/la remarque de l'utilisateur,
+        # "je veux que tu normalises l'espacement entre les sections ...
+        # comme tu l'avais fait pour les sections").
         subsections_wrap = QWidget()
         subsections_wrap.setStyleSheet("background: transparent;")
         subsections_wrap_l = QVBoxLayout(subsections_wrap)
         subsections_wrap_l.setContentsMargins(0, 0, 0, 0)
         _stack_subsections(
             subsections_wrap_l,
-            [columns_sub, resize_badge_sub, headers_sub, text_sub, image_sub, selection_sub])
+            [columns_sub, resize_badge_sub, headers_sub, text_sub, selection_sub])
         section.add(subsections_wrap)
         return section
 
@@ -9486,13 +10534,15 @@ class SettingsWindow(QDialog):
         dans les tableaux doit activer ou non la fonctionnalite de colonnes
         redimensionnable" (une fois cette 2e fonctionnalite ajoutee)."""
         section = _Section("Tableaux")
-        # Apercu de l'element concerne par la section, centre (voir
-        # _section_preview_wrap/la remarque de l'utilisateur, "un tableau
-        # de 2 colonnes et 3 lignes avec entete") — voir _TablePreview,
-        # inclus comme un 3e tableau a en-tete dans _apply_table_radius/
-        # _apply_cell_padding/_apply_table_head_color plus bas.
+        # _TablePreview construit mais PLUS AFFICHE (voir la remarque de
+        # l'utilisateur, "supprime l'apercu des tableaux") — garde toutefois
+        # l'instance EN MEMOIRE (jamais ajoutee a un layout, donc invisible)
+        # car _apply_table_radius/_apply_cell_padding/_apply_table_head_color
+        # plus bas continuent de le traiter comme un 3e tableau a en-tete,
+        # au meme titre que les tableaux REELLEMENT affiches — le retirer
+        # de la, en plus de ces 2 lignes, demanderait de retoucher ces 3
+        # methodes une par une pour un gain nul (widget deja invisible).
         self.table_preview = _TablePreview()
-        section.add(_section_preview_wrap(self.table_preview))
         self.columns_resizable_toggle = _Toggle(bool(self.settings.get("columns_resizable", True)))
         # Deplace ici depuis Geometrie (voir la remarque de l'utilisateur,
         # capture a l'appui : ce reglage concerne les tableaux, pas la
@@ -9504,11 +10554,12 @@ class SettingsWindow(QDialog):
         # + Epaisseur) que Toggles > Cadre/Coche et Colonnes > Bordure —
         # voir la remarque de l'utilisateur, "ajoute dans la section
         # tableau un parametre bordure comme celui des toggles".
-        self.table_border_field = _ToggleSideColorsField(
-            _coerce_side_enabled(self.settings.get("table_border_enabled", True)),
-            self.settings.get("table_border") or {}, self.settings["colors"])
         self.table_border_thickness_field = _SliderField(
             0, 8, int(self.settings.get("table_border_thickness", 1)), slider_width=140, box_width=58)
+        self.table_border_field = _ToggleSideColorsField(
+            _coerce_side_enabled(self.settings.get("table_border_enabled", True)),
+            self.settings.get("table_border") or {}, self.settings["colors"],
+            thickness_field=self.table_border_thickness_field)
         # Padding du texte a l'interieur des cellules — voir _CellPaddingField
         # et SettingsWindow._apply_cell_padding, qui l'applique en direct a
         # TOUS les tableaux de cette fenetre (meme portee que "Rayon des
@@ -9531,7 +10582,6 @@ class SettingsWindow(QDialog):
         frame, self._tables_row_meta, resizer = _build_flat_table([
             ("Colonnes dimensionnables", self.columns_resizable_toggle),
             ("Bordure", self.table_border_field),
-            ("Epaisseur de bordure", self.table_border_thickness_field),
             ("Rayon des angles", self.table_radius_field),
             ("Padding des cellules", self.cell_padding_field),
             ("Couleur d'en-tete", self.table_head_color_field),
@@ -9567,6 +10617,10 @@ class SettingsWindow(QDialog):
         self._flat_resizers.append(resizer)
         self.toggles_table_frame = style_frame
         section.add(style_frame)
+        style_gap = QWidget()
+        style_gap.setStyleSheet("background: transparent;")
+        style_gap.setFixedHeight(_SUBSECTION_GAP_EXPANDED)
+        section.add(style_gap)
 
         # Un SEUL style affiche a la fois (voir _sync_toggle_style_visibility) :
         # celui choisi par Style ci-dessus, PAS les 2 tableaux cote a cote —
@@ -9587,7 +10641,7 @@ class SettingsWindow(QDialog):
             page_l = QVBoxLayout(page)
             page_l.setContentsMargins(0, 0, 0, 0)
             page_l.setSpacing(0)
-            style_sub = _SubSection(label)
+            style_sub = _SubSection(label, level=2)
             # Cadre/Coche sont ici imbriques SOUS style_sub, elle-meme sous
             # `section` ("Toggles") : refresh_min_height recalcule tout
             # l'arbre (voir _activate_layout_tree), peu importe la
@@ -9632,14 +10686,17 @@ class SettingsWindow(QDialog):
         sous une AUTRE _SubSection, voir _section_toggles, doit aussi
         rafraichir CELLE-CI au passage, voir _SubSection.refresh_layout)."""
         s = self.settings
+        outer_border_thickness = _SliderField(
+            0, 8, int(s.get(f"{prefix}_outer_border_thickness", 1)), slider_width=90, box_width=54)
+        coche_border_thickness = _SliderField(
+            0, 8, int(s.get(f"{prefix}_coche_border_thickness", 1)), slider_width=90, box_width=54)
         w: dict[str, QWidget] = {
             "outer_width": _SliderField(4, 80, int(s.get(f"{prefix}_outer_width", 29)), slider_width=90, box_width=54),
             "outer_height": _SliderField(4, 60, int(s.get(f"{prefix}_outer_height", 14)), slider_width=90, box_width=54),
             "outer_border": _ToggleSideColorsField(
                 _coerce_side_enabled(s.get(f"{prefix}_outer_border_enabled", True)), s.get(f"{prefix}_outer_border") or {},
-                s["colors"]),
-            "outer_border_thickness": _SliderField(
-                0, 8, int(s.get(f"{prefix}_outer_border_thickness", 1)), slider_width=90, box_width=54),
+                s["colors"], thickness_field=outer_border_thickness),
+            "outer_border_thickness": outer_border_thickness,
             "outer_border_radius": _CornerRadiusField(
                 bool(s.get(f"{prefix}_outer_border_radius_linked", True)),
                 _coerce_corner_radius(s.get(f"{prefix}_outer_border_radius", 0)), maximum=20),
@@ -9650,9 +10707,8 @@ class SettingsWindow(QDialog):
             "coche_margin": _SliderField(0, 30, int(s.get(f"{prefix}_coche_margin", 4)), slider_width=90, box_width=54),
             "coche_border": _ToggleSideColorsField(
                 _coerce_side_enabled(s.get(f"{prefix}_coche_border_enabled", True)), s.get(f"{prefix}_coche_border") or {},
-                s["colors"]),
-            "coche_border_thickness": _SliderField(
-                0, 8, int(s.get(f"{prefix}_coche_border_thickness", 1)), slider_width=90, box_width=54),
+                s["colors"], thickness_field=coche_border_thickness),
+            "coche_border_thickness": coche_border_thickness,
             "coche_border_radius": _CornerRadiusField(
                 bool(s.get(f"{prefix}_coche_border_radius_linked", True)),
                 _coerce_corner_radius(s.get(f"{prefix}_coche_border_radius", 0)), maximum=20),
@@ -9663,13 +10719,12 @@ class SettingsWindow(QDialog):
             ("Largeur", w["outer_width"]),
             ("Hauteur", w["outer_height"]),
             ("Bordure", w["outer_border"]),
-            ("Epaisseur de bordure", w["outer_border_thickness"]),
             ("Rayon des angles", w["outer_border_radius"]),
             ("Fond (sans)", w["outer_bg"]),
             ("Fond (actif)", w["outer_bg_on"]),
         ])
         self._flat_resizers.append(outer_resizer)
-        outer_sub = _SubSection("Cadre", indent=True)
+        outer_sub = _SubSection("Cadre", level=2)
         outer_sub.add(outer_frame)
         outer_sub.collapsedChanged.connect(on_collapse_changed)
 
@@ -9681,12 +10736,11 @@ class SettingsWindow(QDialog):
             ("Largeur", w["coche_width"]),
             ("Distance du bord", w["coche_margin"]),
             ("Bordure", w["coche_border"]),
-            ("Epaisseur de bordure", w["coche_border_thickness"]),
             ("Rayon des angles", w["coche_border_radius"]),
             ("Couleur", w["coche_color"]),
         ])
         self._flat_resizers.append(coche_resizer)
-        coche_sub = _SubSection("Coche", indent=True)
+        coche_sub = _SubSection("Coche", level=2)
         coche_sub.add(coche_frame)
         coche_sub.collapsedChanged.connect(on_collapse_changed)
 
@@ -9707,7 +10761,6 @@ class SettingsWindow(QDialog):
     def _section_geometry(self) -> _Section:
         section = _Section("Geometrie")
         self.geo_table = _GeoTable(
-            int(self.settings.get("window_radius", 0)),
             bool(self.settings.get("input_frame", True)),
             int(self.settings.get("input_radius", 0)),
             bool(self.settings.get("button_frame", True)),
@@ -9763,7 +10816,7 @@ class SettingsWindow(QDialog):
             ("Rayon des angles", self.slider_thumb_radius_field),
         ])
         self._flat_resizers.append(resizer)
-        thumb_sub = _SubSection("Selecteur", indent=True)
+        thumb_sub = _SubSection("Selecteur", level=2)
         thumb_sub.add(self.slider_thumb_frame)
         thumb_sub.collapsedChanged.connect(section.refresh_min_height)
 
@@ -9794,7 +10847,7 @@ class SettingsWindow(QDialog):
             ("Rayon des angles", self.slider_track_radius_field),
         ])
         self._flat_resizers.append(resizer)
-        rail_sub = _SubSection("Rail", indent=True)
+        rail_sub = _SubSection("Rail", level=2)
         rail_sub.add(self.slider_rail_frame)
         rail_sub.collapsedChanged.connect(section.refresh_min_height)
 
@@ -9812,6 +10865,533 @@ class SettingsWindow(QDialog):
         section.add(columns_wrap)
 
         return section
+
+    def _section_raccourci(self) -> _Section:
+        """Section RACCOURCI (voir pipeline_browser.SHORTCUT_TEXT_STYLE/
+        ROLE_IS_SHORTCUT, Column._on_context_menu "Ajouter un raccourci") :
+        police/couleur DEDIEES pour reperer un raccourci au premier coup
+        d'oeil (un dossier d'un AUTRE emplacement du disque, affiche comme
+        s'il etait physiquement ici) — voir la remarque de l'utilisateur,
+        "police : choix de la police avec toggle : app ou systeme, toggle
+        gras ou regulier, couleur, taille"."""
+        section = _Section("RACCOURCI")
+        # GABARIT "police" (voir _build_font_gabarit_row) — _DualFontSelectField
+        # (pas _FontSelectField, corrige lors du balayage des gabarits :
+        # celle-ci n'offrait pas le choix app/systeme demande) + lissage
+        # ajoute (absent jusqu'ici).
+        self.shortcut_font_family_field = _DualFontSelectField(
+            self.settings.get("shortcut_font_family", "") or "Systeme", width=150)
+        self.shortcut_font_bold_field = _Toggle(
+            bool(self.settings.get("shortcut_font_bold", False)), style_override="toggle1", show_label=False)
+        self.shortcut_font_italic_field = _Toggle(
+            bool(self.settings.get("shortcut_font_italic", False)), show_label=False)
+        self.shortcut_color_field = _CompactAppOrCustomColorField(
+            self.settings.get("shortcut_color", "#8fb4d5"), self.settings["colors"],
+            swatch_size=20, title="Couleur du raccourci")
+        self.shortcut_font_size_field = _SliderField(
+            8, 24, int(self.settings.get("shortcut_font_size", 11)), slider_width=110, box_width=54)
+        self.shortcut_font_smoothing_field = _OverrideSmoothingField(
+            bool(self.settings.get("shortcut_font_smoothing_enabled", False)),
+            self.settings.get("shortcut_font_smoothing", "current"))
+        shortcut_font_row = _build_font_gabarit_row(
+            self.shortcut_font_family_field, self.shortcut_font_bold_field, self.shortcut_font_size_field,
+            self.shortcut_font_smoothing_field, self.shortcut_color_field,
+            italic_field=self.shortcut_font_italic_field)
+        frame, _meta, resizer = _build_flat_table([
+            ("Police", shortcut_font_row),
+        ])
+        self._flat_resizers.append(resizer)
+        section.add(frame)
+        return section
+
+    def _section_icones(self) -> _Section:
+        """Section ICONES (renommee depuis "Logiciel", voir la remarque de
+        l'utilisateur, "renomme la section logiciel en ICONES et crees deux
+        sous sections general et logiciels") : "General" regroupe les
+        icones d'INTERFACE personnalisables (dossier/fichier par defaut,
+        punaise, engrenage Parametres, logo barre de navigation, bouton de
+        repliement — voir _build_icones_general_body) ; "Logiciels" est
+        l'ancien tableau LOGICIEL, INCHANGE (voir _rebuild_logiciels_table),
+        juste deplace sous cette nouvelle sous-section.
+
+        Les 2 sous-sections demarrent REPLIEES et VIDES (voir _SubSection.
+        set_collapsed) — leur contenu (widgets, import differe de
+        pipeline_browser) n'est construit qu'au premier depli (voir
+        _on_icones_general_toggled/_on_icones_logiciels_toggled), MEME
+        principe que Colonnes > Type/Projets/Sous-projets (voir _on_columns_
+        tab_changed) — voir la remarque de l'utilisateur, "tu ne charges
+        leur contenu uniquement que lorsque l'on deplie le tab concerne".
+        Sans risque ici (contrairement au reste de l'onglet General) : ni
+        les icones d'interface ni le tableau Logiciel n'alimentent
+        _current_values() (voir _on_apply/_on_save, qui lisent self.
+        _custom_softwares/self._removed_softwares directement, pas un champ
+        de widget)."""
+        section = _Section("ICONES")
+        general_sub = _SubSection("General", level=2)
+        logiciels_sub = _SubSection("Logiciels", level=2)
+        self._icones_general_sub = general_sub
+        self._icones_logiciels_sub = logiciels_sub
+        self._icones_general_built = False
+        self._icones_logiciels_built = False
+        general_sub.set_collapsed(True)
+        logiciels_sub.set_collapsed(True)
+        general_sub.collapsedChanged.connect(self._on_icones_general_toggled)
+        logiciels_sub.collapsedChanged.connect(self._on_icones_logiciels_toggled)
+
+        wrap = QWidget()
+        wrap_l = QVBoxLayout(wrap)
+        wrap_l.setContentsMargins(0, 0, 0, 0)
+        _stack_subsections(wrap_l, [general_sub, logiciels_sub])
+        section.add(wrap)
+        return section
+
+    def _on_icones_general_toggled(self, collapsed: bool):
+        if not collapsed and not self._icones_general_built:
+            self._icones_general_built = True
+            self._build_icones_general_body(self._icones_general_sub)
+
+    def _on_icones_logiciels_toggled(self, collapsed: bool):
+        if not collapsed and not self._icones_logiciels_built:
+            self._icones_logiciels_built = True
+            self._build_icones_logiciels_body(self._icones_logiciels_sub)
+
+    def _build_icones_logiciels_body(self, sub: "_SubSection"):
+        """Ancien contenu de _section_logiciels (voir son historique) —
+        INCHANGE, juste rattache a une _SubSection au lieu d'une _Section
+        dediee."""
+        self._logiciels_section = sub
+        frame, layout = _table_frame()
+        self._logiciels_frame = frame
+        self._logiciels_layout = layout
+        sub.add(frame)
+        self._rebuild_logiciels_table()
+
+    # -- ICONES > General : icones d'interface (voir UI_ICON_* cote
+    # pipeline_browser) --
+
+    _UI_ICON_ROWS = [
+        ("folder_default", "Dossiers"),
+        ("file_default", "Fichiers"),
+        ("settings_gear", "Engrenage (bouton Parametres)"),
+        ("app_logo", "Icone de la barre de navigation"),
+        ("collapse_toggle", "Icone de repliement de colonne"),
+        ("shortcut", "Raccourcis"),
+    ]
+
+    def _build_icones_general_body(self, sub: "_SubSection"):
+        import pipeline_browser as pb
+
+        radius = int(self.settings.get("button_radius", 0))
+        frame, layout = _table_frame()
+        self._ui_icon_avatars = {}
+
+        index = 0
+        self._build_ui_icon_pin_row(layout, index, radius)
+        index += 1
+        for ui_suffix, label_text in self._UI_ICON_ROWS:
+            ui_key = getattr(pb, f"UI_ICON_{ui_suffix.upper()}")
+            self._build_ui_icon_row(layout, index, ui_key, label_text, radius)
+            index += 1
+
+        _lock_min_height(frame)
+        sub.add(frame)
+        sub.refresh_layout()
+
+    def _build_ui_icon_row(self, layout: QVBoxLayout, index: int, ui_key: str, label_text: str, radius: int):
+        bg = M["table_row_a"] if index % 2 else M["table_row_b"]
+        row, row_l = _table_row(bg, first=(index == 0))
+        row_l.setContentsMargins(14, 6, 14, 6)
+        row_l.setSpacing(10)
+
+        avatar = QLabel()
+        avatar.setFixedSize(24, 24)
+        avatar.setStyleSheet("background: transparent;")
+        self._set_ui_icon_avatar_pixmap(avatar, ui_key)
+        self._ui_icon_avatars[ui_key] = avatar
+        row_l.addWidget(avatar, 0)
+
+        name = QLabel(label_text)
+        name.setFont(_qfont(11, 400))
+        name.setStyleSheet(f"color: {M['value_fg']}; background: transparent;")
+        row_l.addWidget(name, 1)
+
+        change_btn = _Btn(
+            "Changer l'icone...", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"],
+            height=25, radius=radius,
+        )
+        change_btn.clicked.connect(lambda _=False, k=ui_key, av=avatar: self._change_ui_icon(k, av))
+        row_l.addWidget(change_btn, 0)
+
+        capture_btn = _Btn(
+            "Capturer une zone d'ecran...", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"],
+            height=25, radius=radius,
+        )
+        capture_btn.clicked.connect(lambda _=False, k=ui_key, av=avatar: self._capture_ui_icon(k, av))
+        row_l.addWidget(capture_btn, 0)
+
+        reset_btn = _Btn(
+            "Reinitialiser", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"],
+            height=25, radius=radius,
+        )
+        reset_btn.clicked.connect(lambda _=False, k=ui_key, av=avatar: self._reset_ui_icon(k, av))
+        row_l.addWidget(reset_btn, 0)
+
+        _lock_min_height(row)
+        layout.addWidget(row)
+
+    def _build_ui_icon_pin_row(self, layout: QVBoxLayout, index: int, radius: int):
+        """Ligne "Punaise" avec les 2 etats (non attachee/attachee) sur la
+        MEME ligne, voir la remarque de l'utilisateur, "punaise non
+        attachee, + punaise attachee sur la mm ligne"."""
+        import pipeline_browser as pb
+
+        bg = M["table_row_a"] if index % 2 else M["table_row_b"]
+        row, row_l = _table_row(bg, first=(index == 0))
+        row_l.setContentsMargins(14, 6, 14, 6)
+        row_l.setSpacing(16)
+
+        name = QLabel("Punaise")
+        name.setFont(_qfont(11, 400))
+        name.setStyleSheet(f"color: {M['value_fg']}; background: transparent;")
+        row_l.addWidget(name, 0)
+        row_l.addStretch(1)
+
+        for ui_key, sub_label in ((pb.UI_ICON_PIN_INACTIVE, "Non attachee"), (pb.UI_ICON_PIN_ACTIVE, "Attachee")):
+            group = QWidget()
+            group_l = QHBoxLayout(group)
+            group_l.setContentsMargins(0, 0, 0, 0)
+            group_l.setSpacing(6)
+            sub_name = QLabel(sub_label)
+            sub_name.setFont(_qfont(10, 400))
+            sub_name.setStyleSheet(f"color: {M['group_note']}; background: transparent;")
+            group_l.addWidget(sub_name)
+            avatar = QLabel()
+            avatar.setFixedSize(24, 24)
+            avatar.setStyleSheet("background: transparent;")
+            self._set_ui_icon_avatar_pixmap(avatar, ui_key)
+            self._ui_icon_avatars[ui_key] = avatar
+            group_l.addWidget(avatar)
+            change_btn = _Btn(
+                "Changer...", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=25, radius=radius)
+            change_btn.clicked.connect(lambda _=False, k=ui_key, av=avatar: self._change_ui_icon(k, av))
+            group_l.addWidget(change_btn)
+            capture_btn = _Btn(
+                "Capturer...", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=25, radius=radius)
+            capture_btn.clicked.connect(lambda _=False, k=ui_key, av=avatar: self._capture_ui_icon(k, av))
+            group_l.addWidget(capture_btn)
+            reset_btn = _Btn(
+                "Reinit.", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=25, radius=radius)
+            reset_btn.clicked.connect(lambda _=False, k=ui_key, av=avatar: self._reset_ui_icon(k, av))
+            group_l.addWidget(reset_btn)
+            row_l.addWidget(group)
+
+        _lock_min_height(row)
+        layout.addWidget(row)
+
+    def _set_ui_icon_avatar_pixmap(self, avatar: QLabel, ui_key: str):
+        import pipeline_browser as pb
+
+        if ui_key == pb.UI_ICON_PIN_INACTIVE:
+            avatar.setPixmap(pb._pin_icon_pixmap(False, 24))
+        elif ui_key == pb.UI_ICON_PIN_ACTIVE:
+            avatar.setPixmap(pb._pin_icon_pixmap(True, 24))
+        else:
+            pix = pb.custom_ui_icon_pixmap(ui_key, 24)
+            avatar.setPixmap(pix if pix is not None else QPixmap())
+
+    def _change_ui_icon(self, key: str, avatar: QLabel):
+        chosen, _ = QFileDialog.getOpenFileName(
+            self, "Choisir une image", "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.webp *.gif *.tif *.tiff)",
+        )
+        if not chosen:
+            return
+        pix = QPixmap(chosen)
+        if pix.isNull():
+            QMessageBox.warning(self, "Icone", "Impossible de charger cette image.")
+            return
+        self._save_ui_icon_pixmap(key, pix, avatar)
+
+    def _capture_ui_icon(self, key: str, avatar: QLabel):
+        import pipeline_browser as pb
+
+        was_visible = self.isVisible()
+        if was_visible:
+            self.hide()
+        QApplication.processEvents()
+
+        def start_overlay():
+            capture = pb.MultiScreenCapture()
+            self._ui_icon_capture_overlay = capture
+
+            def finish():
+                if was_visible:
+                    self.show()
+                self._ui_icon_capture_overlay = None
+
+            def on_captured(pix: QPixmap):
+                finish()
+                self._save_ui_icon_pixmap(key, pix, avatar)
+
+            capture.captured.connect(on_captured)
+            capture.cancelled.connect(finish)
+
+        QTimer.singleShot(150, start_overlay)
+
+    def _save_ui_icon_pixmap(self, key: str, pix: QPixmap, avatar: QLabel):
+        import pipeline_browser as pb
+
+        if pix.isNull():
+            return
+        if max(pix.width(), pix.height()) > pb.CUSTOM_SOFTWARE_ICON_MAX_DIM:
+            pix = pix.scaled(
+                pb.CUSTOM_SOFTWARE_ICON_MAX_DIM, pb.CUSTOM_SOFTWARE_ICON_MAX_DIM,
+                Qt.KeepAspectRatio, Qt.SmoothTransformation,
+            )
+        dest = pb.custom_software_icon_path(key)
+        try:
+            was_new = not dest.parent.is_dir()
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if was_new:
+                pb._set_hidden(dest.parent)
+        except OSError as exc:
+            QMessageBox.warning(self, "Icone", f"Impossible de creer le dossier de configuration :\n{exc}")
+            return
+        if not pix.save(str(dest), "PNG"):
+            QMessageBox.warning(self, "Icone", "Impossible d'enregistrer l'icone.")
+            return
+        self._set_ui_icon_avatar_pixmap(avatar, key)
+
+    def _reset_ui_icon(self, key: str, avatar: QLabel):
+        import pipeline_browser as pb
+
+        try:
+            pb.custom_software_icon_path(key).unlink(missing_ok=True)
+        except OSError:
+            pass
+        self._set_ui_icon_avatar_pixmap(avatar, key)
+
+    def _rebuild_logiciels_table(self):
+        import pipeline_browser as pb
+
+        layout = self._logiciels_layout
+        while layout.count():
+            item = layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+        labels = {e["key"]: e["label"] for e in self._custom_softwares}
+        keys = [k for k in sorted(pb.SOFTWARE_ICONS.keys()) if k not in self._removed_softwares] + [
+            e["key"] for e in self._custom_softwares if e["key"] not in pb.SOFTWARE_ICONS
+        ]
+        radius = int(self.settings.get("button_radius", 0))
+
+        for i, key in enumerate(keys):
+            bg = M["table_row_a"] if i % 2 else M["table_row_b"]
+            row, row_l = _table_row(bg, first=(i == 0))
+            row_l.setContentsMargins(14, 6, 14, 6)
+            row_l.setSpacing(10)
+
+            avatar = QLabel()
+            avatar.setFixedSize(24, 24)
+            # Fond transparent EXPLICITE (voir _table_cell, meme raison) :
+            # sans lui, le QSS global de l'appli (QWidget { background:
+            # ... } ) peint un fond OPAQUE derriere ce QLabel, masquant la
+            # transparence reelle de l'icone — voir la remarque de
+            # l'utilisateur, "je veux que les icones prennent la
+            # transparence parfaitement ... ce n'est pas le cas avec
+            # blender".
+            avatar.setStyleSheet("background: transparent;")
+            avatar.setPixmap(pb.software_icon_pixmap(key, 24))
+            row_l.addWidget(avatar, 0)
+
+            name = QLabel(labels.get(key, key))
+            name.setFont(_qfont(11, 400))
+            name.setStyleSheet(f"color: {M['value_fg']}; background: transparent;")
+            row_l.addWidget(name, 1)
+
+            change_btn = _Btn(
+                "Changer l'icone...", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"],
+                height=25, radius=radius,
+            )
+            change_btn.clicked.connect(lambda _=False, k=key, av=avatar: self._change_logiciel_icon(k, av))
+            row_l.addWidget(change_btn, 0)
+
+            capture_btn = _Btn(
+                "Capturer une zone d'ecran...", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"],
+                height=25, radius=radius,
+            )
+            capture_btn.clicked.connect(lambda _=False, k=key, av=avatar: self._capture_logiciel_icon(k, av))
+            row_l.addWidget(capture_btn, 0)
+
+            # "Supprimer" (voir la remarque de l'utilisateur, "dans les
+            # logiciels ajoute aussi un bouton supprimer") : sens DIFFERENT
+            # selon l'origine de la ligne — un logiciel AJOUTE (voir "+",
+            # key absente de pb.SOFTWARE_ICONS) n'a rien d'autre a quoi
+            # revenir, "Supprimer" retire donc la ligne entiere ; un
+            # logiciel RECONNU d'origine reste toujours dans la liste (il
+            # est enumere depuis pb.SOFTWARE_ICONS, pas depuis une liste
+            # qu'on pourrait vider), "Supprimer" retire alors seulement son
+            # ICONE PERSONNALISEE (retour au badge genere automatiquement —
+            # meme effet que l'ancienne action "Reinitialiser l'icone du
+            # logiciel").
+            is_custom = key not in pb.SOFTWARE_ICONS
+            delete_btn = _Btn(
+                "Supprimer", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"],
+                height=25, radius=radius,
+            )
+            delete_btn.clicked.connect(lambda _=False, k=key, custom=is_custom: self._delete_logiciel(k, custom))
+            row_l.addWidget(delete_btn, 0)
+
+            _lock_min_height(row)
+            layout.addWidget(row)
+
+        add_bg = M["table_row_a"] if len(keys) % 2 else M["table_row_b"]
+        add_row, add_l = _table_row(add_bg, first=(len(keys) == 0))
+        add_l.setContentsMargins(14, 6, 14, 6)
+        add_btn = _Btn(
+            "+  Ajouter un logiciel...", "transparent", "", M["value_fg"], M["btn_hover"],
+            height=28, weight=500, padding="0 12px", radius=radius,
+        )
+        add_btn.setStyleSheet(add_btn.styleSheet() + "QPushButton { text-align: left; }")
+        add_btn.clicked.connect(self._add_logiciel)
+        add_l.addWidget(add_btn, 0)
+        add_l.addStretch(1)
+        _lock_min_height(add_row)
+        layout.addWidget(add_row)
+
+        # Verrouille aussi le CADRE entier (pas seulement chaque ligne, deja
+        # fait ci-dessus) — MEME correctif que _build_flat_table (voir sa
+        # remarque, "sans ca, un conteneur englobant a court d'espace peut
+        # toujours compresser le cadre lui-meme en dessous de la somme de
+        # ses lignes") : oublie ici a la premiere version de ce tableau,
+        # d'ou les lignes ecrasees/le texte chevauchant constate par
+        # l'utilisateur, capture a l'appui, "le tableau des logiciels est
+        # compressable".
+        _lock_min_height(self._logiciels_frame)
+        if hasattr(self, "_logiciels_section"):
+            self._logiciels_section.refresh_layout()
+
+    def _add_logiciel(self):
+        import pipeline_browser as pb
+
+        name, ok = QInputDialog.getText(self, "Ajouter un logiciel", "Nom du logiciel :")
+        if not ok:
+            return
+        name = name.strip()
+        if not name:
+            return
+        key = "".join(ch for ch in name.upper() if ch.isalnum())
+        if not key:
+            QMessageBox.warning(self, "Logiciel", "Ce nom ne contient aucun caractere valide.")
+            return
+        # Un logiciel d'origine RETIRE (voir _delete_logiciel) reste dans
+        # pb.SOFTWARE_ICONS — "+" le fait juste REAPPARAITRE (voir la
+        # remarque de l'utilisateur, ce doit etre le seul moyen de le
+        # recuperer), plutot que de le refuser comme "deja dans la liste"
+        # ou d'en creer un doublon custom.
+        if key in self._removed_softwares:
+            self._removed_softwares.discard(key)
+            self._rebuild_logiciels_table()
+            self._mark_dirty()
+            return
+        if key in pb.SOFTWARE_ICONS or any(e["key"] == key for e in self._custom_softwares):
+            QMessageBox.warning(self, "Logiciel", f"« {name} » est deja dans la liste.")
+            return
+        self._custom_softwares.append({"key": key, "label": name})
+        self._rebuild_logiciels_table()
+        self._mark_dirty()
+
+    def _delete_logiciel(self, key: str, is_custom: bool):
+        """Retire la LIGNE (voir la remarque de l'utilisateur, "le bouton
+        supprimer ne marche pas, ca ne supprime pas la ligne du logiciel")
+        — pour un logiciel AJOUTE (voir "+"), retire directement son
+        entree ; pour un logiciel RECONNU D'ORIGINE (toujours enumere
+        depuis pb.SOFTWARE_ICONS, impossible a retirer de ce dict), garde
+        sa cle dans self._removed_softwares (voir DEFAULT_SETTINGS) pour
+        l'exclure du tableau ET de la reconnaissance automatique
+        (software_icon_key) tant qu'il n'est pas re-ajoute via "+"."""
+        label = key if not is_custom else next(
+            (e["label"] for e in self._custom_softwares if e["key"] == key), key
+        )
+        if QMessageBox.question(
+            self, "Supprimer", f"Retirer « {label} » de la liste des logiciels ?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+        if is_custom:
+            self._custom_softwares = [e for e in self._custom_softwares if e["key"] != key]
+        else:
+            self._removed_softwares.add(key)
+        self._rebuild_logiciels_table()
+        self._mark_dirty()
+
+    def _change_logiciel_icon(self, key: str, avatar: QLabel):
+        import pipeline_browser as pb
+
+        chosen, _ = QFileDialog.getOpenFileName(
+            self, "Choisir une image", "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.webp *.gif *.tif *.tiff)",
+        )
+        if not chosen:
+            return
+        pix = QPixmap(chosen)
+        if pix.isNull():
+            QMessageBox.warning(self, "Icone", "Impossible de charger cette image.")
+            return
+        self._save_logiciel_icon_pixmap(key, pix, avatar)
+
+    def _capture_logiciel_icon(self, key: str, avatar: QLabel):
+        import pipeline_browser as pb
+
+        was_visible = self.isVisible()
+        if was_visible:
+            self.hide()
+        QApplication.processEvents()
+
+        def start_overlay():
+            capture = pb.MultiScreenCapture()
+            self._logiciel_capture_overlay = capture
+
+            def finish():
+                if was_visible:
+                    self.show()
+                self._logiciel_capture_overlay = None
+
+            def on_captured(pix: QPixmap):
+                finish()
+                self._save_logiciel_icon_pixmap(key, pix, avatar)
+
+            capture.captured.connect(on_captured)
+            capture.cancelled.connect(finish)
+
+        QTimer.singleShot(150, start_overlay)
+
+    def _save_logiciel_icon_pixmap(self, key: str, pix: QPixmap, avatar: QLabel):
+        import pipeline_browser as pb
+
+        if pix.isNull():
+            return
+        if max(pix.width(), pix.height()) > pb.CUSTOM_SOFTWARE_ICON_MAX_DIM:
+            pix = pix.scaled(
+                pb.CUSTOM_SOFTWARE_ICON_MAX_DIM, pb.CUSTOM_SOFTWARE_ICON_MAX_DIM,
+                Qt.KeepAspectRatio, Qt.SmoothTransformation,
+            )
+        dest = pb.custom_software_icon_path(key)
+        try:
+            was_new = not dest.parent.is_dir()
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if was_new:
+                pb._set_hidden(dest.parent)
+        except OSError as exc:
+            QMessageBox.warning(self, "Icone", f"Impossible de creer le dossier de configuration :\n{exc}")
+            return
+        if not pix.save(str(dest), "PNG"):
+            QMessageBox.warning(self, "Icone", "Impossible d'enregistrer l'icone.")
+            return
+        pb._set_hidden(dest)
+        avatar.setPixmap(pb.software_icon_pixmap(key, 24))
 
     # -- barre du bas --
 
@@ -9870,6 +11450,17 @@ class SettingsWindow(QDialog):
         if chosen:
             self.root_field.setText(chosen)
 
+    _WINDOW_RADIUS_ON = 12
+
+    def _window_radius_value(self) -> int:
+        """Fenetre (voir Application > Fenetre, self.window_radius_toggle) :
+        un simple on/off desormais (voir la remarque de l'utilisateur,
+        "transforme le slider en toggle") — rayon FIXE quand actif, 0 sinon
+        (window_radius reste un ENTIER cote stockage, comportement INCHANGE
+        pour pipeline_browser.WINDOW_RADIUS/_apply_panel_radius, seule la
+        commande passe d'un slider a un toggle)."""
+        return self._WINDOW_RADIUS_ON if self.window_radius_toggle.isChecked() else 0
+
     def _apply_panel_radius(self, radius: int):
         # Peint a la main (_PanelFrame), pas en QSS — voir sa remarque de
         # tete de classe : ce widget porte tout le contenu de la fenetre,
@@ -9896,11 +11487,27 @@ class SettingsWindow(QDialog):
         return super().nativeEvent(eventType, message)
 
     def _connect_live_updates(self):
+        # TITRE (voir _section_titre/_apply_title_level_style) : tout
+        # changement de police/couleur/retrait restyle EN DIRECT toutes les
+        # _Section/_SubSection deja construites de cette fenetre.
+        for level in (1, 2, 3, 4, 5):
+            prefix = f"title_level{level}"
+            self.__dict__[f"{prefix}_font_family_field"].changed.connect(self._apply_title_level_style)
+            self.__dict__[f"{prefix}_font_bold_field"].toggled.connect(self._apply_title_level_style)
+            self.__dict__[f"{prefix}_font_italic_field"].toggled.connect(self._apply_title_level_style)
+            self.__dict__[f"{prefix}_font_size_field"].valueChanged.connect(self._apply_title_level_style)
+            self.__dict__[f"{prefix}_font_smoothing_field"].changed.connect(self._apply_title_level_style)
+            self.__dict__[f"{prefix}_font_color_field"].changed.connect(self._apply_title_level_style)
+            self.__dict__[f"{prefix}_indent_field"].valueChanged.connect(self._apply_title_level_style)
         # La racine par defaut suivait auparavant seulement Appliquer/
         # Enregistrer (voir _on_apply) ; l'utilisateur veut desormais que
         # TOUT changement se repercute en direct, sans exception.
         self.root_field.textChanged.connect(self._mark_dirty)
+        self.default_preset_field.changed.connect(self._mark_dirty)
         self.scale_field.valueChanged.connect(self._mark_dirty)
+        self.auto_collapse_set_columns_field.toggled.connect(self._mark_dirty)
+        self.omit_file_names_field.textChanged.connect(self._mark_dirty)
+        self.omit_extensions_field.textChanged.connect(self._mark_dirty)
         self.font_table.changed.connect(self._mark_dirty)
         # _on_colors_changed reapplique le style de TOUTE la fenetre
         # (tableaux, menus, cadre natif...) — correct mais couteux, et
@@ -9917,6 +11524,19 @@ class SettingsWindow(QDialog):
         self._colors_changed_timer.setInterval(16)
         self._colors_changed_timer.timeout.connect(self._on_colors_changed)
         self.color_grid.changed.connect(self._schedule_colors_changed)
+        # Meme regroupement que _colors_changed_timer ci-dessus, pour
+        # _apply_column_type_preview (voir _connect_column_type_overrides) :
+        # c'est le SEUL apercu en direct de cette fenetre encore cable sans
+        # aucun debounce directement sur CHAQUE champ/toggle de 3 onglets
+        # entiers (Colonnes > Type/Projets/Sous-projets) — un simple glisser
+        # de slider y emet valueChanged a CHAQUE pixel, rejouant a chaque
+        # fois une boucle sur ~20 cles x 3 colonnes — voir la remarque de
+        # l'utilisateur, "gros ralentissements ... les manips sont donc tres
+        # lourdes".
+        self._column_type_preview_timer = QTimer(self)
+        self._column_type_preview_timer.setSingleShot(True)
+        self._column_type_preview_timer.setInterval(16)
+        self._column_type_preview_timer.timeout.connect(self._apply_column_type_preview)
         self.header_visible_field.toggled.connect(self._mark_dirty)
         self.header_height_field.valueChanged.connect(self._mark_dirty)
         self.header_padding_field.valueChanged.connect(self._mark_dirty)
@@ -9924,6 +11544,13 @@ class SettingsWindow(QDialog):
         self.header_radius_field.changed.connect(self._mark_dirty)
         self.header_border_field.changed.connect(self._mark_dirty)
         self.header_border_thickness_field.valueChanged.connect(self._mark_dirty)
+        self.header_icon_right_padding_field.valueChanged.connect(self._mark_dirty)
+        self.header_font_family_field.changed.connect(self._mark_dirty)
+        self.header_font_bold_field.toggled.connect(self._mark_dirty)
+        self.header_font_italic_field.toggled.connect(self._mark_dirty)
+        self.header_font_color_field.changed.connect(self._mark_dirty)
+        self.header_font_size_field.valueChanged.connect(self._mark_dirty)
+        self.header_font_smoothing_field.changed.connect(self._mark_dirty)
         self.item_column_width_field.valueChanged.connect(self._mark_dirty)
         self.column_gap_field.valueChanged.connect(self._mark_dirty)
         self.column_padding_field.changed.connect(self._mark_dirty)
@@ -9933,6 +11560,10 @@ class SettingsWindow(QDialog):
         self.column_bg_color_field.changed.connect(self._mark_dirty)
         self.resize_badge_position_field.changed.connect(self._mark_dirty)
         self.resize_badge_font_field.changed.connect(self._mark_dirty)
+        self.resize_badge_font_bold_field.toggled.connect(self._mark_dirty)
+        self.resize_badge_font_italic_field.toggled.connect(self._mark_dirty)
+        self.resize_badge_font_size_field.valueChanged.connect(self._mark_dirty)
+        self.resize_badge_font_smoothing_field.changed.connect(self._mark_dirty)
         self.resize_badge_text_color_field.changed.connect(self._mark_dirty)
         self.resize_badge_bg_color_field.changed.connect(self._mark_dirty)
         self.resize_badge_border_field.changed.connect(self._mark_dirty)
@@ -9946,8 +11577,11 @@ class SettingsWindow(QDialog):
             self.header_height_field.valueChanged, self.header_padding_field.valueChanged,
             self.header_color_field.changed, self.header_radius_field.changed,
             self.header_border_field.changed, self.header_border_thickness_field.valueChanged,
+            self.header_icon_right_padding_field.valueChanged, self.header_font_family_field.changed,
+            self.header_font_color_field.changed, self.header_font_bold_field.toggled,
+            self.header_font_size_field.valueChanged,
             self.column_gap_field.valueChanged, self.column_padding_field.changed,
-            self.column_border_field.changed,
+            self.column_border_field.changed, self.column_bg_color_field.changed,
             self.column_border_thickness_field.valueChanged, self.column_border_radius_field.changed,
         ):
             field_signal.connect(self._apply_column_preview)
@@ -9955,8 +11589,17 @@ class SettingsWindow(QDialog):
             # dont le toggle est OFF suit CE champ general — la boite
             # "Type" de l'apercu doit donc AUSSI se redessiner quand il
             # bouge, pas seulement quand un champ de Colonnes > Type change.
-            if hasattr(self, "_type_toggles"):
-                field_signal.connect(self._apply_column_type_preview)
+            # _schedule_column_type_preview (PAS l'appel direct) : ce champ
+            # GENERAL emet, lui aussi, a chaque pixel d'un glisser de
+            # slider — meme raison que _connect_column_type_overrides.
+            # SANS garde hasattr (contrairement a avant) : l'onglet Colonnes
+            # est desormais construit PARESSEUSEMENT (voir _on_main_tab_
+            # changed), _type_toggles peut donc encore ne pas exister ICI —
+            # sans consequence, _schedule_column_type_preview/_apply_column_
+            # type_preview se no-opent deja proprement tant qu'il n'existe
+            # pas (voir leurs docstrings), et cette connexion reste valide
+            # pour la suite (une fois l'onglet visite).
+            field_signal.connect(self._schedule_column_type_preview)
         self._apply_column_preview()
         # Items (voir _section_items/_ItemRowPreview) : meme principe que
         # l'apercu Colonnes juste au-dessus (_mark_dirty PARTOUT +
@@ -9964,6 +11607,7 @@ class SettingsWindow(QDialog):
         self.item_font_field.changed.connect(self._mark_dirty)
         self.item_font_size_field.valueChanged.connect(self._mark_dirty)
         self.item_font_bold_field.toggled.connect(self._mark_dirty)
+        self.item_font_italic_field.toggled.connect(self._mark_dirty)
         self.item_antialias_field.changed.connect(self._mark_dirty)
         self.item_header_gap_field.valueChanged.connect(self._mark_dirty)
         for spec in _ITEM_TEXT_FIELD_SPECS:
@@ -9980,12 +11624,16 @@ class SettingsWindow(QDialog):
         self.preview_title_font_size_field.valueChanged.connect(self._mark_dirty)
         self.preview_title_font_color_field.changed.connect(self._mark_dirty)
         self.preview_title_font_family_field.changed.connect(self._mark_dirty)
+        self.preview_title_font_bold_field.toggled.connect(self._mark_dirty)
+        self.preview_title_font_italic_field.toggled.connect(self._mark_dirty)
         self.preview_title_font_smoothing_field.changed.connect(self._mark_dirty)
         self.preview_title_padding_field.changed.connect(self._mark_dirty)
         self.preview_status_font_size_field.valueChanged.connect(self._mark_dirty)
         self.preview_status_font_color_field.changed.connect(self._mark_dirty)
         self.preview_status_font_color_idle_field.changed.connect(self._mark_dirty)
         self.preview_status_font_family_field.changed.connect(self._mark_dirty)
+        self.preview_status_font_bold_field.toggled.connect(self._mark_dirty)
+        self.preview_status_font_italic_field.toggled.connect(self._mark_dirty)
         self.preview_status_font_smoothing_field.changed.connect(self._mark_dirty)
         self.preview_status_padding_field.changed.connect(self._mark_dirty)
         self.preview_toggle_width_field.valueChanged.connect(self._mark_dirty)
@@ -9996,6 +11644,13 @@ class SettingsWindow(QDialog):
         self.preview_toggle_radius_field.valueChanged.connect(self._mark_dirty)
         self.preview_toggle_x_field.valueChanged.connect(self._mark_dirty)
         self.preview_toggle_y_field.valueChanged.connect(self._mark_dirty)
+        self.collapse_toggle_mode_field.changed.connect(self._mark_dirty)
+        self.shortcut_font_family_field.changed.connect(self._mark_dirty)
+        self.shortcut_font_bold_field.toggled.connect(self._mark_dirty)
+        self.shortcut_font_italic_field.toggled.connect(self._mark_dirty)
+        self.shortcut_color_field.changed.connect(self._mark_dirty)
+        self.shortcut_font_size_field.valueChanged.connect(self._mark_dirty)
+        self.shortcut_font_smoothing_field.changed.connect(self._mark_dirty)
         self.item_selection_focus_field.changed.connect(self._mark_dirty)
         self.item_selection_unfocus_field.changed.connect(self._mark_dirty)
         self.item_hover_field.changed.connect(self._mark_dirty)
@@ -10004,6 +11659,13 @@ class SettingsWindow(QDialog):
         self.item_selection_border_field.changed.connect(self._mark_dirty)
         self.item_selection_radius_field.changed.connect(self._mark_dirty)
         self.item_selection_edge_border_field.toggled.connect(self._mark_dirty)
+        for state in ("unfocus", "hover", "idle"):
+            for key, sig_attr in (
+                ("padding", "changed"), ("border", "changed"), ("radius", "changed"), ("edge_border", "toggled"),
+            ):
+                field_widget = getattr(self, f"item_selection_{state}_{key}_field")
+                getattr(field_widget, sig_attr).connect(self._mark_dirty)
+                getattr(self, f"item_selection_{state}_{key}_toggle").toggled.connect(self._mark_dirty)
         item_text_signals = [
             spec.dirty_signal(getattr(self, _ITEM_TEXT_FIELD_ATTR[spec.key])) for spec in _ITEM_TEXT_FIELD_SPECS
         ]
@@ -10020,10 +11682,27 @@ class SettingsWindow(QDialog):
             self.item_hover_field.changed, self.item_idle_field.changed, self.item_selection_padding_field.changed,
             self.item_selection_border_field.changed, self.item_selection_radius_field.changed,
             self.item_selection_edge_border_field.toggled,
+            *(
+                getattr(getattr(self, f"item_selection_{state}_{key}_field"), sig_attr)
+                for state in ("unfocus", "hover", "idle")
+                for key, sig_attr in (
+                    ("padding", "changed"), ("border", "changed"),
+                    ("radius", "changed"), ("edge_border", "toggled"),
+                )
+            ),
+            *(
+                getattr(self, f"item_selection_{state}_{key}_toggle").toggled
+                for state in ("unfocus", "hover", "idle")
+                for key in ("padding", "border", "radius", "edge_border")
+            ),
         ):
             field_signal.connect(self._apply_item_preview)
-            if hasattr(self, "_type_toggles"):
-                field_signal.connect(self._apply_column_type_preview)
+            # _schedule_column_type_preview (PAS l'appel direct) : meme
+            # raison que ci-dessus (Colonnes > Type suit aussi ces champs
+            # GENERAUX Items quand son toggle de ligne est OFF). SANS garde
+            # hasattr : voir la remarque juste au-dessus (onglet Colonnes
+            # desormais paresseux).
+            field_signal.connect(self._schedule_column_type_preview)
         self._apply_item_preview()
         self.columns_resizable_toggle.toggled.connect(self._mark_dirty)
         # En plus de piloter les colonnes du navigateur principal (settings
@@ -10074,6 +11753,7 @@ class SettingsWindow(QDialog):
             ):
                 w[key].changed.connect(self._on_toggle_style_changed)
         self.geo_table.changed.connect(self._on_window_radius_changed)
+        self.window_radius_toggle.toggled.connect(self._on_window_radius_changed)
         # Geometrie > Slider (voir _section_geometry) : contrairement aux
         # AUTRES reglages ci-dessus, ceux-la doivent aussi rejouer l'habillage
         # de TOUS les _MiniSlider deja construits (voir _apply_slider_style) —
@@ -10096,7 +11776,7 @@ class SettingsWindow(QDialog):
         # en plus des vrais QLineEdit de la fenetre principale (voir
         # pipeline_browser.apply_all_settings) — voir la remarque de
         # l'utilisateur, capture a l'appui.
-        self.geo_table.input_radius_field.valueChanged.connect(self._apply_dropdown_radius)
+        self.geo_table.input_radius_field.valueChanged.connect(self._queue_dropdown_radius)
         self._apply_dropdown_radius(self.geo_table.input_radius_field.value())
         self.table_radius_field.valueChanged.connect(self._apply_table_radius)
         self._apply_table_radius(self.table_radius_field.value())
@@ -10128,34 +11808,32 @@ class SettingsWindow(QDialog):
         # PERSISTANTS de cette fenetre (barre du bas, Parcourir, preset),
         # restes orphelins de ce reglage jusqu'a present (voir la remarque
         # de l'utilisateur, capture a l'appui).
-        self.geo_table.button_radius_field.valueChanged.connect(self._apply_button_radius)
+        self.geo_table.button_radius_field.valueChanged.connect(self._queue_button_radius)
         self._apply_button_radius(self.geo_table.button_radius_field.value())
 
+    def _queue_button_radius(self, radius: int):
+        """Voir _queue_dropdown_radius, meme raison (performances)."""
+        self._button_radius_pending = radius
+        if not self._button_radius_timer.isActive():
+            self._button_radius_timer.start()
+
+    def _flush_button_radius(self):
+        if self._button_radius_pending is not None:
+            self._apply_button_radius(self._button_radius_pending)
+            self._button_radius_pending = None
+
     def _apply_button_radius(self, radius: int):
+        # Les boutons "Copier" (gabarits bordures/padding/coins arrondis)
+        # ont ete supprimes (voir _build_linked_sides_toggle/la remarque de
+        # l'utilisateur, "Pas de bouton copier") — ne reste ici QUE les
+        # boutons PERSISTANTS de cette fenetre (barre du bas, Parcourir,
+        # preset).
         for btn in (
             self._preset_save_btn, self._browse_btn,
             self._bottombar_reset_btn, self._bottombar_apply_btn,
             self._bottombar_cancel_btn, self._bottombar_save_btn,
-            self.cell_padding_field.copy_btn,
-            self.slider_thumb_border_field.copy_btn,
-            self.slider_track_border_field.copy_btn,
-            self.column_border_field.copy_btn,
-            self.header_border_field.copy_btn,
-            self.table_border_field.copy_btn,
-            self.item_selection_padding_field.copy_btn,
-            self.item_selection_border_field.copy_btn,
-            self.header_radius_field.copy_btn,
-            self.column_border_radius_field.copy_btn,
         ):
             btn.setRadius(radius)
-        for w in self._toggle_widgets.values():
-            w["outer_border"].copy_btn.setRadius(radius)
-            w["coche_border"].copy_btn.setRadius(radius)
-            w["outer_border_radius"].copy_btn.setRadius(radius)
-            w["coche_border_radius"].copy_btn.setRadius(radius)
-        self.item_selection_radius_field.copy_btn.setRadius(radius)
-        self.slider_thumb_radius_field.copy_btn.setRadius(radius)
-        self.slider_track_radius_field.copy_btn.setRadius(radius)
 
     def _apply_columns_resizable(self, enabled: bool):
         """Tableaux > Colonnes dimensionnables : active/desactive le
@@ -10242,12 +11920,39 @@ class SettingsWindow(QDialog):
         settings["toggle_style"] = self.toggle_style_field.value()
         settings.update(self._toggle_shape_values("toggle1"))
         settings.update(self._toggle_shape_values("toggle2"))
-        _sync_toggle_style(settings)
-        for toggle in self.findChildren(_Toggle):
-            toggle.apply_style()
+        # Court-circuit (meme principe que _refresh_dynamic_colors, voir sa
+        # remarque de tete) : ce style ne depend QUE des cles rassemblees
+        # ci-dessus (toggle_style + formes toggle1/toggle2 + couleurs LIVE)
+        # — pas la peine de resynchroniser _TOGGLE_STYLE et repasser
+        # apply_style() sur TOUS les _Toggle deja construits si rien de
+        # tout ca n'a REELLEMENT change depuis le dernier appel. Appelee a
+        # CHAQUE tick de _on_colors_changed (voir sa remarque, "gros
+        # ralentissements ... manips tres lourdes"), le plus souvent SANS
+        # le moindre rapport avec le style des toggles (la pastille glissee
+        # n'etant referencee par AUCUN champ Cadre/Coche en mode "App").
+        snapshot = json.dumps(settings, sort_keys=True, default=str)
+        if snapshot != getattr(self, "_toggle_style_snapshot", None):
+            self._toggle_style_snapshot = snapshot
+            _sync_toggle_style(settings)
+            for toggle in self.findChildren(_Toggle):
+                toggle.apply_style()
         self.toggle_style_field.refreshPreviews()
         self._sync_toggle_style_visibility()
         self._mark_dirty()
+
+    def _queue_dropdown_radius(self, radius: int):
+        """Voir la remarque de tete pres de _dropdown_radius_timer
+        (__init__) : ne fait QUE retarder l'appel reel de 30ms, en ne
+        retenant que la DERNIERE valeur si plusieurs ticks arrivent avant
+        l'echeance (glisser de slider)."""
+        self._dropdown_radius_pending = radius
+        if not self._dropdown_radius_timer.isActive():
+            self._dropdown_radius_timer.start()
+
+    def _flush_dropdown_radius(self):
+        if self._dropdown_radius_pending is not None:
+            self._apply_dropdown_radius(self._dropdown_radius_pending)
+            self._dropdown_radius_pending = None
 
     def _apply_dropdown_radius(self, radius: int):
         """Applique le rayon a TOUTES les boites habillees comme une zone de
@@ -10265,7 +11970,6 @@ class SettingsWindow(QDialog):
             self.scale_field, self.header_height_field, self.header_padding_field,
             self.header_radius_field, self.header_border_thickness_field,
             self.column_gap_field, self.column_border_thickness_field, self.column_border_radius_field,
-            self.geo_table.window_radius_field,
             self.geo_table.input_radius_field, self.geo_table.button_radius_field,
             self.table_radius_field, self.slider_thumb_width_field,
             self.slider_thumb_height_field, self.slider_track_height_field,
@@ -10281,124 +11985,17 @@ class SettingsWindow(QDialog):
         self._sync_preset_box()
 
     def _apply_column_preview(self, *_args):
-        """Colonnes > l'apercu (voir _ColumnPreview) : relit les reglages
-        de la section et les rejoue sur les colonnes de demonstration —
-        voir la remarque de l'utilisateur. _current_hex() (pas
-        self.settings["colors"]) : meme raison que _apply_table_head_color,
-        lit la palette LIVE que le champ suit deja pendant un glisser de la
-        page Couleurs.
-
-        column_gap_field EN PLUS des 4 autres (Hauteur/Padding/Couleur/
-        Arrondi/Cadre) depuis la remarque de l'utilisateur, "ajoute un
-        parametre 'distance entre colonne'... fait en sorte que l'apercu
-        se mette bien a jour avec ca" — pilote l'espacement ENTRE les 2
-        colonnes de demonstration plutot que leur contenu propre, d'ou le
-        setSpacing sur le layout qui les empile plutot qu'un appel a
-        preview.refresh() — meme comportement que le vrai navigateur (voir
-        pipeline_browser.PipelineBrowser._apply_settings/Column.
-        _suppress_left), PAS une reinterpretation propre a l'apercu :
-        voir la remarque de l'utilisateur, "je veux que le fonctionnement
-        de l'apercu soit le meme que dans l'appli". max(0, ...) avant
-        setSpacing (comme cote navigateur) : QBoxLayout.setSpacing() n'accepte
-        PAS un espacement reellement negatif, TOUTE valeur negative y
-        retombe silencieusement sur l'espacement du STYLE (6px ici) plutot
-        que -1px reel — sans ce clamp, les 2 pastilles s'ecartaient au lieu
-        de se toucher a Distance < 0 (voir la remarque de l'utilisateur,
-        "les colonnes s'ecartent... dans cet apercu"). Le filet manquant
-        est gere a la place par setSeamHidden (voir _ColumnPreview), pas
-        par un espacement negatif — meme mecanisme que Column._suppress_left."""
-        hexval = self.header_color_field._current_hex()
-        edges = self.header_border_field.sidesEnabledValue()
-        gap = self.column_gap_field.value()
-        live_colors = dict(self.settings["colors"])
-        live_colors.update(self.color_grid.value())
-        header_border_colors = {
-            k: _resolve_color_value(v, live_colors) for k, v in self.header_border_field.sidesValue().items()
-        }
-        border_enabled = self.column_border_field.sidesEnabledValue()
-        border_colors = {
-            k: _resolve_color_value(v, live_colors) for k, v in self.column_border_field.sidesValue().items()
-        }
-        # PAS de nibbling (voir _nibble_header_radius, desormais inutilisee)
-        # — voir la remarque de l'utilisateur, "je ne veux pas que le fait
-        # de mettre un arrondi sur les colonnes affecte les arrondis des
-        # entetes (j'ai deja un parametre pour ca)".
-        header_radius = _radius_dict(self.header_radius_field.cornersValue())
-        pad = self.column_padding_field.sidesValue()
-        # MEME regle que pipeline_browser.Column._suppress_left (PAS
-        # seulement gap<=0, voir sa docstring) : 2 boites ne fusionnent leur
-        # filet/coin QUE si elles se touchent VRAIMENT — un padding actif
-        # d'un cote ou de l'autre les ecarte deja, meme a gap<=0, et leurs 2
-        # filets/coins arrondis doivent alors REAPPARAITRE — voir la
-        # remarque de l'utilisateur, "il devrait y avoir un coin arrondi
-        # entre les colonnes car le padding des colonnes est different de
-        # 0 ... pareil pour les bordures". Toutes les boites partagent ICI
-        # le MEME padding general (Colonnes > Type peut le surcharger pour
-        # la 1ere boite seule, voir _apply_column_type_preview, qui rejoue
-        # setPadding/setBorder par-dessus mais pas ce seam — ecart mineur,
-        # deja la avant ce correctif).
-        seam_hidden = gap <= 0 and int(pad.get("left", 0)) <= 0 and int(pad.get("right", 0)) <= 0
-        # Fond REEL de la colonne (voir _ColumnPreview.setFillColor) :
-        # C['void'] ("skin - niveau2"), MEME couleur que pipeline_browser.
-        # Column.refresh_colors (card.setFrameStyle(C["void"], ...)) —
-        # live_colors.get("void", ...) (pas C["void"] directement) : suit
-        # la palette LIVE pendant un glisser de la page Couleurs, meme
-        # raison que header_border_colors/border_colors ci-dessus — voir la
-        # remarque de l'utilisateur, "la couleur de fond de colonne est
-        # fausse dans l'apercu".
-        fill_hex = live_colors.get("void", C["void"])
-        for preview in self.column_previews:
-            preview.refresh(
-                self.header_height_field.value(), self.header_padding_field.value(),
-                hexval, header_radius, edges,
-                header_border_colors, self.header_border_thickness_field.value(),
-            )
-            preview.setBorder(
-                border_enabled, border_colors,
-                self.column_border_thickness_field.value(), self.column_border_radius_field.cornersValue(),
-            )
-            preview.setFillColor(fill_hex)
-            preview.setPadding(pad)
-            preview.setSeamHidden(seam_hidden)
-        self.column_preview_row_l.setSpacing(max(0, gap))
+        """No-op — aperçus de colonnes SUPPRIMES (voir _section_headers,
+        la remarque de l'utilisateur, "supprime les apercus de colonnes").
+        Methode gardee UNIQUEMENT parce que des dizaines de signaux y sont
+        deja connectes (voir _connect_live_updates) ; rien a y rejouer."""
+        return
 
     def _apply_item_preview(self, *_args):
-        """Items > Texte/Selection : relit les reglages des 2 tableaux et
-        les rejoue sur les 4 lignes de demonstration DE CHACUNE des boites
-        Type/Projets/Sous-projet DEJA utilisees par Colonnes/Entetes (voir
-        _ColumnPreview.setItemStyle/la remarque de l'utilisateur, "l'apercu
-        doit se faire sur les colonnes deja existantes" — pas de widget
-        d'apercu separe) — meme raison/meme technique que
-        _apply_column_preview (_current_hex()/_resolve_color_value :
-        palette LIVE pendant un glisser de la page Couleurs)."""
-        live_colors = dict(self.settings["colors"])
-        live_colors.update(self.color_grid.value())
-        font_family = self._resolve_item_font_family(self.item_font_field.value())
-        sel_enabled = self.item_selection_border_field.sidesEnabledValue()
-        sel_colors = {
-            k: _resolve_color_value(v, live_colors) for k, v in self.item_selection_border_field.sidesValue().items()
-        }
-        smoothing = self.item_antialias_field.smoothingValue() if self.item_antialias_field.isChecked() else None
-        for preview in self.column_previews:
-            preview.setItemStyle(
-                font_family=font_family,
-                font_size=self.item_font_size_field.value(),
-                smoothing=smoothing,
-                color_hex=_resolve_color_value(self.item_color_field.value(), live_colors),
-                icon_enabled=self.item_icon_field.isChecked(),
-                row_height=self.item_row_height_field.value(),
-                row_spacing=self.item_row_spacing_field.value(),
-                text_padding=self.item_text_padding_field.value(),
-                hover_color=self.item_hover_field.value(),
-                focus_color=self.item_selection_focus_field.value(),
-                unfocus_color=self.item_selection_unfocus_field.value(),
-                padding=self.item_selection_padding_field.sidesValue(),
-                enabled=sel_enabled,
-                colors=sel_colors,
-                radius=self.item_selection_radius_field.cornersValue(),
-                edge_border=self.item_selection_edge_border_field.isChecked(),
-                header_gap=self.item_header_gap_field.value(),
-            )
+        """No-op — aperçus de colonnes SUPPRIMES, voir _apply_column_preview
+        (MEME raison, meme gardee que pour les dizaines de signaux deja
+        connectes)."""
+        return
 
     def _resolve_item_font_family(self, value: str) -> str:
         """Colonnes > Texte > Police : `value` peut etre "Systeme" (auto,
@@ -10468,10 +12065,19 @@ class SettingsWindow(QDialog):
             self.columns_table_frame, self._columns_table_row_meta, radius)
         self._headers_table_row_meta = self._restyle_flat_table(
             self.headers_table_frame, self._headers_table_row_meta, radius)
-        # 2 tableaux Texte/Selection de Items (voir _section_items, meme
-        # technique).
+        # Tableaux Lignes/Texte/Icone/Apercu/Selection de Items (voir
+        # _section_items, meme technique — "Texte" scindee en 4 sous-
+        # sous-sections, voir la remarque de l'utilisateur sur ce refactor).
+        self._titre_row_meta = self._restyle_flat_table(
+            self.titre_table_frame, self._titre_row_meta, radius)
+        self._item_lines_row_meta = self._restyle_flat_table(
+            self.item_lines_frame, self._item_lines_row_meta, radius)
         self._item_text_row_meta = self._restyle_flat_table(
             self.item_text_frame, self._item_text_row_meta, radius)
+        self._item_icon_row_meta = self._restyle_flat_table(
+            self.item_icon_frame, self._item_icon_row_meta, radius)
+        self._item_image_row_meta = self._restyle_flat_table(
+            self.item_image_frame, self._item_image_row_meta, radius)
         self._item_selection_row_meta = self._restyle_flat_table(
             self.item_selection_frame, self._item_selection_row_meta, radius)
         # Les 2 sous-tables de Geometrie > Slider (voir _build_flat_table,
@@ -10518,7 +12124,11 @@ class SettingsWindow(QDialog):
         self.toggles_table_frame.setBorder(enabled, colors, thickness)
         self.columns_table_frame.setBorder(enabled, colors, thickness)
         self.headers_table_frame.setBorder(enabled, colors, thickness)
+        self.titre_table_frame.setBorder(enabled, colors, thickness)
+        self.item_lines_frame.setBorder(enabled, colors, thickness)
         self.item_text_frame.setBorder(enabled, colors, thickness)
+        self.item_icon_frame.setBorder(enabled, colors, thickness)
+        self.item_image_frame.setBorder(enabled, colors, thickness)
         self.item_selection_frame.setBorder(enabled, colors, thickness)
         self.slider_thumb_frame.setBorder(enabled, colors, thickness)
         self.slider_rail_frame.setBorder(enabled, colors, thickness)
@@ -10546,7 +12156,11 @@ class SettingsWindow(QDialog):
             *self._tables_row_meta,
             *self._columns_table_row_meta,
             *self._headers_table_row_meta,
+            *self._titre_row_meta,
+            *self._item_lines_row_meta,
             *self._item_text_row_meta,
+            *self._item_icon_row_meta,
+            *self._item_image_row_meta,
             *self._item_selection_row_meta,
             *self._slider_thumb_row_meta,
             *self._slider_rail_row_meta,
@@ -10601,7 +12215,9 @@ class SettingsWindow(QDialog):
         frames = [
             self.app_table_frame, self.tables_table_frame,
             self.columns_table_frame, self.headers_table_frame,
-            self.item_text_frame, self.item_selection_frame,
+            self.titre_table_frame,
+            self.item_lines_frame, self.item_text_frame, self.item_icon_frame,
+            self.item_image_frame, self.item_selection_frame,
             self.slider_thumb_frame, self.slider_rail_frame, self.toggles_table_frame,
             self.color_grid.wrap, self.font_table.frame, self.geo_table.frame_wrap,
             self.table_preview.frame,
@@ -10704,6 +12320,14 @@ class SettingsWindow(QDialog):
         settings["slider_track_border"] = self.slider_track_border_field.sidesValue()
         settings["slider_track_border_enabled"] = self.slider_track_border_field.sidesEnabledValue()
         settings["slider_track_radius"] = self.slider_track_radius_field.cornersValue()
+        # Court-circuit (meme principe que _on_toggle_style_changed/
+        # _refresh_dynamic_colors ci-dessus) : rien a refaire si aucune des
+        # cles slider_* ci-dessus n'a REELLEMENT change depuis le dernier
+        # appel — meme raison, appelee a chaque tick de _on_colors_changed.
+        snapshot = json.dumps(settings, sort_keys=True, default=str)
+        if snapshot == getattr(self, "_slider_style_snapshot", None):
+            return
+        self._slider_style_snapshot = snapshot
         _sync_slider_style(settings)
         for slider in self.findChildren(_MiniSlider):
             slider.apply_style()
@@ -10776,6 +12400,38 @@ class SettingsWindow(QDialog):
             f"background: {M['field_bg']}; border: 1px solid {M['field_border']}; "
             f"color: {M['value_muted']}; padding: 0 8px;"
         )
+        self._refresh_omit_fields_style()
+
+    def _refresh_omit_fields_style(self):
+        style = (
+            f"background: {M['field_bg']}; border: 1px solid {M['field_border']}; "
+            f"color: {M['value_muted']}; padding: 0 8px;"
+        )
+        for field_name in ("omit_file_names_field", "omit_extensions_field"):
+            field = getattr(self, field_name, None)
+            if field is not None:
+                field.setStyleSheet(style)
+
+    @staticmethod
+    def _parse_omit_list(field: QLineEdit) -> list[str]:
+        text = field.text().replace(";", "\n").replace(",", "\n")
+        values = []
+        seen = set()
+        for raw_value in text.splitlines():
+            value = raw_value.strip()
+            key = value.casefold()
+            if value and key not in seen:
+                values.append(value)
+                seen.add(key)
+        return values
+
+    @staticmethod
+    def _format_omit_list(value) -> str:
+        if isinstance(value, str):
+            return value
+        if not isinstance(value, (list, tuple, set)):
+            return ""
+        return ", ".join(str(item) for item in value if str(item).strip())
 
     def _refresh_dynamic_colors(self, colors: dict):
         """Reapplique en direct (pendant le glisser d'une pastille de la
@@ -10805,7 +12461,7 @@ class SettingsWindow(QDialog):
         )
         # self.panel : le fond de base sous tout le reste (voir
         # _apply_panel_radius) partage aussi M['panel_bg'].
-        self._apply_panel_radius(self.geo_table.window_radius_field.value())
+        self._apply_panel_radius(self._window_radius_value())
         self._refresh_root_field_style()
         self.header_border_field.refresh_colors(colors)
         # Zones de saisie (selects, boites de valeur, preset...) et les 3
@@ -10825,17 +12481,182 @@ class SettingsWindow(QDialog):
             check.update()
 
     def _on_window_radius_changed(self):
-        self._apply_panel_radius(self.geo_table.window_radius_field.value())
+        self._apply_panel_radius(self._window_radius_value())
         self._mark_dirty()
+
+    def _step_badge_values(self) -> dict:
+        """Les cles de l'icone de niveaux (Colonnes > Projets > Colonnes >
+        "Icone de niveaux", voir _build_column_override_page) — MEME repli
+        que _column_override_values (page "Projets" construite
+        PARESSEUSEMENT, voir _on_columns_tab_changed) : lues depuis les
+        CHAMPS live si cette page a deja ete visitee au moins une fois,
+        sinon reprises telles quelles depuis self.settings."""
+        if not hasattr(self, "step_badge_width_field"):
+            return {
+                key: self.settings.get(key) for key in (
+                    "step_badge_width", "step_badge_height",
+                    "step_badge_border_enabled", "step_badge_border", "step_badge_border_thickness",
+                    "step_badge_radius", "step_badge_radius_linked",
+                    "step_badge_color_base2", "step_badge_color_base3", "step_badge_color_base4",
+                    "step_badge_color_base5", "step_badge_color_base6", "step_badge_color_basen",
+                    "step_badge_text_color_base2", "step_badge_text_color_base3", "step_badge_text_color_base4",
+                    "step_badge_text_color_base5", "step_badge_text_color_base6", "step_badge_text_color_basen",
+                    "step_badge_offset_x", "step_badge_offset_y",
+                    "step_badge_font_family", "step_badge_font_bold",
+                    "step_badge_font_smoothing_enabled", "step_badge_font_smoothing",
+                    "step_badge_border_smoothing",
+                )
+            }
+        return {
+            "step_badge_width": self.step_badge_width_field.value(),
+            "step_badge_height": self.step_badge_height_field.value(),
+            "step_badge_border_enabled": self.step_badge_border_field.sidesEnabledValue(),
+            "step_badge_border": self.step_badge_border_field.sidesValue(),
+            "step_badge_border_thickness": self.step_badge_border_thickness_field.value(),
+            "step_badge_border_smoothing": self.step_badge_border_smoothing_field.isChecked(),
+            "step_badge_radius": self.step_badge_radius_field.cornersValue(),
+            "step_badge_radius_linked": self.step_badge_radius_field.isLinked(),
+            "step_badge_color_base2": self.step_badge_color_base2_field.value(),
+            "step_badge_color_base3": self.step_badge_color_base3_field.value(),
+            "step_badge_color_base4": self.step_badge_color_base4_field.value(),
+            "step_badge_color_base5": self.step_badge_color_base5_field.value(),
+            "step_badge_color_base6": self.step_badge_color_base6_field.value(),
+            "step_badge_color_basen": self.step_badge_color_basen_field.value(),
+            "step_badge_text_color_base2": self.step_badge_text_color_base2_field.value(),
+            "step_badge_text_color_base3": self.step_badge_text_color_base3_field.value(),
+            "step_badge_text_color_base4": self.step_badge_text_color_base4_field.value(),
+            "step_badge_text_color_base5": self.step_badge_text_color_base5_field.value(),
+            "step_badge_text_color_base6": self.step_badge_text_color_base6_field.value(),
+            "step_badge_text_color_basen": self.step_badge_text_color_basen_field.value(),
+            "step_badge_offset_x": self.step_badge_offset_x_field.value(),
+            "step_badge_offset_y": self.step_badge_offset_y_field.value(),
+            "step_badge_font_family": (
+                "" if self.step_badge_font_family_field.value() == "Systeme"
+                else self.step_badge_font_family_field.value()),
+            "step_badge_font_bold": self.step_badge_font_bold_field.isChecked(),
+            "step_badge_font_smoothing_enabled": self.step_badge_font_smoothing_field.isChecked(),
+            "step_badge_font_smoothing": self.step_badge_font_smoothing_field.smoothingValue(),
+        }
+
+    def _column_override_values(self) -> dict:
+        """Les 6 cles de surcharge par titre de colonne (Colonnes > Type/
+        Projets/Sous-projets, voir _build_column_override_page) — lues
+        depuis les CHAMPS live pour chaque titre DEJA construit (visite au
+        moins une fois cette session), sinon REPRISES telles quelles depuis
+        self.settings — un titre A LA FOIS, PAS un repli global tout-ou-
+        rien (voir la remarque de l'utilisateur, "le tab colonnes avec
+        tous les overrides ne sont pas sauvegardes dans les presets") :
+        des qu'UN SEUL des 3 titres (Type/Projets/Sous-projet) a ete visite
+        dans cette session, l'ancien repli global (base sur `not self.
+        _type_toggles`) desactivait cette protection pour TOUS les titres a
+        la fois — les titres PAS ENCORE visites se retrouvaient alors
+        rapportes avec des dicts VIDES (`_type_fields.get(title, {})`),
+        EFFACANT silencieusement leurs surcharges deja enregistrees des le
+        prochain Enregistrer/preset.
+
+        Necessaire depuis que l'onglet Colonnes est construit PARESSEUSEMENT
+        (voir _on_main_tab_changed, la remarque de l'utilisateur sur la
+        lenteur a l'ouverture) : _current_values() est appelee au moins une
+        fois AVANT toute visite possible de cet onglet (_preview_now() en
+        fin de __init__)."""
+        type_built = "Type" in getattr(self, "_type_fields", {})
+        if type_built:
+            column_type_override_enabled = {
+                key: toggle.isChecked() for key, toggle in self._type_toggles["Type"].items()
+            }
+            column_type_overrides = {
+                key: _read_override_field_raw(key, field) for key, field in self._type_fields["Type"].items()
+            }
+            column_type_override_linked = {
+                key: self._type_fields["Type"][key].isLinked()
+                for key in _TYPE_LINKED_KEYS if key in self._type_fields["Type"]
+            }
+        else:
+            column_type_override_enabled = self.settings.get("column_type_override_enabled", {})
+            column_type_overrides = self.settings.get("column_type_overrides", {})
+            column_type_override_linked = self.settings.get("column_type_override_linked", {})
+
+        enabled_by_title = dict(self.settings.get("column_override_enabled_by_title") or {})
+        overrides_by_title = dict(self.settings.get("column_overrides_by_title") or {})
+        linked_by_title = dict(self.settings.get("column_override_linked_by_title") or {})
+        # PREVIEW_STACK_TITLE ("Focus") AJOUTE ici (bug latent corrige au
+        # passage, jamais capture jusqu'ici malgre son propre onglet de
+        # surcharge deja existant) — ainsi que "Logiciels"/"IN"/"OVER"/
+        # "OUT"/INSPECTOR_TITLE (voir la remarque de l'utilisateur, "ajoute
+        # la colonne logiciels dans les settings, ainsi que in over et
+        # out, puis la colonne inspecteur") : MEME mecanisme "column_
+        # overrides_by_title" que Projets/Sous-projet, meme garde PAR TITRE
+        # (visite ou non cette session) pour ne jamais ecraser silencieusement
+        # les autres.
+        for title in (
+            "Projets", "Sous-projet", PREVIEW_STACK_TITLE,
+            "Logiciels", "IN", "OVER", "OUT", INSPECTOR_TITLE,
+        ):
+            if title in getattr(self, "_type_fields", {}):
+                enabled_by_title[title] = {
+                    key: toggle.isChecked() for key, toggle in self._type_toggles[title].items()
+                }
+                overrides_by_title[title] = {
+                    key: _read_override_field_raw(key, field) for key, field in self._type_fields[title].items()
+                }
+                linked_by_title[title] = {
+                    key: self._type_fields[title][key].isLinked()
+                    for key in _TYPE_LINKED_KEYS if key in self._type_fields[title]
+                }
+        return {
+            "column_type_override_enabled": column_type_override_enabled,
+            "column_type_overrides": column_type_overrides,
+            "column_type_override_linked": column_type_override_linked,
+            "column_override_enabled_by_title": enabled_by_title,
+            "column_overrides_by_title": overrides_by_title,
+            "column_override_linked_by_title": linked_by_title,
+        }
+
+    def _selection_clone_values(self) -> dict:
+        """Les 4x3 cles d'override des etats "clones" de Focus (Non focus/
+        Survol/Non selectionne, voir _build_selection_clone_subsection) —
+        ces champs sont EAGER (onglet General, jamais paresseux), pas
+        besoin du repli hasattr utilise par _step_badge_values/
+        _column_override_values."""
+        out = {}
+        for state in ("unfocus", "hover", "idle"):
+            padding_field = getattr(self, f"item_selection_{state}_padding_field")
+            border_field = getattr(self, f"item_selection_{state}_border_field")
+            radius_field = getattr(self, f"item_selection_{state}_radius_field")
+            edge_field = getattr(self, f"item_selection_{state}_edge_border_field")
+            out.update({
+                f"item_selection_{state}_padding_override":
+                    getattr(self, f"item_selection_{state}_padding_toggle").isChecked(),
+                f"item_selection_{state}_padding_linked": padding_field.isLinked(),
+                f"item_selection_{state}_padding": padding_field.sidesValue(),
+                f"item_selection_{state}_border_override":
+                    getattr(self, f"item_selection_{state}_border_toggle").isChecked(),
+                f"item_selection_{state}_border_enabled": border_field.sidesEnabledValue(),
+                f"item_selection_{state}_border": border_field.sidesValue(),
+                f"item_selection_{state}_radius_override":
+                    getattr(self, f"item_selection_{state}_radius_toggle").isChecked(),
+                f"item_selection_{state}_radius": radius_field.cornersValue(),
+                f"item_selection_{state}_radius_linked": radius_field.isLinked(),
+                f"item_selection_{state}_edge_border_override":
+                    getattr(self, f"item_selection_{state}_edge_border_toggle").isChecked(),
+                f"item_selection_{state}_edge_border": edge_field.isChecked(),
+            })
+        return out
 
     def _current_values(self) -> dict:
         colors = dict(self.settings["colors"])
         colors.update(self.color_grid.value())
         geo = self.geo_table.value()
         out = dict(self.settings)
+        out.update(self._current_title_level_values())
         out.update({
             "root_path": self.root_field.text().strip() or DEFAULT_SETTINGS["root_path"],
+            "default_preset": "" if self.default_preset_field.value() == "(Aucun)" else self.default_preset_field.value(),
             "ui_scale": self.scale_field.value(),
+            "auto_collapse_set_columns": self.auto_collapse_set_columns_field.isChecked(),
+            "application_omit_file_names": self._parse_omit_list(self.omit_file_names_field),
+            "application_omit_extensions": self._parse_omit_list(self.omit_extensions_field),
+            "window_radius": self._window_radius_value(),
             "colors": colors,
             "header_visible": self.header_visible_field.isChecked(),
             "header_height": self.header_height_field.value(),
@@ -10846,6 +12667,16 @@ class SettingsWindow(QDialog):
             "header_border_enabled": self.header_border_field.sidesEnabledValue(),
             "header_border": self.header_border_field.sidesValue(),
             "header_border_thickness": self.header_border_thickness_field.value(),
+            "header_icon_right_padding": self.header_icon_right_padding_field.value(),
+            "header_font_family": (
+                "" if self.header_font_family_field.value() == "Systeme"
+                else self.header_font_family_field.value()),
+            "header_font_bold": self.header_font_bold_field.isChecked(),
+            "header_font_italic": self.header_font_italic_field.isChecked(),
+            "header_font_color": self.header_font_color_field.value(),
+            "header_font_size": self.header_font_size_field.value(),
+            "header_font_antialias_override_enabled": self.header_font_smoothing_field.isChecked(),
+            "header_font_antialias_override": self.header_font_smoothing_field.smoothingValue(),
             "item_column_width": self.item_column_width_field.value(),
             "column_gap": self.column_gap_field.value(),
             "column_padding_linked": self.column_padding_field.isLinked(),
@@ -10861,6 +12692,11 @@ class SettingsWindow(QDialog):
             "resize_badge_offset_y": self.resize_badge_position_field.offsetY(),
             "resize_badge_font_family": (
                 "" if self.resize_badge_font_field.value() == "Systeme" else self.resize_badge_font_field.value()),
+            "resize_badge_font_bold": self.resize_badge_font_bold_field.isChecked(),
+            "resize_badge_font_italic": self.resize_badge_font_italic_field.isChecked(),
+            "resize_badge_font_size": self.resize_badge_font_size_field.value(),
+            "resize_badge_font_smoothing_enabled": self.resize_badge_font_smoothing_field.isChecked(),
+            "resize_badge_font_smoothing": self.resize_badge_font_smoothing_field.smoothingValue(),
             "resize_badge_text_color": self.resize_badge_text_color_field.value(),
             "resize_badge_bg_color": self.resize_badge_bg_color_field.value(),
             "resize_badge_border_enabled": self.resize_badge_border_field.sidesEnabledValue(),
@@ -10871,6 +12707,7 @@ class SettingsWindow(QDialog):
             "item_font_family": "" if self.item_font_field.value() == "Systeme" else self.item_font_field.value(),
             "item_font_size": self.item_font_size_field.value(),
             "item_font_bold": self.item_font_bold_field.isChecked(),
+            "item_font_italic": self.item_font_italic_field.isChecked(),
             "item_antialias_override_enabled": self.item_antialias_field.isChecked(),
             "item_antialias_override": self.item_antialias_field.smoothingValue(),
             "item_header_gap": self.item_header_gap_field.value(),
@@ -10904,6 +12741,8 @@ class SettingsWindow(QDialog):
             "preview_title_font_family": (
                 "" if self.preview_title_font_family_field.value() == "Systeme"
                 else self.preview_title_font_family_field.value()),
+            "preview_title_font_bold": self.preview_title_font_bold_field.isChecked(),
+            "preview_title_font_italic": self.preview_title_font_italic_field.isChecked(),
             "preview_title_font_smoothing_enabled": self.preview_title_font_smoothing_field.isChecked(),
             "preview_title_font_smoothing": self.preview_title_font_smoothing_field.smoothingValue(),
             "preview_title_padding_linked": self.preview_title_padding_field.isLinked(),
@@ -10914,6 +12753,8 @@ class SettingsWindow(QDialog):
             "preview_status_font_family": (
                 "" if self.preview_status_font_family_field.value() == "Systeme"
                 else self.preview_status_font_family_field.value()),
+            "preview_status_font_bold": self.preview_status_font_bold_field.isChecked(),
+            "preview_status_font_italic": self.preview_status_font_italic_field.isChecked(),
             "preview_status_font_smoothing_enabled": self.preview_status_font_smoothing_field.isChecked(),
             "preview_status_font_smoothing": self.preview_status_font_smoothing_field.smoothingValue(),
             "preview_status_padding_linked": self.preview_status_padding_field.isLinked(),
@@ -10927,6 +12768,17 @@ class SettingsWindow(QDialog):
             "preview_toggle_radius": self.preview_toggle_radius_field.value(),
             "preview_toggle_x": self.preview_toggle_x_field.value(),
             "preview_toggle_y": self.preview_toggle_y_field.value(),
+            "collapse_toggle_mode": (
+                "icone" if self.collapse_toggle_mode_field.value() == "Icone" else "chevrons"),
+            "shortcut_font_family": (
+                "" if self.shortcut_font_family_field.value() == "Systeme"
+                else self.shortcut_font_family_field.value()),
+            "shortcut_font_bold": self.shortcut_font_bold_field.isChecked(),
+            "shortcut_font_italic": self.shortcut_font_italic_field.isChecked(),
+            "shortcut_color": self.shortcut_color_field.value(),
+            "shortcut_font_size": self.shortcut_font_size_field.value(),
+            "shortcut_font_smoothing_enabled": self.shortcut_font_smoothing_field.isChecked(),
+            "shortcut_font_smoothing": self.shortcut_font_smoothing_field.smoothingValue(),
             "item_selection_focus_color": self.item_selection_focus_field.value(),
             "item_selection_unfocus_color": self.item_selection_unfocus_field.value(),
             "item_hover_color": self.item_hover_field.value(),
@@ -10938,37 +12790,14 @@ class SettingsWindow(QDialog):
             "item_selection_radius": self.item_selection_radius_field.cornersValue(),
             "item_selection_radius_linked": self.item_selection_radius_field.isLinked(),
             "item_selection_edge_border": self.item_selection_edge_border_field.isChecked(),
-            # Colonnes > Type (voir _build_column_type_page/
-            # _resolve_type_effective) : un toggle par ligne (ON = cette
-            # cle SURCHARGE la valeur generale sur la colonne "Type") + la
-            # valeur BRUTE de chaque champ (meme forme que son homologue
-            # general ci-dessus) + le "lie"/"libre" des 4 champs qui
-            # l'exposent (voir _TYPE_LINKED_KEYS).
-            "column_type_override_enabled": {
-                key: toggle.isChecked() for key, toggle in self._type_toggles.get("Type", {}).items()
-            },
-            "column_type_overrides": {
-                key: _read_override_field_raw(key, field) for key, field in self._type_fields.get("Type", {}).items()
-            },
-            "column_type_override_linked": {
-                key: self._type_fields["Type"][key].isLinked()
-                for key in _TYPE_LINKED_KEYS if key in self._type_fields.get("Type", {})
-            },
-            # Meme principe, mais pour Projets/Sous-projet (voir
-            # DEFAULT_SETTINGS.column_overrides_by_title/_override_store) —
-            # un sous-dict par titre reel de colonne.
-            "column_override_enabled_by_title": {
-                title: {key: toggle.isChecked() for key, toggle in toggles.items()}
-                for title, toggles in self._type_toggles.items() if title != "Type"
-            },
-            "column_overrides_by_title": {
-                title: {key: _read_override_field_raw(key, field) for key, field in fields.items()}
-                for title, fields in self._type_fields.items() if title != "Type"
-            },
-            "column_override_linked_by_title": {
-                title: {key: fields[key].isLinked() for key in _TYPE_LINKED_KEYS if key in fields}
-                for title, fields in self._type_fields.items() if title != "Type"
-            },
+            **self._selection_clone_values(),
+            # Colonnes > Type/Projets/Sous-projets (voir _column_override_
+            # values, PAS lu directement ici : l'onglet Colonnes est
+            # desormais construit PARESSEUSEMENT, voir _on_main_tab_changed
+            # — self._type_toggles/_type_fields peuvent encore ne pas
+            # exister au tout premier appel de cette methode).
+            **self._column_override_values(),
+            **self._step_badge_values(),
             "columns_resizable": self.columns_resizable_toggle.isChecked(),
             "table_border_enabled": self.table_border_field.sidesEnabledValue(),
             "table_border": self.table_border_field.sidesValue(),
@@ -10996,6 +12825,8 @@ class SettingsWindow(QDialog):
             "slider_track_border_enabled": self.slider_track_border_field.sidesEnabledValue(),
             "slider_track_radius": self.slider_track_radius_field.cornersValue(),
             "slider_track_radius_linked": self.slider_track_radius_field.isLinked(),
+            "custom_softwares": list(self._custom_softwares),
+            "removed_softwares": sorted(self._removed_softwares),
             **geo,
         })
         for key, conf in self.font_table.value().items():
@@ -11031,6 +12862,23 @@ class SettingsWindow(QDialog):
     def _on_save(self):
         self.settings = self._current_values()
         save_settings(self.settings)
+        # Met AUSSI a jour le preset ACTIF sur le disque, s'il y en a un
+        # (voir _save_current_preset, MEME logique) : sans ca, ce bouton
+        # (le bouton PRINCIPAL "Enregistrer" de la fenetre) ne touchait
+        # QUE pipeline_settings.json, jamais pipeline_settings.presets.json
+        # — un changement fait ici semblait bien pris en compte sur le
+        # moment (l'appli l'applique en direct), mais RECHARGER ce MEME
+        # preset plus tard faisait silencieusement REVENIR l'ANCIENNE
+        # valeur, jamais ecrite dans son fichier — voir la remarque de
+        # l'utilisateur, "certains parametres ne s'enregistrent pas dans
+        # les presets". Desormais peu importe LEQUEL des 2 boutons
+        # "Enregistrer" est utilise (celui-ci ou le petit bouton a cote du
+        # selecteur de preset, voir _save_current_preset), un preset ACTIF
+        # est TOUJOURS mis a jour.
+        if self._current_preset and self._current_preset != "Personnalise":
+            presets = _load_presets()
+            presets[self._current_preset] = self.settings
+            _save_presets(presets)
         self._saved = True
         self._dirty = False
         self.titlebar.set_dirty(False)

@@ -1,0 +1,66 @@
+GABARITS
+Je te fais les gabarits de certains parametre qu’il faudra bien que tu gardes en memoire. Applique les sur toutes les lignes concernees jusqu’a maintenant, et toutes les lignes correspondantes qui seront crees.
+
+TOUTES LES LIGNES POLICES:
+sur une seule ligne : 
+- Choix entre police appli et police systeme : les toggle correspondant de doivent avoir aucun texte et etre proche du menu deroulant correspondant. 
+- Toggle gras: le texte doit etre avant le toggle et etre ‘gras’ pour les deux etats. 
+- Slider hauteur: mettre un texte avant le slider de hauteur ‘Hauteur’.
+Ceci est le gabarit pour toutes les lignes ‘police’ de la fenetre de settings. A l’avenir toutes les lignes ‘police’ que je te ferais rajouter seront toutes basees sur ce gabarit sans que je te le mentionne.
+
+TOUTES LES LIGNES ARRONDI DES ANGLES:
+sur une seule ligne : 
+pas de bouton copier. Toggle : texte ‘lier les 4’ avant le toggle et pour les 2 etats. 4 sliders avec invit de saisie dont la valeur se change en temps reel avec le slider pour chacun des cotes.
+Ceci est le gabarit pour toutes les lignes ‘coins arrondis’ de la fenetre de settings. A l’avenir toutes les ligne ‘coins arrondis’ que je te ferais rajouter seront toutes basees sur ce gabarit sans que je te le mentionne.
+
+TOUTES LES LIGNES BORDURES:
+pas de bouton copier. Toggle : texte ‘lier les 4’ avant le toggle et pour les 2 etats. 4 toggles chacun au dessus du choix de la couleur pour chacun des cotes.
+Ceci est le gabarit pour toutes les lignes ‘bordures’ de la fenetre de settings. A l’avenir toutes les ligne ‘bordures’ que je te ferais rajouter seront toutes basees sur ce gabarit sans que je te le mentionne.
+
+TOUTES LES LIGNES PADDING:
+pas de bouton copier. Toggle : texte ‘lier les 4’ avant le toggle et pour les 2 etats. 4 sliders avec invit de saisie dont la valeur se change en temps reel avec le slider pour chacun des cotes.
+Ceci est le gabarit pour toutes les lignes ‘padding’ de la fenetre de settings (sauf si je te precise le cote, par exemple ‘padding droit’. A l’avenir toutes les ligne ‘padding’ que je te ferais rajouter seront toutes basees sur ce gabarit sans que je te le mentionne.
+
+TOUTES LES LIGNES COULEUR:
+Toggles pour choix de couleur Appli ou couleur personnalisee. les textes des toggles doivent etre devant les toggles correspondant et etre “Couleur application” et “Couleur systeme”. concernant les items de la liste deroulante des couleurs applications, il devront etre dans l’ordre alphabetique.
+Ceci est le gabarit pour toutes les lignes de choix de couleurs de la fenetre de settings. A l’avenir toutes les lignes ou je te demande un choix de couleur seront toutes basees sur ce gabarit sans que je te le mentionne.
+
+
+---------------------------------------------------------------------------------------------------------
+
+
+PERFORMENCES
+- il y a des problemes de performances quand on modifie les parametres des settings, voici la liste : 
+– geometrie/zone de saisie
+– geometrie/boutons
+
+INTERFACE
+/GENERAL/
+- colonnes/selection, focus, non focus, survol et non selectionne doivent etre des sous section de ‘selection’
+- geometrie/fenetre : deplace cette ligne dans GENERAL/APPLICATION mais transforme le slider en toggle
+- geometrie/zones de saisie : suprime la ligne mais cree une section Zones de saisie avec : 
+– faire un appercu
+– TABLEAU ligne 1: ‘polices’
+– ligne 2: ‘bordures’
+– ligne 3: ‘coins arrondis’
+– ligne 4: ‘couleur de fond’
+- geometrie/boutons: suprime la ligne mais cree une section Bouton avec :
+– faire un appercu
+– TABLEAU ligne 1: ‘polices’
+– ligne 2: ‘bordures’
+– ligne 3: ‘coins arrondis’
+– ligne 4: ‘couleur de fond’
+- colonnes/cadre de redimensionnement a renommer : encart
+
+- Merci de faire en sorte que la largeur de la colonne inspecteur soit sauvegardee en temps reel.
+
+- nouveau document texte
+
+
+---------------------------------------------------------------------------------------------------------
+
+
+slider ‘Hauteur de ligne’ avec invite de texte comprenant la valeur en px (en temps reel)
+
+
+---------------------------------------------------------------------------------------------------------

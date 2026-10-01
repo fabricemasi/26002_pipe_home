@@ -1,0 +1,30 @@
+{
+  "columns": [
+    {
+      "name": "Colonne 3",
+      "show_dirs": true,
+      "show_files": true,
+      "omit_dirs": [],
+      "omit_files": [],
+      "focus": true
+    },
+    {
+      "name": "Colonne 4",
+      "show_dirs": true,
+      "show_files": true,
+      "omit_dirs": [],
+      "omit_files": [],
+      "focus": true
+    }
+  ],
+  "work_dir": {
+    "type": "logiciel",
+    "show_dirs": true,
+    "show_files": false,
+    "omit_dirs": [],
+    "omit_files": []
+  },
+  "set_enabled": true,
+  "focus_enabled": true,
+  "in_over_out_enabled": true
+}

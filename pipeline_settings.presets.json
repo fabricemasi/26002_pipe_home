@@ -2,7 +2,8 @@
   "fab": {
     "root_path": "F:\\PIPELINE",
     "ui_scale": 100,
-    "window_radius": 1,
+    "auto_collapse_set_columns": false,
+    "window_radius": 12,
     "header_visible": true,
     "header_height": 26,
     "header_padding": 2,
@@ -47,7 +48,7 @@
       "bottom": "#2e3135",
       "right": "#2e3135"
     },
-    "column_border_thickness": 1,
+    "column_border_thickness": 3,
     "column_border_radius": {
       "top_left": 5,
       "top_right": 5,
@@ -56,6 +57,37 @@
     },
     "column_border_radius_linked": true,
     "column_bg_color": "@skinN2",
+    "resize_badge_position": "bottom_right",
+    "resize_badge_offset_x": 8,
+    "resize_badge_offset_y": 8,
+    "resize_badge_font_family": "",
+    "resize_badge_font_bold": true,
+    "resize_badge_font_italic": false,
+    "resize_badge_font_size": 11,
+    "resize_badge_font_smoothing_enabled": true,
+    "resize_badge_font_smoothing": "current",
+    "resize_badge_text_color": "#d6d9dc",
+    "resize_badge_bg_color": "#202326",
+    "resize_badge_border_enabled": {
+      "left": true,
+      "top": true,
+      "bottom": true,
+      "right": true
+    },
+    "resize_badge_border": {
+      "left": "@border2",
+      "top": "@border2",
+      "bottom": "@border2",
+      "right": "@border2"
+    },
+    "resize_badge_border_thickness": 1,
+    "resize_badge_border_radius": {
+      "top_left": 4,
+      "top_right": 4,
+      "bottom_right": 4,
+      "bottom_left": 4
+    },
+    "resize_badge_border_radius_linked": true,
     "preview_padding": {
       "left": 4,
       "top": 4,
@@ -74,7 +106,9 @@
     "preview_title_font_size": 18,
     "preview_title_font_color": "@skinAccent",
     "preview_title_font_family": "Police principale",
-    "preview_title_font_smoothing_enabled": false,
+    "preview_title_font_bold": true,
+    "preview_title_font_italic": false,
+    "preview_title_font_smoothing_enabled": true,
     "preview_title_font_smoothing": "current",
     "preview_title_padding_linked": true,
     "preview_title_padding": {
@@ -86,12 +120,14 @@
     "preview_status_font_color": "#ff9000",
     "preview_status_font_color_idle": "#30ff9000",
     "preview_status_font_family": "Police code",
+    "preview_status_font_bold": true,
+    "preview_status_font_italic": false,
     "preview_status_font_smoothing_enabled": true,
     "preview_status_font_smoothing": "previous",
-    "preview_status_padding_linked": false,
+    "preview_status_padding_linked": true,
     "preview_status_padding": {
       "top": 19,
-      "right": 5
+      "right": 19
     },
     "preview_toggle_width": 33,
     "preview_toggle_height": 33,
@@ -112,16 +148,28 @@
     "preview_toggle_radius": 4,
     "preview_toggle_x": 5,
     "preview_toggle_y": 1,
+    "collapse_toggle_mode": "chevrons",
+    "detail_panel_width": 1239,
+    "shortcut_font_family": "Police fichiers",
+    "shortcut_font_bold": false,
+    "shortcut_font_italic": false,
+    "shortcut_color": "#ff9b00",
+    "shortcut_font_size": 12,
+    "shortcut_font_smoothing_enabled": true,
+    "shortcut_font_smoothing": "current",
     "item_font_family": "Police fichiers",
-    "item_font_size": 13,
+    "item_font_size": 12,
     "item_font_bold": false,
+    "item_font_italic": false,
     "item_color": "#ffffff",
     "item_antialias_override_enabled": true,
     "item_antialias_override": "current",
     "item_icon_enabled": false,
-    "item_row_height": 33,
+    "item_row_height": 35,
+    "item_icon_size": 22,
+    "item_icon_padding_left": 7,
     "item_row_spacing": 3,
-    "item_column_width": 200,
+    "item_column_width": 220,
     "item_row_border_enabled": false,
     "item_row_border_color": "@ligne",
     "item_row_border_thickness": 1,
@@ -186,6 +234,96 @@
     },
     "item_selection_radius_linked": true,
     "item_selection_edge_border": true,
+    "item_selection_unfocus_padding_override": false,
+    "item_selection_unfocus_padding": {
+      "left": 0,
+      "top": 0,
+      "bottom": 0,
+      "right": 0
+    },
+    "item_selection_unfocus_border_override": false,
+    "item_selection_unfocus_border_enabled": {
+      "left": false,
+      "top": false,
+      "bottom": false,
+      "right": false
+    },
+    "item_selection_unfocus_border": {
+      "left": "#2c3034",
+      "top": "#2c3034",
+      "bottom": "#2c3034",
+      "right": "#2c3034"
+    },
+    "item_selection_unfocus_radius_override": false,
+    "item_selection_unfocus_radius": {
+      "top_left": 0,
+      "top_right": 0,
+      "bottom_right": 0,
+      "bottom_left": 0
+    },
+    "item_selection_unfocus_radius_linked": true,
+    "item_selection_unfocus_edge_border_override": false,
+    "item_selection_unfocus_edge_border": true,
+    "item_selection_hover_padding_override": false,
+    "item_selection_hover_padding": {
+      "left": 0,
+      "top": 0,
+      "bottom": 0,
+      "right": 0
+    },
+    "item_selection_hover_border_override": false,
+    "item_selection_hover_border_enabled": {
+      "left": false,
+      "top": false,
+      "bottom": false,
+      "right": false
+    },
+    "item_selection_hover_border": {
+      "left": "#2c3034",
+      "top": "#2c3034",
+      "bottom": "#2c3034",
+      "right": "#2c3034"
+    },
+    "item_selection_hover_radius_override": false,
+    "item_selection_hover_radius": {
+      "top_left": 0,
+      "top_right": 0,
+      "bottom_right": 0,
+      "bottom_left": 0
+    },
+    "item_selection_hover_radius_linked": true,
+    "item_selection_hover_edge_border_override": false,
+    "item_selection_hover_edge_border": true,
+    "item_selection_idle_padding_override": false,
+    "item_selection_idle_padding": {
+      "left": 0,
+      "top": 0,
+      "bottom": 0,
+      "right": 0
+    },
+    "item_selection_idle_border_override": false,
+    "item_selection_idle_border_enabled": {
+      "left": false,
+      "top": false,
+      "bottom": false,
+      "right": false
+    },
+    "item_selection_idle_border": {
+      "left": "#2c3034",
+      "top": "#2c3034",
+      "bottom": "#2c3034",
+      "right": "#2c3034"
+    },
+    "item_selection_idle_radius_override": false,
+    "item_selection_idle_radius": {
+      "top_left": 0,
+      "top_right": 0,
+      "bottom_right": 0,
+      "bottom_left": 0
+    },
+    "item_selection_idle_radius_linked": true,
+    "item_selection_idle_edge_border_override": false,
+    "item_selection_idle_edge_border": true,
     "column_type_overrides": {
       "item_column_width": 120,
       "column_padding": {
@@ -237,11 +375,17 @@
         "right": "#2a2e32"
       },
       "header_border_thickness": 1,
+      "header_icon_right_padding": 0,
+      "header_font_family": "",
+      "header_font_bold": true,
+      "header_font_color": "#9aa1a7",
+      "header_font_size": 10,
       "item_font_family": "Arial",
       "item_font_bold": false,
       "item_color": "#8a8a8a",
-      "item_icon_enabled": true,
       "item_row_height": 39,
+      "item_icon_size": 0,
+      "item_icon_padding_left": 0,
       "item_row_spacing": 0,
       "item_text_padding": 15,
       "item_row_border_enabled": false,
@@ -274,9 +418,6 @@
       },
       "item_image_ratio": 1.0,
       "item_selection_focus_color": "#4a1313",
-      "item_selection_unfocus_color": "#3e4145",
-      "item_hover_color": "#23282a",
-      "item_idle_color": "@itemIdle",
       "item_selection_padding": {
         "left": 7,
         "top": 0,
@@ -301,7 +442,97 @@
         "bottom_right": 0,
         "bottom_left": 10
       },
-      "item_selection_edge_border": false
+      "item_selection_edge_border": false,
+      "item_selection_unfocus_color": "#3e4145",
+      "item_selection_unfocus_padding": {
+        "left": 0,
+        "top": 0,
+        "bottom": 0,
+        "right": 0
+      },
+      "item_selection_unfocus_padding_override": true,
+      "item_selection_unfocus_border_enabled": {
+        "left": false,
+        "top": false,
+        "bottom": false,
+        "right": false
+      },
+      "item_selection_unfocus_border": {
+        "left": "#2c3034",
+        "top": "#2c3034",
+        "bottom": "#2c3034",
+        "right": "#2c3034"
+      },
+      "item_selection_unfocus_border_override": true,
+      "item_selection_unfocus_radius": {
+        "top_left": 0,
+        "top_right": 0,
+        "bottom_right": 0,
+        "bottom_left": 0
+      },
+      "item_selection_unfocus_radius_override": true,
+      "item_selection_unfocus_edge_border": true,
+      "item_selection_unfocus_edge_border_override": true,
+      "item_hover_color": "#23282a",
+      "item_selection_hover_padding": {
+        "left": 0,
+        "top": 0,
+        "bottom": 0,
+        "right": 0
+      },
+      "item_selection_hover_padding_override": true,
+      "item_selection_hover_border_enabled": {
+        "left": false,
+        "top": false,
+        "bottom": false,
+        "right": false
+      },
+      "item_selection_hover_border": {
+        "left": "#2c3034",
+        "top": "#2c3034",
+        "bottom": "#2c3034",
+        "right": "#2c3034"
+      },
+      "item_selection_hover_border_override": true,
+      "item_selection_hover_radius": {
+        "top_left": 0,
+        "top_right": 0,
+        "bottom_right": 0,
+        "bottom_left": 0
+      },
+      "item_selection_hover_radius_override": true,
+      "item_selection_hover_edge_border": true,
+      "item_selection_hover_edge_border_override": true,
+      "item_idle_color": "@itemIdle",
+      "item_selection_idle_padding": {
+        "left": 0,
+        "top": 0,
+        "bottom": 0,
+        "right": 0
+      },
+      "item_selection_idle_padding_override": true,
+      "item_selection_idle_border_enabled": {
+        "left": false,
+        "top": false,
+        "bottom": false,
+        "right": false
+      },
+      "item_selection_idle_border": {
+        "left": "#2c3034",
+        "top": "#2c3034",
+        "bottom": "#2c3034",
+        "right": "#2c3034"
+      },
+      "item_selection_idle_border_override": true,
+      "item_selection_idle_radius": {
+        "top_left": 0,
+        "top_right": 0,
+        "bottom_right": 0,
+        "bottom_left": 0
+      },
+      "item_selection_idle_radius_override": true,
+      "item_selection_idle_edge_border": true,
+      "item_selection_idle_edge_border_override": true
     },
     "column_type_override_enabled": {
       "item_column_width": true,
@@ -319,11 +550,17 @@
       "header_border_enabled": false,
       "header_border": false,
       "header_border_thickness": false,
+      "header_icon_right_padding": false,
+      "header_font_family": false,
+      "header_font_bold": false,
+      "header_font_color": false,
+      "header_font_size": false,
       "item_font_family": false,
       "item_font_bold": false,
       "item_color": false,
-      "item_icon_enabled": false,
       "item_row_height": false,
+      "item_icon_size": false,
+      "item_icon_padding_left": false,
       "item_row_spacing": false,
       "item_text_padding": false,
       "item_row_border_enabled": false,
@@ -336,14 +573,41 @@
       "item_image_radius": false,
       "item_image_ratio": false,
       "item_selection_focus_color": false,
-      "item_selection_unfocus_color": false,
-      "item_hover_color": false,
-      "item_idle_color": false,
       "item_selection_padding": false,
       "item_selection_border_enabled": false,
       "item_selection_border": false,
       "item_selection_radius": false,
-      "item_selection_edge_border": false
+      "item_selection_edge_border": false,
+      "item_selection_unfocus_color": false,
+      "item_selection_unfocus_padding": false,
+      "item_selection_unfocus_padding_override": false,
+      "item_selection_unfocus_border_enabled": false,
+      "item_selection_unfocus_border": false,
+      "item_selection_unfocus_border_override": false,
+      "item_selection_unfocus_radius": false,
+      "item_selection_unfocus_radius_override": false,
+      "item_selection_unfocus_edge_border": false,
+      "item_selection_unfocus_edge_border_override": false,
+      "item_hover_color": false,
+      "item_selection_hover_padding": false,
+      "item_selection_hover_padding_override": false,
+      "item_selection_hover_border_enabled": false,
+      "item_selection_hover_border": false,
+      "item_selection_hover_border_override": false,
+      "item_selection_hover_radius": false,
+      "item_selection_hover_radius_override": false,
+      "item_selection_hover_edge_border": false,
+      "item_selection_hover_edge_border_override": false,
+      "item_idle_color": false,
+      "item_selection_idle_padding": false,
+      "item_selection_idle_padding_override": false,
+      "item_selection_idle_border_enabled": false,
+      "item_selection_idle_border": false,
+      "item_selection_idle_border_override": false,
+      "item_selection_idle_radius": false,
+      "item_selection_idle_radius_override": false,
+      "item_selection_idle_edge_border": false,
+      "item_selection_idle_edge_border_override": false
     },
     "column_type_override_linked": {
       "header_radius": true,
@@ -352,235 +616,17 @@
       "item_selection_padding": false,
       "item_selection_radius": false,
       "item_image_padding": true,
-      "item_image_radius": true
+      "item_image_radius": true,
+      "item_selection_unfocus_padding": true,
+      "item_selection_unfocus_radius": true,
+      "item_selection_hover_padding": true,
+      "item_selection_hover_radius": true,
+      "item_selection_idle_padding": true,
+      "item_selection_idle_radius": true
     },
     "column_overrides_by_title": {
-      "Projets": {
-        "item_column_width": 180,
-        "column_padding": {
-          "left": 5,
-          "top": 5,
-          "bottom": 5,
-          "right": 5
-        },
-        "column_border_enabled": {
-          "left": false,
-          "top": false,
-          "bottom": false,
-          "right": false
-        },
-        "column_border": {
-          "left": "#2e3135",
-          "top": "#2e3135",
-          "bottom": "#2e3135",
-          "right": "#2e3135"
-        },
-        "column_border_thickness": 1,
-        "column_border_radius": {
-          "top_left": 5,
-          "top_right": 5,
-          "bottom_right": 5,
-          "bottom_left": 5
-        },
-        "column_bg_color": "@skinN2",
-        "header_visible": true,
-        "header_height": 26,
-        "header_padding": 2,
-        "header_color": "navbar",
-        "header_radius": {
-          "top_left": 3,
-          "top_right": 3,
-          "bottom_right": 0,
-          "bottom_left": 0
-        },
-        "header_border_enabled": {
-          "left": false,
-          "top": false,
-          "bottom": false,
-          "right": false
-        },
-        "header_border": {
-          "left": "#2a2e32",
-          "top": "#2a2e32",
-          "bottom": "#2a2e32",
-          "right": "#2a2e32"
-        },
-        "header_border_thickness": 0,
-        "item_row_height": 60,
-        "item_row_spacing": 0,
-        "item_row_border_enabled": false,
-        "item_row_border_color": "@ligne",
-        "item_row_border_thickness": 1,
-        "item_image_padding": {
-          "left": 0,
-          "top": 0,
-          "bottom": 0,
-          "right": 0
-        },
-        "item_image_border_enabled": {
-          "left": false,
-          "top": false,
-          "bottom": false,
-          "right": false
-        },
-        "item_image_border": {
-          "left": "#2c3034",
-          "top": "#2c3034",
-          "bottom": "#2c3034",
-          "right": "#2c3034"
-        },
-        "item_image_border_thickness": 1,
-        "item_image_radius": {
-          "top_left": 0,
-          "top_right": 0,
-          "bottom_right": 0,
-          "bottom_left": 0
-        },
-        "item_image_ratio": 1.0,
-        "item_selection_focus_color": "#136cd3",
-        "item_selection_unfocus_color": "#3e4145",
-        "item_hover_color": "#23282a",
-        "item_idle_color": "@itemIdle",
-        "item_selection_padding": {
-          "left": 2,
-          "top": 0,
-          "bottom": 0,
-          "right": 2
-        },
-        "item_selection_border_enabled": {
-          "left": false,
-          "top": false,
-          "bottom": false,
-          "right": false
-        },
-        "item_selection_border": {
-          "left": "@skinAccent",
-          "top": "@skinAccent",
-          "bottom": "@skinAccent",
-          "right": "@skinAccent"
-        },
-        "item_selection_radius": {
-          "top_left": 2,
-          "top_right": 2,
-          "bottom_right": 2,
-          "bottom_left": 2
-        },
-        "item_selection_edge_border": false
-      },
-      "Sous-projet": {
-        "item_column_width": 180,
-        "column_padding": {
-          "left": 5,
-          "top": 5,
-          "bottom": 5,
-          "right": 5
-        },
-        "column_border_enabled": {
-          "left": false,
-          "top": false,
-          "bottom": false,
-          "right": false
-        },
-        "column_border": {
-          "left": "#2e3135",
-          "top": "#2e3135",
-          "bottom": "#2e3135",
-          "right": "#2e3135"
-        },
-        "column_border_thickness": 1,
-        "column_border_radius": {
-          "top_left": 5,
-          "top_right": 5,
-          "bottom_right": 5,
-          "bottom_left": 5
-        },
-        "column_bg_color": "@skinN2",
-        "header_visible": true,
-        "header_height": 26,
-        "header_padding": 2,
-        "header_color": "navbar",
-        "header_radius": {
-          "top_left": 3,
-          "top_right": 3,
-          "bottom_right": 0,
-          "bottom_left": 0
-        },
-        "header_border_enabled": {
-          "left": false,
-          "top": false,
-          "bottom": false,
-          "right": false
-        },
-        "header_border": {
-          "left": "#2a2e32",
-          "top": "#2a2e32",
-          "bottom": "#2a2e32",
-          "right": "#2a2e32"
-        },
-        "header_border_thickness": 0,
-        "item_row_height": 60,
-        "item_row_spacing": 0,
-        "item_row_border_enabled": false,
-        "item_row_border_color": "@ligne",
-        "item_row_border_thickness": 1,
-        "item_image_padding": {
-          "left": 0,
-          "top": 0,
-          "bottom": 0,
-          "right": 0
-        },
-        "item_image_border_enabled": {
-          "left": false,
-          "top": false,
-          "bottom": false,
-          "right": false
-        },
-        "item_image_border": {
-          "left": "#2c3034",
-          "top": "#2c3034",
-          "bottom": "#2c3034",
-          "right": "#2c3034"
-        },
-        "item_image_border_thickness": 1,
-        "item_image_radius": {
-          "top_left": 0,
-          "top_right": 0,
-          "bottom_right": 0,
-          "bottom_left": 0
-        },
-        "item_image_ratio": 1.0,
-        "item_selection_focus_color": "#136cd3",
-        "item_selection_unfocus_color": "#3e4145",
-        "item_hover_color": "#23282a",
-        "item_idle_color": "@itemIdle",
-        "item_selection_padding": {
-          "left": 2,
-          "top": 0,
-          "bottom": 0,
-          "right": 2
-        },
-        "item_selection_border_enabled": {
-          "left": false,
-          "top": false,
-          "bottom": false,
-          "right": false
-        },
-        "item_selection_border": {
-          "left": "@skinAccent",
-          "top": "@skinAccent",
-          "bottom": "@skinAccent",
-          "right": "@skinAccent"
-        },
-        "item_selection_radius": {
-          "top_left": 2,
-          "top_right": 2,
-          "bottom_right": 2,
-          "bottom_left": 2
-        },
-        "item_selection_edge_border": false
-      },
       "Focus": {
-        "item_column_width": 250,
+        "item_column_width": 222,
         "column_padding": {
           "left": 5,
           "top": 5,
@@ -630,84 +676,1092 @@
           "right": "#ffffff"
         },
         "header_border_thickness": 1,
+        "header_icon_right_padding": 0,
+        "header_font_family": "",
+        "header_font_bold": true,
+        "header_font_color": "#9aa1a7",
+        "header_font_size": 10,
         "item_image_ratio": 1.0
+      },
+      "Projets": {
+        "item_column_width": 260,
+        "column_padding": {
+          "left": 5,
+          "top": 5,
+          "bottom": 5,
+          "right": 0
+        },
+        "column_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "column_border": {
+          "left": "#2e3135",
+          "top": "#2e3135",
+          "bottom": "#2e3135",
+          "right": "#2e3135"
+        },
+        "column_border_thickness": 3,
+        "column_border_radius": {
+          "top_left": 5,
+          "top_right": 5,
+          "bottom_right": 5,
+          "bottom_left": 5
+        },
+        "column_bg_color": "@skinN2",
+        "header_visible": true,
+        "header_height": 26,
+        "header_padding": 2,
+        "header_color": "navbar",
+        "header_radius": {
+          "top_left": 3,
+          "top_right": 3,
+          "bottom_right": 0,
+          "bottom_left": 0
+        },
+        "header_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "header_border": {
+          "left": "#ffffff",
+          "top": "#ffffff",
+          "bottom": "#ffffff",
+          "right": "#ffffff"
+        },
+        "header_border_thickness": 1,
+        "header_icon_right_padding": 0,
+        "header_font_family": "Police principale",
+        "header_font_bold": true,
+        "header_font_color": "#9aa1a7",
+        "header_font_size": 10,
+        "item_row_height": 60,
+        "item_row_spacing": 3,
+        "item_row_border_enabled": false,
+        "item_row_border_color": "@ligne",
+        "item_row_border_thickness": 1,
+        "item_image_padding": {
+          "left": 2,
+          "top": 2,
+          "bottom": 2,
+          "right": 2
+        },
+        "item_image_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_image_border": {
+          "left": "#1d7cda",
+          "top": "#1d7cda",
+          "bottom": "#1d7cda",
+          "right": "#1d7cda"
+        },
+        "item_image_border_thickness": 1,
+        "item_image_radius": {
+          "top_left": 3,
+          "top_right": 3,
+          "bottom_right": 3,
+          "bottom_left": 3
+        },
+        "item_image_ratio": 1.0,
+        "item_selection_focus_color": "#006ae4",
+        "item_selection_padding": {
+          "left": 4,
+          "top": 0,
+          "bottom": 0,
+          "right": 4
+        },
+        "item_selection_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_selection_border": {
+          "left": "@skinAccent",
+          "top": "@skinAccent",
+          "bottom": "@skinAccent",
+          "right": "@skinAccent"
+        },
+        "item_selection_radius": {
+          "top_left": 4,
+          "top_right": 4,
+          "bottom_right": 4,
+          "bottom_left": 4
+        },
+        "item_selection_edge_border": true,
+        "item_selection_unfocus_color": "#1a375f",
+        "item_selection_unfocus_padding": {
+          "left": 0,
+          "top": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "item_selection_unfocus_padding_override": true,
+        "item_selection_unfocus_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_selection_unfocus_border": {
+          "left": "#2c3034",
+          "top": "#2c3034",
+          "bottom": "#2c3034",
+          "right": "#2c3034"
+        },
+        "item_selection_unfocus_border_override": true,
+        "item_selection_unfocus_radius": {
+          "top_left": 0,
+          "top_right": 0,
+          "bottom_right": 0,
+          "bottom_left": 0
+        },
+        "item_selection_unfocus_radius_override": true,
+        "item_selection_unfocus_edge_border": true,
+        "item_selection_unfocus_edge_border_override": true,
+        "item_hover_color": "#23282a",
+        "item_selection_hover_padding": {
+          "left": 0,
+          "top": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "item_selection_hover_padding_override": true,
+        "item_selection_hover_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_selection_hover_border": {
+          "left": "#2c3034",
+          "top": "#2c3034",
+          "bottom": "#2c3034",
+          "right": "#2c3034"
+        },
+        "item_selection_hover_border_override": true,
+        "item_selection_hover_radius": {
+          "top_left": 0,
+          "top_right": 0,
+          "bottom_right": 0,
+          "bottom_left": 0
+        },
+        "item_selection_hover_radius_override": true,
+        "item_selection_hover_edge_border": true,
+        "item_selection_hover_edge_border_override": true,
+        "item_idle_color": "#232629",
+        "item_selection_idle_padding": {
+          "left": 0,
+          "top": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "item_selection_idle_padding_override": true,
+        "item_selection_idle_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_selection_idle_border": {
+          "left": "#2c3034",
+          "top": "#2c3034",
+          "bottom": "#2c3034",
+          "right": "#2c3034"
+        },
+        "item_selection_idle_border_override": true,
+        "item_selection_idle_radius": {
+          "top_left": 0,
+          "top_right": 0,
+          "bottom_right": 0,
+          "bottom_left": 0
+        },
+        "item_selection_idle_radius_override": true,
+        "item_selection_idle_edge_border": true,
+        "item_selection_idle_edge_border_override": true
+      },
+      "Sous-projet": {
+        "item_column_width": 260,
+        "column_padding": {
+          "left": 5,
+          "top": 5,
+          "bottom": 5,
+          "right": 0
+        },
+        "column_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "column_border": {
+          "left": "#2e3135",
+          "top": "#2e3135",
+          "bottom": "#2e3135",
+          "right": "#2e3135"
+        },
+        "column_border_thickness": 3,
+        "column_border_radius": {
+          "top_left": 5,
+          "top_right": 5,
+          "bottom_right": 5,
+          "bottom_left": 5
+        },
+        "column_bg_color": "@skinN2",
+        "header_visible": true,
+        "header_height": 26,
+        "header_padding": 2,
+        "header_color": "navbar",
+        "header_radius": {
+          "top_left": 3,
+          "top_right": 3,
+          "bottom_right": 0,
+          "bottom_left": 0
+        },
+        "header_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "header_border": {
+          "left": "#ffffff",
+          "top": "#ffffff",
+          "bottom": "#ffffff",
+          "right": "#ffffff"
+        },
+        "header_border_thickness": 1,
+        "header_icon_right_padding": 0,
+        "header_font_family": "Police principale",
+        "header_font_bold": true,
+        "header_font_color": "#9aa1a7",
+        "header_font_size": 10,
+        "item_row_height": 60,
+        "item_row_spacing": 3,
+        "item_row_border_enabled": false,
+        "item_row_border_color": "@ligne",
+        "item_row_border_thickness": 1,
+        "item_image_padding": {
+          "left": 2,
+          "top": 2,
+          "bottom": 2,
+          "right": 2
+        },
+        "item_image_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_image_border": {
+          "left": "#1d7cda",
+          "top": "#1d7cda",
+          "bottom": "#1d7cda",
+          "right": "#1d7cda"
+        },
+        "item_image_border_thickness": 1,
+        "item_image_radius": {
+          "top_left": 3,
+          "top_right": 3,
+          "bottom_right": 3,
+          "bottom_left": 3
+        },
+        "item_image_ratio": 1.0,
+        "item_selection_focus_color": "#006ae4",
+        "item_selection_padding": {
+          "left": 4,
+          "top": 0,
+          "bottom": 0,
+          "right": 4
+        },
+        "item_selection_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_selection_border": {
+          "left": "@skinAccent",
+          "top": "@skinAccent",
+          "bottom": "@skinAccent",
+          "right": "@skinAccent"
+        },
+        "item_selection_radius": {
+          "top_left": 4,
+          "top_right": 4,
+          "bottom_right": 4,
+          "bottom_left": 4
+        },
+        "item_selection_edge_border": true,
+        "item_selection_unfocus_color": "#1a375f",
+        "item_selection_unfocus_padding": {
+          "left": 0,
+          "top": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "item_selection_unfocus_padding_override": true,
+        "item_selection_unfocus_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_selection_unfocus_border": {
+          "left": "#2c3034",
+          "top": "#2c3034",
+          "bottom": "#2c3034",
+          "right": "#2c3034"
+        },
+        "item_selection_unfocus_border_override": true,
+        "item_selection_unfocus_radius": {
+          "top_left": 0,
+          "top_right": 0,
+          "bottom_right": 0,
+          "bottom_left": 0
+        },
+        "item_selection_unfocus_radius_override": true,
+        "item_selection_unfocus_edge_border": true,
+        "item_selection_unfocus_edge_border_override": true,
+        "item_hover_color": "#23282a",
+        "item_selection_hover_padding": {
+          "left": 0,
+          "top": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "item_selection_hover_padding_override": true,
+        "item_selection_hover_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_selection_hover_border": {
+          "left": "#2c3034",
+          "top": "#2c3034",
+          "bottom": "#2c3034",
+          "right": "#2c3034"
+        },
+        "item_selection_hover_border_override": true,
+        "item_selection_hover_radius": {
+          "top_left": 0,
+          "top_right": 0,
+          "bottom_right": 0,
+          "bottom_left": 0
+        },
+        "item_selection_hover_radius_override": true,
+        "item_selection_hover_edge_border": true,
+        "item_selection_hover_edge_border_override": true,
+        "item_idle_color": "#232629",
+        "item_selection_idle_padding": {
+          "left": 0,
+          "top": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "item_selection_idle_padding_override": true,
+        "item_selection_idle_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_selection_idle_border": {
+          "left": "#2c3034",
+          "top": "#2c3034",
+          "bottom": "#2c3034",
+          "right": "#2c3034"
+        },
+        "item_selection_idle_border_override": true,
+        "item_selection_idle_radius": {
+          "top_left": 0,
+          "top_right": 0,
+          "bottom_right": 0,
+          "bottom_left": 0
+        },
+        "item_selection_idle_radius_override": true,
+        "item_selection_idle_edge_border": true,
+        "item_selection_idle_edge_border_override": true
+      },
+      "IN": {
+        "item_column_width": 220,
+        "column_padding": {
+          "left": 5,
+          "top": 5,
+          "bottom": 5,
+          "right": 0
+        },
+        "column_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "column_border": {
+          "left": "#2e3135",
+          "top": "#2e3135",
+          "bottom": "#2e3135",
+          "right": "#2e3135"
+        },
+        "column_border_thickness": 3,
+        "column_border_radius": {
+          "top_left": 5,
+          "top_right": 5,
+          "bottom_right": 5,
+          "bottom_left": 5
+        },
+        "column_bg_color": "@skinN2",
+        "header_visible": true,
+        "header_height": 26,
+        "header_padding": 2,
+        "header_color": "navbar",
+        "header_radius": {
+          "top_left": 3,
+          "top_right": 3,
+          "bottom_right": 0,
+          "bottom_left": 0
+        },
+        "header_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "header_border": {
+          "left": "#ffffff",
+          "top": "#ffffff",
+          "bottom": "#ffffff",
+          "right": "#ffffff"
+        },
+        "header_border_thickness": 1,
+        "header_icon_right_padding": 0,
+        "header_font_family": "Police principale",
+        "header_font_bold": true,
+        "header_font_color": "#9aa1a7",
+        "header_font_size": 10,
+        "item_row_height": 35,
+        "item_row_spacing": 3,
+        "item_row_border_enabled": false,
+        "item_row_border_color": "@ligne",
+        "item_row_border_thickness": 1,
+        "item_image_padding": {
+          "left": 2,
+          "top": 2,
+          "bottom": 2,
+          "right": 2
+        },
+        "item_image_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_image_border": {
+          "left": "#1d7cda",
+          "top": "#1d7cda",
+          "bottom": "#1d7cda",
+          "right": "#1d7cda"
+        },
+        "item_image_border_thickness": 1,
+        "item_image_radius": {
+          "top_left": 3,
+          "top_right": 3,
+          "bottom_right": 3,
+          "bottom_left": 3
+        },
+        "item_image_ratio": 1.0,
+        "item_selection_focus_color": "#006ae4",
+        "item_selection_padding": {
+          "left": 4,
+          "top": 0,
+          "bottom": 0,
+          "right": 4
+        },
+        "item_selection_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_selection_border": {
+          "left": "@skinAccent",
+          "top": "@skinAccent",
+          "bottom": "@skinAccent",
+          "right": "@skinAccent"
+        },
+        "item_selection_radius": {
+          "top_left": 4,
+          "top_right": 4,
+          "bottom_right": 4,
+          "bottom_left": 4
+        },
+        "item_selection_edge_border": true,
+        "item_selection_unfocus_color": "#1a375f",
+        "item_selection_unfocus_padding": {
+          "left": 0,
+          "top": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "item_selection_unfocus_padding_override": true,
+        "item_selection_unfocus_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_selection_unfocus_border": {
+          "left": "#2c3034",
+          "top": "#2c3034",
+          "bottom": "#2c3034",
+          "right": "#2c3034"
+        },
+        "item_selection_unfocus_border_override": true,
+        "item_selection_unfocus_radius": {
+          "top_left": 0,
+          "top_right": 0,
+          "bottom_right": 0,
+          "bottom_left": 0
+        },
+        "item_selection_unfocus_radius_override": true,
+        "item_selection_unfocus_edge_border": true,
+        "item_selection_unfocus_edge_border_override": true,
+        "item_hover_color": "#23282a",
+        "item_selection_hover_padding": {
+          "left": 0,
+          "top": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "item_selection_hover_padding_override": true,
+        "item_selection_hover_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_selection_hover_border": {
+          "left": "#2c3034",
+          "top": "#2c3034",
+          "bottom": "#2c3034",
+          "right": "#2c3034"
+        },
+        "item_selection_hover_border_override": true,
+        "item_selection_hover_radius": {
+          "top_left": 0,
+          "top_right": 0,
+          "bottom_right": 0,
+          "bottom_left": 0
+        },
+        "item_selection_hover_radius_override": true,
+        "item_selection_hover_edge_border": true,
+        "item_selection_hover_edge_border_override": true,
+        "item_idle_color": "#232629",
+        "item_selection_idle_padding": {
+          "left": 0,
+          "top": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "item_selection_idle_padding_override": true,
+        "item_selection_idle_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_selection_idle_border": {
+          "left": "#2c3034",
+          "top": "#2c3034",
+          "bottom": "#2c3034",
+          "right": "#2c3034"
+        },
+        "item_selection_idle_border_override": true,
+        "item_selection_idle_radius": {
+          "top_left": 0,
+          "top_right": 0,
+          "bottom_right": 0,
+          "bottom_left": 0
+        },
+        "item_selection_idle_radius_override": true,
+        "item_selection_idle_edge_border": true,
+        "item_selection_idle_edge_border_override": true
+      },
+      "OVER": {
+        "item_column_width": 220,
+        "column_padding": {
+          "left": 5,
+          "top": 5,
+          "bottom": 5,
+          "right": 0
+        },
+        "column_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "column_border": {
+          "left": "#2e3135",
+          "top": "#2e3135",
+          "bottom": "#2e3135",
+          "right": "#2e3135"
+        },
+        "column_border_thickness": 3,
+        "column_border_radius": {
+          "top_left": 5,
+          "top_right": 5,
+          "bottom_right": 5,
+          "bottom_left": 5
+        },
+        "column_bg_color": "@skinN2",
+        "header_visible": true,
+        "header_height": 26,
+        "header_padding": 2,
+        "header_color": "navbar",
+        "header_radius": {
+          "top_left": 3,
+          "top_right": 3,
+          "bottom_right": 0,
+          "bottom_left": 0
+        },
+        "header_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "header_border": {
+          "left": "#ffffff",
+          "top": "#ffffff",
+          "bottom": "#ffffff",
+          "right": "#ffffff"
+        },
+        "header_border_thickness": 1,
+        "header_icon_right_padding": 0,
+        "header_font_family": "Police principale",
+        "header_font_bold": true,
+        "header_font_color": "#9aa1a7",
+        "header_font_size": 10,
+        "item_row_height": 35,
+        "item_row_spacing": 3,
+        "item_row_border_enabled": false,
+        "item_row_border_color": "@ligne",
+        "item_row_border_thickness": 1,
+        "item_image_padding": {
+          "left": 2,
+          "top": 2,
+          "bottom": 2,
+          "right": 2
+        },
+        "item_image_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_image_border": {
+          "left": "#1d7cda",
+          "top": "#1d7cda",
+          "bottom": "#1d7cda",
+          "right": "#1d7cda"
+        },
+        "item_image_border_thickness": 1,
+        "item_image_radius": {
+          "top_left": 3,
+          "top_right": 3,
+          "bottom_right": 3,
+          "bottom_left": 3
+        },
+        "item_image_ratio": 1.0,
+        "item_selection_focus_color": "#006ae4",
+        "item_selection_padding": {
+          "left": 4,
+          "top": 0,
+          "bottom": 0,
+          "right": 4
+        },
+        "item_selection_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_selection_border": {
+          "left": "@skinAccent",
+          "top": "@skinAccent",
+          "bottom": "@skinAccent",
+          "right": "@skinAccent"
+        },
+        "item_selection_radius": {
+          "top_left": 4,
+          "top_right": 4,
+          "bottom_right": 4,
+          "bottom_left": 4
+        },
+        "item_selection_edge_border": true,
+        "item_selection_unfocus_color": "#1a375f",
+        "item_selection_unfocus_padding": {
+          "left": 0,
+          "top": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "item_selection_unfocus_padding_override": true,
+        "item_selection_unfocus_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_selection_unfocus_border": {
+          "left": "#2c3034",
+          "top": "#2c3034",
+          "bottom": "#2c3034",
+          "right": "#2c3034"
+        },
+        "item_selection_unfocus_border_override": true,
+        "item_selection_unfocus_radius": {
+          "top_left": 0,
+          "top_right": 0,
+          "bottom_right": 0,
+          "bottom_left": 0
+        },
+        "item_selection_unfocus_radius_override": true,
+        "item_selection_unfocus_edge_border": true,
+        "item_selection_unfocus_edge_border_override": true,
+        "item_hover_color": "#23282a",
+        "item_selection_hover_padding": {
+          "left": 0,
+          "top": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "item_selection_hover_padding_override": true,
+        "item_selection_hover_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_selection_hover_border": {
+          "left": "#2c3034",
+          "top": "#2c3034",
+          "bottom": "#2c3034",
+          "right": "#2c3034"
+        },
+        "item_selection_hover_border_override": true,
+        "item_selection_hover_radius": {
+          "top_left": 0,
+          "top_right": 0,
+          "bottom_right": 0,
+          "bottom_left": 0
+        },
+        "item_selection_hover_radius_override": true,
+        "item_selection_hover_edge_border": true,
+        "item_selection_hover_edge_border_override": true,
+        "item_idle_color": "#232629",
+        "item_selection_idle_padding": {
+          "left": 0,
+          "top": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "item_selection_idle_padding_override": true,
+        "item_selection_idle_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_selection_idle_border": {
+          "left": "#2c3034",
+          "top": "#2c3034",
+          "bottom": "#2c3034",
+          "right": "#2c3034"
+        },
+        "item_selection_idle_border_override": true,
+        "item_selection_idle_radius": {
+          "top_left": 0,
+          "top_right": 0,
+          "bottom_right": 0,
+          "bottom_left": 0
+        },
+        "item_selection_idle_radius_override": true,
+        "item_selection_idle_edge_border": true,
+        "item_selection_idle_edge_border_override": true
+      },
+      "OUT": {
+        "item_column_width": 220,
+        "column_padding": {
+          "left": 5,
+          "top": 5,
+          "bottom": 5,
+          "right": 0
+        },
+        "column_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "column_border": {
+          "left": "#2e3135",
+          "top": "#2e3135",
+          "bottom": "#2e3135",
+          "right": "#2e3135"
+        },
+        "column_border_thickness": 3,
+        "column_border_radius": {
+          "top_left": 5,
+          "top_right": 5,
+          "bottom_right": 5,
+          "bottom_left": 5
+        },
+        "column_bg_color": "@skinN2",
+        "header_visible": true,
+        "header_height": 26,
+        "header_padding": 2,
+        "header_color": "navbar",
+        "header_radius": {
+          "top_left": 3,
+          "top_right": 3,
+          "bottom_right": 0,
+          "bottom_left": 0
+        },
+        "header_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "header_border": {
+          "left": "#ffffff",
+          "top": "#ffffff",
+          "bottom": "#ffffff",
+          "right": "#ffffff"
+        },
+        "header_border_thickness": 1,
+        "header_icon_right_padding": 0,
+        "header_font_family": "Police principale",
+        "header_font_bold": true,
+        "header_font_color": "#9aa1a7",
+        "header_font_size": 10,
+        "item_row_height": 35,
+        "item_row_spacing": 3,
+        "item_row_border_enabled": false,
+        "item_row_border_color": "@ligne",
+        "item_row_border_thickness": 1,
+        "item_image_padding": {
+          "left": 2,
+          "top": 2,
+          "bottom": 2,
+          "right": 2
+        },
+        "item_image_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_image_border": {
+          "left": "#1d7cda",
+          "top": "#1d7cda",
+          "bottom": "#1d7cda",
+          "right": "#1d7cda"
+        },
+        "item_image_border_thickness": 1,
+        "item_image_radius": {
+          "top_left": 3,
+          "top_right": 3,
+          "bottom_right": 3,
+          "bottom_left": 3
+        },
+        "item_image_ratio": 1.0,
+        "item_selection_focus_color": "#006ae4",
+        "item_selection_padding": {
+          "left": 4,
+          "top": 0,
+          "bottom": 0,
+          "right": 4
+        },
+        "item_selection_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_selection_border": {
+          "left": "@skinAccent",
+          "top": "@skinAccent",
+          "bottom": "@skinAccent",
+          "right": "@skinAccent"
+        },
+        "item_selection_radius": {
+          "top_left": 4,
+          "top_right": 4,
+          "bottom_right": 4,
+          "bottom_left": 4
+        },
+        "item_selection_edge_border": true,
+        "item_selection_unfocus_color": "#1a375f",
+        "item_selection_unfocus_padding": {
+          "left": 0,
+          "top": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "item_selection_unfocus_padding_override": true,
+        "item_selection_unfocus_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_selection_unfocus_border": {
+          "left": "#2c3034",
+          "top": "#2c3034",
+          "bottom": "#2c3034",
+          "right": "#2c3034"
+        },
+        "item_selection_unfocus_border_override": true,
+        "item_selection_unfocus_radius": {
+          "top_left": 0,
+          "top_right": 0,
+          "bottom_right": 0,
+          "bottom_left": 0
+        },
+        "item_selection_unfocus_radius_override": true,
+        "item_selection_unfocus_edge_border": true,
+        "item_selection_unfocus_edge_border_override": true,
+        "item_hover_color": "#23282a",
+        "item_selection_hover_padding": {
+          "left": 0,
+          "top": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "item_selection_hover_padding_override": true,
+        "item_selection_hover_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_selection_hover_border": {
+          "left": "#2c3034",
+          "top": "#2c3034",
+          "bottom": "#2c3034",
+          "right": "#2c3034"
+        },
+        "item_selection_hover_border_override": true,
+        "item_selection_hover_radius": {
+          "top_left": 0,
+          "top_right": 0,
+          "bottom_right": 0,
+          "bottom_left": 0
+        },
+        "item_selection_hover_radius_override": true,
+        "item_selection_hover_edge_border": true,
+        "item_selection_hover_edge_border_override": true,
+        "item_idle_color": "#232629",
+        "item_selection_idle_padding": {
+          "left": 0,
+          "top": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "item_selection_idle_padding_override": true,
+        "item_selection_idle_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "item_selection_idle_border": {
+          "left": "#2c3034",
+          "top": "#2c3034",
+          "bottom": "#2c3034",
+          "right": "#2c3034"
+        },
+        "item_selection_idle_border_override": true,
+        "item_selection_idle_radius": {
+          "top_left": 0,
+          "top_right": 0,
+          "bottom_right": 0,
+          "bottom_left": 0
+        },
+        "item_selection_idle_radius_override": true,
+        "item_selection_idle_edge_border": true,
+        "item_selection_idle_edge_border_override": true
+      },
+      "Inspecteur": {
+        "item_column_width": 220,
+        "column_padding": {
+          "left": 5,
+          "top": 5,
+          "bottom": 5,
+          "right": 0
+        },
+        "column_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "column_border": {
+          "left": "#2e3135",
+          "top": "#2e3135",
+          "bottom": "#2e3135",
+          "right": "#2e3135"
+        },
+        "column_border_thickness": 3,
+        "column_border_radius": {
+          "top_left": 5,
+          "top_right": 5,
+          "bottom_right": 5,
+          "bottom_left": 5
+        },
+        "column_bg_color": "@skinN2",
+        "header_visible": true,
+        "header_height": 26,
+        "header_padding": 2,
+        "header_color": "navbar",
+        "header_radius": {
+          "top_left": 3,
+          "top_right": 3,
+          "bottom_right": 0,
+          "bottom_left": 0
+        },
+        "header_border_enabled": {
+          "left": false,
+          "top": false,
+          "bottom": false,
+          "right": false
+        },
+        "header_border": {
+          "left": "#ffffff",
+          "top": "#ffffff",
+          "bottom": "#ffffff",
+          "right": "#ffffff"
+        },
+        "header_border_thickness": 1,
+        "header_icon_right_padding": 0,
+        "header_font_family": "Police informations",
+        "header_font_bold": true,
+        "header_font_color": "#9aa1a7",
+        "header_font_size": 13
       }
     },
     "column_override_enabled_by_title": {
-      "Projets": {
-        "item_column_width": false,
-        "column_padding": false,
-        "column_border_enabled": false,
-        "column_border": false,
-        "column_border_thickness": false,
-        "column_border_radius": false,
-        "column_bg_color": false,
-        "header_visible": false,
-        "header_height": false,
-        "header_padding": false,
-        "header_color": false,
-        "header_radius": false,
-        "header_border_enabled": false,
-        "header_border": false,
-        "header_border_thickness": false,
-        "item_row_height": true,
-        "item_row_spacing": false,
-        "item_row_border_enabled": false,
-        "item_row_border_color": false,
-        "item_row_border_thickness": false,
-        "item_image_padding": false,
-        "item_image_border_enabled": false,
-        "item_image_border": false,
-        "item_image_border_thickness": false,
-        "item_image_radius": false,
-        "item_image_ratio": true,
-        "item_selection_focus_color": false,
-        "item_selection_unfocus_color": false,
-        "item_hover_color": false,
-        "item_idle_color": false,
-        "item_selection_padding": false,
-        "item_selection_border_enabled": false,
-        "item_selection_border": false,
-        "item_selection_radius": false,
-        "item_selection_edge_border": false
-      },
-      "Sous-projet": {
-        "item_column_width": false,
-        "column_padding": false,
-        "column_border_enabled": false,
-        "column_border": false,
-        "column_border_thickness": false,
-        "column_border_radius": false,
-        "column_bg_color": false,
-        "header_visible": false,
-        "header_height": false,
-        "header_padding": false,
-        "header_color": false,
-        "header_radius": false,
-        "header_border_enabled": false,
-        "header_border": false,
-        "header_border_thickness": false,
-        "item_row_height": true,
-        "item_row_spacing": false,
-        "item_row_border_enabled": false,
-        "item_row_border_color": false,
-        "item_row_border_thickness": false,
-        "item_image_padding": false,
-        "item_image_border_enabled": false,
-        "item_image_border": false,
-        "item_image_border_thickness": false,
-        "item_image_radius": false,
-        "item_image_ratio": false,
-        "item_selection_focus_color": false,
-        "item_selection_unfocus_color": false,
-        "item_hover_color": false,
-        "item_idle_color": false,
-        "item_selection_padding": false,
-        "item_selection_border_enabled": false,
-        "item_selection_border": false,
-        "item_selection_radius": false,
-        "item_selection_edge_border": false
-      },
       "Focus": {
         "item_column_width": true,
         "column_padding": false,
@@ -724,10 +1778,387 @@
         "header_border_enabled": false,
         "header_border": false,
         "header_border_thickness": false,
+        "header_icon_right_padding": false,
+        "header_font_family": false,
+        "header_font_bold": false,
+        "header_font_color": false,
+        "header_font_size": false,
         "item_image_ratio": true
+      },
+      "Projets": {
+        "item_column_width": true,
+        "column_padding": false,
+        "column_border_enabled": false,
+        "column_border": false,
+        "column_border_thickness": false,
+        "column_border_radius": false,
+        "column_bg_color": false,
+        "header_visible": false,
+        "header_height": false,
+        "header_padding": false,
+        "header_color": false,
+        "header_radius": false,
+        "header_border_enabled": false,
+        "header_border": false,
+        "header_border_thickness": false,
+        "header_icon_right_padding": false,
+        "header_font_family": false,
+        "header_font_bold": false,
+        "header_font_color": false,
+        "header_font_size": false,
+        "item_row_height": true,
+        "item_row_spacing": false,
+        "item_row_border_enabled": false,
+        "item_row_border_color": false,
+        "item_row_border_thickness": false,
+        "item_image_padding": false,
+        "item_image_border_enabled": false,
+        "item_image_border": false,
+        "item_image_border_thickness": false,
+        "item_image_radius": false,
+        "item_image_ratio": false,
+        "item_selection_focus_color": false,
+        "item_selection_padding": false,
+        "item_selection_border_enabled": false,
+        "item_selection_border": false,
+        "item_selection_radius": false,
+        "item_selection_edge_border": false,
+        "item_selection_unfocus_color": false,
+        "item_selection_unfocus_padding": false,
+        "item_selection_unfocus_padding_override": false,
+        "item_selection_unfocus_border_enabled": false,
+        "item_selection_unfocus_border": false,
+        "item_selection_unfocus_border_override": false,
+        "item_selection_unfocus_radius": false,
+        "item_selection_unfocus_radius_override": false,
+        "item_selection_unfocus_edge_border": false,
+        "item_selection_unfocus_edge_border_override": false,
+        "item_hover_color": false,
+        "item_selection_hover_padding": false,
+        "item_selection_hover_padding_override": false,
+        "item_selection_hover_border_enabled": false,
+        "item_selection_hover_border": false,
+        "item_selection_hover_border_override": false,
+        "item_selection_hover_radius": false,
+        "item_selection_hover_radius_override": false,
+        "item_selection_hover_edge_border": false,
+        "item_selection_hover_edge_border_override": false,
+        "item_idle_color": false,
+        "item_selection_idle_padding": false,
+        "item_selection_idle_padding_override": false,
+        "item_selection_idle_border_enabled": false,
+        "item_selection_idle_border": false,
+        "item_selection_idle_border_override": false,
+        "item_selection_idle_radius": false,
+        "item_selection_idle_radius_override": false,
+        "item_selection_idle_edge_border": false,
+        "item_selection_idle_edge_border_override": false
+      },
+      "Sous-projet": {
+        "item_column_width": true,
+        "column_padding": false,
+        "column_border_enabled": false,
+        "column_border": false,
+        "column_border_thickness": false,
+        "column_border_radius": false,
+        "column_bg_color": false,
+        "header_visible": false,
+        "header_height": false,
+        "header_padding": false,
+        "header_color": false,
+        "header_radius": false,
+        "header_border_enabled": false,
+        "header_border": false,
+        "header_border_thickness": false,
+        "header_icon_right_padding": false,
+        "header_font_family": false,
+        "header_font_bold": false,
+        "header_font_color": false,
+        "header_font_size": false,
+        "item_row_height": true,
+        "item_row_spacing": false,
+        "item_row_border_enabled": false,
+        "item_row_border_color": false,
+        "item_row_border_thickness": false,
+        "item_image_padding": false,
+        "item_image_border_enabled": false,
+        "item_image_border": false,
+        "item_image_border_thickness": false,
+        "item_image_radius": false,
+        "item_image_ratio": false,
+        "item_selection_focus_color": false,
+        "item_selection_padding": false,
+        "item_selection_border_enabled": false,
+        "item_selection_border": false,
+        "item_selection_radius": false,
+        "item_selection_edge_border": false,
+        "item_selection_unfocus_color": false,
+        "item_selection_unfocus_padding": false,
+        "item_selection_unfocus_padding_override": false,
+        "item_selection_unfocus_border_enabled": false,
+        "item_selection_unfocus_border": false,
+        "item_selection_unfocus_border_override": false,
+        "item_selection_unfocus_radius": false,
+        "item_selection_unfocus_radius_override": false,
+        "item_selection_unfocus_edge_border": false,
+        "item_selection_unfocus_edge_border_override": false,
+        "item_hover_color": false,
+        "item_selection_hover_padding": false,
+        "item_selection_hover_padding_override": false,
+        "item_selection_hover_border_enabled": false,
+        "item_selection_hover_border": false,
+        "item_selection_hover_border_override": false,
+        "item_selection_hover_radius": false,
+        "item_selection_hover_radius_override": false,
+        "item_selection_hover_edge_border": false,
+        "item_selection_hover_edge_border_override": false,
+        "item_idle_color": false,
+        "item_selection_idle_padding": false,
+        "item_selection_idle_padding_override": false,
+        "item_selection_idle_border_enabled": false,
+        "item_selection_idle_border": false,
+        "item_selection_idle_border_override": false,
+        "item_selection_idle_radius": false,
+        "item_selection_idle_radius_override": false,
+        "item_selection_idle_edge_border": false,
+        "item_selection_idle_edge_border_override": false
+      },
+      "IN": {
+        "item_column_width": false,
+        "column_padding": false,
+        "column_border_enabled": false,
+        "column_border": false,
+        "column_border_thickness": false,
+        "column_border_radius": false,
+        "column_bg_color": false,
+        "header_visible": false,
+        "header_height": false,
+        "header_padding": false,
+        "header_color": false,
+        "header_radius": false,
+        "header_border_enabled": false,
+        "header_border": false,
+        "header_border_thickness": false,
+        "header_icon_right_padding": false,
+        "header_font_family": false,
+        "header_font_bold": false,
+        "header_font_color": false,
+        "header_font_size": false,
+        "item_row_height": false,
+        "item_row_spacing": false,
+        "item_row_border_enabled": false,
+        "item_row_border_color": false,
+        "item_row_border_thickness": false,
+        "item_image_padding": false,
+        "item_image_border_enabled": false,
+        "item_image_border": false,
+        "item_image_border_thickness": false,
+        "item_image_radius": false,
+        "item_image_ratio": false,
+        "item_selection_focus_color": false,
+        "item_selection_padding": false,
+        "item_selection_border_enabled": false,
+        "item_selection_border": false,
+        "item_selection_radius": false,
+        "item_selection_edge_border": false,
+        "item_selection_unfocus_color": false,
+        "item_selection_unfocus_padding": false,
+        "item_selection_unfocus_padding_override": false,
+        "item_selection_unfocus_border_enabled": false,
+        "item_selection_unfocus_border": false,
+        "item_selection_unfocus_border_override": false,
+        "item_selection_unfocus_radius": false,
+        "item_selection_unfocus_radius_override": false,
+        "item_selection_unfocus_edge_border": false,
+        "item_selection_unfocus_edge_border_override": false,
+        "item_hover_color": false,
+        "item_selection_hover_padding": false,
+        "item_selection_hover_padding_override": false,
+        "item_selection_hover_border_enabled": false,
+        "item_selection_hover_border": false,
+        "item_selection_hover_border_override": false,
+        "item_selection_hover_radius": false,
+        "item_selection_hover_radius_override": false,
+        "item_selection_hover_edge_border": false,
+        "item_selection_hover_edge_border_override": false,
+        "item_idle_color": false,
+        "item_selection_idle_padding": false,
+        "item_selection_idle_padding_override": false,
+        "item_selection_idle_border_enabled": false,
+        "item_selection_idle_border": false,
+        "item_selection_idle_border_override": false,
+        "item_selection_idle_radius": false,
+        "item_selection_idle_radius_override": false,
+        "item_selection_idle_edge_border": false,
+        "item_selection_idle_edge_border_override": false
+      },
+      "OVER": {
+        "item_column_width": false,
+        "column_padding": false,
+        "column_border_enabled": false,
+        "column_border": false,
+        "column_border_thickness": false,
+        "column_border_radius": false,
+        "column_bg_color": false,
+        "header_visible": false,
+        "header_height": false,
+        "header_padding": false,
+        "header_color": false,
+        "header_radius": false,
+        "header_border_enabled": false,
+        "header_border": false,
+        "header_border_thickness": false,
+        "header_icon_right_padding": false,
+        "header_font_family": false,
+        "header_font_bold": false,
+        "header_font_color": false,
+        "header_font_size": false,
+        "item_row_height": false,
+        "item_row_spacing": false,
+        "item_row_border_enabled": false,
+        "item_row_border_color": false,
+        "item_row_border_thickness": false,
+        "item_image_padding": false,
+        "item_image_border_enabled": false,
+        "item_image_border": false,
+        "item_image_border_thickness": false,
+        "item_image_radius": false,
+        "item_image_ratio": false,
+        "item_selection_focus_color": false,
+        "item_selection_padding": false,
+        "item_selection_border_enabled": false,
+        "item_selection_border": false,
+        "item_selection_radius": false,
+        "item_selection_edge_border": false,
+        "item_selection_unfocus_color": false,
+        "item_selection_unfocus_padding": false,
+        "item_selection_unfocus_padding_override": false,
+        "item_selection_unfocus_border_enabled": false,
+        "item_selection_unfocus_border": false,
+        "item_selection_unfocus_border_override": false,
+        "item_selection_unfocus_radius": false,
+        "item_selection_unfocus_radius_override": false,
+        "item_selection_unfocus_edge_border": false,
+        "item_selection_unfocus_edge_border_override": false,
+        "item_hover_color": false,
+        "item_selection_hover_padding": false,
+        "item_selection_hover_padding_override": false,
+        "item_selection_hover_border_enabled": false,
+        "item_selection_hover_border": false,
+        "item_selection_hover_border_override": false,
+        "item_selection_hover_radius": false,
+        "item_selection_hover_radius_override": false,
+        "item_selection_hover_edge_border": false,
+        "item_selection_hover_edge_border_override": false,
+        "item_idle_color": false,
+        "item_selection_idle_padding": false,
+        "item_selection_idle_padding_override": false,
+        "item_selection_idle_border_enabled": false,
+        "item_selection_idle_border": false,
+        "item_selection_idle_border_override": false,
+        "item_selection_idle_radius": false,
+        "item_selection_idle_radius_override": false,
+        "item_selection_idle_edge_border": false,
+        "item_selection_idle_edge_border_override": false
+      },
+      "OUT": {
+        "item_column_width": false,
+        "column_padding": false,
+        "column_border_enabled": false,
+        "column_border": false,
+        "column_border_thickness": false,
+        "column_border_radius": false,
+        "column_bg_color": false,
+        "header_visible": false,
+        "header_height": false,
+        "header_padding": false,
+        "header_color": false,
+        "header_radius": false,
+        "header_border_enabled": false,
+        "header_border": false,
+        "header_border_thickness": false,
+        "header_icon_right_padding": false,
+        "header_font_family": false,
+        "header_font_bold": false,
+        "header_font_color": false,
+        "header_font_size": false,
+        "item_row_height": false,
+        "item_row_spacing": false,
+        "item_row_border_enabled": false,
+        "item_row_border_color": false,
+        "item_row_border_thickness": false,
+        "item_image_padding": false,
+        "item_image_border_enabled": false,
+        "item_image_border": false,
+        "item_image_border_thickness": false,
+        "item_image_radius": false,
+        "item_image_ratio": false,
+        "item_selection_focus_color": false,
+        "item_selection_padding": false,
+        "item_selection_border_enabled": false,
+        "item_selection_border": false,
+        "item_selection_radius": false,
+        "item_selection_edge_border": false,
+        "item_selection_unfocus_color": false,
+        "item_selection_unfocus_padding": false,
+        "item_selection_unfocus_padding_override": false,
+        "item_selection_unfocus_border_enabled": false,
+        "item_selection_unfocus_border": false,
+        "item_selection_unfocus_border_override": false,
+        "item_selection_unfocus_radius": false,
+        "item_selection_unfocus_radius_override": false,
+        "item_selection_unfocus_edge_border": false,
+        "item_selection_unfocus_edge_border_override": false,
+        "item_hover_color": false,
+        "item_selection_hover_padding": false,
+        "item_selection_hover_padding_override": false,
+        "item_selection_hover_border_enabled": false,
+        "item_selection_hover_border": false,
+        "item_selection_hover_border_override": false,
+        "item_selection_hover_radius": false,
+        "item_selection_hover_radius_override": false,
+        "item_selection_hover_edge_border": false,
+        "item_selection_hover_edge_border_override": false,
+        "item_idle_color": false,
+        "item_selection_idle_padding": false,
+        "item_selection_idle_padding_override": false,
+        "item_selection_idle_border_enabled": false,
+        "item_selection_idle_border": false,
+        "item_selection_idle_border_override": false,
+        "item_selection_idle_radius": false,
+        "item_selection_idle_radius_override": false,
+        "item_selection_idle_edge_border": false,
+        "item_selection_idle_edge_border_override": false
+      },
+      "Inspecteur": {
+        "item_column_width": false,
+        "column_padding": false,
+        "column_border_enabled": false,
+        "column_border": false,
+        "column_border_thickness": false,
+        "column_border_radius": false,
+        "column_bg_color": false,
+        "header_visible": true,
+        "header_height": false,
+        "header_padding": false,
+        "header_color": false,
+        "header_radius": false,
+        "header_border_enabled": false,
+        "header_border": false,
+        "header_border_thickness": false,
+        "header_icon_right_padding": false,
+        "header_font_family": false,
+        "header_font_bold": false,
+        "header_font_color": false,
+        "header_font_size": false
       }
     },
     "column_override_linked_by_title": {
+      "Focus": {
+        "header_radius": false,
+        "column_padding": false,
+        "column_border_radius": true
+      },
       "Projets": {
         "header_radius": false,
         "column_padding": false,
@@ -735,7 +2166,13 @@
         "item_selection_padding": false,
         "item_selection_radius": true,
         "item_image_padding": true,
-        "item_image_radius": true
+        "item_image_radius": true,
+        "item_selection_unfocus_padding": true,
+        "item_selection_unfocus_radius": true,
+        "item_selection_hover_padding": true,
+        "item_selection_hover_radius": true,
+        "item_selection_idle_padding": true,
+        "item_selection_idle_radius": true
       },
       "Sous-projet": {
         "header_radius": false,
@@ -744,15 +2181,66 @@
         "item_selection_padding": false,
         "item_selection_radius": true,
         "item_image_padding": true,
-        "item_image_radius": true
+        "item_image_radius": true,
+        "item_selection_unfocus_padding": true,
+        "item_selection_unfocus_radius": true,
+        "item_selection_hover_padding": true,
+        "item_selection_hover_radius": true,
+        "item_selection_idle_padding": true,
+        "item_selection_idle_radius": true
       },
-      "Focus": {
+      "IN": {
+        "header_radius": false,
+        "column_padding": false,
+        "column_border_radius": true,
+        "item_selection_padding": false,
+        "item_selection_radius": true,
+        "item_image_padding": true,
+        "item_image_radius": true,
+        "item_selection_unfocus_padding": true,
+        "item_selection_unfocus_radius": true,
+        "item_selection_hover_padding": true,
+        "item_selection_hover_radius": true,
+        "item_selection_idle_padding": true,
+        "item_selection_idle_radius": true
+      },
+      "OVER": {
+        "header_radius": false,
+        "column_padding": false,
+        "column_border_radius": true,
+        "item_selection_padding": false,
+        "item_selection_radius": true,
+        "item_image_padding": true,
+        "item_image_radius": true,
+        "item_selection_unfocus_padding": true,
+        "item_selection_unfocus_radius": true,
+        "item_selection_hover_padding": true,
+        "item_selection_hover_radius": true,
+        "item_selection_idle_padding": true,
+        "item_selection_idle_radius": true
+      },
+      "OUT": {
+        "header_radius": false,
+        "column_padding": false,
+        "column_border_radius": true,
+        "item_selection_padding": false,
+        "item_selection_radius": true,
+        "item_image_padding": true,
+        "item_image_radius": true,
+        "item_selection_unfocus_padding": true,
+        "item_selection_unfocus_radius": true,
+        "item_selection_hover_padding": true,
+        "item_selection_hover_radius": true,
+        "item_selection_idle_padding": true,
+        "item_selection_idle_radius": true
+      },
+      "Inspecteur": {
         "header_radius": false,
         "column_padding": false,
         "column_border_radius": true
       }
     },
-    "header_font_family": "",
+    "header_font_family": "Police principale",
     "input_frame": true,
     "input_radius": 3,
     "button_frame": true,
@@ -944,7 +2432,7 @@
       "sel_idle": "#2e3338",
       "row_idle": "#1b1d20",
       "hover": "#232729",
-      "accent": "#3f6f9f",
+      "accent": "#0080ff",
       "accent_text": "#eef2f5",
       "btn": "#282c30",
       "btn_border": "#383d42",
@@ -971,7 +2459,7 @@
       "bold": false,
       "smoothing": "current",
       "color": "",
-      "custom": false
+      "custom": true
     },
     "font_titles": {
       "family": "",
@@ -1083,6 +2571,124 @@
         "sep_h": true,
         "sep_v": true
       }
-    }
+    },
+    "custom_softwares": [
+      {
+        "key": "PUREREF",
+        "label": "PUREREF"
+      },
+      {
+        "key": "LEOCAD",
+        "label": "LEOCAD"
+      },
+      {
+        "key": "AUTOCAD",
+        "label": "AUTOCAD"
+      }
+    ],
+    "removed_softwares": [
+      "3DSMAX",
+      "AFTEREFFECTS",
+      "C4D",
+      "CINEMA4D",
+      "CLARISSE",
+      "INDESIGN",
+      "MAX",
+      "NUKEX",
+      "RESOLVE",
+      "UNITY"
+    ],
+    "step_badge_width": 18,
+    "step_badge_height": 18,
+    "step_badge_border_enabled": {
+      "top": false,
+      "right": false,
+      "bottom": false,
+      "left": false
+    },
+    "step_badge_border": {
+      "top": "#2e343a",
+      "right": "#2e343a",
+      "bottom": "#2e343a",
+      "left": "#2e343a"
+    },
+    "step_badge_border_thickness": 1,
+    "step_badge_radius": {
+      "top_left": 9,
+      "top_right": 9,
+      "bottom_right": 9,
+      "bottom_left": 9
+    },
+    "step_badge_radius_linked": true,
+    "step_badge_color_base2": "#117ac5",
+    "step_badge_color_base3": "#ff9000",
+    "step_badge_color_base4": "#589f3f",
+    "step_badge_color_base5": "#df2769",
+    "step_badge_color_base6": "#a82bd9",
+    "step_badge_color_basen": "#32353b",
+    "step_badge_text_color_base2": "#eef2f5",
+    "step_badge_text_color_base3": "#000000",
+    "step_badge_text_color_base4": "#eef2f5",
+    "step_badge_text_color_base5": "#ffffff",
+    "step_badge_text_color_base6": "#eef2f5",
+    "step_badge_text_color_basen": "#68696b",
+    "step_badge_offset_x": 4,
+    "step_badge_offset_y": 0,
+    "step_badge_font_family": "",
+    "step_badge_font_bold": true,
+    "step_badge_font_smoothing_enabled": true,
+    "step_badge_font_smoothing": "current",
+    "step_badge_border_smoothing": true,
+    "header_icon_right_padding": 0,
+    "header_font_bold": true,
+    "header_font_color": "#9aa1a7",
+    "header_font_size": 10,
+    "header_font_italic": false,
+    "header_font_antialias_override_enabled": true,
+    "header_font_antialias_override": "current",
+    "default_preset": "fab",
+    "title_level1_font_family": "Police code",
+    "title_level1_font_bold": true,
+    "title_level1_font_italic": false,
+    "title_level1_font_size": 16,
+    "title_level1_font_smoothing_enabled": true,
+    "title_level1_font_smoothing": "current",
+    "title_level1_font_color": "#59abfc",
+    "title_level1_indent": 0,
+    "title_level2_font_family": "Police principale",
+    "title_level2_font_bold": true,
+    "title_level2_font_italic": false,
+    "title_level2_font_size": 12,
+    "title_level2_font_smoothing_enabled": true,
+    "title_level2_font_smoothing": "current",
+    "title_level2_font_color": "#59abfc",
+    "title_level2_indent": 0,
+    "title_level3_font_family": "Police principale",
+    "title_level3_font_bold": true,
+    "title_level3_font_italic": false,
+    "title_level3_font_size": 11,
+    "title_level3_font_smoothing_enabled": true,
+    "title_level3_font_smoothing": "current",
+    "title_level3_font_color": "#9259abfc",
+    "title_level3_indent": 40,
+    "title_level4_font_family": "Police principale",
+    "title_level4_font_bold": true,
+    "title_level4_font_italic": false,
+    "title_level4_font_size": 13,
+    "title_level4_font_smoothing_enabled": true,
+    "title_level4_font_smoothing": "current",
+    "title_level4_font_color": "#5d656b",
+    "title_level4_indent": 60,
+    "title_level5_font_family": "Police principale",
+    "title_level5_font_bold": true,
+    "title_level5_font_italic": false,
+    "title_level5_font_size": 12,
+    "title_level5_font_smoothing_enabled": true,
+    "title_level5_font_smoothing": "current",
+    "title_level5_font_color": "#5d656b",
+    "title_level5_indent": 80,
+    "item_selection_unfocus_padding_linked": false,
+    "item_selection_hover_padding_linked": false,
+    "item_selection_idle_padding_linked": false
   }
 }

@@ -13,12 +13,18 @@ Lecture seule pour l'instant.
 """
 
 import hashlib
+import io
 import json
 import math
+import mmap
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import threading
+import time
 
 if sys.platform == "win32":
     # Sans cette declaration, Windows ne sait pas que l'appli gere elle-meme
@@ -45,7 +51,7 @@ from pathlib import Path
 
 from PySide6.QtCore import (
     QByteArray, QEasingCurve, QEvent, QEventLoop, QMimeData, QObject, QParallelAnimationGroup, QPoint, QPointF,
-    QPropertyAnimation, QRect, QRectF, QSize, Qt, QTimer, QUrl, Signal,
+    QPropertyAnimation, QRunnable, QRect, QRectF, QSize, Qt, QThreadPool, QTimer, QUrl, Signal,
 )
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
 from PySide6.QtMultimediaWidgets import QVideoWidget
@@ -55,6 +61,7 @@ from PySide6.QtGui import (
     QCursor,
     QDesktopServices,
     QDrag,
+    QIcon,
     QImage,
     QImageReader,
     QPainter,
@@ -68,6 +75,9 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QCheckBox,
+    QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QGraphicsEffect,
@@ -82,6 +92,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -89,11 +100,12 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate,
     QVBoxLayout,
     QWidget,
+    QWidgetAction,
 )
 
 # Dependances optionnelles (voir requirements.txt) : import protege pour
 # qu'une install sans ces paquets perde juste les apercus concernes, sans
-# empecher l'appli de demarrer. numpy sert au rasteriseur lisse des .obj
+# empecher l'appli de demarrer. numpy sert au rasteriseur des .obj
 # (voir _rasterize_obj_numpy) ET, avec OpenEXR, au decodage des .exr (voir
 # _decode_exr_image) — verifie separement, un .obj lisse ne doit pas
 # dependre de la presence d'OpenEXR.
@@ -112,13 +124,19 @@ from app_style import (
     C,
     COLUMN_FRAME_KEYS,
     COLUMN_TYPE_OVERRIDE_KEYS,
+    INSPECTOR_TITLE,
     PREVIEW_STACK_TITLE,
     STYLESHEET_COLOR_KEYS,
     _hex_to_rgb,
     apply_dwm_frame,
     apply_style,
+    auto_collapse_set_columns,
     column_gap,
     columns_resizable,
+    custom_softwares,
+    removed_softwares,
+    set_custom_softwares,
+    set_removed_softwares,
     font,
     header_qss,
     refresh_style,
@@ -126,6 +144,7 @@ from app_style import (
     role_color,
     role_font,
     scaled,
+    set_auto_collapse_set_columns,
     set_button_frame,
     set_button_radius,
     set_color,
@@ -149,15 +168,21 @@ from app_style import (
     ITEM_FONT_ROLE_LABELS,
 )
 from settings_window import (
+    M,
     SettingsWindow,
     load_settings,
     save_settings,
     _coerce_side_enabled,
+    _load_presets,
     _paint_bordered_rect,
     _radius_dict,
     _radius_any,
     _radius_shrink,
     _rounded_rect_path,
+    _save_presets,
+    _sync_slider_style,
+    _sync_dynamic_M,
+    _TableFrame,
 )
 
 # ==========================================================================
@@ -168,12 +193,21 @@ ROOT = Path(r"F:\PIPELINE")
 
 COLUMN_LABELS = ["Type", "Projets", "Sous-projet", "Logiciels", "Contenu"]
 
-# Colonnes repliables (voir Column.set_collapsed) : une fois Projet ET
-# Sous-projet choisis, ces trois colonnes de navigation perdent leur utilite
-# immediate (le contexte est fixe) et peuvent se replier en bandeau etroit,
-# avec une icone pour les redeplier a la demande (voir
-# PipelineBrowser._sync_collapse_state).
-COLLAPSIBLE_COLUMN_TITLES = {"Type", "Projets", "Sous-projet"}
+# Repli des colonnes "de set" (voir Column.set_collapsed/PipelineBrowser.
+# _apply_project_columns_collapsed) : une fois la chaine de navigation
+# COMPLETEMENT settee jusqu'au repertoire de travail (voir
+# _chain_expected_total, N colonnes reelles quelconques — Type/Projets/
+# Sous-projet en legacy, ou N niveaux configures, voir load_project_
+# columns), ces colonnes perdent leur utilite immediate (le contexte est
+# fixe) et peuvent se replier en bandeau etroit, avec une icone pour les
+# redeplier a la demande (voir PipelineBrowser._sync_collapse_state) — pas
+# de liste de TITRES fixe (voir Column.collapsible, base sur group_kind) :
+# generalise a N'IMPORTE QUEL nombre d'etapes, voir la remarque de
+# l'utilisateur, "si un projet est sur une base 3 etapes, 3 colonnes
+# devront se rabattre, si c'est une base 4, 4 colonnes ... en fait c'est
+# toutes les colonnes avant les colonnes de focus". Reglable (voir
+# app_style.auto_collapse_set_columns/General > Application, "un toggle
+# qui permet ou pas de rabattre les colonnes de set").
 
 # Dossiers dont le contenu est remonte dans la colonne du parent.
 FLATTEN_FOLDERS = {"WORK"}
@@ -188,6 +222,15 @@ IMAGE_EXTENSIONS = {
 # une vraie image, mais traites comme tel partout ailleurs (meme ligne-carte,
 # meme cache disque) via PREVIEWABLE_EXTENSIONS.
 OBJ_EXTENSIONS = {".obj"}
+ABC_EXTENSIONS = {".abc"}
+BLEND_EXTENSIONS = {".blend"}
+MAYA_SCENE_EXTENSIONS = {".ma", ".mb"}
+FBX_EXTENSIONS = {".fbx"}
+DWG_EXTENSIONS = {".dwg"}
+RENDERABLE_3D_EXTENSIONS = (
+    OBJ_EXTENSIONS | ABC_EXTENSIONS | BLEND_EXTENSIONS | MAYA_SCENE_EXTENSIONS | FBX_EXTENSIONS
+)
+_DWG_RENDER_LOCK = threading.Lock()
 
 # Fichiers Photoshop : Qt ne sait pas les decoder (absent de
 # QImageReader.supportedImageFormats), mais Photoshop y embarque presque
@@ -196,22 +239,37 @@ OBJ_EXTENSIONS = {".obj"}
 # hors de portee ici.
 PSD_EXTENSIONS = {".psd", ".psb"}
 
-# Rendus HDR (voir _decode_exr_image) : necessite le paquet OpenEXR (voir
-# _OPENEXR_AVAILABLE) ; sans lui, ces fichiers restent sans apercu, comme
-# avant.
+# Rendus HDR .exr (voir _decode_exr_image) : necessite le paquet OpenEXR
+# (voir _OPENEXR_AVAILABLE) ; sans lui, ces fichiers restent sans apercu,
+# comme avant.
 EXR_EXTENSIONS = {".exr"}
+
+# Textures Arnold/OpenImageIO : conversion vers une vignette PNG via oiiotool.
+TX_EXTENSIONS = {".tx"}
+
+# HDRI Radiance (voir _decode_hdr_image) : format RGBE documente/stable,
+# parseur maison (juste numpy, AUCUNE dependance externe contrairement a
+# .exr/OpenEXR) — voir la remarque de l'utilisateur, "possible de faire
+# les apercus des hdri ?".
+HDR_EXTENSIONS = {".hdr"}
 
 # Videos : une frame extraite via QtMultimedia (voir _decode_video_frame),
 # module fourni avec PySide6 (ffmpeg embarque, aucune dependance externe).
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".wmv", ".m4v"}
 
 PREVIEWABLE_EXTENSIONS = (
-    IMAGE_EXTENSIONS | OBJ_EXTENSIONS | PSD_EXTENSIONS | EXR_EXTENSIONS | VIDEO_EXTENSIONS
+    IMAGE_EXTENSIONS | OBJ_EXTENSIONS | ABC_EXTENSIONS | BLEND_EXTENSIONS | MAYA_SCENE_EXTENSIONS | FBX_EXTENSIONS | DWG_EXTENSIONS | PSD_EXTENSIONS | EXR_EXTENSIONS | HDR_EXTENSIONS | TX_EXTENSIONS | VIDEO_EXTENSIONS
 )
+TWO_D_IMAGE_EXTENSIONS = (
+    IMAGE_EXTENSIONS | PSD_EXTENSIONS | EXR_EXTENSIONS | HDR_EXTENSIONS | TX_EXTENSIONS | DWG_EXTENSIONS
+)
+
+_MANUAL_3D_PREVIEW_REQUESTS: set[str] = set()
+_STALE_PREVIEW_PATHS: set[str] = set()
 
 # Fichiers texte/code dont le contenu (debut) s'affiche dans l'inspecteur
 # (voir DetailPanel.show_path) : contrairement a IMAGE_EXTENSIONS/
-# OBJ_EXTENSIONS, jamais utilise pour les cartes-vignette des colonnes (un
+# OBJ_EXTENSIONS/ABC_EXTENSIONS, jamais utilise pour les cartes-vignette des colonnes (un
 # extrait de texte reduit a la taille d'une icone serait illisible) — texte
 # brut affiche en clair uniquement dans le panneau de droite.
 TEXT_PREVIEW_EXTENSIONS = {
@@ -222,6 +280,9 @@ TEXT_PREVIEW_EXTENSIONS = {
 TEXT_PREVIEW_MAX_BYTES = 4000    # lu depuis le disque, avant decodage/troncature
 TEXT_PREVIEW_MAX_LINES = 40
 TEXT_PREVIEW_PANEL_HEIGHT = 220   # hauteur fixe du panneau de texte dans l'inspecteur (voir DetailPanel)
+PUR_PREVIEW_EXTENSIONS = {".pur"}
+PUR_MAX_EMBEDDED_IMAGES = 3000
+_PUR_IMAGE_INDEX_CACHE: dict[str, tuple[float, list[tuple[int, int, str]]]] = {}
 
 # Reglable depuis la fenetre de parametres : affiche les fichiers image, dans
 # n'importe quelle colonne classique, avec exactement le meme style de ligne
@@ -231,7 +292,7 @@ TEXT_PREVIEW_PANEL_HEIGHT = 220   # hauteur fixe du panneau de texte dans l'insp
 SHOW_FILE_IMAGE_PREVIEWS = True
 
 PREVIEW_MIN_HEIGHT = 104   # hauteur de la vignette sans image (ou image tres petite)
-PREVIEW_MAX_HEIGHT = 800   # jamais plus grand que ca, meme pour une tres grande image
+PREVIEW_MAX_HEIGHT = 1200  # affichage natif des apercus OBJ/ABC en 1200 x 1200 px
 
 # Vignettes de dossier (colonnes "Projets" et "Sous-projet") : image
 # personnalisee stockee a la racine du dossier, sinon image par defaut
@@ -247,8 +308,18 @@ PROJECT_ROW_HEIGHT = 64    # hauteur de ligne (vignette carree + texte a droite)
 # icone perso est alors globale au logiciel (pas au projet), stockee a cote
 # du script puisqu'elle ne depend pas de la racine du pipeline consultee.
 SOFTWARE_COLUMN_LABEL = "Logiciels"
-SOFTWARE_ICON_SIZE = 16
+# 16 (valeur d'origine) etait bien EN DESSOUS de la hauteur de ligne
+# reelle (24-40px selon les reglages) : software_icon_pixmap mettait donc
+# en cache un bitmap de 16x16, ensuite AGRANDI par _paint_row_image pour
+# remplir la ligne — un agrandissement, jamais net (voir la remarque de
+# l'utilisateur, "je veux que toutes les icones soient parfaitement
+# redimensionnables sans pixelisation"). 128 : large marge au-dessus de
+# toute hauteur de ligne realiste, pour que la mise a l'echelle EFFECTIVE
+# (dans _paint_row_image) soit TOUJOURS un RETRECISSEMENT — voir
+# _smooth_scale_down, jamais floue/pixelisee dans ce sens.
+SOFTWARE_ICON_SIZE = 128
 CUSTOM_SOFTWARE_ICON_DIR = Path(__file__).resolve().parent / ".pipeline_software_icons"
+ICONS_DIR = Path(__file__).resolve().parent / "icons"
 CUSTOM_SOFTWARE_ICON_MAX_DIM = 128
 
 _FILE_ATTRIBUTE_HIDDEN = 0x2
@@ -267,6 +338,35 @@ def _set_hidden(path: Path) -> None:
         ctypes.windll.kernel32.SetFileAttributesW(str(path), _FILE_ATTRIBUTE_HIDDEN)
     except (AttributeError, OSError):
         pass
+
+
+_FILE_ATTRIBUTE_NORMAL = 0x80
+
+
+def _clear_hidden(path: Path) -> None:
+    """Retire l'attribut cache (voir _set_hidden) juste AVANT de RE-ECRIRE
+    un fichier deja marque cache lors d'un enregistrement precedent (ex.
+    .pipeline_columns.json/.thumbnail.png reecrits a chaque modification) —
+    sur Windows, ouvrir en ecriture/troncature (voir Path.write_text, mode
+    'w') un fichier EXISTANT ne portant QUE l'attribut HIDDEN echoue avec
+    PermissionError (confirme, reproductible a coup sur : SetFileAttributesW
+    HIDDEN puis un 2e write_text() du meme fichier echouait TOUJOURS, meme
+    en preservant les autres attributs existants) — voir la remarque de
+    l'utilisateur, "quand j'essaie d'enregistrer une modification ... il ne
+    se passe rien, il ne prend pas en compte les modifs" : c'etait
+    exactement cette PermissionError, non rattrapee, qui interrompait
+    silencieusement Column._open_column_config/ColumnConfigDialog._on_save
+    avant self.accept(). Sans effet si `path` n'existe pas encore (rien a
+    reecrire) — l'appelant doit alors re-cacher APRES coup (voir
+    _set_hidden), comme avant. No-op silencieux hors Windows."""
+    if sys.platform != "win32":
+        return
+    try:
+        if path.is_file():
+            ctypes.windll.kernel32.SetFileAttributesW(str(path), _FILE_ATTRIBUTE_NORMAL)
+    except (AttributeError, OSError):
+        pass
+
 
 # nom normalise (alphanumerique, majuscules) -> (couleur de fond, couleur du texte, texte du badge)
 SOFTWARE_ICONS: dict[str, tuple[str, str, str]] = {
@@ -317,9 +417,18 @@ _software_icon_cache: dict[tuple[str, int], tuple[float | None, QPixmap]] = {}
 
 def software_icon_key(name: str) -> str | None:
     """Normalise un nom de dossier (« Nuke X », « nuke_x »...) et le
-    rapproche d'un logiciel connu. None si non reconnu."""
+    rapproche d'un logiciel connu — soit d'origine (SOFTWARE_ICONS), soit
+    AJOUTE par l'utilisateur (voir Fenetre de parametres > General >
+    Logiciel, "+ Ajouter un logiciel...", app_style.custom_softwares).
+    None si non reconnu."""
     norm = "".join(ch for ch in name.upper() if ch.isalnum())
-    return norm if norm in SOFTWARE_ICONS else None
+    if norm in removed_softwares():
+        return None
+    if norm in SOFTWARE_ICONS:
+        return norm
+    if any(e["key"] == norm for e in custom_softwares()):
+        return norm
+    return None
 
 
 def custom_software_icon_path(key: str) -> Path:
@@ -328,21 +437,100 @@ def custom_software_icon_path(key: str) -> Path:
     return CUSTOM_SOFTWARE_ICON_DIR / f"{key}.png"
 
 
-def _cover_crop_square(pix: QPixmap, size: int) -> QPixmap:
-    """Redimensionne `pix` en carre `size`x`size` en recadrant (« cover »)."""
-    scaled = pix.scaled(size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-    x = max(0, (scaled.width() - size) // 2)
-    y = max(0, (scaled.height() - size) // 2)
-    return scaled.copy(x, y, size, size)
+# Cles d'icones d'INTERFACE personnalisables (voir Settings > ICONES >
+# General) — reutilisent TEL QUEL le meme mecanisme de stockage que les
+# icones de logiciel (custom_software_icon_path, CUSTOM_SOFTWARE_ICON_DIR/
+# {key}.png, deja generique par cle) — prefixees "ui_" pour ne jamais
+# entrer en collision avec une cle de logiciel reconnu.
+UI_ICON_FOLDER_DEFAULT = "ui_folder_default"
+UI_ICON_FILE_DEFAULT = "ui_file_default"
+UI_ICON_PIN_INACTIVE = "ui_pin_inactive"
+UI_ICON_PIN_ACTIVE = "ui_pin_active"
+UI_ICON_SETTINGS_GEAR = "ui_settings_gear"
+UI_ICON_APP_LOGO = "ui_app_logo"
+UI_ICON_COLLAPSE_TOGGLE = "ui_collapse_toggle"
+UI_ICON_SHORTCUT = "ui_shortcut"
+
+_UI_ICON_CACHE: dict[tuple[str, int], tuple[float, QPixmap]] = {}
+
+
+def custom_ui_icon_pixmap(key: str, size: int) -> QPixmap | None:
+    """Pixmap perso pour une icone d'INTERFACE (voir les UI_ICON_* ci-
+    dessus) si l'utilisateur en a choisi une (Settings > ICONES >
+    General), sinon None — l'appelant garde alors son rendu par defaut
+    actuel (glyphe peint/chevrons/fichier fourni). MEME invalidation par
+    mtime que software_icon_pixmap : pas de purge explicite necessaire au
+    moment de l'enregistrement depuis la fenetre de parametres."""
+    path = custom_software_icon_path(key)
+    try:
+        mtime = path.stat().st_mtime if path.is_file() else None
+    except OSError:
+        mtime = None
+    if mtime is None:
+        return None
+    cache_key = (key, size)
+    cached = _UI_ICON_CACHE.get(cache_key)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    loaded = QPixmap(str(path))
+    if loaded.isNull():
+        return None
+    pix = _contain_square(loaded, size)
+    _UI_ICON_CACHE[cache_key] = (mtime, pix)
+    return pix
+
+
+def _smooth_scale_down(pix: QPixmap, target: QSize, mode=Qt.KeepAspectRatioByExpanding) -> QPixmap:
+    """Reduit `pix` vers `target` par MOITIES SUCCESSIVES (mipmap), PAS en
+    un seul saut quand l'ecart est grand — voir _paint_row_image, la
+    remarque de l'utilisateur, "je veux que toutes les icones soient
+    parfaitement redimensionnables sans pixelisation mais avec un super
+    antialiasing dans le cas ou elle serait plus petite que l'originale".
+    Un seul Qt.SmoothTransformation directement d'une haute resolution
+    (voir SOFTWARE_ICON_SIZE) vers une PETITE taille de ligne (ratio de
+    reduction > 2x) reste un filtre bilineaire simple, qui peut aliaser/
+    perdre du detail fin (traits, contours nets) — chaque division par 2
+    PRE-MOYENNE reellement 4 pixels source en 1 (une vraie supersample),
+    avant qu'une derniere passe (SmoothTransformation, ecart <2x
+    restant) ajuste la taille EXACTE demandee sur un pas dorenavant fin."""
+    while pix.width() > target.width() * 2 and pix.height() > target.height() * 2:
+        pix = pix.scaled(
+            max(1, pix.width() // 2), max(1, pix.height() // 2),
+            Qt.IgnoreAspectRatio, Qt.SmoothTransformation,
+        )
+    return pix.scaled(target, mode, Qt.SmoothTransformation)
+
+
+def _contain_square(pix: QPixmap, size: int) -> QPixmap:
+    """Redimensionne `pix` pour tenir ENTIEREMENT dans un carre `size`x`size`
+    (contrairement aux apercus/vignettes, qui recadrent en "cover") :
+    centree, sans rien couper, le reste transparent — voir
+    software_icon_pixmap, la remarque de l'utilisateur, "contrairement aux
+    apercus, l'icone, si elle n'est pas totalement carree doit apparaitre
+    entiere dans l'espace reserve"."""
+    scaled = _smooth_scale_down(pix, QSize(size, size), Qt.KeepAspectRatio)
+    canvas = QPixmap(size, size)
+    canvas.fill(Qt.transparent)
+    painter = QPainter(canvas)
+    x = (size - scaled.width()) // 2
+    y = (size - scaled.height()) // 2
+    painter.drawPixmap(x, y, scaled)
+    painter.end()
+    return canvas
 
 
 def _cover_crop_rect(pix: QPixmap, width: int, height: int) -> QPixmap:
     """MEME principe que _cover_crop_square, mais pour un rectangle
     largeur x hauteur QUELCONQUE (pas necessairement carre) — voir
     _SquarePreviewImage.set_rect/Colonnes > Apercu > Image > Ratio, la
-    remarque de l'utilisateur, "je veux une section ratio"."""
+    remarque de l'utilisateur, "je veux une section ratio". _smooth_
+    scale_down (PAS un .scaled() direct) — voir sa docstring, la remarque
+    de l'utilisateur, "les apercus sont tres flous, est-il possible de
+    les rendre plus nets ?" : une capture d'ecran/vignette perso est
+    souvent BIEN plus haute resolution que le bloc Focus ou elle
+    s'affiche, un seul saut de mise a l'echelle y perdait du detail fin."""
     width, height = max(1, width), max(1, height)
-    scaled = pix.scaled(width, height, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+    scaled = _smooth_scale_down(pix, QSize(width, height), Qt.KeepAspectRatioByExpanding)
     x = max(0, (scaled.width() - width) // 2)
     y = max(0, (scaled.height() - height) // 2)
     return scaled.copy(x, y, width, height)
@@ -376,12 +564,148 @@ FILE_IMAGE_DISK_CACHE_DIR = Path(__file__).resolve().parent / ".pipeline_preview
 # que le fichier source lui-meme n'est pas retouche. A incrementer chaque
 # fois que la logique de decodage/rendu change reellement (ex. le passage a
 # un flat shading sans contour) pour forcer une regeneration.
-_PREVIEW_CACHE_VERSION = 5
+_PREVIEW_CACHE_VERSION = 44
+
+# Evite de rescanner le cache disque a chaque repaint d'une ligne sans apercu.
+# La cle inclut le mtime : une modification du fichier force une nouvelle recherche.
+_PREVIEW_STALE_LOOKUP_MISSES: set[tuple[str, int]] = set()
+_PREVIEW_CACHE_HAS_PNG: bool | None = None
 
 
-def _file_image_cache_path(path: Path, mtime: float) -> Path:
-    digest = hashlib.sha1(f"{_PREVIEW_CACHE_VERSION}:{path}".encode("utf-8")).hexdigest()
+def _file_image_cache_signature(path: Path) -> str:
+    template_signature = ""
+    if path.suffix.lower() in {".obj", ".abc", ".blend"} | MAYA_SCENE_EXTENSIONS | FBX_EXTENSIONS | DWG_EXTENSIONS:
+        template_path = Path(__file__).resolve().parent / "files" / "scene pour appercu.blend"
+        try:
+            template_stat = template_path.stat()
+            template_signature = f":{template_stat.st_mtime_ns}:{template_stat.st_size}"
+        except OSError:
+            pass
+        if path.suffix.lower() == ".blend":
+            template_signature += ":blend_all_modifiers_subd_smooth_gloss_shadow_v4"
+        elif path.suffix.lower() in MAYA_SCENE_EXTENSIONS:
+            template_signature += ":maya_ascii_join_apply_all_transforms_before_bbox_scale_v8"
+        elif path.suffix.lower() in FBX_EXTENSIONS:
+            template_signature += ":fbx_blender_template_import_v1"
+        elif path.suffix.lower() in DWG_EXTENSIONS:
+            template_signature += ":dwg_oda_dxf_ezdxf_2d_v1"
+    return template_signature
+
+
+def _file_image_cache_path(path: Path, mtime: float, version: int | None = None, signature: str | None = None) -> Path:
+    if version is None:
+        version = _PREVIEW_CACHE_VERSION
+    if signature is None:
+        signature = _file_image_cache_signature(path)
+    digest = hashlib.sha1(f"{version}:{path}{signature}".encode("utf-8")).hexdigest()
     return FILE_IMAGE_DISK_CACHE_DIR / f"{digest}_{int(mtime)}.png"
+
+
+def _preview_cache_metadata_path(path: Path) -> Path:
+    identity = hashlib.sha1(os.path.normcase(str(path.resolve())).encode("utf-8")).hexdigest()
+    return FILE_IMAGE_DISK_CACHE_DIR / f"preview_{identity}.json"
+
+
+def _record_preview_cache(path: Path, source_mtime: float, cache_path: Path) -> None:
+    """Remember the last usable image even after its render key goes stale."""
+    try:
+        _PREVIEW_STALE_LOOKUP_MISSES.discard((str(path), int(source_mtime)))
+        FILE_IMAGE_DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        metadata_path = _preview_cache_metadata_path(path)
+        payload = {
+            "source": os.path.normcase(str(path.resolve())),
+            "source_mtime": float(source_mtime),
+            "cache": str(cache_path.resolve()),
+        }
+        temp_path = metadata_path.with_suffix(".json.tmp")
+        temp_path.write_text(json.dumps(payload), encoding="utf-8")
+        temp_path.replace(metadata_path)
+    except (OSError, ValueError):
+        pass
+
+
+def _preview_cache_metadata_matches(path: Path, cache_path: Path) -> bool:
+    try:
+        metadata_path = _preview_cache_metadata_path(path)
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        return (
+            payload.get("source") == os.path.normcase(str(path.resolve()))
+            and Path(payload.get("cache", "")).resolve() == cache_path.resolve()
+        )
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return False
+
+
+def _find_stale_preview_cache(path: Path, mtime: float, current_path: Path) -> Path | None:
+    """Find the last cached image for this source when its render key changed."""
+    try:
+        metadata_path = _preview_cache_metadata_path(path)
+        if metadata_path.is_file():
+            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+            stale_path = Path(payload.get("cache", ""))
+            same_source = payload.get("source") == os.path.normcase(str(path.resolve()))
+            if (same_source and stale_path != current_path and stale_path.parent == FILE_IMAGE_DISK_CACHE_DIR
+                    and stale_path.is_file()):
+                return stale_path
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        pass
+
+    # Le cache peut ne contenir que des sidecars JSON (par exemple si les
+    # anciens apercus ont ete purges). Detecter ce cas une seule fois evite
+    # alors toute la recherche de migration pour chaque fichier affiche.
+    global _PREVIEW_CACHE_HAS_PNG
+    if _PREVIEW_CACHE_HAS_PNG is None:
+        try:
+            _PREVIEW_CACHE_HAS_PNG = next(FILE_IMAGE_DISK_CACHE_DIR.glob("*.png"), None) is not None
+        except OSError:
+            _PREVIEW_CACHE_HAS_PNG = False
+    if not _PREVIEW_CACHE_HAS_PNG:
+        return None
+
+    # Migrate legacy cache files created before the metadata sidecar existed.
+    # These candidates cover earlier preview revisions without guessing from
+    # unrelated PNG files in the shared cache directory.
+    suffix = path.suffix.lower()
+    signatures = [_file_image_cache_signature(path)]
+    if suffix in MAYA_SCENE_EXTENSIONS:
+        template_base = signatures[0].split(":maya_", 1)[0]
+        signatures.extend(template_base + ":" + value for value in (
+            "maya_ascii_join_apply_all_transforms_before_bbox_scale_v8",
+            "maya_ascii_join_weld_before_bbox_transform_v7",
+            "maya_ascii_join_weld_before_bbox_transform_v6",
+            "maya_ascii_join_before_bbox_transform_v5",
+            "maya_ascii_binary_join_before_bbox_transform_v4",
+            "maya_ascii_binary_collective_bbox_transform_v3",
+            "maya_ascii_binary_manual_idle_escaped_paths_v2",
+        ))
+    digests = set()
+    # Les anciennes revisions n'ont pas de sidecar et doivent etre migrees
+    # occasionnellement. Ne pas parcourir toute l'histoire du cache a chaque
+    # ligne visible : cela faisait des centaines de glob() synchrones, surtout
+    # couteux sur les dossiers Maya sans rendu existant. Les revisions recentes
+    # couvrent les formats de cache encore susceptibles d'etre presents.
+    first_version = max(1, _PREVIEW_CACHE_VERSION - 8)
+    for old_version in range(first_version, _PREVIEW_CACHE_VERSION):
+        for signature in signatures:
+            digests.add(hashlib.sha1(f"{old_version}:{path}{signature}".encode("utf-8")).hexdigest())
+    for digest in digests:
+        candidates = list(FILE_IMAGE_DISK_CACHE_DIR.glob(f"{digest}_*.png"))
+        if candidates:
+            candidates.sort(key=lambda candidate: candidate.stat().st_mtime, reverse=True)
+            return candidates[0]
+
+    # Source-only changes keep the same render digest; the old source-mtime
+    # suffix remains available until a replacement is written.
+    digest = current_path.stem.rsplit("_", 1)[0]
+    try:
+        candidates = [candidate for candidate in FILE_IMAGE_DISK_CACHE_DIR.glob(f"{digest}_*.png")
+                      if candidate != current_path]
+        if candidates:
+            candidates.sort(key=lambda candidate: candidate.stat().st_mtime, reverse=True)
+            return candidates[0]
+    except OSError:
+        pass
+    return None
 
 
 def _prune_stale_disk_cache(cache_path: Path) -> None:
@@ -400,52 +724,59 @@ def _prune_stale_disk_cache(cache_path: Path) -> None:
         pass
 
 
-# Apercu des fichiers .obj : pas de vraie camera/moteur 3D, un shading
-# logiciel (projection orthographique fixe + lissage Gouraud vrai — voir
-# _rasterize_obj_numpy) suffisant pour reconnaitre la forme d'un modele en
-# vignette. Le cout de parsing/rendu n'est pas negligeable sur un gros
-# maillage, mais file_image_pixmap le met en cache exactement comme une
-# image : recalcule seulement a la premiere ouverture (ou apres
-# modification du fichier).
+# Apercu des fichiers .obj : projection orthographique fixe et wireframe
+# opaque, sans remplissage, shader ni occlusion ambiante. L'image est mise
+# en cache comme les autres apercus apres sa premiere generation.
 OBJ_PREVIEW_MAX_TRIANGLES = 150_000   # au-dela, le maillage est tronque (vignette, pas un rendu final)
+OBJ_PREVIEW_RENDER_EDGES = 20_000
 # Resolution dediee, plus grande que FILE_IMAGE_CACHE_MAX_DIM (640, pense
 # pour des photos deja haute def qu'on reduit) : un .obj est genere par
 # nos soins a une taille fixe, donc c'est SA resolution native qui
 # determine la nettete a l'agrandissement (Inspecteur elargi, HiDPI...),
 # pas un simple redimensionnement d'un fichier source. Supersamplee en
-# interne (voir _rasterize_obj_numpy) pour lisser aussi le contour.
-OBJ_PREVIEW_DIM = 1200
-# Camera fixe en haut a droite (et de face) : yaw negatif = camera vers +X
-# (droite), pitch positif = camera vers +Y (haut) — voir le calcul dans la
-# conversation qui a fixe ces signes. 20 deg de chaque cote plutot que le
-# coin isometrique classique (45/35) : angle plus doux, l'objet reste vu
-# presque de face.
+# interne (voir _rasterize_obj_numpy) pour lisser aussi le contour. Une
+# sortie 1800 px garde les details fins lorsque l'inspecteur est agrandi.
+OBJ_PREVIEW_DIM = 1105
+# Camera fixe en haut a droite, axes Z-up : yaw autour de Z, puis pitch
+# autour de X. L'ecran projette X horizontal et Z vertical.
 _OBJ_YAW = math.radians(-20)
 _OBJ_PITCH = math.radians(20)
 
 
-def _normalize3(v: tuple[float, float, float]) -> tuple[float, float, float]:
-    x, y, z = v
-    length = math.sqrt(x * x + y * y + z * z) or 1.0
-    return (x / length, y / length, z / length)
-
-
-_OBJ_LIGHT = _normalize3((0.45, 0.65, 1.0))
-
-
-def _decode_obj_image(path: Path, max_dim: int) -> QImage | None:
-    """Parse `path` (Wavefront .obj) et rend une image flat-shaded de
-    max_dim x max_dim px, ou None si le fichier est illisible/vide/sans
-    geometrie exploitable. Ne lit que les sommets ("v ") et faces ("f ") :
-    materiaux, normales/UV fournis, groupes... ne servent a rien pour une
-    simple silhouette ombree."""
+def _decode_obj_image(path: Path, max_dim: int, progress_callback=None, cancel_event=None) -> QImage | None:
+    """Produit une image opaque en wireframe depuis un OBJ Wavefront."""
+    eevee_image = _render_wireframe_eevee(path, max_dim, progress_callback, cancel_event)
+    if eevee_image is not None:
+        return eevee_image
+    if cancel_event is not None and cancel_event.is_set():
+        return None
+    template_path = Path(__file__).resolve().parent / "files" / "scene pour appercu.blend"
+    if _blender_executable() and template_path.is_file():
+        # Ne pas substituer silencieusement un rendu different du template.
+        return None
     vertices: list[tuple[float, float, float]] = []
     faces: list[tuple[int, int, int]] = []   # triangles (fan) d'indices dans `vertices`
+    wire_edges: list[tuple[int, int]] = []   # aretes des polygones sources, sans diagonales de triangulation
+    source_y_up = False
+    try:
+        file_size = path.stat().st_size
+    except OSError:
+        return None
+    last_parse_percent = -1
+    if progress_callback:
+        progress_callback(1, "Lecture du maillage OBJ")
 
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            for line in f:
-                if line.startswith("v "):
+            while True:
+                line = f.readline()
+                if not line:
+                    break
+                if line.lower().startswith("# file exported by zbrush"):
+                    # Dans les OBJ ZBrush de cette collection, l'axe vertical
+                    # source est Y; le convertit vers la convention du rendu Z-up.
+                    source_y_up = True
+                elif line.startswith("v "):
                     parts = line.split()
                     if len(parts) >= 4:
                         try:
@@ -464,15 +795,35 @@ def _decode_obj_image(path: Path, max_dim: int) -> QImage | None:
                         # liste de sommets deja lus.
                         idx.append(n - 1 if n > 0 else len(vertices) + n)
                     if len(idx) >= 3:
+                        if all(0 <= vertex < len(vertices) for vertex in idx):
+                            wire_edges.extend((idx[i], idx[(i + 1) % len(idx)]) for i in range(len(idx)))
                         for i in range(1, len(idx) - 1):
                             faces.append((idx[0], idx[i], idx[i + 1]))
                             if len(faces) >= OBJ_PREVIEW_MAX_TRIANGLES:
                                 break
+                if progress_callback and file_size:
+                    percent = min(24, int(f.tell() * 24 / file_size))
+                    if percent > last_parse_percent:
+                        last_parse_percent = percent
+                        progress_callback(percent, f"Lecture OBJ : {percent * 100 // 24}% du fichier")
     except OSError:
         return None
 
+    if source_y_up:
+        vertices = [(x, -z, y) for x, y, z in vertices]
+        if progress_callback:
+            progress_callback(25, "Conversion des coordonnées ZBrush Y-up vers Z-up")
     if not vertices or not faces:
+        if progress_callback:
+            progress_callback(100, "Aucune géométrie exploitable")
         return None
+    # Une arete partagee par deux faces ne doit etre dessinee qu'une fois.
+    wire_edges = list(dict.fromkeys((min(a, b), max(a, b)) for a, b in wire_edges if a != b))
+    # Ne pas sous-echantillonner les faces : supprimer des triangles de façon
+    # uniforme ouvre des trous dans la surface et donne un aspect « éclaté ».
+    if len(wire_edges) > OBJ_PREVIEW_RENDER_EDGES:
+        stride = math.ceil(len(wire_edges) / OBJ_PREVIEW_RENDER_EDGES)
+        wire_edges = wire_edges[::stride]
 
     xs = [v[0] for v in vertices]
     ys = [v[1] for v in vertices]
@@ -485,82 +836,563 @@ def _decode_obj_image(path: Path, max_dim: int) -> QImage | None:
     transformed: list[tuple[float, float, float]] = []
     for x, y, z in vertices:
         x, y, z = (x - cx) / extent, (y - cy) / extent, (z - cz) / extent
-        x, z = x * cos_y + z * sin_y, -x * sin_y + z * cos_y   # rotation (yaw)
-        y, z = y * cos_p - z * sin_p, y * sin_p + z * cos_p    # rotation (pitch)
+        x, y = x * cos_y - y * sin_y, x * sin_y + y * cos_y    # yaw autour de Z
+        y, z = y * cos_p - z * sin_p, y * sin_p + z * cos_p    # pitch autour de X
         transformed.append((x, y, z))
 
-    # Etendue projetee (x, y) reelle apres rotation, pour cadrer pile le
+    # Etendue projetee (x, z) reelle apres rotation, pour cadrer pile le
     # modele quelle que soit son orientation d'origine.
     proj_xs = [p[0] for p in transformed]
-    proj_ys = [p[1] for p in transformed]
+    proj_ys = [p[2] for p in transformed]
     span = max(max(proj_xs) - min(proj_xs), max(proj_ys) - min(proj_ys)) or 1.0
     scale = (max_dim * 0.82) / span
     ox = max_dim / 2 - (min(proj_xs) + max(proj_xs)) / 2 * scale
     oy = max_dim / 2 + (min(proj_ys) + max(proj_ys)) / 2 * scale
 
     def to_screen(p: tuple[float, float, float]) -> QPointF:
-        return QPointF(p[0] * scale + ox, -p[1] * scale + oy)
+        return QPointF(p[0] * scale + ox, -p[2] * scale + oy)
 
-    # Normales par face (non normalisees : leur norme, proportionnelle a
-    # l'aire du triangle, sert de poids naturel dans l'accumulation par
-    # sommet ci-dessous) puis normales par sommet (moyenne des faces
-    # adjacentes), pour un vrai lissage Gouraud (intensite interpolee par
-    # pixel entre les 3 sommets d'un triangle, voir _rasterize_obj_numpy) :
-    # deux triangles voisins partageant des sommets se retrouvent avec un
-    # degrade continu, sans les facettes dures d'un flat shading par face.
-    vertex_normals = [[0.0, 0.0, 0.0] for _ in vertices]
-    for a, b, c in faces:
-        va, vb, vc = transformed[a], transformed[b], transformed[c]
-        e1 = (vb[0] - va[0], vb[1] - va[1], vb[2] - va[2])
-        e2 = (vc[0] - va[0], vc[1] - va[1], vc[2] - va[2])
-        n = (
-            e1[1] * e2[2] - e1[2] * e2[1],
-            e1[2] * e2[0] - e1[0] * e2[2],
-            e1[0] * e2[1] - e1[1] * e2[0],
-        )
-        for i in (a, b, c):
-            vertex_normals[i][0] += n[0]
-            vertex_normals[i][1] += n[1]
-            vertex_normals[i][2] += n[2]
+    # Ajuste les plans selon la profondeur reelle, avec les bornes de
+    # reference de l'utilisateur (near >= 0.1, far <= 10000). Les sommets
+    # sont normalises avant cette etape : les valeurs restent adaptees au
+    # modele plutot que d'utiliser systematiquement toute la plage.
+    depth_values = [p[1] for p in transformed]
+    depth_span = max(max(depth_values) - min(depth_values), 1e-4)
+    near_clip = max(0.1, depth_span * 0.01)
+    far_clip = min(10000.0, max(near_clip + 0.1, near_clip + depth_span * 1.05))
+    depth_max = max(depth_values)
+    camera_depth = [-(depth_max - value + near_clip) for value in depth_values]
+    if progress_callback:
+        progress_callback(26, f"Caméra Z-up : near={near_clip:.4g}, far={far_clip:.4g}")
 
-    def vertex_intensity(i: int) -> float:
-        nx, ny, nz = vertex_normals[i]
-        nlen = math.sqrt(nx * nx + ny * ny + nz * nz)
-        if nlen == 0:
-            return 0.25
-        # abs() plutot qu'un vrai dot signe + culling de face arriere : les
-        # normales d'un .obj quelconque ne sont pas garanties bien orientees,
-        # et une face vue de "dos" doit quand meme apparaitre (surface
-        # ouverte, mesh non manifold...) plutot que rester un trou noir.
-        return 0.25 + 0.75 * abs(
-            (nx * _OBJ_LIGHT[0] + ny * _OBJ_LIGHT[1] + nz * _OBJ_LIGHT[2]) / nlen
-        )
-
-    vertex_shade = [vertex_intensity(i) for i in range(len(vertices))]
+    vertex_shade: list[float] = []  # conservé dans la signature du rasteriseur
     base_rgb = (190, 190, 196)
 
     if _NUMPY_AVAILABLE:
-        return _rasterize_obj_numpy(transformed, faces, vertex_shade, max_dim, scale, ox, oy, base_rgb)
-    return _rasterize_obj_qpainter(transformed, faces, vertex_shade, max_dim, to_screen, base_rgb)
+        return _rasterize_obj_numpy(
+            transformed, faces, vertex_shade, max_dim, scale, ox, oy, base_rgb, wire_edges,
+            progress_callback=progress_callback, camera_depth=camera_depth,
+            near_clip=near_clip, far_clip=far_clip,
+        )
+    return _rasterize_obj_qpainter(
+        transformed, faces, vertex_shade, max_dim, to_screen, base_rgb, wire_edges,
+        progress_callback=progress_callback,
+    )
+
+
+def _blender_executable() -> str | None:
+    """Trouve Blender, requis pour lire les caches Alembic binaires."""
+    configured = os.environ.get("BLENDER_EXECUTABLE")
+    if configured and Path(configured).is_file():
+        return configured
+    found = shutil.which("blender")
+    if found:
+        return found
+    if sys.platform == "win32":
+        for root in (Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Blender Foundation",
+                     Path(r"C:\Program Files\Blender Foundation")):
+            try:
+                candidates = sorted(root.glob("Blender */blender.exe"), reverse=True)
+                if candidates:
+                    return str(candidates[0])
+            except OSError:
+                pass
+    return None
+
+
+def _render_wireframe_eevee(path: Path, max_dim: int, progress_callback=None, cancel_event=None, kind_override=None) -> QImage | None:
+    """Rend l'objet dans la scene Eevee du template, avec son eclairage."""
+    blender = _blender_executable()
+    if not blender:
+        return None
+    suffix = path.suffix.lower()
+    script = r'''import bpy, sys
+from mathutils import Matrix, Vector
+src, dst, status_path, kind, output_dim = sys.argv[sys.argv.index("--") + 1:sys.argv.index("--") + 6]
+output_dim = int(output_dim)
+def report(percent, text):
+    try:
+        with open(status_path, "w", encoding="utf-8") as f: f.write("%d|%s" % (percent, text))
+    except OSError: pass
+def fail(message):
+    report(99, message)
+    raise RuntimeError(message)
+report(3, "Ouverture de la scene de rendu")
+scene = bpy.context.scene
+if scene.camera is None: fail("La scene de preview ne contient pas de camera")
+bbox_obj = bpy.data.objects.get("Cube")
+if bbox_obj is None or bbox_obj.type != "MESH": fail("Le cube servant de bounding box est introuvable")
+bbox_corners = [bbox_obj.matrix_world @ Vector(corner) for corner in bbox_obj.bound_box]
+bbox_min = Vector(tuple(min(p[i] for p in bbox_corners) for i in range(3)))
+bbox_max = Vector(tuple(max(p[i] for p in bbox_corners) for i in range(3)))
+target_center = (bbox_min + bbox_max) * 0.5
+target_size = max(bbox_max - bbox_min)
+if target_size <= 1e-12: fail("Le cube de bounding box a une taille nulle")
+initial_objects = {obj.as_pointer() for obj in scene.objects}
+report(8, "Import du fichier dans le template")
+try:
+    if kind in {"abc", "maya"}:
+        bpy.ops.wm.alembic_import(filepath=src, scale=1.0, validate_meshes=False)
+    elif kind == "blend":
+        with bpy.data.libraries.load(src, link=False) as (data_from, data_to):
+            if not data_from.scenes: raise RuntimeError("Aucune scene dans le fichier .blend")
+            data_to.scenes = [data_from.scenes[0]]
+        source_scene = data_to.scenes[0]
+        if source_scene is None: raise RuntimeError("Scene source introuvable")
+        scene.collection.children.link(source_scene.collection)
+        bpy.context.view_layer.update()
+        for source_obj in source_scene.objects:
+            source_obj.hide_render = source_obj.type != "MESH"
+    elif kind == "fbx":
+        try:
+            bpy.ops.import_scene.fbx(filepath=src)
+        except Exception as exc:
+            raise RuntimeError("Import FBX impossible : %s" % exc)
+    else:
+        try:
+            bpy.ops.wm.obj_import(filepath=src, global_scale=1.0, clamp_size=0.0,
+                forward_axis='NEGATIVE_Z', up_axis='Y', use_split_objects=True,
+                use_split_groups=False, import_vertex_groups=False, validate_meshes=True,
+                close_spline_loops=True, mtl_name_collision_mode='MAKE_UNIQUE')
+        except (AttributeError, TypeError):
+            bpy.ops.import_scene.obj(filepath=src, global_clamp_size=0.0,
+                axis_forward='-Z', axis_up='Y', use_split_objects=True,
+                use_split_groups=False, use_image_search=False)
+except Exception as exc:
+    fail("Import Blender impossible : %s" % exc)
+objects = [o for o in scene.objects if o.as_pointer() not in initial_objects and o.type == "MESH"]
+if not objects: fail("Aucun maillage importe par Blender")
+if kind in {"ma", "mb", "maya"}:
+    report(16, "Selection de tous les objets Maya et fusion avec Ctrl+J")
+    bpy.ops.object.select_all(action="DESELECT")
+    for obj in objects:
+        obj.select_set(True)
+    bpy.context.view_layer.objects.active = objects[0]
+    try:
+        bpy.ops.object.join()
+    except Exception as exc:
+        fail("Impossible de fusionner les objets Maya : %s" % exc)
+    objects = [bpy.context.view_layer.objects.active]
+    report(18, "Application de Ctrl+A - All Transforms avant le scale")
+    try:
+        bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    except Exception as exc:
+        fail("Impossible d'appliquer All Transforms au maillage Maya fusionne : %s" % exc)
+    bpy.context.view_layer.update()
+subdivision_objects = set()
+if kind == "blend":
+    report(14, "Application de tous les modifiers avant le cadrage")
+    for obj in objects:
+        if any(mod.type == "SUBSURF" for mod in obj.modifiers):
+            subdivision_objects.add(obj.as_pointer())
+        modifier_names = [mod.name for mod in obj.modifiers]
+        if modifier_names:
+            obj.data = obj.data.copy()
+            bpy.ops.object.select_all(action="DESELECT")
+            obj.select_set(True)
+            bpy.context.view_layer.objects.active = obj
+            for modifier_name in modifier_names:
+                if obj.modifiers.get(modifier_name) is None:
+                    continue
+                try:
+                    bpy.ops.object.modifier_apply(modifier=modifier_name)
+                except Exception as exc:
+                    fail("Impossible d'appliquer le modifier %s sur %s : %s" % (modifier_name, obj.name, exc))
+    if subdivision_objects:
+        for light in scene.objects:
+            if light.type == "LIGHT" and hasattr(light.data, "use_shadow"):
+                light.data.use_shadow = True
+    bpy.context.view_layer.update()
+report(20, "Calcul de la bounding box de l'objet")
+world_matrices = {obj: obj.matrix_world.copy() for obj in objects}
+world_points = [world_matrices[obj] @ vertex.co for obj in objects for vertex in obj.data.vertices]
+if not world_points: fail("Aucune geometrie exploitable")
+source_min = Vector(tuple(min(p[i] for p in world_points) for i in range(3)))
+source_max = Vector(tuple(max(p[i] for p in world_points) for i in range(3)))
+source_center = (source_min + source_max) * 0.5
+source_size = max(source_max - source_min)
+if source_size <= 1e-12: fail("La bounding box de l'objet a une taille nulle")
+uniform_scale = target_size / source_size
+transform = Matrix.Translation(target_center) @ Matrix.Scale(uniform_scale, 4) @ Matrix.Translation(-source_center)
+# Une seule transformation est calculee depuis la bounding box globale puis
+# cuite dans la geometrie. Les objets Maya ont ete joints et leurs transforms
+# appliques avant le calcul de cette bounding box.
+report(32, "Scale et centrage du maillage Maya fusionne dans le cube" if kind in {"ma", "mb", "maya"} else "Mise a l'echelle et centrage dans le cube")
+for obj in objects:
+    original_world = world_matrices[obj]
+    obj.data = obj.data.copy()
+    obj.data.transform(transform @ original_world)
+    obj.parent = None
+    obj.matrix_world = Matrix.Identity(4)
+    use_subdivision_shading = obj.as_pointer() in subdivision_objects
+    for polygon in obj.data.polygons: polygon.use_smooth = use_subdivision_shading
+    obj.data.materials.clear()
+surface = bpy.data.materials.new("Preview - surface opaque")
+surface.diffuse_color = (0.48, 0.50, 0.53, 1.0)
+surface.use_nodes = True
+principled = surface.node_tree.nodes.get("Principled BSDF")
+if principled:
+    principled.inputs["Base Color"].default_value = surface.diffuse_color
+    principled.inputs["Roughness"].default_value = 0.78
+    principled.inputs["Alpha"].default_value = 1.0
+surface_subdivision = bpy.data.materials.new("Preview - surface lisse brillante")
+surface_subdivision.diffuse_color = (0.48, 0.50, 0.53, 1.0)
+surface_subdivision.use_nodes = True
+principled_subdivision = surface_subdivision.node_tree.nodes.get("Principled BSDF")
+if principled_subdivision:
+    principled_subdivision.inputs["Base Color"].default_value = surface_subdivision.diffuse_color
+    principled_subdivision.inputs["Roughness"].default_value = 0.22
+    principled_subdivision.inputs["Metallic"].default_value = 0.08
+    principled_subdivision.inputs["Alpha"].default_value = 1.0
+    coat_weight = principled_subdivision.inputs.get("Coat Weight")
+    if coat_weight is not None:
+        coat_weight.default_value = 0.12
+    coat_roughness = principled_subdivision.inputs.get("Coat Roughness")
+    if coat_roughness is not None:
+        coat_roughness.default_value = 0.2
+wire_material = bpy.data.materials.new("Preview - wireframe noir")
+wire_material.diffuse_color = (0.002, 0.002, 0.002, 1.0)
+wire_material.use_nodes = True
+nodes = wire_material.node_tree.nodes
+nodes.clear()
+output = nodes.new("ShaderNodeOutputMaterial")
+emission = nodes.new("ShaderNodeEmission")
+emission.inputs["Color"].default_value = (0.002, 0.002, 0.002, 1.0)
+emission.inputs["Strength"].default_value = 1.0
+wire_material.node_tree.links.new(emission.outputs["Emission"], output.inputs["Surface"])
+for index, obj in enumerate(objects):
+    obj.data.materials.append(
+        surface_subdivision if obj.as_pointer() in subdivision_objects else surface
+    )
+    obj.data.materials.append(wire_material)
+    if obj.as_pointer() not in subdivision_objects:
+        wire = obj.modifiers.new("Wireframe fin", "WIREFRAME")
+        wire.thickness = target_size * 1.8 / max(output_dim, 1)
+        wire.offset = 0.0
+        wire.use_replace = False
+        wire.use_even_offset = False
+        wire.use_boundary = True
+        wire.use_crease = False
+        wire.use_relative_offset = False
+        wire.material_offset = 1
+    if index % max(1, len(objects) // 5) == 0:
+        report(42 + int(20 * index / max(1, len(objects))), "Preparation du wireframe : objet %d/%d" % (index + 1, len(objects)))
+# Grille, axes, curseur et gizmos sont des overlays du viewport, jamais rendus.
+for obj in scene.objects:
+    if obj.type in {'EMPTY', 'CAMERA'}: obj.hide_render = True
+bbox_obj.hide_render = True
+scene.camera.hide_render = False
+scene.camera.data.clip_start = 0.1
+scene.camera.data.clip_end = 10000.0
+scene.render.resolution_x = output_dim
+scene.render.resolution_y = output_dim
+scene.render.resolution_percentage = 100
+scene.render.image_settings.file_format = "PNG"
+scene.render.image_settings.color_mode = "RGB"
+scene.render.film_transparent = False
+scene.render.filepath = dst
+report(70, "Rendu Eevee dans le template avec ses lumieres et sa camera")
+bpy.ops.render.render(write_still=True)
+report(98, "Apercu Eevee pret")
+'''
+    try:
+        with tempfile.TemporaryDirectory(prefix="pipe_eevee_wire_") as temp_dir:
+            temp = Path(temp_dir)
+            script_path, image_path, status_path = temp / "render.py", temp / "preview.png", temp / "status.txt"
+            error_path = temp / "blender_error.log"
+            script_path.write_text(script, encoding="utf-8")
+            error_stream = error_path.open("w", encoding="utf-8", errors="replace")
+            kwargs = {"stdout": subprocess.DEVNULL, "stderr": error_stream}
+            if sys.platform == "win32":
+                kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            template_path = Path(__file__).resolve().parent / "files" / "scene pour appercu.blend"
+            if not template_path.is_file():
+                if progress_callback:
+                    progress_callback(99, f"Scene de rendu introuvable : {template_path}")
+                error_stream.close()
+                return None
+            proc = subprocess.Popen(
+                [blender, "--background", str(template_path), "--python", str(script_path), "--",
+                 str(path.resolve()), str(image_path), str(status_path),
+                 kind_override or ("abc" if suffix == ".abc" else "blend" if suffix == ".blend" else "fbx" if suffix == ".fbx" else "obj"), str(max_dim)],
+                **kwargs,
+            )
+            last_status = ""
+            deadline = time.monotonic() + 90
+            while proc.poll() is None:
+                if cancel_event is not None and cancel_event.is_set():
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=3)
+                    error_stream.close()
+                    return None
+                try:
+                    current = status_path.read_text(encoding="utf-8")
+                    if current and current != last_status:
+                        last_status = current
+                        percent, message = current.split("|", 1)
+                        if progress_callback:
+                            progress_callback(int(percent), message)
+                except (OSError, ValueError):
+                    pass
+                if time.monotonic() >= deadline:
+                    proc.terminate()
+                    proc.wait(timeout=3)
+                    error_stream.close()
+                    return None
+                time.sleep(0.1)
+            error_stream.close()
+            if proc.returncode != 0 or not image_path.is_file():
+                if progress_callback:
+                    try:
+                        percent, message = last_status.split("|", 1)
+                        details = error_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                        detail = next((line.strip() for line in reversed(details) if line.strip()), "")
+                        progress_callback(99, f"Echec Eevee : {detail or message}")
+                    except ValueError:
+                        pass
+                return None
+            image = QImage(str(image_path))
+            return image.copy() if not image.isNull() else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+def _decode_abc_image(path: Path, max_dim: int, progress_callback=None, cancel_event=None) -> QImage | None:
+    """Extrait le maillage Alembic via Blender, puis reutilise le rendu OBJ."""
+    try:
+        with open(path, "rb") as source_file:
+            legacy_hdf5 = source_file.read(8) == b"\x89HDF\r\n\x1a\n"
+    except OSError:
+        return None
+    if legacy_hdf5:
+        if progress_callback:
+            progress_callback(100, "Alembic HDF5 obsolète : réexport Blender en Ogawa requis")
+        return None
+    eevee_image = _render_wireframe_eevee(path, max_dim, progress_callback, cancel_event)
+    if eevee_image is not None:
+        return eevee_image
+    if cancel_event is not None and cancel_event.is_set():
+        return None
+    template_path = Path(__file__).resolve().parent / "files" / "scene pour appercu.blend"
+    if _blender_executable() and template_path.is_file():
+        return None
+    blender = _blender_executable()
+    if not blender:
+        if progress_callback:
+            progress_callback(1, "Blender introuvable")
+        return None
+    # Blender evalue l'Alembic a sa frame de depart et exporte les meshes
+    # evalues en OBJ temporaire. Le rendu et le cadrage restent identiques
+    # aux apercus OBJ, et le cache existant evite de relancer Blender.
+    script = r'''import bpy, sys
+from mathutils import Vector
+src, dst, status_path = sys.argv[sys.argv.index("--") + 1:sys.argv.index("--") + 4]
+def report(pct, message):
+    with open(status_path, "w", encoding="utf-8") as status:
+        status.write("%d|%s" % (pct, message))
+report(5, "Import Alembic dans Blender")
+# Blender demarre avec une scene contenant un cube par defaut : vider la
+# scene avant l'import pour ne pas l'inclure dans le maillage d'aperçu.
+bpy.ops.object.select_all(action="SELECT")
+bpy.ops.object.delete(use_global=False)
+bpy.ops.wm.alembic_import(filepath=src)
+source_y_up = open(src, "rb").read(8) == b"\x89HDF\r\n\x1a\n"
+report(18, "Alembic importé; conversion Y-up" if source_y_up else "Alembic importé; axe Z-up")
+deps = bpy.context.evaluated_depsgraph_get()
+vertices, polygons = [], []
+triangle_count = 0
+limit = 150000
+mesh_objects = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
+for object_index, obj in enumerate(mesh_objects):
+    report(18 + int(12 * object_index / max(1, len(mesh_objects))),
+           "Extraction du maillage : objet %d/%d" % (object_index + 1, len(mesh_objects)))
+    if obj.type != "MESH": continue
+    evaluated = obj.evaluated_get(deps)
+    mesh = evaluated.to_mesh()
+    if not mesh: continue
+    offset = len(vertices)
+    matrix = evaluated.matrix_world
+    for vertex in mesh.vertices:
+        world = matrix @ vertex.co
+        vertices.append(Vector((world.x, -world.z, world.y)) if source_y_up else world)
+    poly_step = max(1, len(mesh.polygons) // 8)
+    for poly_index, poly in enumerate(mesh.polygons):
+        if poly_index % poly_step == 0:
+            report(20 + int(10 * (object_index + poly_index / max(1, len(mesh.polygons)))
+                             / max(1, len(mesh_objects))),
+                   "Extraction des faces : %d/%d" % (poly_index + 1, len(mesh.polygons)))
+        ids = list(poly.vertices)
+        if len(ids) >= 3:
+            polygons.append([offset + i + 1 for i in ids])
+            triangle_count += len(ids) - 2
+        if triangle_count >= limit: break
+    evaluated.to_mesh_clear()
+    if triangle_count >= limit: break
+report(32, "Écriture du maillage temporaire")
+with open(dst, "w", encoding="utf-8") as f:
+    for v in vertices: f.write("v %.9g %.9g %.9g\n" % (v.x, v.y, v.z))
+    for polygon in polygons: f.write("f " + " ".join(map(str, polygon)) + "\n")
+report(35, "Maillage prêt; préparation du rendu")
+'''
+    try:
+        with tempfile.TemporaryDirectory(prefix="pipe_abc_preview_") as temp_dir:
+            temp = Path(temp_dir)
+            pyfile, meshfile, statusfile = temp / "extract.py", temp / "mesh.obj", temp / "status.txt"
+            pyfile.write_text(script, encoding="utf-8")
+            kwargs = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+            if sys.platform == "win32":
+                kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            proc = subprocess.Popen([blender, "--background", "--python", str(pyfile), "--",
+                                     str(path.resolve()), str(meshfile), str(statusfile)], **kwargs)
+            if progress_callback:
+                progress_callback(3, "Démarrage de Blender")
+            deadline = time.monotonic() + 45
+            last_status = ""
+            while proc.poll() is None:
+                if cancel_event is not None and cancel_event.is_set():
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=3)
+                    return None
+                try:
+                    current_status = statusfile.read_text(encoding="utf-8")
+                    if current_status and current_status != last_status:
+                        last_status = current_status
+                        percent_text, message = current_status.split("|", 1)
+                        if progress_callback:
+                            progress_callback(int(percent_text), message)
+                except (OSError, ValueError):
+                    pass
+                if time.monotonic() >= deadline:
+                    proc.terminate()
+                    proc.wait(timeout=3)
+                    return None
+                time.sleep(0.1)
+            if proc.returncode != 0:
+                if source_is_hdf5 and progress_callback:
+                    progress_callback(99, "Import refusé : archive HDF5 héritée; réexport requis en Ogawa")
+                return None
+            if not meshfile.is_file() or meshfile.stat().st_size == 0:
+                return None
+            return _decode_obj_image(
+                meshfile, max_dim,
+                progress_callback=(lambda pct, msg: progress_callback(35 + int(pct * 0.64), msg))
+                if progress_callback else None, cancel_event=cancel_event,
+            )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _mayapy_executable() -> str | None:
+    """Trouve l'interpreteur Maya necessaire pour lire les fichiers .ma."""
+    configured = os.environ.get("MAYA_PYTHON_EXECUTABLE")
+    if configured and Path(configured).is_file():
+        return configured
+    maya_location = os.environ.get("MAYA_LOCATION")
+    candidates = [Path(maya_location) / "bin" / "mayapy.exe"] if maya_location else []
+    root = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Autodesk"
+    try:
+        candidates.extend(root.glob("Maya*/bin/mayapy.exe"))
+    except OSError:
+        pass
+    existing = sorted((p for p in candidates if p.is_file()), reverse=True)
+    return str(existing[0]) if existing else None
+
+
+def _render_ma_wireframe(path: Path, max_dim: int, progress_callback=None, cancel_event=None) -> QImage | None:
+    """Ouvre un fichier Maya ASCII/binaire, l'exporte en Alembic temporaire et le rend."""
+    mayapy = _mayapy_executable()
+    if not mayapy:
+        if progress_callback:
+            progress_callback(99, f"Maya/mayapy introuvable pour lire le fichier {path.suffix.lower()}")
+        return None
+    script = r'''import sys
+import maya.standalone
+maya.standalone.initialize(name="python")
+import maya.cmds as cmds
+src, dst = sys.argv[sys.argv.index("--") + 1:sys.argv.index("--") + 3]
+cmds.loadPlugin("AbcExport", quiet=True)
+cmds.file(src, open=True, force=True, prompt=False, ignoreVersion=True)
+frame = cmds.currentTime(query=True)
+roots = cmds.ls(assemblies=True, long=True) or []
+if not roots: raise RuntimeError("Aucune racine de scene a exporter")
+parts = ["-frameRange", str(frame), str(frame), "-step", "1", "-dataFormat", "ogawa", "-worldSpace"]
+for root in roots:
+    parts.extend(("-root", '"%s"' % root.replace('"', '\\"')))
+abc_output_path = dst.replace("\\", "/").replace('"', '\\"')
+parts.extend(("-file", '"%s"' % abc_output_path))
+cmds.AbcExport(j=" ".join(parts))
+'''
+    try:
+        with tempfile.TemporaryDirectory(prefix="pipe_ma_preview_") as temp_dir:
+            temp = Path(temp_dir)
+            script_path, abc_path = temp / "convert.py", temp / "scene.abc"
+            log_path = temp / "maya_error.log"
+            script_path.write_text(script, encoding="utf-8")
+            env = os.environ.copy()
+            tool_dir = str(Path(mayapy).resolve().parent)
+            env["PATH"] = tool_dir + os.pathsep + env.get("PATH", "")
+            env.setdefault("MAYA_DISABLE_CIP", "1")
+            log_stream = log_path.open("w", encoding="utf-8", errors="replace")
+            kwargs = {"stdout": log_stream, "stderr": log_stream, "env": env}
+            if sys.platform == "win32":
+                kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            if progress_callback:
+                progress_callback(5, "Ouverture du fichier Maya dans mayapy")
+            proc = subprocess.Popen([mayapy, str(script_path), "--", str(path.resolve()), str(abc_path)], **kwargs)
+            deadline = time.monotonic() + 120
+            while proc.poll() is None:
+                if cancel_event is not None and cancel_event.is_set():
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=3)
+                    log_stream.close()
+                    return None
+                if time.monotonic() >= deadline:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=3)
+                    log_stream.close()
+                    if progress_callback:
+                        progress_callback(99, "Delai depasse pendant l'ouverture Maya")
+                    return None
+                time.sleep(0.1)
+            log_stream.close()
+            if proc.returncode != 0 or not abc_path.is_file() or abc_path.stat().st_size == 0:
+                if progress_callback:
+                    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                    detail = next((line.strip() for line in reversed(lines) if line.strip()), "")
+                    progress_callback(99, f"Echec import Maya : {detail or 'export Alembic impossible'}")
+                return None
+            if progress_callback:
+                progress_callback(32, "Scene convertie; rendu Eevee dans le template")
+            return _render_wireframe_eevee(abc_path, max_dim, progress_callback, cancel_event, kind_override="maya")
+    except (OSError, subprocess.SubprocessError):
+        return None
 
 
 def _rasterize_obj_numpy(
     transformed: list[tuple[float, float, float]], faces: list[tuple[int, int, int]],
     vertex_shade: list[float], max_dim: int, scale: float, ox: float, oy: float,
-    base_rgb: tuple[int, int, int],
+    base_rgb: tuple[int, int, int], wire_edges: list[tuple[int, int]],
+    camera_depth: list[float], near_clip: float, far_clip: float, progress_callback=None,
 ) -> QImage:
-    """Rasterise `faces` avec un vrai z-buffer (ordre correct quelle que
-    soit la complexite du maillage, contrairement a l'ancien tri peintre)
-    et un vrai lissage Gouraud : l'intensite lumineuse est interpolee par
-    coordonnees barycentriques a CHAQUE PIXEL entre les 3 sommets d'un
-    triangle, pas moyennee une seule fois pour tout le triangle — c'est ce
-    qui elimine reellement le facettage visible, la ou le flat shading
-    (QPainter, une couleur unie par triangle) ne pouvait que l'attenuer.
-    Supersample x2 (rendu a 2*max_dim puis reduit par moyenne de blocs
-    2x2) pour lisser aussi le contour exterieur, qu'un rasteriseur naif
-    (test au centre du pixel, sans anti-aliasing) laisserait crenele."""
-    render_dim = max_dim * 2
-    r_scale, r_ox, r_oy = scale * 2, ox * 2, oy * 2
+    """Construit un z-buffer pour masquer les arêtes cachées et trace un
+    wireframe opaque, sans coloration ni occlusion ambiante."""
+    supersample = 2.0 / 3.0
+    render_dim = int(round(max_dim * supersample))
+    r_scale, r_ox, r_oy = scale * supersample, ox * supersample, oy * supersample
 
     n = len(transformed)
     xs = np.empty(n, dtype=np.float64)
@@ -569,17 +1401,23 @@ def _rasterize_obj_numpy(
     for i, (x, y, z) in enumerate(transformed):
         xs[i], ys[i], zs[i] = x, y, z
     screen_x = xs * r_scale + r_ox
-    screen_y = -ys * r_scale + r_oy
-    shade = np.asarray(vertex_shade, dtype=np.float64)
+    screen_y = -zs * r_scale + r_oy
+    depth_values = np.asarray(camera_depth, dtype=np.float64)
 
-    color_buf = np.empty((render_dim, render_dim, 3), dtype=np.float64)
-    color_buf[:, :] = _hex_to_rgb(C["well"])   # fond, la ou aucun triangle ne couvre le pixel
+    color_buf = np.empty((render_dim, render_dim, 3), dtype=np.uint8)
+    color_buf[:, :] = (238, 240, 242)
     depth_buf = np.full((render_dim, render_dim), -np.inf, dtype=np.float64)
 
-    for a, b, c in faces:
-        x0, y0, z0 = screen_x[a], screen_y[a], zs[a]
-        x1, y1, z1 = screen_x[b], screen_y[b], zs[b]
-        x2, y2, z2 = screen_x[c], screen_y[c], zs[c]
+    face_step = max(1, len(faces) // 20)
+    if progress_callback:
+        progress_callback(27, "Projection et préparation du z-buffer")
+    for face_index, (a, b, c) in enumerate(faces):
+        if progress_callback and face_index % face_step == 0:
+            progress_callback(28 + int(face_index * 55 / max(1, len(faces))),
+                              f"Rendu des faces : {face_index + 1}/{len(faces)}")
+        x0, y0, z0 = screen_x[a], screen_y[a], depth_values[a]
+        x1, y1, z1 = screen_x[b], screen_y[b], depth_values[b]
+        x2, y2, z2 = screen_x[c], screen_y[c], depth_values[c]
 
         min_x = max(int(math.floor(min(x0, x1, x2))), 0)
         max_x = min(int(math.ceil(max(x0, x1, x2))), render_dim - 1)
@@ -606,61 +1444,84 @@ def _rasterize_obj_numpy(
 
         z_interp = l0 * z0 + l1 * z1 + l2 * z2
         region_depth = depth_buf[min_y:max_y + 1, min_x:max_x + 1]
-        closer = inside & (z_interp > region_depth)
+        in_clip_range = (z_interp <= -near_clip) & (z_interp >= -far_clip)
+        closer = inside & in_clip_range & (z_interp > region_depth)
         if not closer.any():
             continue
 
-        intensity = l0 * shade[a] + l1 * shade[b] + l2 * shade[c]
         region_depth[closer] = z_interp[closer]
-        region_color = color_buf[min_y:max_y + 1, min_x:max_x + 1]
-        for k in range(3):
-            channel = region_color[..., k]
-            channel[closer] = base_rgb[k] * intensity[closer]
 
-    # Reduction 2x2 (moyenne) : supersampling -> anti-aliasing bon marche,
-    # sur le contour ET sur les aretes internes que le z-buffer laisserait
-    # sinon dentelees (test au centre du pixel, pas de couverture partielle).
-    color_buf = color_buf.reshape(max_dim, 2, max_dim, 2, 3).mean(axis=(1, 3))
+    # Conversion de l'image supersamplee : le wireframe est dessine avant
+    # cette reduction pour rester net et fin dans l'apercu final.
     rgb8 = np.clip(color_buf, 0, 255).astype(np.uint8)
     rgb8 = np.ascontiguousarray(rgb8)
-    # .copy() : QImage(buffer, ...) ne fait que referencer rgb8.data, qui
-    # serait libere avec le tableau numpy des la sortie de cette fonction.
-    return QImage(rgb8.data, max_dim, max_dim, max_dim * 3, QImage.Format_RGB888).copy()
+    # Dessine seulement les aretes des faces source, a la resolution
+    # supersamplee, puis reduit proprement : les diagonales creees par la
+    # triangulation interne ne deviennent pas visibles.
+    image = QImage(rgb8.data, render_dim, render_dim, render_dim * 3, QImage.Format_RGB888).copy()
+    if wire_edges:
+        if progress_callback:
+            progress_callback(93, "Traçage du wireframe des faces")
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(QPen(QColor(0, 0, 0), 0.75))
+        edge_step = max(1, len(wire_edges) // 6)
+        for edge_index, (a, b) in enumerate(wire_edges):
+            x0, y0, z0 = screen_x[a], screen_y[a], depth_values[a]
+            x1, y1, z1 = screen_x[b], screen_y[b], depth_values[b]
+            steps = max(1, int(math.ceil(max(abs(x1 - x0), abs(y1 - y0)))))
+            run_start = None
+            previous = None
+            for step in range(steps + 1):
+                t = step / steps
+                x, y = x0 + (x1 - x0) * t, y0 + (y1 - y0) * t
+                ix, iy = int(round(x)), int(round(y))
+                visible = False
+                if 0 <= ix < render_dim and 0 <= iy < render_dim:
+                    surface_depth = depth_buf[iy, ix]
+                    edge_depth = z0 + (z1 - z0) * t
+                    visible = np.isfinite(surface_depth) and edge_depth >= surface_depth - 0.025
+                if visible:
+                    point = QPointF(x, y)
+                    if run_start is None:
+                        run_start = point
+                    previous = point
+                elif run_start is not None:
+                    if previous is not None:
+                        painter.drawLine(run_start, previous)
+                    run_start = previous = None
+            if run_start is not None and previous is not None:
+                painter.drawLine(run_start, previous)
+            if progress_callback and edge_index % edge_step == 0:
+                progress_callback(93 + int(edge_index * 6 / max(1, len(wire_edges))),
+                                  f"Wireframe : {edge_index + 1}/{len(wire_edges)} arêtes")
+        painter.end()
+    if progress_callback:
+        progress_callback(99, "Mise à l’échelle et finalisation")
+    return image.scaled(max_dim, max_dim, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
 
 
 def _rasterize_obj_qpainter(
     transformed: list[tuple[float, float, float]], faces: list[tuple[int, int, int]],
     vertex_shade: list[float], max_dim: int, to_screen, base_rgb: tuple[int, int, int],
+    wire_edges: list[tuple[int, int]], progress_callback=None,
 ) -> QImage:
-    """Repli sans numpy (voir _NUMPY_AVAILABLE) : un triangle = une couleur
-    unie (moyenne de l'ombrage a ses 3 sommets, pas un vrai Gouraud par
-    pixel) et un tri peintre au lieu d'un z-buffer — degrade mais
-    fonctionnel si le paquet numpy manque."""
-    faces_sorted = sorted(faces, key=lambda f: (
-        transformed[f[0]][2] + transformed[f[1]][2] + transformed[f[2]][2]
-    ))
-    image = QImage(max_dim, max_dim, QImage.Format_ARGB32_Premultiplied)
-    image.fill(QColor(C["well"]))
+    """Repli opaque sans shader : dessine uniquement les aretes du maillage."""
+    image = QImage(max_dim, max_dim, QImage.Format_RGB32)
+    image.fill(QColor(238, 240, 242))
     painter = QPainter(image)
     painter.setRenderHint(QPainter.Antialiasing, True)
-    for a, b, c in faces_sorted:
-        intensity = (vertex_shade[a] + vertex_shade[b] + vertex_shade[c]) / 3.0
-        color = QColor(
-            min(255, round(base_rgb[0] * intensity)),
-            min(255, round(base_rgb[1] * intensity)),
-            min(255, round(base_rgb[2] * intensity)),
-        )
-        # Contour de la meme couleur que le remplissage (pas de "Qt.NoPen") :
-        # au tri peintre, deux triangles adjacents co-plans (la diagonale de
-        # triangulation d'une meme face) laissent sinon un filet d'anti-
-        # aliasing visible entre eux, qui ressort comme un wireframe residuel
-        # malgre un shading identique des deux cotes.
-        painter.setPen(color)
-        painter.setBrush(color)
-        painter.drawPolygon(QPolygonF([to_screen(transformed[a]), to_screen(transformed[b]), to_screen(transformed[c])]))
+    painter.setPen(QPen(QColor(0, 0, 0), 0.7))
+    edge_step = max(1, len(wire_edges) // 8)
+    for edge_index, (a, b) in enumerate(wire_edges):
+        painter.drawLine(to_screen(transformed[a]), to_screen(transformed[b]))
+        if progress_callback and edge_index % edge_step == 0:
+            progress_callback(35 + int(edge_index * 63 / max(1, len(wire_edges))),
+                              f"Wireframe : {edge_index + 1}/{len(wire_edges)} aretes")
     painter.end()
+    if progress_callback:
+        progress_callback(99, "Finalisation de l'image opaque")
     return image
-
 
 def _decode_psd_thumbnail(path: Path) -> QImage | None:
     """Extrait la vignette JPEG que Photoshop embarque dans un .psd/.psb
@@ -719,6 +1580,52 @@ def _decode_psd_thumbnail(path: Path) -> QImage | None:
     return None
 
 
+def _oiiotool_executable() -> str | None:
+    """Trouve l'utilitaire OpenImageIO livre avec Arnold ou Maya."""
+    found = shutil.which("oiiotool")
+    if found:
+        return found
+    roots = []
+    maya_location = os.environ.get("MAYA_LOCATION")
+    if maya_location:
+        roots.append(Path(maya_location))
+    program_files = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
+    roots.extend((program_files / "Autodesk" / "Arnold", program_files / "Autodesk"))
+    candidates = []
+    for root in roots:
+        for pattern in ("Maya*/bin/oiiotool.exe", "*/bin/oiiotool.exe", "bin/oiiotool.exe"):
+            try:
+                candidates.extend(root.glob(pattern))
+            except OSError:
+                pass
+    candidates = sorted({p for p in candidates if p.is_file()}, reverse=True)
+    return str(candidates[0]) if candidates else None
+
+
+def _decode_tx_image(path: Path, max_dim: int) -> QImage | None:
+    """Convertit une texture Arnold .tx en petite image lisible par Qt."""
+    oiiotool = _oiiotool_executable()
+    if not oiiotool:
+        return None
+    try:
+        with tempfile.TemporaryDirectory(prefix="pipe_tx_preview_") as temp_dir:
+            output_path = Path(temp_dir) / "preview.png"
+            tool_dir = str(Path(oiiotool).resolve().parent)
+            env = os.environ.copy()
+            env["PATH"] = tool_dir + os.pathsep + env.get("PATH", "")
+            result = subprocess.run(
+                [oiiotool, str(path.resolve()), "--fit", f"{max_dim}x{max_dim}", "-o", str(output_path)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                timeout=45, check=False, env=env,
+            )
+            if result.returncode != 0 or not output_path.is_file():
+                return None
+            image = QImage(str(output_path))
+            return image.copy() if not image.isNull() else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
 def _decode_exr_image(path: Path, max_dim: int) -> QImage | None:
     """Convertit le rendu HDR d'un .exr en image affichable : tone-mapping
     Reinhard simple (gere sans les cramer les valeurs > 1, frequentes en
@@ -765,6 +1672,105 @@ def _decode_exr_image(path: Path, max_dim: int) -> QImage | None:
     # .copy() : QImage(buffer, ...) ne fait que referencer `rgb8.data`, qui
     # serait libere avec le tableau numpy des la sortie de cette fonction.
     return QImage(rgb8.data, w, h, w * 3, QImage.Format_RGB888).copy()
+
+
+def _decode_hdr_image(path: Path, max_dim: int) -> QImage | None:
+    """Convertit un .hdr (Radiance RGBE) en image affichable — MEME tone-
+    mapping Reinhard + gamma sRGB que _decode_exr_image (voir sa remarque)
+    — voir la remarque de l'utilisateur, "possible de faire les apercus
+    des hdri ?". Parseur RGBE MAISON (juste numpy, AUCUNE dependance
+    externe contrairement a .exr/OpenEXR — le format Radiance est
+    documente/stable et volontairement simple) : supporte le format RLE
+    "nouveau style" (l'immense majorite des .hdr generes par les outils
+    actuels, HDRI Haven/Poly Haven inclus) ET le format PLAT (non
+    compresse) — PAS l'ancien RLE "repeat previous pixel" (marginal,
+    fichiers tres anciens des annees 1990) : None dans ce cas, comme pour
+    tout fichier illisible/non exploitable ailleurs dans ce module."""
+    if not _NUMPY_AVAILABLE:
+        return None
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    try:
+        pos = data.index(b"\n") + 1
+        if not data.startswith(b"#?"):
+            return None
+        # En-tete texte (FORMAT=.../EXPOSURE=.../commentaires) jusqu'a la
+        # PREMIERE ligne vide.
+        while True:
+            nl = data.index(b"\n", pos)
+            if data[pos:nl] == b"":
+                pos = nl + 1
+                break
+            pos = nl + 1
+        # Ligne de resolution ("-Y H +X W", quasi-universelle — les
+        # variantes retournees/miroir sont ignorees ici, sans consequence
+        # pour une simple vignette).
+        nl = data.index(b"\n", pos)
+        res_parts = data[pos:nl].decode("ascii", errors="ignore").split()
+        pos = nl + 1
+        if len(res_parts) != 4:
+            return None
+        h, w = int(res_parts[1]), int(res_parts[3])
+        if h <= 0 or w <= 0:
+            return None
+    except (ValueError, IndexError, UnicodeDecodeError):
+        return None
+
+    rgbe = np.zeros((h, w, 4), dtype=np.uint8)
+    try:
+        for y in range(h):
+            if pos + 4 > len(data):
+                return None
+            b0, b1, b2, b3 = data[pos], data[pos + 1], data[pos + 2], data[pos + 3]
+            if b0 == 2 and b1 == 2 and 8 <= w < 0x8000 and (b2 << 8 | b3) == w:
+                pos += 4
+                row = np.zeros((4, w), dtype=np.uint8)
+                for channel in range(4):
+                    x = 0
+                    while x < w:
+                        count = data[pos]
+                        pos += 1
+                        if count > 128:
+                            count -= 128
+                            row[channel, x:x + count] = data[pos]
+                            pos += 1
+                        else:
+                            row[channel, x:x + count] = np.frombuffer(
+                                data, dtype=np.uint8, count=count, offset=pos)
+                            pos += count
+                        x += count
+                rgbe[y] = row.T
+            else:
+                # Ancien format PLAT (4 octets/pixel, pas de RLE) — repli
+                # simple, pas l'ancien RLE "repeat previous pixel" (voir
+                # remarque de tete).
+                row = np.frombuffer(data, dtype=np.uint8, count=w * 4, offset=pos).reshape(w, 4)
+                pos += w * 4
+                rgbe[y] = row
+    except (ValueError, IndexError):
+        return None
+
+    e = rgbe[..., 3].astype(np.int32)
+    # Decodage RGBE standard (voir rgbe2float de Radiance) : mantisse
+    # (0-255) * 2^(exposant-128-8), 0 si exposant nul (pixel noir).
+    scale = np.where(e > 0, np.exp2((e - 136).astype(np.float32)), 0.0)
+    rgb = rgbe[..., :3].astype(np.float32) * scale[..., None]
+
+    rgb = np.clip(rgb, 0.0, None)
+    rgb = rgb / (1.0 + rgb)             # tone-mapping Reinhard
+    rgb = np.power(rgb, 1.0 / 2.2)      # gamma sRGB approche
+    rgb8 = np.clip(rgb * 255.0 + 0.5, 0, 255).astype(np.uint8)
+
+    hh, ww = rgb8.shape[:2]
+    longest = max(hh, ww)
+    if longest > max_dim:
+        step = max(1, longest // max_dim)
+        rgb8 = rgb8[::step, ::step]
+    rgb8 = np.ascontiguousarray(rgb8)
+    hh, ww = rgb8.shape[:2]
+    return QImage(rgb8.data, ww, hh, ww * 3, QImage.Format_RGB888).copy()
 
 
 VIDEO_PREVIEW_SEEK_FRACTION = 0.1   # position dans la video (evite les frames noires/logo d'intro a 0%)
@@ -829,7 +1835,220 @@ def _decode_video_frame(path: Path, max_dim: int) -> QImage | None:
     return image
 
 
-def file_image_pixmap(path: Path) -> QPixmap | None:
+def _oda_file_converter() -> str | None:
+    """Trouve ODA File Converter, necessaire pour convertir un DWG en DXF."""
+    configured = os.environ.get("ODA_FILE_CONVERTER")
+    if configured and Path(configured).is_file():
+        return configured
+    found = shutil.which("ODAFileConverter") or shutil.which("ODAFileConverter.exe")
+    if found:
+        return found
+    roots = [Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "ODA"]
+    roots.append(Path(r"C:\Program Files\ODA"))
+    for root in roots:
+        try:
+            candidates = sorted(root.glob("**/ODAFileConverter.exe"), reverse=True)
+            if candidates:
+                return str(candidates[0])
+        except OSError:
+            continue
+    return None
+
+
+def _decode_dwg_image(path: Path, max_dim: int, progress_callback=None, cancel_event=None) -> QImage | None:
+    """Convertit le DWG en DXF puis rend le model space en image 2D."""
+    converter = _oda_file_converter()
+    if not converter:
+        if progress_callback:
+            progress_callback(99, "ODA File Converter requis pour lire les fichiers DWG")
+        return None
+    try:
+        import ezdxf
+        from ezdxf.addons.drawing import Frontend, RenderContext
+        from ezdxf import recover
+        from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
+        from ezdxf.addons.drawing.properties import LayoutProperties
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        from matplotlib.figure import Figure
+    except ImportError as exc:
+        if progress_callback:
+            progress_callback(99, f"Dependances d'apercu DWG manquantes : {exc}")
+        return None
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="pipe_dwg_preview_") as temp_dir:
+            output_dir = Path(temp_dir)
+            log_path = output_dir / "oda_converter.log"
+            log_stream = log_path.open("w", encoding="utf-8", errors="replace")
+            if progress_callback:
+                progress_callback(8, "Conversion DWG vers DXF")
+            kwargs = {"stdout": log_stream, "stderr": log_stream}
+            if sys.platform == "win32":
+                kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            proc = subprocess.Popen(
+                [converter, str(path.parent), str(output_dir), "ACAD2018", "DXF", "0", "0", path.name],
+                **kwargs,
+            )
+            deadline = time.monotonic() + 120
+            while proc.poll() is None:
+                if cancel_event is not None and cancel_event.is_set():
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=3)
+                    log_stream.close()
+                    return None
+                if time.monotonic() >= deadline:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=3)
+                    log_stream.close()
+                    if progress_callback:
+                        progress_callback(99, "Delai depasse pendant la conversion DWG")
+                    return None
+                time.sleep(0.1)
+            log_stream.close()
+            dxf_path = next(
+                (candidate for candidate in output_dir.glob("*") if candidate.suffix.lower() == ".dxf"),
+                None,
+            )
+            if proc.returncode != 0 or dxf_path is None:
+                if progress_callback:
+                    progress_callback(99, "Conversion DWG impossible avec ODA File Converter")
+                return None
+            if progress_callback:
+                progress_callback(42, "Lecture du dessin 2D")
+            try:
+                doc, auditor = recover.readfile(str(dxf_path))
+            except Exception:
+                doc = ezdxf.readfile(str(dxf_path))
+                auditor = None
+            if auditor is not None and auditor.errors:
+                if progress_callback:
+                    progress_callback(99, "Le dessin DXF converti contient des erreurs")
+                return None
+            layout = doc.modelspace()
+            with _DWG_RENDER_LOCK:
+                figure = Figure(figsize=(6, 6), dpi=max(96, int(max_dim / 6)))
+                canvas = FigureCanvasAgg(figure)
+                axes = figure.add_axes((0, 0, 1, 1))
+                axes.set_aspect("equal", adjustable="datalim")
+                context = RenderContext(doc)
+                properties = LayoutProperties.from_layout(layout)
+                properties.set_colors("#17191b", "#d6d9dc")
+                if progress_callback:
+                    progress_callback(68, "Rendu du model space en 2D")
+                Frontend(context, MatplotlibBackend(axes)).draw_layout(
+                    layout, finalize=True, layout_properties=properties
+                )
+                canvas.draw()
+                buffer = io.BytesIO()
+                canvas.print_png(buffer)
+            image = QImage.fromData(buffer.getvalue(), "PNG")
+            if image.isNull():
+                return None
+            if max(image.width(), image.height()) > max_dim:
+                image = image.scaled(max_dim, max_dim, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            return image
+    except (OSError, subprocess.SubprocessError, ezdxf.DXFStructureError) as exc:
+        if progress_callback:
+            progress_callback(99, f"Erreur de rendu DWG 2D : {exc}")
+        return None
+
+
+def _read_preview_pixmap(path: Path, mtime: float) -> tuple[QPixmap | None, bool]:
+    """Load a current cached preview, or keep the last render as stale fallback."""
+    key = str(path)
+    cached = _file_image_cache.get(key)
+    if cached and cached[0] == mtime:
+        return cached[1], key in _STALE_PREVIEW_PATHS
+    current_path = _file_image_cache_path(path, mtime)
+    if current_path.is_file():
+        pix = QPixmap(str(current_path))
+        if not pix.isNull():
+            is_stale = key in _STALE_PREVIEW_PATHS
+            if not is_stale:
+                _STALE_PREVIEW_PATHS.discard(key)
+            _bounded_cache_set(_file_image_cache, key, (mtime, pix))
+            if not _preview_cache_metadata_matches(path, current_path):
+                _record_preview_cache(path, mtime, current_path)
+            return pix, is_stale
+    miss_key = (key, int(mtime))
+    if miss_key in _PREVIEW_STALE_LOOKUP_MISSES:
+        return None, False
+    # Evite meme la lecture des sidecars individuels dans un dossier qui ne
+    # contient aucun apercu image. Cas courant pour une serie de scenes Maya
+    # en attente du balayage d'inactivite : seul le premier fichier provoque
+    # le scan du dossier de cache.
+    global _PREVIEW_CACHE_HAS_PNG
+    if _PREVIEW_CACHE_HAS_PNG is None:
+        try:
+            _PREVIEW_CACHE_HAS_PNG = next(FILE_IMAGE_DISK_CACHE_DIR.glob("*.png"), None) is not None
+        except OSError:
+            _PREVIEW_CACHE_HAS_PNG = False
+    if not _PREVIEW_CACHE_HAS_PNG:
+        if len(_PREVIEW_STALE_LOOKUP_MISSES) >= 4096:
+            _PREVIEW_STALE_LOOKUP_MISSES.clear()
+        _PREVIEW_STALE_LOOKUP_MISSES.add(miss_key)
+        return None, False
+    stale_path = _find_stale_preview_cache(path, mtime, current_path)
+    if stale_path is not None:
+        pix = QPixmap(str(stale_path))
+        if not pix.isNull():
+            _STALE_PREVIEW_PATHS.add(key)
+            _bounded_cache_set(_file_image_cache, key, (mtime, pix))
+            if not _preview_cache_metadata_matches(path, stale_path):
+                try:
+                    old_mtime = float(stale_path.stem.rsplit("_", 1)[1])
+                except (ValueError, IndexError):
+                    old_mtime = 0.0
+                _record_preview_cache(path, old_mtime, stale_path)
+            return pix, True
+    _STALE_PREVIEW_PATHS.discard(key)
+    if len(_PREVIEW_STALE_LOOKUP_MISSES) >= 4096:
+        _PREVIEW_STALE_LOOKUP_MISSES.clear()
+    _PREVIEW_STALE_LOOKUP_MISSES.add(miss_key)
+    return None, False
+
+
+def _decode_2d_image(path: Path, max_dim: int, progress_callback=None, cancel_event=None) -> QImage | None:
+    """Decode all static 2D preview formats to a bounded QImage."""
+    suffix = path.suffix.lower()
+    if progress_callback:
+        progress_callback(12, f"Lecture de l'image 2D {suffix}")
+    if suffix in DWG_EXTENSIONS:
+        image = _decode_dwg_image(path, max_dim, progress_callback, cancel_event)
+    elif suffix in PSD_EXTENSIONS:
+        image = _decode_psd_thumbnail(path)
+    elif suffix in EXR_EXTENSIONS:
+        image = _decode_exr_image(path, max_dim)
+    elif suffix in HDR_EXTENSIONS:
+        image = _decode_hdr_image(path, max_dim)
+    elif suffix in TX_EXTENSIONS:
+        image = _decode_tx_image(path, max_dim)
+    else:
+        reader = QImageReader(str(path))
+        reader.setAutoTransform(True)
+        size = reader.size()
+        if size.isValid() and max(size.width(), size.height()) > max_dim:
+            scale = max_dim / max(size.width(), size.height())
+            reader.setScaledSize(QSize(
+                max(1, round(size.width() * scale)), max(1, round(size.height() * scale)),
+            ))
+        image = reader.read()
+    if image is None or image.isNull():
+        return None
+    if max(image.width(), image.height()) > max_dim:
+        image = image.scaled(max_dim, max_dim, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    return image
+
+
+def file_image_pixmap(path: Path, asynchronous: bool = False) -> QPixmap | None:
     """Image du fichier `path` lui-meme (pas une vignette perso a choisir :
     c'est le fichier) — ou, pour un .obj (voir OBJ_EXTENSIONS), un rendu
     genere (voir _decode_obj_image), ou pour un .psd/.psb (voir
@@ -848,33 +2067,47 @@ def file_image_pixmap(path: Path) -> QPixmap | None:
     except OSError:
         return None
     key = str(path)
-    cached = _file_image_cache.get(key)
-    if cached and cached[0] == mtime:
-        return cached[1]
-
     cache_path = _file_image_cache_path(path, mtime)
-    if cache_path.is_file():
-        pix = QPixmap(str(cache_path))
-        if not pix.isNull():
-            _bounded_cache_set(_file_image_cache, key, (mtime, pix))
-            return pix
+    if asynchronous:
+        cached = _file_image_cache.get(key)
+        if cached and (cached[0] == mtime or key in _STALE_PREVIEW_PATHS):
+            return cached[1]
+        suffix = path.suffix.lower()
+        # Les vignettes sont chargées/décodées en worker pour que l'ouverture
+        # d'une colonne ne fasse jamais de lecture image sur le thread UI.
+        if suffix in TWO_D_IMAGE_EXTENSIONS | VIDEO_EXTENSIONS:
+            _PREVIEW_DECODE_MANAGER.request(
+                path, mtime, quiet=True, cache_only=False, force_render=key in _STALE_PREVIEW_PATHS
+            )
+        elif suffix in OBJ_EXTENSIONS | ABC_EXTENSIONS | BLEND_EXTENSIONS | MAYA_SCENE_EXTENSIONS | FBX_EXTENSIONS:
+            _PREVIEW_DECODE_MANAGER.request(path, mtime, quiet=True, cache_only=True)
+        elif suffix in DWG_EXTENSIONS:
+            _PREVIEW_DECODE_MANAGER.request(path, mtime, quiet=True, cache_only=False)
+        return None
+    cached_pix, is_stale = _read_preview_pixmap(path, mtime)
+    if cached_pix is not None:
+        if is_stale and path.suffix.lower() in TWO_D_IMAGE_EXTENSIONS:
+            _PREVIEW_DECODE_MANAGER.request(path, mtime, quiet=True)
+        return cached_pix
 
     suffix = path.suffix.lower()
-    if suffix in OBJ_EXTENSIONS:
-        image = _decode_obj_image(path, OBJ_PREVIEW_DIM)
-        if image is None or image.isNull():
-            return None
-    elif suffix in PSD_EXTENSIONS:
-        image = _decode_psd_thumbnail(path)
-        if image is None or image.isNull():
-            return None
-        if max(image.width(), image.height()) > FILE_IMAGE_CACHE_MAX_DIM:
-            image = image.scaled(
-                FILE_IMAGE_CACHE_MAX_DIM, FILE_IMAGE_CACHE_MAX_DIM,
-                Qt.KeepAspectRatio, Qt.SmoothTransformation,
-            )
-    elif suffix in EXR_EXTENSIONS:
-        image = _decode_exr_image(path, FILE_IMAGE_CACHE_MAX_DIM)
+    if suffix in OBJ_EXTENSIONS | ABC_EXTENSIONS:
+        # Les rendus OBJ/ABC sont explicites (menu contextuel) ou lances par
+        # le balayage d'inactivite ; ne pas les demarrer a la simple selection.
+        return None
+    elif suffix in DWG_EXTENSIONS:
+        # Conversion DWG couteuse : elle est generee en arriere-plan.
+        _PREVIEW_DECODE_MANAGER.request(path, mtime)
+        return None
+    elif suffix in BLEND_EXTENSIONS:
+        # Un .blend ne se rend qu'a la demande via son menu contextuel;
+        # une fois genere, son cache est affiche comme les autres apercus.
+        return None
+    elif suffix in MAYA_SCENE_EXTENSIONS | FBX_EXTENSIONS:
+        # Les scenes Maya se rendent a la demande ou pendant le balayage d'inactivite.
+        return None
+    elif suffix in TWO_D_IMAGE_EXTENSIONS:
+        image = _decode_2d_image(path, FILE_IMAGE_CACHE_MAX_DIM)
         if image is None or image.isNull():
             return None
     elif suffix in VIDEO_EXTENSIONS:
@@ -882,20 +2115,9 @@ def file_image_pixmap(path: Path) -> QPixmap | None:
         if image is None or image.isNull():
             return None
     else:
-        reader = QImageReader(str(path))
-        reader.setAutoTransform(True)
-        size = reader.size()
-        if size.isValid():
-            longest = max(size.width(), size.height())
-            if longest > FILE_IMAGE_CACHE_MAX_DIM:
-                scale = FILE_IMAGE_CACHE_MAX_DIM / longest
-                reader.setScaledSize(QSize(
-                    max(1, round(size.width() * scale)), max(1, round(size.height() * scale)),
-                ))
-        image = reader.read()
-        if image.isNull():
-            return None
+        return None
     pix = QPixmap.fromImage(image)
+    _STALE_PREVIEW_PATHS.discard(key)
     _bounded_cache_set(_file_image_cache, key, (mtime, pix))
     try:
         was_new = not FILE_IMAGE_DISK_CACHE_DIR.is_dir()
@@ -903,15 +2125,407 @@ def file_image_pixmap(path: Path) -> QPixmap | None:
         if was_new:
             _set_hidden(FILE_IMAGE_DISK_CACHE_DIR)
         if pix.save(str(cache_path), "PNG"):
+            global _PREVIEW_CACHE_HAS_PNG
+            _PREVIEW_CACHE_HAS_PNG = True
             _set_hidden(cache_path)
             _prune_stale_disk_cache(cache_path)
+            _record_preview_cache(path, mtime, cache_path)
     except OSError:
         pass
     return pix
 
 
+def _cached_file_image_pixmap(path: Path) -> QPixmap | None:
+    """Lit seulement le cache d'un apercu, sans lancer sa generation."""
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    pix, _is_stale = _read_preview_pixmap(path, mtime)
+    return pix
+
+
+class _PreviewDecodeSignals(QObject):
+    finished = Signal(object, str, float, object)
+    progress = Signal(str, int, str)
+
+
+class _PreviewDecodeTask(QRunnable):
+    """Genere un apercu 3D sans bloquer l'interface; ne manipule que QImage."""
+    def __init__(self, path: Path, mtime: float, quiet: bool = False, cancel_event=None, cache_only: bool = False, force_render: bool = False):
+        super().__init__()
+        self.path = path
+        self.mtime = mtime
+        self.quiet = quiet
+        self.cancel_event = cancel_event
+        self.cache_only = cache_only
+        self.force_render = force_render
+        self.signals = _PreviewDecodeSignals()
+
+    def run(self):
+        def report(percent, message):
+            if not self.quiet:
+                self.signals.progress.emit(str(self.path), int(percent), str(message))
+        try:
+            cache_path = _file_image_cache_path(self.path, self.mtime)
+            if cache_path.is_file() and not self.force_render:
+                image = QImage(str(cache_path))
+                if image.isNull():
+                    image = None
+            elif self.cache_only:
+                image = None
+            else:
+                image = self._decode()
+            if image is not None and not image.isNull() and (self.force_render or not cache_path.is_file()):
+                try:
+                    cache_path.parent.mkdir(parents=True, exist_ok=True)
+                    temp_path = cache_path.with_name(cache_path.stem + ".tmp.png")
+                    if image.save(str(temp_path), "PNG"):
+                        os.replace(temp_path, cache_path)
+                        global _PREVIEW_CACHE_HAS_PNG
+                        _PREVIEW_CACHE_HAS_PNG = True
+                        _set_hidden(cache_path)
+                        _prune_stale_disk_cache(cache_path)
+                        _record_preview_cache(self.path, self.mtime, cache_path)
+                except OSError:
+                    pass
+        except Exception:
+            image = None
+        if image is not None and not image.isNull():
+            report(100, "Image prête")
+        else:
+            report(100, "Aucun rendu exploitable")
+        self.signals.finished.emit(self, str(self.path), self.mtime, image)
+
+    def _decode(self):
+        def report(percent, message):
+            if not self.quiet:
+                self.signals.progress.emit(str(self.path), int(percent), str(message))
+        suffix = self.path.suffix.lower()
+        if suffix in OBJ_EXTENSIONS: return _decode_obj_image(self.path, OBJ_PREVIEW_DIM, report, self.cancel_event)
+        if suffix in ABC_EXTENSIONS: return _decode_abc_image(self.path, OBJ_PREVIEW_DIM, report, self.cancel_event)
+        if suffix in BLEND_EXTENSIONS: return _render_wireframe_eevee(self.path, OBJ_PREVIEW_DIM, report, self.cancel_event)
+        if suffix in MAYA_SCENE_EXTENSIONS: return _render_ma_wireframe(self.path, OBJ_PREVIEW_DIM, report, self.cancel_event)
+        if suffix in FBX_EXTENSIONS: return _render_wireframe_eevee(self.path, OBJ_PREVIEW_DIM, report, self.cancel_event)
+        if suffix in DWG_EXTENSIONS: return _decode_dwg_image(self.path, OBJ_PREVIEW_DIM, report, self.cancel_event)
+        if suffix in TWO_D_IMAGE_EXTENSIONS: return _decode_2d_image(self.path, FILE_IMAGE_CACHE_MAX_DIM, report, self.cancel_event)
+        if suffix in VIDEO_EXTENSIONS: return _decode_video_frame(self.path, FILE_IMAGE_CACHE_MAX_DIM)
+        return None
+
+
+_PREVIEW_DECODE_POOL = QThreadPool()
+_PREVIEW_DECODE_POOL.setMaxThreadCount(2)
+_IDLE_SCAN_POOL = QThreadPool()
+_IDLE_SCAN_POOL.setMaxThreadCount(1)
+
+
+class _PreviewDecodeManager(QObject):
+    started = Signal(str)
+    progress = Signal(str, int, str)
+    ready = Signal(str, float, object)
+
+    def __init__(self):
+        super().__init__()
+        self.active: dict[str, _PreviewDecodeTask] = {}
+
+    def request(self, path: Path, mtime: float, quiet: bool = False, cancel_event=None, cache_only: bool = False, force_render: bool = False):
+        key = str(path)
+        if key in self.active:
+            return
+        task = _PreviewDecodeTask(path, mtime, quiet=quiet, cancel_event=cancel_event,
+                                  cache_only=cache_only, force_render=force_render)
+        task.signals.finished.connect(self._on_finished)
+        task.signals.progress.connect(self._on_task_progress)
+        self.active[key] = task
+        if not quiet:
+            self.started.emit(key)
+        _PREVIEW_DECODE_POOL.start(task)
+
+    def _on_finished(self, task, path_str: str, mtime: float, image):
+        self.active.pop(path_str, None)
+        self.ready.emit(path_str, mtime, image)
+
+    def _on_task_progress(self, path_str: str, percent: int, message: str):
+        task = self.active.get(path_str)
+        if task is None or not task.quiet:
+            self.progress.emit(path_str, percent, message)
+
+
+_PREVIEW_DECODE_MANAGER = _PreviewDecodeManager()
+
+
+class _IdleFileScanSignals(QObject):
+    finished = Signal(str, object, object)
+
+
+class _IdleFileScanTask(QRunnable):
+    """Parcourt recursivement la racine sans bloquer la fenetre."""
+    def __init__(self, root: Path, supported: set[str], cancel_event,
+                 omit_file_names: set[str] | None = None, omit_extensions: set[str] | None = None):
+        super().__init__()
+        self.root = root
+        self.supported = supported
+        self.cancel_event = cancel_event
+        self.omit_file_names = omit_file_names or set()
+        self.omit_extensions = omit_extensions or set()
+        self.signals = _IdleFileScanSignals()
+
+    def run(self):
+        found = []
+        root_text = str(self.root)
+        try:
+            for current, dirs, files in os.walk(root_text, topdown=True, followlinks=False):
+                if self.cancel_event.is_set():
+                    break
+                dirs.sort(key=str.casefold)
+                files.sort(key=str.casefold)
+                for filename in files:
+                    if self.cancel_event.is_set():
+                        break
+                    name_lower = filename.casefold()
+                    suffix = Path(filename).suffix.lower()
+                    if (suffix not in self.supported
+                            or name_lower in self.omit_file_names
+                            or any(name_lower.endswith("." + extension) for extension in self.omit_extensions)):
+                        continue
+                    path = Path(current) / filename
+                    try:
+                        found.append((str(path), path.stat().st_mtime))
+                    except OSError:
+                        continue
+        except (OSError, PermissionError):
+            pass
+        self.signals.finished.emit(root_text, found, self.cancel_event.is_set())
+
+
+class _IdlePreviewScheduler(QObject):
+    """Met a jour les apercus 2D/3D perimes apres 2 min d'inactivite."""
+    IDLE_DELAY_MS = 120_000
+    RESCAN_INTERVAL_SECONDS = 60.0
+    LOG_SEPARATOR = "-----------------------------------------"
+    SUPPORTED_SUFFIXES = RENDERABLE_3D_EXTENSIONS | TWO_D_IMAGE_EXTENSIONS
+
+    def __init__(self, browser):
+        super().__init__(browser)
+        self.browser = browser
+        self.timer = QTimer(self)
+        self.timer.setInterval(500)
+        self.timer.timeout.connect(self._poll)
+        self.last_activity = time.monotonic()
+        self.is_idle = False
+        self.queue: list[tuple[Path, float]] = []
+        self.done: set[tuple[str, float]] = set()
+        self.active_key: str | None = None
+        self.active_identity: tuple[str, float] | None = None
+        self.cancel_event: threading.Event | None = None
+        self.scan_cancel_event: threading.Event | None = None
+        self.scan_task: _IdleFileScanTask | None = None
+        self.scan_in_progress = False
+        self.scan_root = ""
+        self.last_scan = 0.0
+        self.auto_render_count = 0
+        self.active_log_path: Path | None = None
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
+        _PREVIEW_DECODE_MANAGER.ready.connect(self._on_preview_ready)
+        _PREVIEW_DECODE_MANAGER.started.connect(self._on_preview_started)
+        _PREVIEW_DECODE_MANAGER.progress.connect(self._on_preview_progress)
+        self.timer.start()
+
+    def eventFilter(self, watched, event):
+        if sys.platform != "win32" and event.type() in {
+            QEvent.Type.MouseMove, QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease,
+            QEvent.Type.MouseButtonDblClick, QEvent.Type.Wheel, QEvent.Type.KeyPress,
+            QEvent.Type.KeyRelease, QEvent.Type.TouchBegin, QEvent.Type.TouchUpdate,
+        }:
+            self.last_activity = time.monotonic()
+        return False
+
+    @staticmethod
+    def _system_idle_ms() -> int | None:
+        if sys.platform != "win32":
+            return None
+        class LastInputInfo(ctypes.Structure):
+            _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+        info = LastInputInfo()
+        info.cbSize = ctypes.sizeof(LastInputInfo)
+        try:
+            if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+                return None
+            return (ctypes.windll.kernel32.GetTickCount() - info.dwTime) & 0xFFFFFFFF
+        except (AttributeError, OSError):
+            return None
+
+    def _user_is_idle(self) -> bool:
+        system_idle = self._system_idle_ms()
+        if system_idle is not None:
+            return system_idle >= self.IDLE_DELAY_MS
+        return (time.monotonic() - self.last_activity) * 1000 >= self.IDLE_DELAY_MS
+
+    def _poll(self):
+        idle_now = self._user_is_idle()
+        if not idle_now:
+            self.is_idle = False
+            if self.cancel_event is not None:
+                self.cancel_event.set()
+            if self.scan_cancel_event is not None:
+                self.scan_cancel_event.set()
+            return
+        if not self.is_idle:
+            self.is_idle = True
+            self.last_scan = 0.0
+        if self.active_key is not None:
+            return
+        if self.scan_in_progress:
+            return
+        if not self.queue and time.monotonic() - self.last_scan >= self.RESCAN_INTERVAL_SECONDS:
+            self._start_file_scan()
+        if self.queue:
+            self._start_next()
+
+    def _start_file_scan(self):
+        self.last_scan = time.monotonic()
+        root_text = self.browser.root_field.text().strip()
+        root = Path(root_text)
+        if not root.is_dir():
+            return
+        self.scan_in_progress = True
+        self.scan_root = str(root)
+        self.scan_cancel_event = threading.Event()
+        task = _IdleFileScanTask(
+            root, self.SUPPORTED_SUFFIXES, self.scan_cancel_event,
+            GLOBAL_OMIT_FILE_NAMES.copy(), GLOBAL_OMIT_FILE_EXTENSIONS.copy(),
+        )
+        task.signals.finished.connect(self._on_file_scan_finished)
+        self.scan_task = task
+        _IDLE_SCAN_POOL.start(task)
+
+    def _on_file_scan_finished(self, root_text: str, entries, canceled: bool):
+        self.scan_in_progress = False
+        self.scan_task = None
+        self.scan_cancel_event = None
+        self.last_scan = time.monotonic()
+        if canceled or not self.is_idle or not self._user_is_idle():
+            return
+        if str(Path(self.browser.root_field.text().strip())) != root_text:
+            return
+        found = []
+        seen = set()
+        for value, mtime in entries:
+            path = Path(value)
+            key = str(path)
+            identity = (key, mtime)
+            if identity in seen or identity in self.done or key in _PREVIEW_DECODE_MANAGER.active:
+                continue
+            seen.add(identity)
+            if _file_image_cache_path(path, mtime).is_file():
+                self.done.add(identity)
+                continue
+            found.append((path, mtime))
+        self.queue.extend(found)
+        self._start_next()
+
+    def _append_log(self, line: str):
+        path = self.active_log_path
+        if path is None:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8", newline="\n") as stream:
+                stream.write(line.rstrip("\r\n") + "\n")
+        except OSError:
+            pass
+
+    def _on_preview_started(self, path_str: str):
+        if path_str != self.active_key:
+            return
+        self.active_log_path = Path(self.browser.root_field.text().strip()) / "pipeline_preview_render.log"
+        try:
+            has_previous_render = self.active_log_path.is_file() and self.active_log_path.stat().st_size > 0
+        except OSError:
+            has_previous_render = False
+        if has_previous_render:
+            self._append_log(self.LOG_SEPARATOR)
+        self.auto_render_count += 1
+        # La ligne courante et toutes les progressions sont egalement ecrites
+        # dans le journal du root, sans inclure les apercus declenches a la main.
+        self._append_log(f"> Aperçu en cours : {path_str}")
+
+    def _on_preview_progress(self, path_str: str, percent: int, message: str):
+        if path_str == self.active_key:
+            self._append_log(f"[{percent:3d}%] {Path(path_str).name} — {message}")
+
+    def _start_next(self):
+        while self.queue:
+            path, previous_mtime = self.queue.pop(0)
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            key = str(path)
+            identity = (key, mtime)
+            if identity in self.done or key in _PREVIEW_DECODE_MANAGER.active:
+                continue
+            if _file_image_cache_path(path, mtime).is_file():
+                self.done.add(identity)
+                continue
+            self.active_key = key
+            self.active_identity = identity
+            self.cancel_event = threading.Event()
+            self.browser.detail.prepare_auto_preview_log(path)
+            _PREVIEW_DECODE_MANAGER.request(path, mtime, cancel_event=self.cancel_event, force_render=True)
+            if key not in _PREVIEW_DECODE_MANAGER.active:
+                self.active_key = None
+                self.active_identity = None
+                self.cancel_event = None
+            return
+
+    def _on_preview_ready(self, path_str: str, mtime: float, image):
+        if path_str != self.active_key:
+            return
+        canceled = self.cancel_event is not None and self.cancel_event.is_set()
+        if canceled:
+            self._append_log(f"[---] {Path(path_str).name} — interrompu par une activité utilisateur")
+        else:
+            message = "Aperçu terminé" if image is not None and not image.isNull() else "Aperçu indisponible"
+            self._append_log(f"[100%] {Path(path_str).name} — {message}")
+        identity = self.active_identity
+        self.active_key = None
+        self.active_identity = None
+        self.cancel_event = None
+        self.active_log_path = None
+        if canceled:
+            if identity is not None:
+                self.queue.insert(0, (Path(path_str), mtime))
+            return
+        if identity is not None:
+            self.done.add((path_str, mtime))
+        if self.is_idle and self._user_is_idle():
+            self._start_next()
+
+
+_FALLBACK_SOFTWARE_BADGE_PALETTE = [
+    ("#5c6bc0", "#eef0ff"), ("#26a69a", "#e8fff9"), ("#8d6e63", "#fff3e6"),
+    ("#7e57c2", "#f2ecff"), ("#42a5f5", "#e8f4ff"), ("#66bb6a", "#eafff0"),
+    ("#ec407a", "#ffe9f1"), ("#ffa726", "#3a2200"),
+]
+
+
+def _fallback_software_badge_style(key: str) -> tuple[str, str, str]:
+    """Couleur/lettres d'un logiciel AJOUTE par l'utilisateur (voir
+    software_icon_key/app_style.custom_softwares) : pas de charte connue
+    comme SOFTWARE_ICONS, mais un badge STABLE (meme cle -> toujours la
+    meme couleur/les memes lettres) plutot qu'un rendu incoherent."""
+    label_source = next((e["label"] for e in custom_softwares() if e["key"] == key), key)
+    bg, fg = _FALLBACK_SOFTWARE_BADGE_PALETTE[sum(ord(c) for c in key) % len(_FALLBACK_SOFTWARE_BADGE_PALETTE)]
+    letters = "".join(ch for ch in label_source if ch.isalnum())[:2].upper() or "?"
+    return bg, fg, letters
+
+
 def _generate_software_badge(key: str, size: int) -> QPixmap:
-    bg, fg, label = SOFTWARE_ICONS[key]
+    entry = SOFTWARE_ICONS.get(key)
+    bg, fg, label = entry if entry is not None else _fallback_software_badge_style(key)
     pix = QPixmap(size, size)
     pix.fill(Qt.transparent)
     painter = QPainter(pix)
@@ -945,11 +2559,46 @@ def software_icon_pixmap(key: str, size: int) -> QPixmap:
     if mtime is not None:
         loaded = QPixmap(str(custom))
         if not loaded.isNull():
-            pix = _cover_crop_square(loaded, size)
+            pix = _contain_square(loaded, size)
     if pix is None:
         pix = _generate_software_badge(key, size)
 
     _software_icon_cache[cache_key] = (mtime, pix)
+    return pix
+
+
+def _row_icon_pixmap(is_dir: bool, icon_key: str | None, size: int) -> QPixmap | None:
+    """Icone de gauche pour UNE ligne (voir _paint_unified_row) : celle du
+    logiciel reconnu si `icon_key` en a un ; sinon, le REPLI par defaut
+    dossier/fichier choisi dans Settings > ICONES > General (voir
+    UI_ICON_FOLDER_DEFAULT/UI_ICON_FILE_DEFAULT) si l'utilisateur en a
+    choisi un ; sinon None (comportement inchange : aucune icone)."""
+    if icon_key is not None:
+        return software_icon_pixmap(icon_key, size)
+    return custom_ui_icon_pixmap(UI_ICON_FOLDER_DEFAULT if is_dir else UI_ICON_FILE_DEFAULT, size)
+
+
+_PIN_ICON_CACHE: dict[tuple[bool, int], QPixmap] = {}
+
+
+def _pin_icon_pixmap(active: bool, size: int) -> QPixmap:
+    """Icone punaise d'en-tete de colonne (voir Column._toggle_pin, la
+    remarque de l'utilisateur, "je viens de te coller deux icones ...
+    punaise_01.png [par defaut] / punaise_02.png [actif]") — chargee une
+    fois depuis icons/, puis mise a l'echelle en carre CONTENU (voir
+    _contain_square/_smooth_scale_down, memes raisons que software_icon_
+    pixmap : source haute resolution, jamais pixelisee en la retrecissant
+    vers la petite taille d'en-tete)."""
+    custom = custom_ui_icon_pixmap(UI_ICON_PIN_ACTIVE if active else UI_ICON_PIN_INACTIVE, size)
+    if custom is not None:
+        return custom
+    key = (active, size)
+    cached = _PIN_ICON_CACHE.get(key)
+    if cached is not None:
+        return cached
+    src = QPixmap(str(ICONS_DIR / ("punaise_02.png" if active else "punaise_01.png")))
+    pix = _contain_square(src, size) if not src.isNull() else QPixmap()
+    _PIN_ICON_CACHE[key] = pix
     return pix
 
 # ==========================================================================
@@ -982,17 +2631,13 @@ GROUP_COLUMN_MAX_HEIGHT = 900
 # detail "Fichiers pour X".
 _WIDGET_SIZE_MAX = 16777215
 # Redimensionnement des lignes a la souris (Ctrl + clic entre 2 lignes +
-# glisser, voir Column.row_resize_begin/_ROW_HEIGHT_RESIZABLE_TITLES) —
-# memes bornes que le slider "Hauteur de la ligne" de la fenetre de
-# parametres (voir settings_window._ITEM_TEXT_FIELD_SPECS) pour qu'une
-# valeur posee ici ne soit jamais silencieusement recadree en rouvrant les
-# parametres.
+# glisser, voir Column.row_resize_begin/_in_row_resize_zone, disponible sur
+# TOUTE colonne) — memes bornes que le slider "Hauteur de la ligne" de la
+# fenetre de parametres (voir settings_window._ITEM_TEXT_FIELD_SPECS) pour
+# qu'une valeur posee ici ne soit jamais silencieusement recadree en
+# rouvrant les parametres.
 ROW_RESIZE_MIN_HEIGHT = 14
 ROW_RESIZE_MAX_HEIGHT = 80
-# Colonnes dont "Hauteur de la ligne" est un vrai reglage surchargeable
-# (voir settings_window._build_column_override_page) — seules celles-ci
-# ont une hauteur de ligne UNIFORME et persistable a la main.
-_ROW_HEIGHT_RESIZABLE_TITLES = ("Type", "Projets", "Sous-projet")
 ROW_HEIGHT = 24
 ROW_SPACING = 1            # espace (px) entre les lignes, dans toutes les colonnes
 HEADER_HEIGHT = 26
@@ -1000,18 +2645,24 @@ HEADER_PADDING = 0    # inset (4 cotes) entre le fond colore de l'entete et les 
 TOPBAR_HEIGHT = 40
 STATUS_HEIGHT = 24
 TITLEBAR_HEIGHT = 28
+# Largeur de depart de l'Inspecteur (voir DetailPanel.__init__) — mutable
+# par apply_all_settings (cle "detail_panel_width") : auto-enregistree sans
+# punaise, comme Type/Focus, voir DetailPanel.mouseReleaseEvent — la
+# colonne Inspecteur n'a pas de bouton punaise ni d'onglet de surcharge
+# PAR TITRE dedie, une simple cle GENERALE suffit (une seule instance dans
+# toute l'appli, contrairement a Type/Focus qui partagent un bucket de
+# style avec d'autres colonnes du meme genre).
 DETAIL_PANEL_WIDTH = 300
 DETAIL_PANEL_MIN_WIDTH = 220
 DETAIL_PANEL_MAX_WIDTH = 520
-# Titre "virtuel" utilise pour resoudre le style EFFECTIF de l'inspecteur
-# (voir app_style.column_style_for/DetailPanel.refresh_header/refresh_
-# colors) — jamais dans COLUMN_SETTINGS/COLLAPSIBLE_COLUMN_TITLES/etc (ce
-# n'est pas une vraie colonne de la rangee), et jamais surcharge par titre
-# (pas d'onglet dedie dans Colonnes > ..., comme Logiciels/Contenu) : suit
-# donc TOUJOURS le style GENERAL — voir la remarque de l'utilisateur, "la
-# colonne inspecteur est differente des autres, je veux exactement le
-# meme style, parametres par parametres".
-INSPECTOR_TITLE = "Inspecteur"
+GLOBAL_OMIT_FILE_NAMES: set[str] = set()
+GLOBAL_OMIT_FILE_EXTENSIONS: set[str] = set()
+# INSPECTOR_TITLE (titre "virtuel" pour resoudre le style EFFECTIF de
+# l'inspecteur, voir app_style.column_style_for/DetailPanel.refresh_header/
+# refresh_colors) est desormais importe depuis app_style.py, MEME raison
+# que PREVIEW_STACK_TITLE ci-dessous : possede maintenant son propre onglet
+# de surcharge (voir SettingsWindow._build_columns_page) — voir la remarque
+# de l'utilisateur, "ajoute ... la colonne inspecteur" (dans les settings).
 # PREVIEW_STACK_TITLE (la colonne fantome de l'apercu image empile, une
 # fois une selection faite dans Projets/Sous-projet) est desormais
 # importee depuis app_style.py — settings_window.py en a aussi besoin
@@ -1043,6 +2694,16 @@ COLUMN_SETTINGS: dict[str, dict[str, int]] = {
     "Sous-projet": {"width": 208, "height": 58, "spacing": 1, "img_pad": 0, "img_radius": 0},
     "Logiciels":   {"width": 186, "height": 30, "plain_height": 22, "spacing": 0, "img_pad": 3, "img_radius": 2},
     "Contenu":     {"width": 186, "height": 25, "plain_height": 20, "spacing": 0, "img_pad": 3, "img_radius": 0},
+    # IN/OVER/OUT (colonnes du groupe fantome, voir update_preview_stack) :
+    # memes valeurs de depart que "Contenu" — c'est le bucket qu'elles
+    # partageaient AVANT d'obtenir leur propre onglet de surcharge dedie
+    # (voir SettingsWindow._build_columns_page, la remarque de
+    # l'utilisateur, "ajoute la colonne logiciels dans les settings, ainsi
+    # que in over et out") : aucun changement visuel tant qu'aucune
+    # surcharge n'est activee pour l'une d'elles.
+    "IN":          {"width": 186, "height": 25, "plain_height": 20, "spacing": 0, "img_pad": 3, "img_radius": 0},
+    "OVER":        {"width": 186, "height": 25, "plain_height": 20, "spacing": 0, "img_pad": 3, "img_radius": 0},
+    "OUT":         {"width": 186, "height": 25, "plain_height": 20, "spacing": 0, "img_pad": 3, "img_radius": 0},
 }
 
 # Style de Colonnes/Entetes/Items par titre reel (voir settings_window.
@@ -1158,6 +2819,13 @@ def col_img_radius(title: str) -> int:
 # Scan disque
 # ==========================================================================
 
+def _is_globally_omitted_file(name: str) -> bool:
+    lowered = name.casefold()
+    return lowered in GLOBAL_OMIT_FILE_NAMES or any(
+        lowered.endswith("." + extension) for extension in GLOBAL_OMIT_FILE_EXTENSIONS
+    )
+
+
 def human_size(n: int) -> str:
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if n < 1024 or unit == "TB":
@@ -1187,6 +2855,8 @@ def list_entries(directory: Path, exclude: frozenset[str] | None = None) -> list
                     else:
                         dirs.append(path)
                 else:
+                    if _is_globally_omitted_file(entry.name):
+                        continue
                     files.append(path)
     except OSError:
         return []
@@ -1251,6 +2921,8 @@ def _dir_has_content(directory: Path) -> bool:
         with os.scandir(directory) as it:
             for entry in it:
                 if not entry.name.startswith(HIDDEN_PREFIXES):
+                    if not entry.is_dir() and _is_globally_omitted_file(entry.name):
+                        continue
                     return True
     except OSError:
         pass
@@ -1276,23 +2948,33 @@ def status_folder_state(directory: Path, name: str) -> tuple[bool, Path]:
 # Convention du pipeline : les logiciels d'un sous-projet vivent dans un
 # sous-dossier "softs" (F:\PIPELINE\...\<sous-projet>\softs\<logiciel>), pas
 # directement sous le sous-projet (qui a aussi "in"/"out"...). Voir
-# _softs_subdir, utilise par PipelineBrowser.on_selected en ouvrant la
-# colonne "Logiciels".
+# _named_subdir, utilise par PipelineBrowser.on_selected en ouvrant la
+# colonne "Logiciels", ET par la chaine de navigation CONFIGUREE (voir
+# load_project_columns/ColumnConfigDialog) pour CHAQUE niveau configure —
+# meme convention generalisee (nom de sous-dossier FIXE, pas un choix libre)
+# — voir la remarque de l'utilisateur, "chaque colonne configuree pointe
+# vers un nom de dossier fixe".
 SOFTS_FOLDER_NAME = "softs"
 
 
-def _softs_subdir(directory: Path) -> Path:
-    """Repertoire reellement liste pour la colonne "Logiciels" : le
-    sous-dossier "softs" de `directory` (insensible a la casse) s'il existe,
+def _named_subdir(directory: Path, name: str) -> Path:
+    """Repertoire reellement liste pour un niveau de navigation dont le nom
+    de dossier est FIXE (voir SOFTS_FOLDER_NAME/_softs_subdir, l'ancien nom
+    de cette fonction avant sa generalisation a la chaine configurable) : le
+    sous-dossier `name` de `directory` (insensible a la casse) s'il existe,
     sinon `directory` lui-meme (repli si la convention n'est pas suivie)."""
     try:
         with os.scandir(directory) as it:
             for entry in it:
-                if entry.is_dir() and entry.name.lower() == SOFTS_FOLDER_NAME:
+                if entry.is_dir() and entry.name.lower() == name.lower():
                     return Path(entry.path)
     except OSError:
         pass
     return directory
+
+
+def _softs_subdir(directory: Path) -> Path:
+    return _named_subdir(directory, SOFTS_FOLDER_NAME)
 
 
 def _count_dirs_recursive(directory: Path) -> int:
@@ -1335,6 +3017,8 @@ def count_entries(directory: Path, exclude: frozenset[str] | None = None) -> int
                     else:
                         count += 1
                 else:
+                    if _is_globally_omitted_file(entry.name):
+                        continue
                     count += 1
     except OSError:
         return 0
@@ -1420,6 +3104,434 @@ def default_thumbnail() -> QPixmap:
     return pix
 
 
+# ==========================================================================
+# Chaine de navigation configurable PAR PROJET (voir ColumnConfigDialog) —
+# voir la remarque de l'utilisateur, "j'aimerai que cette configuration
+# change, mais suivant les besoins de l'utilisateur ... cette icone doit
+# etre cliquable et faire apparaitre une fenetre qui permettra de determiner
+# le nombres de colonnes a deployer". Stockee DANS le dossier du projet
+# (voyage avec lui, meme esprit que THUMBNAIL_FILENAME/project_thumbnail_
+# path juste au-dessus) — un projet SANS ce fichier (cas le plus courant,
+# tant que l'utilisateur n'a jamais ouvert cette fenetre) garde EXACTEMENT
+# la chaine fixe Type/Projets/Sous-projet/Logiciels d'aujourd'hui (voir
+# PipelineBrowser.on_selected, branche `if config is None`).
+# ==========================================================================
+
+PROJECT_COLUMNS_FILENAME = ".pipeline_columns.json"
+
+# "Type" du repertoire de travail final (voir ColumnConfigDialog, menu
+# deroulant "Repertoire de travail > Type") : cle -> nom de DOSSIER fixe
+# recherche (voir _named_subdir), libelle du menu deroulant ("label"),
+# intitule affiche en entete de la colonne du groupe ("display", INCHANGE
+# entre les 2 types — c'est la meme colonne conceptuelle, seule son
+# APPARENCE change), et cle de STYLE ("style_title", voir column_style_for)
+# qui pilote reellement hauteur de ligne/police/couleurs/bordures/padding —
+# voir la remarque de l'utilisateur, "je veux avoir le choix entre deux
+# types : logiciels ... et standard ... elle doit avoir le meme
+# comportement que les colonnes standards que l'on trouve apres" :
+# "standard" reutilise donc la cle "Contenu", DEJA partagee par IN/OVER/OUT
+# (voir add_group_column plus bas) et desactive only_recognized_software
+# (icones/filtre "logiciel reconnu", propre au type "logiciel").
+WORK_DIR_TYPES: dict[str, dict] = {
+    "logiciel": {
+        "folder_name": SOFTS_FOLDER_NAME, "label": "Logiciels",
+        "display": SOFTWARE_COLUMN_LABEL, "style_title": SOFTWARE_COLUMN_LABEL,
+        "only_recognized_software": True,
+    },
+    "standard": {
+        "folder_name": SOFTS_FOLDER_NAME, "label": "Standard",
+        "display": SOFTWARE_COLUMN_LABEL, "style_title": "Contenu",
+        "only_recognized_software": False,
+        # En-tete DYNAMIQUE (voir update_preview_stack, "display" ci-dessus
+        # ignore alors) : reprend le nom de la selection de la colonne
+        # PRECEDENTE (terminal_path), exactement comme une colonne "de set"
+        # normale (voir add_column/display_title) — voir la remarque de
+        # l'utilisateur, "quand la colonne logiciels n'est pas formatee
+        # comme logiciel, je veux qu'elle ait le nom de la selection de la
+        # colonne precedente".
+        "display_from_selection": True,
+    },
+}
+DEFAULT_WORK_DIR_TYPE = "logiciel"
+
+
+def _project_columns_path(project_dir: Path) -> Path:
+    return project_dir / PROJECT_COLUMNS_FILENAME
+
+
+def _coerce_project_column(raw: dict) -> dict:
+    """Normalise UN niveau de la chaine configuree (voir load_project_
+    columns) — repli sur des valeurs sures pour toute cle manquante/mal
+    typee dans un JSON ecrit a la main ou corrompu, plutot que de faire
+    planter toute la navigation pour un seul projet mal configure."""
+    name = str(raw.get("name") or "").strip()
+    return {
+        "name": name,
+        "show_dirs": bool(raw.get("show_dirs", True)),
+        "show_files": bool(raw.get("show_files", False)),
+        "omit_dirs": [str(v) for v in (raw.get("omit_dirs") or []) if str(v).strip()],
+        "omit_files": [str(v) for v in (raw.get("omit_files") or []) if str(v).strip()],
+        "focus": bool(raw.get("focus", False)),
+    }
+
+
+def _coerce_work_dir(raw: dict) -> dict:
+    work_type = raw.get("type")
+    if work_type not in WORK_DIR_TYPES:
+        work_type = DEFAULT_WORK_DIR_TYPE
+    return {
+        "type": work_type,
+        "show_dirs": bool(raw.get("show_dirs", True)),
+        "show_files": bool(raw.get("show_files", False)),
+        "omit_dirs": [str(v) for v in (raw.get("omit_dirs") or []) if str(v).strip()],
+        "omit_files": [str(v) for v in (raw.get("omit_files") or []) if str(v).strip()],
+    }
+
+
+_PROJECT_COLUMNS_CACHE: dict[Path, tuple[float | None, dict | None]] = {}
+
+
+def load_project_columns(project_dir: Path) -> dict | None:
+    """Configuration de chaine de navigation propre a `project_dir` (voir
+    PROJECT_COLUMNS_FILENAME) — None si le fichier est absent/illisible/
+    invalide (repli SILENCIEUX sur la chaine legacy fixe, voir on_selected :
+    un JSON corrompu ne doit jamais empecher de naviguer, juste ignorer la
+    personnalisation) : `{"columns": [{"name","show_dirs","show_files",
+    "omit_dirs","omit_files","focus"}, ...], "work_dir": {"type",
+    "show_dirs","show_files","omit_dirs","omit_files"}}`. Chaque niveau de
+    "columns" ne garde jamais un `name` vide (voir _coerce_project_column) —
+    un niveau sans nom n'aurait aucun dossier fixe a chercher. "columns"
+    VIDE est desormais une configuration VALIDE (voir ColumnConfigDialog.
+    MIN_STEPS, "base 2" : Type+Projets, directement suivis du repertoire de
+    travail, aucun niveau intermediaire) — voir la remarque de
+    l'utilisateur, "peux-tu faire en sorte de pouvoir setter en base 2" :
+    distinct d'un fichier ABSENT/invalide (repli sur la chaine legacy a 3
+    etapes), un fichier valide avec "columns": [] doit rester tel quel,
+    PAS retomber sur le repli legacy.
+
+    Cache par mtime (voir _PROJECT_COLUMNS_CACHE, meme principe que
+    software_icon_pixmap) : appelee a CHAQUE peinture d'une ligne "Projets"
+    (voir ProjectTileDelegate.paint, step_badge) — sans cache, un
+    Ctrl+glisser de redimensionnement de ligne (jusqu'a ~60 relayouts/s,
+    voir _throttled_layout) relisait ce fichier ET reparsait son JSON a
+    CHAQUE ligne visible ET a CHAQUE frame, d'ou la lenteur constatee par
+    l'utilisateur specifiquement sur cette colonne, "quand je veux
+    redimensionner les lignes ... il y a de grosses lenteurs"."""
+    path = _project_columns_path(project_dir)
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = None
+    cached = _PROJECT_COLUMNS_CACHE.get(project_dir)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    result: dict | None = None
+    if mtime is not None:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raw = None
+        if isinstance(raw, dict):
+            columns = [_coerce_project_column(c) for c in (raw.get("columns") or []) if isinstance(c, dict)]
+            columns = [c for c in columns if c["name"]]
+            result = {
+                "columns": columns, "work_dir": _coerce_work_dir(raw.get("work_dir") or {}),
+                # Toggles maitres (voir ColumnConfigDialog, la remarque de
+                # l'utilisateur, "j'aimerai ajouter trois toggles ... set /
+                # focus / logiciels" puis "in over et out") — defaut True
+                # partout : comportement INCHANGE pour un fichier ecrit
+                # AVANT ce reglage. Toggle "logiciels" SUPPRIME depuis (voir
+                # la remarque de l'utilisateur, "supprime le toggle
+                # logiciels") — la cle "logiciels_enabled" d'un fichier plus
+                # ancien est desormais simplement IGNOREE, jamais relue.
+                "set_enabled": bool(raw.get("set_enabled", True)),
+                "focus_enabled": bool(raw.get("focus_enabled", True)),
+                "in_over_out_enabled": bool(raw.get("in_over_out_enabled", True)),
+            }
+    _PROJECT_COLUMNS_CACHE[project_dir] = (mtime, result)
+    return result
+
+
+def save_project_columns(project_dir: Path, config: dict) -> None:
+    """Ecrit `config` (MEME forme que load_project_columns) dans le dossier
+    du projet — voir ColumnConfigDialog._on_save. `_set_hidden` (deja
+    utilise pour .thumbnail.png/.pipeline_preview_cache) : cache le fichier
+    a l'explorateur Windows, meme convention que le reste des fichiers
+    internes de l'appli poses directement dans un dossier de projet.
+    `_clear_hidden` AVANT d'ecrire (voir sa remarque de tete) : ce fichier a
+    deja pu etre cache par un PRECEDENT appel — sans ca, toute MODIFICATION
+    d'une configuration existante echouait silencieusement (PermissionError
+    non rattrapee)."""
+    path = _project_columns_path(project_dir)
+    payload = {
+        "columns": [_coerce_project_column(c) for c in config.get("columns", [])],
+        "work_dir": _coerce_work_dir(config.get("work_dir") or {}),
+        "set_enabled": bool(config.get("set_enabled", True)),
+        "focus_enabled": bool(config.get("focus_enabled", True)),
+        "in_over_out_enabled": bool(config.get("in_over_out_enabled", True)),
+    }
+    _clear_hidden(path)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    _set_hidden(path)
+    # Purge le cache (voir load_project_columns) : une resolution de mtime
+    # au-dela de la seconde (courante sur certains systemes de fichiers)
+    # pourrait sinon renvoyer encore l'ANCIENNE config juste apres cet
+    # enregistrement.
+    _PROJECT_COLUMNS_CACHE.pop(project_dir, None)
+
+
+def project_step_count(config: dict | None) -> int | str:
+    """Nombre d'etapes necessaires pour etre "bien sette" dans l'espace de
+    travail d'un projet (voir le badge numerote, ProjectTileDelegate.paint)
+    — Type + Projets (2, TOUJOURS presents) + le nombre de niveaux
+    configures avant le repertoire de travail ; 3 (comportement D'AVANT ce
+    reglage — Type/Projets/Sous-projet) si aucune configuration — voir la
+    remarque de l'utilisateur, "actuellement l'icone devrait comporter le
+    chiffre 3"."""
+    if config is None:
+        return 3
+    if not config.get("set_enabled", True):
+        # "N" (PAS 2, voir _step_badge_color/_step_badge_text_color) : sans
+        # "set", ce projet n'a plus de nombre d'etapes a proprement parler
+        # (aucune limite de profondeur, voir _chain_expected_total/
+        # on_selected) — voir la remarque de l'utilisateur, "quand set est
+        # desactive je veux que l'indicateur de base affiche N".
+        return "N"
+    return 2 + len(config["columns"])
+
+
+# ==========================================================================
+# Reglages de MISE EN PAGE propres a UN dossier (hauteur de ligne d'une
+# colonne, hauteur des colonnes du groupe IN/OVER/OUT/LOGICIELS) — meme
+# convention que .pipeline_columns.json/.thumbnail.png (fichier CACHE pose
+# DANS le dossier concerne, voir _set_hidden) : voir la remarque de
+# l'utilisateur, "le dimensionnement en hauteur des colonnes de focus doit
+# etre enregistre en temps reel et ce dependant du [sous-]dossier ... d'un
+# sous dossier a l'autre, les dimensionnements seront differents ...
+# exactement pareil pour la hauteur des lignes de dossier et de fichier de
+# l'ensemble de l'appli ... des fichiers de settings qui enregistrent ces
+# modifs directement sur les emplacements des dossiers". Remplace, pour la
+# hauteur de ligne, l'ancien reglage UNIQUEMENT GLOBAL (COLUMN_SETTINGS/
+# _col_key, par bucket de style partage entre TOUTES les colonnes de ce
+# style) par un reglage PAR DOSSIER REELLEMENT AFFICHE (voir Column.
+# directory) — le bucket de style reste le repli par defaut tant qu'aucun
+# dossier n'a encore ete ajuste a la main.
+# ==========================================================================
+
+LAYOUT_SETTINGS_FILENAME = ".pipeline_layout.json"
+
+
+def _layout_settings_path(directory: Path) -> Path:
+    return directory / LAYOUT_SETTINGS_FILENAME
+
+
+def load_layout_settings(directory: Path) -> dict:
+    """Reglages de mise en page de `directory` — {} si le fichier est
+    absent/illisible/invalide (repli SILENCIEUX sur les valeurs par
+    defaut, meme esprit que load_project_columns : jamais bloquant)."""
+    path = _layout_settings_path(directory)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def save_layout_settings(directory: Path, data: dict) -> None:
+    """Ecrit `data` (dict complet) dans le dossier — voir _update_layout_
+    setting pour ne modifier qu'UNE cle. `_clear_hidden` AVANT d'ecrire
+    (voir sa remarque de tete, meme piege Windows deja rencontre avec
+    save_project_columns) : ce fichier a deja pu etre cache par un
+    PRECEDENT appel."""
+    path = _layout_settings_path(directory)
+    _clear_hidden(path)
+    try:
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        return
+    _set_hidden(path)
+
+
+def _update_layout_setting(directory: Path, key: str, value) -> None:
+    """Modifie UNE seule cle des reglages de mise en page de `directory`,
+    en conservant les autres (voir save_layout_settings) — appelee a
+    CHAQUE relachement de glisser (voir Column.row_resize_end/
+    PipelineBrowser._on_group_height_resize_end), jamais pendant le
+    glisser lui-meme (memes bornes que _persist_row_height, deja
+    limitees au relachement pour ne pas ecrire sur le disque a CHAQUE
+    mouvement de souris)."""
+    data = load_layout_settings(directory)
+    data[key] = value
+    save_layout_settings(directory, data)
+
+
+# Raccourcis (voir Column._on_context_menu "Ajouter un raccourci", refresh()) :
+# un dossier situe AILLEURS sur le disque, affiche comme s'il etait
+# physiquement dans CE dossier — enregistres dans un fichier cache PROPRE A
+# CE DOSSIER (meme convention que .pipeline_layout.json/la punaise), pas dans
+# un reglage GENERAL : si le dossier racine change, un raccourci pose ICI ne
+# doit jamais se retrouver, par erreur, dans une colonne d'un tout AUTRE
+# projet — voir la remarque de l'utilisateur, "de maniere a ce que si on
+# change le root, le raccourci ne se retrouve pas dans une colonne malgre
+# lui".
+SHORTCUTS_FILENAME = ".pipeline_shortcuts.json"
+
+
+def _shortcuts_path(directory: Path) -> Path:
+    return directory / SHORTCUTS_FILENAME
+
+
+def load_shortcuts(directory: Path) -> list[dict]:
+    """Raccourcis de `directory` — [] si le fichier est absent/illisible/
+    invalide (repli SILENCIEUX, meme convention que load_layout_settings)."""
+    try:
+        raw = json.loads(_shortcuts_path(directory).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(raw, list):
+        return []
+    return [e for e in raw if isinstance(e, dict) and e.get("target")]
+
+
+def save_shortcuts(directory: Path, shortcuts: list[dict]) -> None:
+    path = _shortcuts_path(directory)
+    _clear_hidden(path)
+    try:
+        path.write_text(json.dumps(shortcuts, indent=2, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        return
+    _set_hidden(path)
+
+
+def add_shortcut(directory: Path, target: Path) -> None:
+    shortcuts = load_shortcuts(directory)
+    target_str = str(target)
+    if any(s.get("target") == target_str for s in shortcuts):
+        return
+    shortcuts.append({"target": target_str})
+    save_shortcuts(directory, shortcuts)
+
+
+def remove_shortcut(directory: Path, target: Path) -> None:
+    shortcuts = load_shortcuts(directory)
+    target_str = str(target)
+    filtered = [s for s in shortcuts if s.get("target") != target_str]
+    if len(filtered) != len(shortcuts):
+        save_shortcuts(directory, filtered)
+
+
+# Reglable en direct (voir apply_all_settings/STEP_BADGE_STYLE, Settings >
+# Colonnes > Projets > Colonnes > "Icone de niveaux") — ces 2 constantes ne
+# restent que comme les toutes PREMIERES valeurs par defaut (avant le tout
+# premier apply_all_settings au demarrage, voir main()).
+STEP_BADGE_SIZE = 18
+STEP_BADGE_MARGIN = 4
+STEP_BADGE_STYLE: dict = {
+    "width": STEP_BADGE_SIZE, "height": STEP_BADGE_SIZE,
+    "border_enabled": {"top": False, "right": False, "bottom": False, "left": False},
+    "border": {}, "border_thickness": 1,
+    "radius": {"top_left": 9, "top_right": 9, "bottom_right": 9, "bottom_left": 9},
+    "colors": {2: "#5c6368", 3: "#5c6368", 4: "#3f6f9f", 5: "#3f6f9f", 6: "#d9822b", "N": "#5c6368"},
+    "text_colors": {2: "#eef2f5", 3: "#eef2f5", 4: "#eef2f5", 5: "#eef2f5", 6: "#eef2f5", "N": "#eef2f5"},
+    "offset_x": STEP_BADGE_MARGIN, "offset_y": 0,
+    "font_family": "", "font_bold": True, "border_smoothing": True,
+    "font_smoothing_enabled": False, "font_smoothing": "current",
+}
+
+# Police/couleur des lignes "raccourci" (voir ROLE_IS_SHORTCUT, Settings >
+# RACCOURCI) — DISTINCTES du reste du texte de la ligne, pour reperer un
+# raccourci au premier coup d'oeil, meme rendu partage (_paint_unified_row)
+# que le reste : voir la remarque de l'utilisateur, "police : choix de la
+# police avec toggle : app ou systeme, toggle gras ou regulier, couleur,
+# taille".
+SHORTCUT_TEXT_STYLE: dict = {
+    "font_family": "", "font_bold": False, "color": "#8fb4d5", "font_size": 11,
+}
+
+# Bouton de repliement de colonne (voir Column.set_collapsed/toggle_btn) :
+# "chevrons" (defaut, comportement inchange, voir IconButton kind
+# dchevron_left/right) ou "icone" (voir UI_ICON_COLLAPSE_TOGGLE, Settings >
+# ICONES > General) — reglage Settings > Colonnes > Focus > Bouton
+# repliement > "Icone".
+COLLAPSE_TOGGLE_MODE = "chevrons"
+
+def _step_badge_color(n: int | str) -> str:
+    """Couleur du badge numerote (voir ProjectTileDelegate.paint) selon le
+    nombre d'etapes `n` (project_step_count) — une des 5 couleurs reglables
+    (STEP_BADGE_STYLE["colors"], Settings > Colonnes > Projets > Colonnes >
+    "Icone de niveaux", "couleur fond base 2 a 6") : n est BORNE a [2, 6],
+    2 pour tout n <= 2, 6 pour tout n >= 6 (chaine plus longue que prevu
+    par les 5 couleurs — reutilise la derniere plutot que planter).
+    `n == "N"` (voir project_step_count, toggle "set" desactive dans
+    ColumnConfigDialog) : 6e couleur DEDIEE (STEP_BADGE_STYLE["colors"]
+    ["N"]), jamais confondue avec la base 2 — voir la remarque de
+    l'utilisateur, "quand set est desactive je veux que l'indicateur de
+    base affiche N ... rajoute cette option pour le choix de la couleur
+    dans les settings".
+    resolve_color_ref (PAS la valeur brute) : ce champ (_AppOrCustomColorField,
+    voir sa docstring) peut valoir soit un hex direct, soit une reference
+    "@<slot>" a une pastille semantique de l'appli — SANS cette resolution,
+    une couleur "app" choisie ici produisait un QColor invalide (chaine
+    "@accent" telle quelle, jamais un hex) — voir la remarque de
+    l'utilisateur, "il y a des bugs avec les couleurs appli, ca ne
+    fonctionne pas"."""
+    key = "N" if n == "N" else max(2, min(6, n))
+    return resolve_color_ref(STEP_BADGE_STYLE["colors"][key])
+
+
+def _step_badge_text_color(n: int | str) -> str:
+    """Couleur du TEXTE du badge — une PAR base (2 a 6, PAS une seule
+    globale) — voir STEP_BADGE_STYLE["text_colors"], Settings > Colonnes >
+    Projets > Colonnes > "Icone de niveaux", carre du HAUT de chaque paire
+    — voir la remarque de l'utilisateur, "la couleur du haut est pour le
+    texte (pour chacune des bases) et la couleur du bas est pour le
+    fond". MEME bornage/MEME resolution/MEME cas "N" que _step_badge_color."""
+    key = "N" if n == "N" else max(2, min(6, n))
+    return resolve_color_ref(STEP_BADGE_STYLE["text_colors"][key])
+
+
+def _row_preview_left_x(row_rect: QRect, style: dict) -> int:
+    """Bord GAUCHE du slot ou l'apercu se dessine sur cette ligne (voir
+    _paint_unified_row, "apercu ... ANCRE sur le bord DROIT de la zone de
+    selection") — calcul PARTAGE avec le hit-test du badge numerote (voir
+    _step_badge_rect/Column.eventFilter), pour rester synchronises SANS
+    dupliquer la formule."""
+    pad = style.get("item_selection_padding") or {}
+    sel_left = row_rect.left() + max(0, int(pad.get("left", 0)))
+    sel_width = row_rect.width() - max(0, int(pad.get("left", 0))) - max(0, int(pad.get("right", 0)))
+    img_size = row_rect.height() - max(0, int(pad.get("top", 0))) - max(0, int(pad.get("bottom", 0)))
+    if img_size <= 0:
+        img_size = 14
+    img_ratio = float(style.get("item_image_ratio", 1.0) or 1.0)
+    img_width = max(1, round(img_size * img_ratio))
+    if sel_width > 0:
+        return sel_left + sel_width - img_width
+    return row_rect.right() - img_width
+
+
+def _step_badge_rect(row_rect: QRect, preview_left: int | None = None) -> QRect:
+    """Rect du badge numerote — voir ProjectTileDelegate.paint/Column.
+    eventFilter, fonction PARTAGEE entre le dessin et le hit-test du clic,
+    pour rester synchronisees. `preview_left` (voir _row_preview_left_x) :
+    juste AVANT (a gauche de) l'apercu de la ligne, PAS par-dessus (voir la
+    remarque de l'utilisateur, "j'aimerai que la petite icone de levels
+    soit avant l'apercu et pas a l'interieur") — repli sur l'ancien
+    comportement (haut-droite de row_rect) si aucun apercu n'est fourni
+    (ne devrait plus arriver en pratique, "Projets" en a toujours un, voir
+    project_thumbnail_pixmap)."""
+    width = STEP_BADGE_STYLE["width"]
+    height = STEP_BADGE_STYLE["height"]
+    offset_x = STEP_BADGE_STYLE["offset_x"]
+    offset_y = STEP_BADGE_STYLE["offset_y"]
+    if preview_left is not None:
+        x = preview_left - offset_x - width
+        y = row_rect.top() + (row_rect.height() - height) // 2 + offset_y
+    else:
+        x = row_rect.right() - width - offset_x
+        y = row_rect.top() + offset_x + offset_y
+    return QRect(x, y, width, height)
+
+
 def _resize_width_indicator(win: QWidget, key: str = "default") -> QLabel:
     """Badge flottant affichant la largeur/hauteur (px) pendant le
     redimensionnement d'une colonne ou du panneau de details (voir
@@ -1469,11 +3581,15 @@ def _refresh_resize_width_style(label: QLabel) -> None:
     # (mono_family()), PAS une resolution par role (_resolve_font_family
     # n'a aucun repli "mono", seulement des roles a chasse variable).
     family_label = s.get("font_family") or ""
+    size = int(s.get("font_size", 11))
+    weight = 600 if s.get("font_bold", True) else 400
+    italic = bool(s.get("font_italic", False))
+    smoothing = s.get("font_smoothing", "current") if s.get("font_smoothing_enabled") else "current"
     if family_label:
-        resolved_family = _resolve_font_family(family_label, 11, 600)
-        label.setFont(font(11, 600, family=resolved_family))
+        resolved_family = _resolve_font_family(family_label, size, weight)
+        label.setFont(font(size, weight, family=resolved_family, smoothing=smoothing, italic=italic))
     else:
-        label.setFont(font(11, 600, mono=True))
+        label.setFont(font(size, weight, mono=True, smoothing=smoothing, italic=italic))
     text_color = resolve_color_ref(s.get("text_color", "#d6d9dc"))
     bg = resolve_color_ref(s.get("bg_color", "#202326"))
     thickness = max(0, int(s.get("border_thickness", 1)))
@@ -1538,6 +3654,39 @@ def _hide_resize_width(widget: QWidget, key: str = "default") -> None:
         labels[key].hide()
 
 
+def _show_row_resize_indicator(column: "Column", row_index: int, height: int) -> None:
+    """MEME badge que _show_resize_width (voir _resize_width_indicator/
+    RESIZE_BADGE_STYLE pour l'habillage : police/couleur/fond/bordure
+    restent les memes reglages), mais ancre juste SOUS `row_index` (voir
+    Column.row_resize_begin) plutot que sous le coin de la colonne entiere
+    — voir la remarque de l'utilisateur, "je veux que la position de
+    l'indicateur de hauteur soit juste au dessous de la ligne que l'on
+    redimensionne". `key="row_height"` DEDIE (jamais "default", partage
+    par le redimensionnement de LARGEUR/hauteur de groupe) : ce glisser
+    peut survenir alors qu'un AUTRE indicateur est deja affiche ailleurs
+    sur la meme fenetre (peu probable mais gratuit a eviter)."""
+    win = column.window()
+    label = _resize_width_indicator(win, "row_height")
+    label.setText(str(height))
+    _refresh_resize_width_style(label)
+    label.adjustSize()
+    row_rect = None
+    if row_index >= 0:
+        index = column.list.model().index(row_index, 0)
+        if index.isValid():
+            row_rect = column.list.visualRect(index)
+    viewport = column.list.viewport()
+    if row_rect is not None:
+        anchor_local = QPoint(row_rect.center().x(), row_rect.bottom())
+    else:
+        anchor_local = QPoint(viewport.width() // 2, 0)
+    anchor_global = viewport.mapToGlobal(anchor_local)
+    local = win.mapFromGlobal(anchor_global)
+    label.move(local.x() - label.width() // 2, local.y() + 4)
+    label.show()
+    label.raise_()
+
+
 def _persist_row_height(win, title: str, new_height: int) -> None:
     """Enregistre `new_height` comme hauteur de ligne EFFECTIVE de `title`
     sur le disque (voir Column.row_resize_end) — memes cles que la fenetre
@@ -1545,14 +3694,25 @@ def _persist_row_height(win, title: str, new_height: int) -> None:
     garde ses cles historiques, "Projets"/"Sous-projet" les nouvelles cles
     imbriquees par titre (voir _override_store cote settings_window) — pour
     qu'un redimensionnement a la souris se retrouve, actif, la prochaine
-    fois que Colonnes > (Type/Projets/Sous-projets) est ouvert."""
+    fois que Colonnes > (Type/Projets/Sous-projets) est ouvert. Ctrl+glisser
+    est desormais possible sur TOUTE colonne (voir _in_row_resize_zone, la
+    remarque de l'utilisateur, "doit etre sur toutes les colonnes") — mais
+    "Logiciels"/"Contenu" (et toute colonne de chaine CONFIGUREE qui retombe
+    dans ce meme bucket, voir _col_key, ex. "test1") n'ont PAS d'onglet de
+    surcharge PAR TITRE dedie (voir apply_all_settings, "suivent directement
+    la valeur GENERALE") : le SEUL reglage qui pilote reellement leur
+    hauteur est le defaut GENERAL "item_row_height", c'est donc lui qu'il
+    faut ecrire pour que ce glisser survive a un redemarrage — memes effet
+    que le slider General > Colonnes > "Hauteur de la ligne"""
     def _apply_height_override(target: dict) -> None:
         if title == "Type":
             target.setdefault("column_type_overrides", {})["item_row_height"] = new_height
             target.setdefault("column_type_override_enabled", {})["item_row_height"] = True
-        else:
+        elif title in ("Projets", "Sous-projet", PREVIEW_STACK_TITLE):
             target.setdefault("column_overrides_by_title", {}).setdefault(title, {})["item_row_height"] = new_height
             target.setdefault("column_override_enabled_by_title", {}).setdefault(title, {})["item_row_height"] = True
+        else:
+            target["item_row_height"] = new_height
 
     settings = load_settings()
     _apply_height_override(settings)
@@ -1569,9 +3729,7 @@ def _persist_row_height(win, title: str, new_height: int) -> None:
     # voir la remarque de l'utilisateur, "apres un redimensionnement les
     # espacements entre les lignes ne sont plus respecte, et ca concerne
     # toutes les colonnes". La hauteur est re-appliquee explicitement sur
-    # CETTE vue aussi (_apply_height_override), sans se reposer sur le fait
-    # que _sync_settings_dialog_row_height ait deja synchronise le champ du
-    # dialogue pendant le glisser.
+    # CETTE vue aussi (_apply_height_override).
     dialog = getattr(win, "_settings_dialog", None)
     live_settings = None
     if dialog is not None:
@@ -1585,48 +3743,92 @@ def _persist_row_height(win, title: str, new_height: int) -> None:
     apply_all_settings(live_settings if live_settings is not None else settings)
 
 
-def _sync_settings_dialog_row_height(win, title: str, new_height: int) -> None:
-    """Repercute EN TEMPS REEL, PENDANT le glisser (voir Column.
-    row_resize_update, PAS seulement au relachement/_persist_row_height),
-    la hauteur choisie sur la fenetre de parametres SI elle est deja
-    ouverte — sur son onglet de surcharge PAR TITRE (Colonnes > Type/
-    Projets/Sous-projets), jamais General : le glisser cree/met a jour
-    TOUJOURS une surcharge (voir _persist_row_height), jamais la valeur
-    generale — voir la remarque de l'utilisateur, "quand on change la
-    valeur de la hauteur de ligne avec la touche controle, je veux que la
-    valeur dans les settings soit mise a jour en temps reel"."""
+def _sync_default_preset_override(settings: dict, apply_override) -> None:
+    """Reapplique `apply_override` (MEME callable que celui deja utilise sur
+    `settings`) au preset "par defaut" ACTIF (settings["default_preset"],
+    voir General > Application) — sans ca, une largeur "auto-enregistree"
+    (voir _persist_column_width/_persist_detail_panel_width) etait
+    silencieusement ECRASEE par la valeur PERIMEE de ce preset des le
+    PROCHAIN chargement (voir settings_window.load_settings, qui fusionne
+    TOUJOURS le preset par defaut PAR-DESSUS pipeline_settings.json), tant
+    qu'un preset par defaut restait configure — voir la remarque de
+    l'utilisateur, "la largeur de la colonne inspecteur ne s'enregistre
+    toujours pas automatiquement". No-op si aucun preset par defaut n'est
+    configure, ou s'il a depuis ete supprime/renomme (repli SILENCIEUX,
+    meme convention que load_settings)."""
+    default_preset = settings.get("default_preset")
+    if not default_preset:
+        return
+    presets = _load_presets()
+    preset = presets.get(default_preset)
+    if preset is None:
+        return
+    apply_override(preset)
+    _save_presets(presets)
+
+
+def _persist_column_width(win, title: str, new_width: int) -> None:
+    """Analogue de _persist_row_height, mais pour la LARGEUR — reservee aux
+    colonnes qui n'ont pas (ou plus) besoin de punaise pour s'enregistrer :
+    Type (jamais de bouton punaise, voir Column.__init__) et Focus/
+    PREVIEW_STACK_TITLE (colonnes empilees Projets/Sous-projet de
+    l'apercu, voir PreviewColumn — aucune notion de dossier UNIQUE a
+    associer, donc pas de mecanisme .pipeline_layout.json possible pour
+    elles) — voir la remarque de l'utilisateur, "les seules colonnes dont
+    les parametres sont enregistrees automatiquement sont : colonne type,
+    colonnes focus, colonne inspecteur"."""
+    def _apply_width_override(target: dict) -> None:
+        if title == "Type":
+            target.setdefault("column_type_overrides", {})["item_column_width"] = new_width
+            target.setdefault("column_type_override_enabled", {})["item_column_width"] = True
+        elif title in ("Projets", "Sous-projet", PREVIEW_STACK_TITLE):
+            target.setdefault("column_overrides_by_title", {}).setdefault(title, {})["item_column_width"] = new_width
+            target.setdefault("column_override_enabled_by_title", {}).setdefault(title, {})["item_column_width"] = True
+        else:
+            target["item_column_width"] = new_width
+
+    settings = load_settings()
+    _apply_width_override(settings)
+    save_settings(settings)
+    _sync_default_preset_override(settings, _apply_width_override)
+
     dialog = getattr(win, "_settings_dialog", None)
-    if dialog is None:
-        return
-    try:
-        if not dialog.isVisible():
-            return
-    except RuntimeError:
-        return
-    fields = getattr(dialog, "_type_fields", {}).get(title)
-    if not fields or "item_row_height" not in fields:
-        return
-    # blockSignals ici : ce champ/toggle est cable sur _mark_dirty (voir
-    # _connect_column_type_overrides), qui relance via son timer 30ms tout
-    # apply_all_settings()/refresh_all_columns() — en le laissant faire a
-    # CHAQUE frame de glisser, ce chemin entrait en concurrence avec la
-    # mise a jour directe de row_resize_update (COLUMN_SETTINGS +
-    # doItemsLayout) et provoquait l'espacement/hauteur qui "buggait"
-    # pendant le glisser. setValue/setChecked mettent quand meme l'affichage
-    # a jour meme signaux bloques ; seule la notification (donc la cascade
-    # settingsChanged) est supprimee pendant le drag.
-    field = fields["item_row_height"]
-    field.blockSignals(True)
-    field.setValue(int(new_height))
-    field.blockSignals(False)
-    toggles = getattr(dialog, "_type_toggles", {}).get(title) or {}
-    toggle = toggles.get("item_row_height")
-    if toggle is not None:
-        toggle.blockSignals(True)
-        toggle.setChecked(True)
-        toggle.blockSignals(False)
-    if hasattr(dialog, "_apply_column_type_preview"):
-        dialog._apply_column_type_preview()
+    live_settings = None
+    if dialog is not None:
+        try:
+            if dialog.isVisible():
+                live_settings = dialog._current_values()
+        except RuntimeError:
+            live_settings = None
+    if live_settings is not None:
+        _apply_width_override(live_settings)
+    apply_all_settings(live_settings if live_settings is not None else settings)
+
+
+def _persist_detail_panel_width(win, new_width: int) -> None:
+    """Analogue de _persist_column_width, mais pour l'Inspecteur (voir
+    DetailPanel.mouseReleaseEvent) — une seule cle GENERALE PLATE
+    ("detail_panel_width", pas de branchement par titre : cette colonne
+    n'a ni punaise ni onglet de surcharge dedie, une seule instance existe
+    dans toute l'appli) — voir la remarque de l'utilisateur, "la largeur
+    de la colonne inspecteur ... doivent etre enregistrees
+    automatiquement"."""
+    settings = load_settings()
+    settings["detail_panel_width"] = new_width
+    save_settings(settings)
+    _sync_default_preset_override(settings, lambda target: target.__setitem__("detail_panel_width", new_width))
+
+    dialog = getattr(win, "_settings_dialog", None)
+    live_settings = None
+    if dialog is not None:
+        try:
+            if dialog.isVisible():
+                live_settings = dialog._current_values()
+        except RuntimeError:
+            live_settings = None
+    if live_settings is not None:
+        live_settings["detail_panel_width"] = new_width
+    apply_all_settings(live_settings if live_settings is not None else settings)
 
 
 def open_path(path: Path):
@@ -1640,6 +3842,113 @@ def reveal_in_file_manager(path: Path):
         subprocess.Popen(["open", "-R", str(path)])
     else:
         subprocess.Popen(["xdg-open", str(path.parent)])
+
+
+# Gestion de la vignette perso d'un dossier (voir project_thumbnail_path) —
+# fonctions LIBRES (pas des methodes Column), pour etre partagees par
+# Column._change_thumbnail/_capture_thumbnail/_save_thumbnail_pixmap/
+# _reset_thumbnail (menu clic droit d'une ligne normale) ET
+# _PreviewBlock._on_context_menu (menu clic droit d'un bloc Focus, voir sa
+# remarque de tete) — voir la remarque de l'utilisateur, "les fichiers et
+# dossiers de focus ne fonctionnent pas comme les autres colonnes,
+# notamment pour le clic droit". `anchor` : SEULEMENT utilise comme parent
+# de dialogue (QFileDialog/QMessageBox, n'importe quel QWidget convient)
+# et pour garder une reference Python vivante sur la capture d'ecran en
+# cours (voir _prompt_capture_thumbnail, `anchor._capture_overlay`) tant
+# que la fenetre de selection est ouverte — jamais suppose etre un Column.
+# `on_done` : callback SANS argument, appele apres une ecriture/suppression
+# reussie (le SEUL bout specifique a l'appelant — un repaint de liste pour
+# Column, un rechargement de pixmap pour _PreviewBlock).
+
+
+def _prompt_change_thumbnail(anchor: QWidget, path: Path, on_done) -> None:
+    # QTimer.singleShot(0, ...) : NE JAMAIS ouvrir ce QFileDialog
+    # DIRECTEMENT depuis ce slot — appele depuis un menu CONTEXTUEL tout
+    # juste ferme (voir Column._on_context_menu/_PreviewBlock.
+    # _show_context_menu, menu.exec(...) qui vient de retourner) : ouvrir
+    # un 2e dialogue modal DANS LE MEME CYCLE D'EVENEMENTS que la
+    # fermeture du 1er est un piege Qt classique — le clic de
+    # relachement qui a ferme le menu se fait parfois REINTERPRETER par
+    # le NOUVEAU dialogue comme un clic EN DEHORS de lui, le refermant
+    # INSTANTANEMENT — voir la remarque de l'utilisateur, "quand je
+    # clique sur changer l'icone du logiciel, la fenetre pour choisir
+    # une nouvelle image se referme tout de suite" (meme mecanisme,
+    # voir _change_software_icon). QTimer.singleShot(150, ...) — PAS 0
+    # (essaye puis insuffisant sur _change_software_icon, voir la
+    # remarque de l'utilisateur "cette fois-ci aucune fenetre ne
+    # s'ouvre" : un simple tour de boucle Qt ne suffit pas a laisser
+    # Windows relacher completement le grab souris/clavier NATIF du
+    # menu contextuel tout juste ferme). Meme delai deja utilise
+    # ailleurs dans ce fichier pour un probleme de meme nature
+    # (_capture_thumbnail/_capture_software_icon).
+    def open_dialog():
+        chosen, _ = QFileDialog.getOpenFileName(
+            anchor, "Choisir une image", str(path),
+            "Images (*.png *.jpg *.jpeg *.bmp *.webp *.gif *.tif *.tiff)",
+        )
+        if not chosen:
+            return
+        pix = QPixmap(chosen)
+        if pix.isNull():
+            QMessageBox.warning(anchor, "Image", "Impossible de charger cette image.")
+            return
+        _save_thumbnail_pixmap_for(path, pix, anchor, on_done)
+
+    QTimer.singleShot(150, open_dialog)
+
+
+def _prompt_capture_thumbnail(anchor: QWidget, path: Path, on_done) -> None:
+    """Ouvre un selecteur de zone carree (un par ecran connecte) pour
+    capturer une vignette de projet directement depuis l'affichage."""
+    win = anchor.window()
+    was_visible = win.isVisible()
+    if was_visible:
+        win.hide()
+    QApplication.processEvents()
+
+    def start_overlay():
+        capture = MultiScreenCapture()
+        anchor._capture_overlay = capture  # garde une reference tant que les fenetres sont ouvertes
+
+        def finish():
+            if was_visible:
+                win.show()
+            anchor._capture_overlay = None
+
+        def on_captured(pix: QPixmap):
+            finish()
+            _save_thumbnail_pixmap_for(path, pix, anchor, on_done)
+
+        capture.captured.connect(on_captured)
+        capture.cancelled.connect(finish)
+
+    # Laisse le temps a la fenetre principale de disparaitre avant la
+    # capture, sinon elle apparait encore dans la vignette.
+    QTimer.singleShot(150, start_overlay)
+
+
+def _save_thumbnail_pixmap_for(path: Path, pix: QPixmap, anchor: QWidget, on_done) -> None:
+    if pix.isNull():
+        return
+    if max(pix.width(), pix.height()) > THUMBNAIL_MAX_DIM:
+        pix = _smooth_scale_down(pix, QSize(THUMBNAIL_MAX_DIM, THUMBNAIL_MAX_DIM), Qt.KeepAspectRatio)
+    dest = project_thumbnail_path(path)
+    if not pix.save(str(dest), "PNG"):
+        QMessageBox.warning(anchor, "Image", "Impossible d'enregistrer la vignette.")
+        return
+    _set_hidden(dest)
+    on_done()
+
+
+def _prompt_reset_thumbnail(anchor: QWidget, path: Path, on_done) -> None:
+    thumb = project_thumbnail_path(path)
+    if thumb.exists():
+        try:
+            thumb.unlink()
+        except OSError as exc:
+            QMessageBox.warning(anchor, "Image", f"Impossible de supprimer la vignette :\n{exc}")
+            return
+    on_done()
 
 
 # ==========================================================================
@@ -1656,6 +3965,24 @@ ROLE_META = Qt.UserRole + 2
 # l'utilisateur, "je veux une anotation a cote du nom du repertoire ...
 # s'il vient de projet ou de sous projet".
 ROLE_SOURCE_LABEL = Qt.UserRole + 3
+# Position (2 = Type, 3 = Projets, 4 = Sous-projet, 5+ = niveaux configures
+# suivants) de la colonne "de set" SOURCE d'une ligne fusionnee IN/OVER/OUT
+# (voir Column.refresh, PipelineBrowser.update_preview_stack) — reutilise
+# TEL QUEL le meme palier de couleur que le badge numerote (voir
+# _step_badge_color/STEP_BADGE_STYLE, Settings > Colonnes > Projets >
+# Colonnes > "Icone de niveaux") pour colorer l'etiquette d'origine
+# differemment selon l'etape source — voir la remarque de l'utilisateur,
+# "les couleurs des indications doivent changer selon les etapes". None
+# (partout ailleurs) = couleur fixe inchangee.
+ROLE_SOURCE_STEP = Qt.UserRole + 4
+# Vrai pour une ligne "raccourci" (voir load_shortcuts/Column.refresh,
+# Column._on_context_menu "Ajouter un raccourci") : un dossier situe
+# AILLEURS sur le disque, affiche comme s'il etait physiquement dans CE
+# dossier — voir _resolve_shortcut_font_color/SHORTCUT_TEXT_STYLE (police/
+# couleur dediees, Settings > RACCOURCI) pour le distinguer visuellement,
+# et le menu contextuel reduit ("Retirer le raccourci" au lieu de
+# Renommer/Supprimer, qui agirait par erreur sur la VRAIE cible).
+ROLE_IS_SHORTCUT = Qt.UserRole + 5
 
 
 def _paint_row_border(painter: QPainter, rect, option, style: dict):
@@ -1781,10 +4108,19 @@ def _paint_row_image(
 
     radius = _radius_dict(style.get("item_image_radius") or 0)
 
-    scaled_pix = pixmap.scaled(img_rect.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-    sx = max(0, (scaled_pix.width() - img_rect.width()) // 2)
-    sy = max(0, (scaled_pix.height() - img_rect.height()) // 2)
-    cropped = scaled_pix.copy(sx, sy, min(img_rect.width(), scaled_pix.width()), min(img_rect.height(), scaled_pix.height()))
+    # Taille PHYSIQUE reelle (devicePixelRatio), pas seulement LOGIQUE —
+    # voir la remarque de l'utilisateur, "je trouve les icones encore tres
+    # floues" : sur un ecran mis a l'echelle (>100%, tres courant), un
+    # pixmap cree a EXACTEMENT la taille logique du slot (devicePixelRatio
+    # implicite 1.0) est ensuite lui-meme RE-agrandi par Qt au moment de
+    # le peindre dans ce MEME rect logique sur un peripherique physique
+    # plus dense — un flou invisible cote algorithme de mise a l'echelle
+    # (deja bon, voir _smooth_scale_down), uniquement du a ce DERNIER saut
+    # (le pixmap final n'annonce jamais sa vraie densite a Qt)."""
+    device = painter.device()
+    dpr = (device.devicePixelRatioF() if device is not None else 1.0) or 1.0
+    phys_w = max(1, round(img_rect.width() * dpr))
+    phys_h = max(1, round(img_rect.height() * dpr))
 
     if _radius_any(radius):
         # Masque construit a la main (REMPLISSAGE antialiase + composition
@@ -1796,7 +4132,11 @@ def _paint_row_image(
         # les deux) — voir la remarque de l'utilisateur, "l'antialiasing
         # est affreux" puis "peux tu ameliorer encore plus l'antialiasing"
         # (4x -> 8x). MEME facteur que le trait de bordure dans
-        # _paint_bordered_rect.
+        # _paint_bordered_rect. `radius` mis a l'echelle par dpr AVANT
+        # de rejoindre le masque (PAS le rayon "logique" brut) : sinon les
+        # coins paraitraient proportionnellement plus petits que prevu des
+        # que dpr > 1 (le masque, lui, grandit avec phys_w/phys_h, le
+        # rayon doit suivre pour rester visuellement identique).
         #
         # Le masque passe par un PIXMAP intermediaire (dessine ENTIEREMENT
         # par-dessus l'image avec drawPixmap), PAS par un fillPath direct
@@ -1809,24 +4149,42 @@ def _paint_row_image(
         # arrondi, le meme que la bordure". Un drawPixmap, lui, couvre TOUT
         # le rectangle : les coins du masque (transparents) y remettent
         # bien l'alpha a 0.
-        mask = _rounded_mask_pixmap(img_rect.width(), img_rect.height(), radius)
+        #
+        # `hires_cropped` recadre/reduit DIRECTEMENT `pixmap` (la source
+        # ORIGINALE, haute resolution) a la taille SUR-ECHANTILLONNEE du
+        # masque — PAS un recadrage prealable a la taille FINALE (phys_w/
+        # phys_h) suivi d'un agrandissement 8x pour rejoindre le masque :
+        # cet aller-retour (retrecir PUIS agrandir PUIS retrecir a nouveau)
+        # perdait du detail a chaque etape — voir la remarque de
+        # l'utilisateur, "je trouve les icones encore tres floues".
+        radius_dpr = {k: v * dpr for k, v in radius.items()}
+        mask = _rounded_mask_pixmap(phys_w, phys_h, radius_dpr)
         big = mask.size()
-        big_rect = QRect(0, 0, big.width(), big.height())
+        hires = _smooth_scale_down(pixmap, big, Qt.KeepAspectRatioByExpanding)
+        hsx = max(0, (hires.width() - big.width()) // 2)
+        hsy = max(0, (hires.height() - big.height()) // 2)
+        hires_cropped = hires.copy(hsx, hsy, min(big.width(), hires.width()), min(big.height(), hires.height()))
 
         masked = QPixmap(big)
         masked.fill(Qt.transparent)
         mp = QPainter(masked)
         mp.setRenderHint(QPainter.Antialiasing, True)
         mp.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        mp.drawPixmap(big_rect, cropped)
+        mp.drawPixmap(QRect(0, 0, big.width(), big.height()), hires_cropped)
         mp.setCompositionMode(QPainter.CompositionMode_DestinationIn)
         mp.drawPixmap(0, 0, mask)
         mp.end()
 
-        masked = masked.scaled(img_rect.size(), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        masked = _smooth_scale_down(masked, QSize(phys_w, phys_h), Qt.IgnoreAspectRatio)
+        masked.setDevicePixelRatio(dpr)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
         painter.drawPixmap(img_rect, masked)
     else:
+        cropped = _smooth_scale_down(pixmap, QSize(phys_w, phys_h), Qt.KeepAspectRatioByExpanding)
+        sx = max(0, (cropped.width() - phys_w) // 2)
+        sy = max(0, (cropped.height() - phys_h) // 2)
+        cropped = cropped.copy(sx, sy, min(phys_w, cropped.width()), min(phys_h, cropped.height()))
+        cropped.setDevicePixelRatio(dpr)
         painter.drawPixmap(img_rect, cropped)
 
     border_enabled = dict(style.get("item_image_border_enabled") or {})
@@ -1871,8 +4229,27 @@ def _resolve_row_font_color(title: str):
     # les polices ... j'aimerais rajouter une option pour mettre le texte
     # en gras (toggle)".
     weight = 600 if s.get("item_font_bold") else 400
-    row_font = font(size, weight=weight, family=resolved_family, smoothing=smoothing)
+    italic = bool(s.get("item_font_italic", False))
+    row_font = font(size, weight=weight, family=resolved_family, smoothing=smoothing, italic=italic)
     row_color = resolve_color_ref(s.get("item_color") or C["text"])
+    return row_font, row_color
+
+
+def _resolve_shortcut_font_color():
+    """Police/couleur EFFECTIVES d'une ligne "raccourci" (voir
+    ROLE_IS_SHORTCUT/SHORTCUT_TEXT_STYLE, Settings > RACCOURCI) — GENERALE
+    (pas par colonne, contrairement a _resolve_row_font_color : un
+    raccourci doit se reperer de la MEME facon partout)."""
+    family = (SHORTCUT_TEXT_STYLE.get("font_family") or "").strip()
+    size = max(1, int(SHORTCUT_TEXT_STYLE.get("font_size") or 11))
+    resolved_family = _resolve_font_family(family, size, 400)
+    weight = 600 if SHORTCUT_TEXT_STYLE.get("font_bold") else 400
+    italic = bool(SHORTCUT_TEXT_STYLE.get("font_italic", False))
+    smoothing = (
+        SHORTCUT_TEXT_STYLE.get("font_smoothing", "current")
+        if SHORTCUT_TEXT_STYLE.get("font_smoothing_enabled") else "current")
+    row_font = font(size, weight=weight, family=resolved_family, smoothing=smoothing, italic=italic)
+    row_color = resolve_color_ref(SHORTCUT_TEXT_STYLE.get("color") or C["text"])
     return row_font, row_color
 
 
@@ -1895,7 +4272,7 @@ class RowDelegate(QStyledItemDelegate):
         a la creation, et de nouveau si l'utilisateur change les parametres
         de typographie sans reconstruire la colonne (previsualisation en
         direct)."""
-        self.type_font, self.type_color = _resolve_row_font_color(self.column.column_title)
+        self.type_font, self.type_color = _resolve_row_font_color(self.column.style_title)
 
     def _has_preview(self, index) -> bool:
         """Version bon marche de _image_pixmap : dit si CETTE ligne
@@ -1916,7 +4293,7 @@ class RowDelegate(QStyledItemDelegate):
     def _image_pixmap(self, index) -> QPixmap | None:
         if not self._has_preview(index):
             return None
-        return file_image_pixmap(Path(index.data(ROLE_PATH)))
+        return file_image_pixmap(Path(index.data(ROLE_PATH)), asynchronous=True)
 
     def sizeHint(self, option, index) -> QSize:
         # L'espacement est ajoute a la hauteur ici, puis retranche au dessin
@@ -1928,8 +4305,8 @@ class RowDelegate(QStyledItemDelegate):
         # la MEME hauteur, avec ou sans image — voir la remarque de
         # l'utilisateur, "reformate toutes les autres colonnes exactement
         # de la meme maniere que la colonne type".
-        title = self.column.column_title
-        return QSize(self.column.width(), col_row_height(title) + col_spacing(title))
+        title = self.column.style_title
+        return QSize(self.column.width(), self.column.effective_row_height() + col_spacing(title))
 
     def paint(self, painter: QPainter, option, index):
         # Rendu UNIQUE, PARTAGE par toutes les colonnes (voir
@@ -1941,48 +4318,98 @@ class RowDelegate(QStyledItemDelegate):
         # toutes les autres colonnes exactement de la meme maniere que la
         # colonne type ... si une colonne a deja des images, reutilises
         # les".
-        title = self.column.column_title
+        title = self.column.style_title
         spacing = col_spacing(title)
         rect = option.rect.adjusted(0, 0, 0, -spacing)
         is_dir = bool(index.data(ROLE_ISDIR))
         path_str = index.data(ROLE_PATH)
 
-        pixmap = None
-        if title == "Type":
-            if path_str and is_dir and project_thumbnail_path(Path(path_str)).is_file():
-                pixmap = project_thumbnail_pixmap(Path(path_str))
-        else:
-            icon_key = None
-            if is_dir and title == SOFTWARE_COLUMN_LABEL:
-                icon_key = software_icon_key(index.data(Qt.DisplayRole) or "")
-            if icon_key is not None:
-                pixmap = software_icon_pixmap(icon_key, SOFTWARE_ICON_SIZE)
-            else:
-                pixmap = self._image_pixmap(index)
+        # Icone de logiciel (voir software_icon_key/SOFTWARE_ICONS/
+        # settings_window._section_logiciels) : DISTINCTE d'un apercu (voir
+        # ci-dessous) — voir la remarque de l'utilisateur, "tous les
+        # dossiers qui ont le nom d'un logiciel doivent avoir son icone, je
+        # veux que tu fasses la distinction entre une icone et un apercu".
+        # Reconnue pour TOUT dossier dont le NOM correspond a un logiciel
+        # (connu ou ajoute), dans N'IMPORTE QUELLE colonne — plus seulement
+        # "Logiciels" comme avant. DISTINCTE d'un apercu (voir plus bas) —
+        # les DEUX peuvent coexister sur la meme ligne (voir la remarque de
+        # l'utilisateur, "les apercus a droite et les icones a gauche,
+        # comme ca il n'y aura plus d'ambiguite" — voir _paint_unified_row).
+        is_shortcut = bool(index.data(ROLE_IS_SHORTCUT))
+        icon_key = software_icon_key(index.data(Qt.DisplayRole) or "") if is_dir else None
+        icon_pixmap = _row_icon_pixmap(is_dir, icon_key, SOFTWARE_ICON_SIZE)
+        if is_shortcut:
+            # Icone DEDIEE (Settings > ICONES > General > "Raccourcis") si
+            # l'utilisateur en a choisi une, prioritaire sur l'icone
+            # logiciel/le repli dossier — voir la remarque de l'utilisateur,
+            # "dans les icones merci de rajouter une ligne raccourcis".
+            shortcut_icon = custom_ui_icon_pixmap(UI_ICON_SHORTCUT, SOFTWARE_ICON_SIZE)
+            if shortcut_icon is not None:
+                icon_pixmap = shortcut_icon
+
+        # Apercu personnalise (voir Column._on_context_menu, "Ajouter un
+        # apercu.../Capturer une zone d'ecran...") : deja generalise a
+        # N'IMPORTE QUELLE colonne/ligne dossier cote menu (voir sa
+        # remarque, "n'importe quelle ligne de n'importe quelle colonne"),
+        # y compris une colonne de chaine CONFIGUREE (voir load_project_
+        # columns/on_selected, ex. "test1"/"test2") — teste ici pour TOUT
+        # titre, pas seulement "Type" comme avant, sinon une capture prise
+        # sur une de ces colonnes ne s'affichait jamais (project_thumbnail_
+        # path existait bien sur le disque, mais RowDelegate.paint ne le
+        # consultait que sur "Type").
+        preview_pixmap = None
+        if path_str and is_dir and project_thumbnail_path(Path(path_str)).is_file():
+            preview_pixmap = project_thumbnail_pixmap(Path(path_str))
+        elif title != "Type":
+            preview_pixmap = self._image_pixmap(index)
+
+        # Police/couleur DEDIEES pour un raccourci (voir SHORTCUT_TEXT_
+        # STYLE, Settings > RACCOURCI) — GENERALE, pas par colonne : un
+        # raccourci doit se reperer de la MEME facon partout.
+        row_font, row_color = _resolve_shortcut_font_color() if is_shortcut else (self.type_font, self.type_color)
 
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
         _paint_unified_row(
             painter, rect, option, column_style_for(title),
-            index.data(Qt.DisplayRole), pixmap, self.type_font, self.type_color, self.column.is_active,
-            annotation=index.data(ROLE_SOURCE_LABEL),
+            index.data(Qt.DisplayRole), icon_pixmap, preview_pixmap, row_font, row_color,
+            self.column.is_active, annotation=index.data(ROLE_SOURCE_LABEL),
+            annotation_step=index.data(ROLE_SOURCE_STEP),
+            icon_visible_override=self.column._show_icon_override,
+            preview_visible_override=self.column._show_preview_override,
+            icon_size_override=self.column._icon_size_override,
+            icon_padding_left_override=self.column._icon_padding_left_override,
+            text_padding_left_override=self.column._text_padding_left_override,
         )
         painter.restore()
 
 
 def _paint_unified_row(
-    painter: QPainter, rect, option, style: dict, name: str, pixmap: QPixmap | None,
+    painter: QPainter, rect, option, style: dict, name: str,
+    icon_pixmap: QPixmap | None, preview_pixmap: QPixmap | None,
     text_font, text_color: str, active: bool, annotation: str | None = None,
+    step_badge: int | str | None = None, annotation_step: int | None = None,
+    icon_visible_override: bool | None = None, preview_visible_override: bool | None = None,
+    icon_size_override: int | None = None, icon_padding_left_override: int | None = None,
+    text_padding_left_override: int | None = None,
 ):
     """Ligne UNIQUE, PARTAGEE par toutes les colonnes (Type/Projets/Sous-
-    projet/Logiciels/Contenu) : icone toggle optionnelle OU image (apercu
-    personnalise sur "Type", vignette de projet/icone logiciel/apercu de
-    fichier reutilisee telle quelle sur les autres) + nom + pastille de
-    selection — voir la remarque de l'utilisateur, "je veux que tu
+    projet/Logiciels/Contenu) : icone toggle optionnelle, icone de
+    logiciel/apercu personnalise (ou les DEUX a la fois) + nom + pastille
+    de selection — voir la remarque de l'utilisateur, "je veux que tu
     reformate toutes les autres colonnes exactement de la meme maniere que
     la colonne type ... si une colonne a deja des images, reutilises les".
-    `pixmap` est deja RESOLU par l'appelant (chaque colonne garde sa propre
+    `icon_pixmap`/`preview_pixmap` : DISTINCTS (voir la remarque de
+    l'utilisateur, "je veux que desormais nous distinguions icone et
+    apercu ... les apercus a droite et les icones a gauche, comme ca il
+    n'y aura plus d'ambiguite") — une icone IDENTIFIE ce qu'est le dossier
+    (logiciel reconnu, voir software_icon_key), toujours ANCREE a GAUCHE,
+    comme avant ; un apercu est une simple DECORATION facultative (vignette
+    de projet, capture d'ecran...), desormais ANCRE a DROITE — les DEUX
+    peuvent coexister sur la MEME ligne (voir RowDelegate.paint/
+    ProjectTileDelegate.paint, qui les resolvent independamment). Chacun
+    est deja RESOLU par l'appelant (chaque colonne garde sa propre
     logique de choix d'image, voir RowDelegate.paint/ProjectTileDelegate.
     `annotation` (voir ROLE_SOURCE_LABEL, RowDelegate.paint) : texte
     "(projet)"/"(<nom du sous-projet>)" affiche APRES le nom, police/
@@ -1990,7 +4417,10 @@ def _paint_unified_row(
     la remarque de l'utilisateur, "je veux une anotation a cote du nom du
     repertoire ... entre parentheses (d'une police et couleur
     differente)".
-    paint) ; None affiche l'icone toggle (si activee) ou rien."""
+    paint) ; None affiche l'icone toggle (si activee) ou rien.
+    `step_badge` (voir project_step_count/_step_badge_color/_step_badge_rect,
+    ProjectTileDelegate.paint) : nombre affiche dans un badge rond en haut a
+    droite de `rect` (colonne "Projets" uniquement) ; None = pas de badge."""
     s = style
     selected = bool(option.state & QStyle.State_Selected)
     hovered = bool(option.state & QStyle.State_MouseOver)
@@ -2009,13 +4439,30 @@ def _paint_unified_row(
     _paint_row_border(painter, rect, option, s)
 
     icon_enabled = bool(s.get("item_icon_enabled", True))
-    text_padding = max(0, int(s.get("item_text_padding", 8)))
-    has_preview_image = pixmap is not None
+    # "Padding gauche du texte" (menu contextuel, voir Column._on_context_
+    # menu/_text_padding_left_override) : surcharge PAR COLONNE de item_
+    # text_padding — voir la remarque de l'utilisateur, "je veux que le
+    # padding left ... du texte de chaque ligne soit modifiable dans le
+    # menu contextuel".
+    text_padding = max(0, text_padding_left_override if text_padding_left_override is not None
+                       else int(s.get("item_text_padding", 8)))
+    # Menu contextuel "Afficher l'icone"/"Afficher l'apercu" (voir Column.
+    # _on_context_menu/_show_icon_override/_show_preview_override) : None
+    # (repli) = comportement INCHANGE, sinon force explicitement visible/
+    # masque pour CETTE colonne — voir la remarque de l'utilisateur,
+    # "ajoute une option 'afficher l'apercu' avec un toggle, une autre
+    # 'afficher l'icone' avec un toggle".
+    icon_visible = True if icon_visible_override is None else icon_visible_override
+    preview_visible = True if preview_visible_override is None else preview_visible_override
+    has_icon = icon_pixmap is not None and icon_visible
+    has_preview = preview_pixmap is not None and preview_visible
 
     if selected:
+        state = "focus" if active else "unfocus"
         sel_color = s.get("item_selection_focus_color", C["accent"]) if active \
             else s.get("item_selection_unfocus_color", C["sel_idle"])
     elif hovered:
+        state = "hover"
         sel_color = s.get("item_hover_color", C["hover"])
     else:
         # Boite "non selectionnee" (voir DEFAULT_SETTINGS.
@@ -2027,26 +4474,72 @@ def _paint_unified_row(
         # (PAS s.get(...) direct) : _AppOrCustomColorField (contrairement
         # a Focus/Hors focus/Survol, restes en _ColorField) peut stocker
         # une reference "@slot", pas seulement un hex direct.
+        state = "idle"
         sel_color = resolve_color_ref(s.get("item_idle_color"), C["row_idle"])
 
     if sel_color:
-        pad = s.get("item_selection_padding") or {}
+        # Forme (padding/bordure/rayon/bord de colonne) : "focus" reste la
+        # BASE (cles item_selection_* historiques, inchangees) — les 3
+        # autres etats (unfocus/hover/idle) EN HERITENT SAUF override
+        # explicite (un toggle par parametre, voir Settings > General >
+        # Colonnes > Selection > Non focus/Survol/Non selectionne) — voir
+        # la remarque de l'utilisateur, "non focus survol et non
+        # selectionne sont des clones des focus (sauf la couleur) donc
+        # mets leur des toggles d'override".
+        def _shape(value_key: str, base_key: str, default, toggle_suffix: str | None = None):
+            if state == "focus":
+                return s.get(base_key, default)
+            toggle_suffix = toggle_suffix or value_key
+            if s.get(f"item_selection_{state}_{toggle_suffix}_override"):
+                return s.get(f"item_selection_{state}_{value_key}", default)
+            return s.get(base_key, default)
+
+        pad = _shape("padding", "item_selection_padding", {}) or {}
+        pad_left = max(0, int(pad.get("left", 0)))
+        pad_right = max(0, int(pad.get("right", 0)))
+        pad_top = max(0, int(pad.get("top", 0)))
+        pad_bottom = max(0, int(pad.get("bottom", 0)))
+        # Reduit PROPORTIONNELLEMENT (jamais coupe a 0 net) si la somme
+        # depasse la dimension disponible : un padding General reglé pour
+        # des lignes HAUTES (Projets/Sous-projet, ~58px) pouvait a lui
+        # seul depasser la hauteur des lignes bien plus COURTES (Logiciels/
+        # Contenu/IN/OVER/OUT, ~25-30px), rendant sel_rect degenere
+        # (largeur/hauteur <= 0) — la boite de selection (et donc sa
+        # couleur) disparaissait alors SILENCIEUSEMENT (voir le test
+        # `sel_rect.width() > 0 and sel_rect.height() > 0` plus bas), MEME
+        # avec une couleur parfaitement valide — voir la remarque de
+        # l'utilisateur, "pour les colonnes logiciels in over et out, la
+        # couleur des selections ne se fait pas ... sa couleur ne devient
+        # pas celle definie dans les settings".
+        if pad_top + pad_bottom >= rect.height():
+            total = pad_top + pad_bottom
+            budget = max(0, rect.height() - 1)
+            scale = budget / total if total > 0 else 0
+            pad_top = int(pad_top * scale)
+            pad_bottom = int(pad_bottom * scale)
+        if pad_left + pad_right >= rect.width():
+            total = pad_left + pad_right
+            budget = max(0, rect.width() - 1)
+            scale = budget / total if total > 0 else 0
+            pad_left = int(pad_left * scale)
+            pad_right = int(pad_right * scale)
         sel_rect = QRect(
-            rect.left() + max(0, int(pad.get("left", 0))),
-            rect.top() + max(0, int(pad.get("top", 0))),
-            rect.width() - max(0, int(pad.get("left", 0))) - max(0, int(pad.get("right", 0))),
-            rect.height() - max(0, int(pad.get("top", 0))) - max(0, int(pad.get("bottom", 0))),
+            rect.left() + pad_left, rect.top() + pad_top,
+            rect.width() - pad_left - pad_right, rect.height() - pad_top - pad_bottom,
         )
-        border_enabled = dict(s.get("item_selection_border_enabled") or {})
+        border_enabled = dict(_shape(
+            "border_enabled", "item_selection_border_enabled", {}, toggle_suffix="border") or {})
         border_colors = {
-            k: resolve_color_ref(v) for k, v in (s.get("item_selection_border") or {}).items()
+            k: resolve_color_ref(v) for k, v in (
+                _shape("border", "item_selection_border", {}, toggle_suffix="border") or {}
+            ).items()
         }
-        edge_border = bool(s.get("item_selection_edge_border", True))
-        for side in ("left", "right"):
-            flush = max(0, int(pad.get(side, 0))) <= 0
+        edge_border = bool(_shape("edge_border", "item_selection_edge_border", True))
+        for side, side_pad in (("left", pad_left), ("right", pad_right)):
+            flush = side_pad <= 0
             if flush and not edge_border:
                 border_enabled[side] = False
-        radius = _radius_dict(s.get("item_selection_radius", 0))
+        radius = _radius_dict(_shape("radius", "item_selection_radius", 0))
         if sel_rect.width() > 0 and sel_rect.height() > 0:
             painter.setRenderHint(QPainter.Antialiasing, _radius_any(radius))
             _paint_bordered_rect(painter, sel_rect, radius, border_enabled, 1, border_colors, sel_color)
@@ -2065,39 +4558,63 @@ def _paint_unified_row(
     icon_x = sel_rect.left() + text_padding if sel_rect.width() > 0 else rect.left() + text_padding
     text_x = icon_x
 
-    # Icone/apercu EN PREMIER PLAN (voir la remarque de l'utilisateur,
-    # "l'image d'apercu est dessous les zones de selection ... mets les
-    # en premier plan") : dessinee APRES la boite de selection/idle
-    # ci-dessus, jamais recouverte par son remplissage opaque.
-    if has_preview_image:
-        # Hauteur = celle de la zone de selection (sel_rect, TOUJOURS
-        # definie ici puisque sel_color l'est desormais dans les 3 etats,
-        # voir plus haut), collee sur son bord GAUCHE — voir la remarque
-        # de l'utilisateur, "la hauteur de l'image soit de la meme
-        # hauteur que les zones de selection ... collee sur le bord
-        # gauche des zones de selection" — PAS le carre 14x14 fixe de
-        # l'icone toggle (elle, inchangee, voir le "elif" plus bas).
-        img_size = sel_rect.height() if sel_rect.height() > 0 else 14
-        # item_image_ratio (largeur/hauteur, voir Colonnes > ... > Image) :
-        # 1.0 = carre (comportement INCHANGE par defaut) — plus grand,
-        # plus l'image est allongee HORIZONTALEMENT (largeur > hauteur) —
-        # voir la remarque de l'utilisateur, "je veux une section ratio,
-        # qui correspond au ratio entre la hauteur et la largeur. Plus le
-        # chiffre est grand et plus l'image est allongee
-        # horizontalement". La HAUTEUR reste toujours celle de la zone de
-        # selection (voir plus haut) ; seule la LARGEUR en depend.
-        img_ratio = float(s.get("item_image_ratio", 1.0) or 1.0)
-        img_width = max(1, round(img_size * img_ratio))
-        img_x = sel_rect.left() if sel_rect.width() > 0 else icon_x
-        img_y = sel_rect.top() if sel_rect.height() > 0 else rect.center().y() - 7
-        img_slot = QRect(img_x, img_y, img_width, img_size)
+    # Icone (gauche) / apercu (droite) EN PREMIER PLAN (voir la remarque de
+    # l'utilisateur, "l'image d'apercu est dessous les zones de selection
+    # ... mets les en premier plan") : dessines APRES la boite de
+    # selection/idle ci-dessus, jamais recouverts par son remplissage
+    # opaque. Les DEUX peuvent coexister sur la meme ligne (voir la
+    # docstring de cette fonction, "je veux que desormais nous
+    # distinguions icone et apercu ... les apercus a droite et les icones
+    # a gauche") — chacun garde la MEME hauteur que la zone de selection,
+    # MEME ratio (item_image_ratio) — seule leur ANCRE horizontale differe.
+    img_size = sel_rect.height() if sel_rect.height() > 0 else 14
+    # item_image_ratio (largeur/hauteur, voir Colonnes > ... > Image) :
+    # 1.0 = carre (comportement INCHANGE par defaut) — plus grand, plus
+    # l'image est allongee HORIZONTALEMENT (largeur > hauteur) — voir la
+    # remarque de l'utilisateur, "je veux une section ratio, qui
+    # correspond au ratio entre la hauteur et la largeur. Plus le chiffre
+    # est grand et plus l'image est allongee horizontalement". La HAUTEUR
+    # reste toujours celle de la zone de selection (voir plus haut) ;
+    # seule la LARGEUR en depend.
+    img_ratio = float(s.get("item_image_ratio", 1.0) or 1.0)
+    img_width = max(1, round(img_size * img_ratio))
+    img_y = sel_rect.top() if sel_rect.height() > 0 else rect.center().y() - 7
+    img_pad = s.get("item_image_padding") or {}
+    text_right_limit = rect.right() - text_padding
+
+    if has_icon:
+        # Hauteur = celle de la zone de selection, collee sur son bord
+        # GAUCHE — voir la remarque de l'utilisateur, "la hauteur de
+        # l'image soit de la meme hauteur que les zones de selection ...
+        # collee sur le bord gauche des zones de selection" — PAS le
+        # carre 14x14 fixe de l'icone toggle (elle, inchangee, voir le
+        # "elif" plus bas).
+        # Padding gauche DEDIE a l'icone (item_icon_padding_left, General >
+        # Colonnes > Texte, MEME esprit que le padding du texte) : decale
+        # l'icone SEULE, sans toucher au texte ni a l'apercu — voir la
+        # remarque de l'utilisateur, "comme les textes j'aimerais que tu
+        # ajoutes un padding left sur les icones pour chaque lignes".
+        icon_left_pad = max(0, icon_padding_left_override if icon_padding_left_override is not None
+                            else int(s.get("item_icon_padding_left", 0) or 0))
+        icon_img_x = (sel_rect.left() if sel_rect.width() > 0 else icon_x) + icon_left_pad
+        # Taille de l'icone INDEPENDANTE de l'apercu (item_icon_size,
+        # General > Colonnes > Texte > "Taille de l'icone par defaut") : 0
+        # (repli) = comportement INCHANGE, la meme hauteur que la zone de
+        # selection (img_size, comme l'apercu) — une valeur positive fixe
+        # la taille de l'icone independamment de la hauteur de ligne,
+        # centree verticalement dans l'espace qu'elle occuperait sinon —
+        # voir la remarque de l'utilisateur, "ajoute une ligne dans les
+        # settings ... taille de l'icone par defaut".
+        icon_box_size = max(1, icon_size_override or int(s.get("item_icon_size") or 0) or img_size)
+        icon_box_width = max(1, round(icon_box_size * img_ratio))
+        icon_img_y = img_y + (img_size - icon_box_size) // 2
         # Padding/bordure/rayon (voir Colonnes > ... > Image, DEFAULT_
         # SETTINGS.item_image_*) — voir la remarque de l'utilisateur,
         # "les parametres images ... sont pour controler les apercus
         # que l'on trouve sur les differentes lignes". item_image_radius
         # est un reglage INDEPENDANT du rayon de selection (0 = carre).
-        _paint_row_image(painter, img_slot, pixmap, s)
-        # Distance texte<->image PILOTEE par "Padding du texte" (item_
+        _paint_row_image(painter, QRect(icon_img_x, icon_img_y, icon_box_width, icon_box_size), icon_pixmap, s)
+        # Distance texte<->icone PILOTEE par "Padding du texte" (item_
         # text_padding), PAS un ecart fixe — voir la remarque de
         # l'utilisateur, "je veux que le padding du texte ... controle
         # ... la distance entre le texte et l'image quand il y a un
@@ -2110,17 +4627,38 @@ def _paint_unified_row(
         # en compte le bord de l'image, c'est a dire que si l'image a
         # elle-meme un padding, ca doit etre pris en compte dans la
         # distance totale".
-        img_right_pad = max(0, int((s.get("item_image_padding") or {}).get("right", 0)))
-        text_x = img_x + img_width - img_right_pad + text_padding
-    elif icon_enabled:
+        img_right_pad = max(0, int(img_pad.get("right", 0)))
+        text_x = icon_img_x + icon_box_width - img_right_pad + text_padding
+    elif icon_enabled and icon_visible:
         box_y = rect.center().y() - 14 // 2
         painter.setPen(QPen(QColor(role_color("dim", C["label"])), 1))
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(icon_x, box_y, 14 - 1, 14 - 1)
         text_x = icon_x + 14 + 8
 
+    preview_img_x = None
+    if has_preview:
+        # MEME principe que l'icone, mais ANCRE sur le bord DROIT de la
+        # zone de selection (QRect.right() = left+width-1, voir Qt) —
+        # jamais lie a la presence/absence d'une icone a gauche.
+        preview_img_x = (sel_rect.right() - img_width + 1) if sel_rect.width() > 0 else (rect.right() - img_width)
+        _paint_row_image(painter, QRect(preview_img_x, img_y, img_width, img_size), preview_pixmap, s)
+        img_left_pad = max(0, int(img_pad.get("left", 0)))
+        text_right_limit = preview_img_x + img_left_pad - text_padding
+
+    # Badge numerote (voir plus bas) : calcule ICI (avant text_rect) des
+    # que l'apercu est connu — voir la remarque de l'utilisateur, "je
+    # veux que la petite icone de levels soit AVANT l'apercu et pas a
+    # l'interieur" : desormais sa propre plage, entre le texte et
+    # l'apercu, retranchee de text_right_limit comme l'apercu lui-meme
+    # (sinon un nom long pourrait passer PAR-DESSOUS le badge).
+    badge_rect = None
+    if step_badge is not None:
+        badge_rect = _step_badge_rect(rect, preview_img_x)
+        text_right_limit = min(text_right_limit, badge_rect.left() - text_padding)
+
     final_text_color = C["accent_text"] if (selected and active) else text_color
-    text_rect = QRect(text_x, rect.top(), rect.right() - text_x - text_padding, rect.height())
+    text_rect = QRect(text_x, rect.top(), max(0, text_right_limit - text_x), rect.height())
     if annotation:
         # Largeur de l'annotation d'ABORD (police "info", voir sa remarque
         # de tete) : le nom n'a droit qu'au RESTE de text_rect, elide en
@@ -2143,7 +4681,13 @@ def _paint_unified_row(
             max(0, text_rect.width() - name_actual_width), text_rect.height())
         if ann_rect.width() > 0:
             painter.setFont(ann_font)
-            painter.setPen(QColor(role_color("info", C["dim"])))
+            # Couleur par etape (voir ROLE_SOURCE_STEP/_step_badge_color,
+            # Settings > Colonnes > Projets > Colonnes > "Icone de
+            # niveaux") si connue, sinon la couleur fixe d'origine (voir la
+            # remarque de l'utilisateur, "les couleurs des indications
+            # doivent changer selon les etapes").
+            ann_color = _step_badge_color(annotation_step) if annotation_step is not None else role_color("info", C["dim"])
+            painter.setPen(QColor(ann_color))
             elided_ann = painter.fontMetrics().elidedText(ann_text, Qt.ElideRight, ann_rect.width())
             painter.drawText(ann_rect, Qt.AlignLeft | Qt.AlignVCenter, elided_ann)
     else:
@@ -2151,6 +4695,43 @@ def _paint_unified_row(
         painter.setPen(QColor(final_text_color))
         elided = painter.fontMetrics().elidedText(name, Qt.ElideMiddle, max(0, text_rect.width()))
         painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, elided)
+
+    if badge_rect is not None:
+        # Style REGLABLE (voir apply_all_settings/STEP_BADGE_STYLE, Settings
+        # > Colonnes > Projets > Colonnes > "Icone de niveaux") — largeur/
+        # hauteur/bordure/rayon/couleur, MEME technique que n'importe quel
+        # autre rectangle borde-arrondi de l'appli (_paint_bordered_rect),
+        # plutot qu'un simple cercle fixe comme avant.
+        badge_style = STEP_BADGE_STYLE
+        badge_border_colors = {
+            k: resolve_color_ref(v) for k, v in (badge_style.get("border") or {}).items()
+        }
+        # Lissage (antialiasing) du TRAIT de bordure — DESACTIVABLE (voir
+        # Settings > Colonnes > Projets > Colonnes > "Icone de niveaux" >
+        # "Lissage de la bordure"), contrairement au reste — voir la
+        # remarque de l'utilisateur, "lissage des bordures" -> "antialiasing
+        # du contour de la bordure".
+        painter.setRenderHint(QPainter.Antialiasing, bool(badge_style.get("border_smoothing", True)))
+        _paint_bordered_rect(
+            painter, badge_rect, badge_style["radius"], badge_style.get("border_enabled") or {},
+            max(1, int(badge_style.get("border_thickness", 1))), badge_border_colors,
+            _step_badge_color(step_badge),
+        )
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        # Police/gras/lissage du numero (voir Settings > ... > "Icone de
+        # niveaux" > "Police / gras / lissage du numero") — couleur PAR
+        # BASE (_step_badge_text_color), PAS un champ separe (voir la
+        # remarque de l'utilisateur, "enleve la couleur dans la ligne
+        # texte ... la couleur du haut est pour le texte").
+        badge_font_weight = 700 if badge_style.get("font_bold", True) else 400
+        badge_font_family = _resolve_font_family(
+            (badge_style.get("font_family") or "").strip(), 10, badge_font_weight, fallback_role="info")
+        badge_smoothing = (
+            badge_style.get("font_smoothing", "current")
+            if badge_style.get("font_smoothing_enabled") else "current")
+        painter.setPen(QColor(_step_badge_text_color(step_badge)))
+        painter.setFont(font(10, badge_font_weight, family=badge_font_family, smoothing=badge_smoothing))
+        painter.drawText(badge_rect, Qt.AlignCenter, str(step_badge))
 
 
 class ProjectTileDelegate(QStyledItemDelegate):
@@ -2165,13 +4746,13 @@ class ProjectTileDelegate(QStyledItemDelegate):
         self.refresh_fonts()
 
     def refresh_fonts(self):
-        self.font_name, self.color_name = _resolve_row_font_color(self.column.column_title)
+        self.font_name, self.color_name = _resolve_row_font_color(self.column.style_title)
 
     def sizeHint(self, option, index) -> QSize:
         # L'espacement est ajoute ici, retranche au dessin (voir paint) :
         # voir la remarque sur QListView.setSpacing dans Column.__init__.
-        title = self.column.column_title
-        return QSize(self.column.width(), col_row_height(title) + col_spacing(title))
+        title = self.column.style_title
+        return QSize(self.column.width(), self.column.effective_row_height() + col_spacing(title))
 
     def paint(self, painter: QPainter, option, index):
         # Rendu UNIQUE, PARTAGE avec RowDelegate (voir _paint_unified_row) —
@@ -2186,13 +4767,763 @@ class ProjectTileDelegate(QStyledItemDelegate):
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
         path = Path(index.data(ROLE_PATH))
-        title = self.column.column_title
+        title = self.column.style_title
         rect = option.rect.adjusted(0, 0, 0, -col_spacing(title))
+        step_badge = None
+        if title == "Projets" and bool(index.data(ROLE_ISDIR)):
+            step_badge = project_step_count(load_project_columns(path))
+        # Icone de logiciel (voir RowDelegate.paint, MEME regle "tous les
+        # dossiers qui ont le nom d'un logiciel", meme si un Projet/Sous-
+        # projet nomme comme un logiciel reste rare en pratique) — la
+        # vignette de projet (project_thumbnail_pixmap, perso ou generique
+        # par defaut) est elle un APERCU (voir _paint_unified_row) :
+        # DISTINCTS, la premiere a gauche, le second desormais a droite.
+        is_dir_entry = bool(index.data(ROLE_ISDIR))
+        icon_key = software_icon_key(path.name) if is_dir_entry else None
+        icon_pixmap = _row_icon_pixmap(is_dir_entry, icon_key, SOFTWARE_ICON_SIZE)
+        is_shortcut = bool(index.data(ROLE_IS_SHORTCUT))
+        if is_shortcut:
+            shortcut_icon = custom_ui_icon_pixmap(UI_ICON_SHORTCUT, SOFTWARE_ICON_SIZE)
+            if shortcut_icon is not None:
+                icon_pixmap = shortcut_icon
+        row_font, row_color = _resolve_shortcut_font_color() if is_shortcut else (self.font_name, self.color_name)
         _paint_unified_row(
             painter, rect, option, column_style_for(title),
-            path.name, project_thumbnail_pixmap(path), self.font_name, self.color_name, self.column.is_active,
+            path.name, icon_pixmap, project_thumbnail_pixmap(path), row_font, row_color,
+            self.column.is_active, step_badge=step_badge,
+            icon_visible_override=self.column._show_icon_override,
+            preview_visible_override=self.column._show_preview_override,
+            icon_size_override=self.column._icon_size_override,
+            icon_padding_left_override=self.column._icon_padding_left_override,
+            text_padding_left_override=self.column._text_padding_left_override,
         )
         painter.restore()
+
+
+def _square_checkbox_qss(muted: bool = False) -> str:
+    """Habillage QSS partage par toutes les cases a cocher de
+    ColumnConfigDialog (case CARREE petite + coche, pas le rendu natif de
+    l'OS) — reproduit la maquette fournie par l'utilisateur, "change
+    l'interface de la fenetre scrupuleusement comme celle en piece
+    jointe" : le fonctionnement (isChecked/setChecked/toggled, deja
+    utilise partout ci-dessous) reste EXACTEMENT celui d'un QCheckBox
+    normal, seul l'indicateur est restyle via QSS (::indicator).
+
+    `muted=True` (voir "Focus"/"In / Over / Out", toggles secondaires a
+    cote de "Set") : texte NORMAL (pas seulement `:disabled`) attenue —
+    voir la remarque de l'utilisateur, "le texte de focus et in over out
+    doit etre vraiment moins perceptible"."""
+    # 0.30 (pas 0.55) : voir la remarque de l'utilisateur, "le texte de
+    # focus et in over out doit etre vraiment moins perceptible (plus de
+    # transparence, laisse 30%)".
+    text_color = f"rgba({', '.join(str(c) for c in _hex_to_rgb(C['text']))}, 0.30)" if muted else C['text']
+    return (
+        f"QCheckBox {{ color: {text_color}; spacing: 8px; background: transparent; }}"
+        f"QCheckBox::indicator {{ width: 14px; height: 14px; border-radius: 2px; "
+        f"border: 1px solid {C['border']}; background: {C['well']}; }}"
+        f"QCheckBox::indicator:hover {{ border: 1px solid {C['accent']}; }}"
+        f"QCheckBox::indicator:checked {{ background: {C['accent']}; border: 1px solid {C['accent']}; }}"
+        # Grise (voir setEnabled(False), la remarque de l'utilisateur,
+        # "quand set est desactive, desactive automatiquement focus, in
+        # over et out, et grise les") : les couleurs ci-dessus etant fixes
+        # (QSS EXPLICITE, pas le rendu natif de l'OS), Qt ne les assombrit
+        # PAS automatiquement a l'etat desactive sans ces regles ":disabled"
+        # dediees. rgba (alpha ~0.5 sur la couleur NORMALE, pas C['dim']
+        # directement) : un simple saut vers C['dim'] (bien plus sombre que
+        # le texte normal) rendait le grisage trop marque — voir la remarque
+        # de l'utilisateur, "le grise de desactivation doit etre moins
+        # perceptible".
+        f"QCheckBox:disabled {{ color: rgba({', '.join(str(c) for c in _hex_to_rgb(C['text']))}, 0.45); }}"
+        f"QCheckBox::indicator:disabled {{ "
+        f"border: 1px solid rgba({', '.join(str(c) for c in _hex_to_rgb(C['border']))}, 0.6); "
+        f"background: {C['well']}; }}"
+    )
+
+
+class _StepperField(QWidget):
+    """Compteur "Nombre de colonnes" (ColumnConfigDialog) : boite en
+    lecture + 2 petits boutons empiles ▲/▼, EXACTEMENT la maquette fournie
+    par l'utilisateur (remplace le QSpinBox natif, dont le style de l'OS
+    ne pouvait pas rendre cette disposition) — expose la MEME API minimale
+    (value/setValue/valueChanged) qu'un QSpinBox, seuls les appelants
+    utilises ci-dessous (voir _rebuild_blocks, ColumnConfigDialog.__init__)."""
+
+    valueChanged = Signal(int)
+
+    def __init__(self, minimum: int, maximum: int, value: int, parent=None):
+        super().__init__(parent)
+        self._min, self._max = minimum, maximum
+        self._value = max(minimum, min(maximum, value))
+        self.setFixedSize(70, 26)
+        self.setStyleSheet(
+            f"background: {C['well']}; border: 1px solid {C['border']}; border-radius: 4px;"
+        )
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self.value_label = QLabel(str(self._value))
+        self.value_label.setAlignment(Qt.AlignCenter)
+        self.value_label.setFont(font(12, 400, mono=True))
+        self.value_label.setStyleSheet(f"color: {C['text']}; background: transparent; border: none;")
+        layout.addWidget(self.value_label, 1)
+
+        btns = QWidget(self)
+        btns.setFixedWidth(18)
+        btns.setStyleSheet(f"background: transparent; border-left: 1px solid {C['border']};")
+        btns_l = QVBoxLayout(btns)
+        btns_l.setContentsMargins(0, 0, 0, 0)
+        btns_l.setSpacing(0)
+        up_btn = QPushButton("▲")
+        down_btn = QPushButton("▼")
+        for b, cb in ((up_btn, self._increment), (down_btn, self._decrement)):
+            b.setFixedHeight(12)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setFocusPolicy(Qt.NoFocus)
+            b.setStyleSheet(
+                f"QPushButton {{ background: transparent; color: {C['label']}; "
+                f"border: none; font-size: 7px; padding: 0; }}"
+                f"QPushButton:hover {{ color: {C['text']}; background: {C['hover']}; }}"
+            )
+            b.clicked.connect(cb)
+            btns_l.addWidget(b)
+        layout.addWidget(btns)
+
+    def _increment(self):
+        self.setValue(self._value + 1)
+
+    def _decrement(self):
+        self.setValue(self._value - 1)
+
+    def value(self) -> int:
+        return self._value
+
+    def setValue(self, value: int):
+        value = max(self._min, min(self._max, value))
+        if value != self._value:
+            self._value = value
+            self.value_label.setText(str(value))
+            self.valueChanged.emit(value)
+
+
+class _OmitListField(QWidget):
+    """Petite liste "a omettre" (repertoires/fichiers) reutilisable dans
+    ColumnConfigDialog : QListWidget + boutons +/- (ajout via
+    QInputDialog.getText, meme pattern que Column._create_folder)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        self.list = QListWidget(self)
+        self.list.setFixedHeight(96)
+        self.list.setStyleSheet(
+            f"QListWidget {{ background: {C['well']}; color: {C['text']}; "
+            f"border: 1px solid {C['border']}; border-radius: 0px; }}"
+            f"QListWidget::item {{ padding: 2px 4px; }}"
+            f"QListWidget::item:selected {{ background: {C['sel_idle']}; }}"
+        )
+        layout.addWidget(self.list)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(4)
+        add_btn = QPushButton("+")
+        remove_btn = QPushButton("-")
+        for b in (add_btn, remove_btn):
+            b.setFixedSize(24, 20)
+            # Police EXPLICITE (voir la remarque de l'utilisateur,
+            # "ajoute + et - sur les boutons" — les glyphes restaient
+            # quasi invisibles, herites d'une police par defaut trop
+            # discrete pour une si petite case) : grasse, bien plus
+            # grande que le texte courant, pour que +/- restent lisibles
+            # a cette taille de bouton.
+            b.setFont(font(13, 700))
+            b.setStyleSheet(
+                f"QPushButton {{ background: {C['btn']}; color: {C['text']}; "
+                f"border: 1px solid {C['btn_border']}; border-radius: 3px; padding: 0px; }}"
+                f"QPushButton:hover {{ background: {C['btn_hover']}; }}"
+            )
+        add_btn.clicked.connect(self._add)
+        remove_btn.clicked.connect(self._remove_selected)
+        btn_row.addWidget(add_btn)
+        btn_row.addWidget(remove_btn)
+        btn_row.addStretch(1)
+        layout.addLayout(btn_row)
+
+    def _add(self):
+        name, ok = QInputDialog.getText(self, "Ajouter", "Nom a omettre :")
+        name = name.strip()
+        if ok and name:
+            self.list.addItem(name)
+
+    def _remove_selected(self):
+        for item in self.list.selectedItems():
+            self.list.takeItem(self.list.row(item))
+
+    def values(self) -> list[str]:
+        return [self.list.item(i).text() for i in range(self.list.count())]
+
+    def set_values(self, values) -> None:
+        self.list.clear()
+        self.list.addItems([str(v) for v in (values or [])])
+
+
+class _ColumnConfigBlock(QWidget):
+    """Une CARTE "Colonne N" dans ColumnConfigDialog (largeur fixe, alignee
+    a cote des autres dans une rangee defilante horizontalement) : nom +
+    afficher repertoires/fichiers + listes a omettre + toggle Focus
+    (independant par colonne, voir la remarque de l'utilisateur, "un
+    toggle Focus independant par colonne") — reproduit la maquette fournie
+    par l'utilisateur, "change l'interface de la fenetre scrupuleusement
+    comme celle en piece jointe"."""
+
+    CARD_WIDTH = 308
+
+    def __init__(self, index: int, data: dict, parent=None):
+        super().__init__(parent)
+        self.setFixedWidth(self.CARD_WIDTH)
+        self.setObjectName("ColCard")
+        self.setStyleSheet(
+            f"#ColCard {{ background: {C['chrome']}; border: 1px solid {C['border_soft']}; }}"
+        )
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        name_row = QHBoxLayout()
+        name_row.setSpacing(9)
+        label = QLabel(f"Nom colonne {index + 3}")
+        label.setFont(font(11, 400))
+        label.setStyleSheet(f"color: {C['label']}; background: transparent;")
+        name_row.addWidget(label)
+        self.name_edit = QLineEdit(data.get("name", ""))
+        self.name_edit.setStyleSheet(
+            f"QLineEdit {{ background: {C['well']}; color: {C['text']}; "
+            f"border: 1px solid {C['border']}; border-radius: 0px; padding: 3px 8px; }}"
+        )
+        name_row.addWidget(self.name_edit, 1)
+        layout.addLayout(name_row)
+
+        self.show_dirs_check = QCheckBox("Afficher les repertoires")
+        self.show_files_check = QCheckBox("Afficher les fichiers")
+        self.show_dirs_check.setChecked(bool(data.get("show_dirs", True)))
+        self.show_files_check.setChecked(bool(data.get("show_files", False)))
+        for cb in (self.show_dirs_check, self.show_files_check):
+            cb.setStyleSheet(_square_checkbox_qss())
+            layout.addWidget(cb)
+
+        omit_row = QHBoxLayout()
+        omit_row.setSpacing(10)
+        dirs_col = QVBoxLayout()
+        dirs_col.setSpacing(5)
+        dirs_label = QLabel("Repertoires a omettre")
+        dirs_label.setFont(font(9, 600, tracking=0.07))
+        dirs_label.setStyleSheet(f"color: {C['label']}; background: transparent;")
+        dirs_col.addWidget(dirs_label)
+        self.omit_dirs = _OmitListField(self)
+        self.omit_dirs.set_values(data.get("omit_dirs"))
+        dirs_col.addWidget(self.omit_dirs)
+        files_col = QVBoxLayout()
+        files_col.setSpacing(5)
+        files_label = QLabel("Fichiers a omettre")
+        files_label.setFont(font(9, 600, tracking=0.07))
+        files_label.setStyleSheet(f"color: {C['label']}; background: transparent;")
+        files_col.addWidget(files_label)
+        self.omit_files = _OmitListField(self)
+        self.omit_files.set_values(data.get("omit_files"))
+        files_col.addWidget(self.omit_files)
+        omit_row.addLayout(dirs_col)
+        omit_row.addLayout(files_col)
+        layout.addLayout(omit_row)
+
+        # Toggle "Focus" PAR COLONNE SUPPRIME (voir la remarque de
+        # l'utilisateur, "supprime le toggle focus ... celui qui indique
+        # coche focus le contenu du repertoire" — redondant/confus a cote
+        # du toggle MAITRE "Focus" de ColumnConfigDialog, qui masque ou
+        # affiche TOUTE la colonne fantome des vignettes). La valeur
+        # persistee garde simplement celle DEJA enregistree pour ce niveau
+        # (`_coerce_project_column`, repli `True` pour un bloc SANS config
+        # anterieure — voir _rebuild_blocks) — plus aucun moyen de la
+        # changer depuis cette fenetre, mais un fichier existant qui avait
+        # deliberement "focus": False pour un niveau garde ce choix.
+        self._focus_value = bool(data.get("focus", True))
+
+    def data(self) -> dict:
+        return {
+            "name": self.name_edit.text().strip(),
+            "show_dirs": self.show_dirs_check.isChecked(),
+            "show_files": self.show_files_check.isChecked(),
+            "omit_dirs": self.omit_dirs.values(),
+            "omit_files": self.omit_files.values(),
+            "focus": self._focus_value,
+        }
+
+
+class ColumnConfigDialog(QDialog):
+    """Fenetre de configuration de la chaine de navigation d'UN projet (voir
+    le badge numerote cliquable, Column._open_column_config) — reproduit la
+    maquette fournie par l'utilisateur : nombre de colonnes, blocs "Colonne
+    N" dynamiques (nom, afficher repertoires/fichiers, a omettre, Focus
+    independant), puis un bloc "Repertoire de travail" (type/afficher/
+    omettre, sans Focus — voir WORK_DIR_TYPES). Enregistrer ecrit le fichier
+    de config DANS LE DOSSIER DU PROJET (voir save_project_columns, choix de
+    l'utilisateur "dans le dossier du projet ... voyage avec le projet")."""
+
+    # MIN_STEPS = 2 (Type+Projets seuls, AUCUN niveau intermediaire — voir
+    # load_project_columns, "columns": [] est desormais une config VALIDE)
+    # — voir la remarque de l'utilisateur, "peux-tu faire en sorte de
+    # pouvoir setter en base 2 ?".
+    MIN_STEPS = 2
+    MAX_STEPS = 12
+
+    def __init__(self, project_path: Path, config: dict | None, parent=None):
+        super().__init__(parent)
+        self.project_path = project_path
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setModal(True)
+        # Plus large qu'avant (etait 460x560) : les colonnes configurees se
+        # rangent desormais cote a cote (voir _blocks_container, cartes de
+        # largeur fixe) au lieu d'etre empilees verticalement — reproduit
+        # la maquette fournie par l'utilisateur, "change l'interface de la
+        # fenetre scrupuleusement comme celle en piece jointe".
+        self.resize(980, 850)
+        # Redimensionnable par les bords (voir nativeEvent/showEvent
+        # ci-dessous, meme mecanisme que PipelineBrowser/SettingsWindow) —
+        # voir la remarque de l'utilisateur, "fait la fenetre configuration
+        # redimensionnable".
+        self.setMinimumSize(760, 480)
+
+        self._blocks: list[dict] = []
+        if config is not None:
+            for col in config["columns"]:
+                self._blocks.append(dict(col))
+            self._work_dir = dict(config["work_dir"])
+            self._set_enabled = bool(config.get("set_enabled", True))
+            self._focus_enabled = bool(config.get("focus_enabled", True))
+            self._in_over_out_enabled = bool(config.get("in_over_out_enabled", True))
+        else:
+            self._blocks = [{
+                "name": "Sous-projet", "show_dirs": True, "show_files": False,
+                "omit_dirs": [], "omit_files": [], "focus": True,
+            }]
+            self._work_dir = {
+                # "show_files": True (PAS False) : voir la remarque de
+                # l'utilisateur, "active par defaut les fichiers dans
+                # repertoire de travail" — repli SEULEMENT pour un NOUVEAU
+                # projet (config is None) ; un projet DEJA configure garde
+                # sa propre valeur enregistree, jamais reecrasee ici.
+                "type": DEFAULT_WORK_DIR_TYPE, "show_dirs": True, "show_files": True,
+                "omit_dirs": [], "omit_files": [],
+            }
+            self._set_enabled = True
+            self._focus_enabled = True
+            self._in_over_out_enabled = True
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        panel = QFrame(self)
+        panel.setObjectName("ConfigPanel")
+        panel.setStyleSheet(
+            f"#ConfigPanel {{ background: {C['window']}; "
+            f"border: 1px solid {C['border']}; border-radius: {WINDOW_RADIUS}px; }}"
+        )
+        outer.addWidget(panel)
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.setSpacing(0)
+
+        head = QWidget(panel)
+        head.setFixedHeight(34)
+        head.setStyleSheet(f"background: {C['chrome']}; border-top-left-radius: {WINDOW_RADIUS}px; "
+                            f"border-top-right-radius: {WINDOW_RADIUS}px;")
+        head_l = QHBoxLayout(head)
+        head_l.setContentsMargins(12, 0, 8, 0)
+        title_label = QLabel(f"Configuration - {project_path.name}")
+        title_label.setFont(font(11, 600))
+        title_label.setStyleSheet(f"color: {C['text']}; background: transparent;")
+        head_l.addWidget(title_label, 1)
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(22, 22)
+        # Police EXPLICITE (voir _OmitListField, MEME correctif/MEME
+        # raison — le glyphe restait quasi invisible sans elle, voir la
+        # remarque de l'utilisateur, "je ne vois pas le x").
+        close_btn.setFont(font(12, 700))
+        close_btn.setStyleSheet(
+            f"QPushButton {{ color: {C['label']}; background: transparent; border: none; padding: 0px; }}"
+            f"QPushButton:hover {{ background: {C['hover']}; color: {C['text']}; }}"
+        )
+        close_btn.clicked.connect(self.reject)
+        head_l.addWidget(close_btn)
+        head.mousePressEvent = self._head_mouse_press
+        panel_layout.addWidget(head)
+
+        scroll = QScrollArea(panel)
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        body = QWidget()
+        body.setStyleSheet("background: transparent;")
+        self._body_layout = QVBoxLayout(body)
+        self._body_layout.setContentsMargins(14, 12, 14, 12)
+        self._body_layout.setSpacing(8)
+        scroll.setWidget(body)
+        panel_layout.addWidget(scroll, 1)
+
+        spin_row = QHBoxLayout()
+        spin_row.setSpacing(14)
+        spin_label = QLabel("Nombre de colonnes")
+        spin_label.setFont(font(12, 400))
+        spin_label.setStyleSheet(f"color: {C['text']}; background: transparent;")
+        spin_row.addWidget(spin_label)
+        self.spin = _StepperField(self.MIN_STEPS, self.MAX_STEPS, 2 + len(self._blocks), self)
+        self.spin.valueChanged.connect(self._on_spin_changed)
+        spin_row.addWidget(self.spin)
+        spin_hint = QLabel("2 premieres colonnes figees — Type puis Projet")
+        spin_hint.setFont(font(9, 400))
+        spin_hint.setStyleSheet(f"color: {C['dim']}; background: transparent;")
+        spin_row.addWidget(spin_hint)
+        spin_row.addStretch(1)
+        self._body_layout.addLayout(spin_row)
+
+        # Toggles maitres (voir la remarque de l'utilisateur, "j'aimerai
+        # ajouter trois toggles ... set / focus / logiciels" puis "in over
+        # et out") — a 0 : "set" saute directement de Projets a la colonne
+        # apres le groupe IN/OVER/OUT/LOGICIELS (aucun niveau intermediaire
+        # configure ci-dessous n'est alors utilise, quel que soit leur
+        # nombre) ; "focus" masque la colonne Focus (vignettes) ; "in/over/
+        # out" masque ces 3 colonnes du groupe (LOGICIELS reste). Toggle
+        # "logiciels" SUPPRIME (voir la remarque de l'utilisateur, "supprime
+        # le toggle logiciels") — desormais toujours affichee.
+        toggles_row = QHBoxLayout()
+        toggles_row.setSpacing(18)
+        self.set_check = QCheckBox("Set")
+        self.set_check.setChecked(self._set_enabled)
+        self.set_check.setStyleSheet(_square_checkbox_qss())
+        toggles_row.addWidget(self.set_check)
+        self.focus_check_master = QCheckBox("Focus")
+        self.focus_check_master.setChecked(self._focus_enabled)
+        self.focus_check_master.setStyleSheet(_square_checkbox_qss(muted=True))
+        toggles_row.addWidget(self.focus_check_master)
+        self.in_over_out_check = QCheckBox("In / Over / Out")
+        self.in_over_out_check.setChecked(self._in_over_out_enabled)
+        self.in_over_out_check.setStyleSheet(_square_checkbox_qss(muted=True))
+        toggles_row.addWidget(self.in_over_out_check)
+        toggles_row.addStretch(1)
+        self._body_layout.addLayout(toggles_row)
+
+        # "Set" a 0 : "Focus"/"In / Over / Out" perdent tout sens (rien
+        # avant lequel se distinguer, voir _chain_expected_total) —
+        # decoches et desactives AUTOMATIQUEMENT, grises tant que "Set"
+        # reste desactive — voir la remarque de l'utilisateur, "quand set
+        # est desactive, desactive automatiquement focus, in over et out,
+        # et grise les".
+        def _on_set_toggled(checked: bool):
+            if not checked:
+                self.focus_check_master.setChecked(False)
+                self.in_over_out_check.setChecked(False)
+            self.focus_check_master.setEnabled(checked)
+            self.in_over_out_check.setEnabled(checked)
+
+        self.set_check.toggled.connect(_on_set_toggled)
+        _on_set_toggled(self.set_check.isChecked())
+
+        # "Colonne 1 - Type"/"Colonne 2 - Projet" : rangee label + boite
+        # valeur (figee, italique) + note, comme les 2 premieres colonnes
+        # FIXES de la maquette fournie par l'utilisateur.
+        for fixed_index, fixed_label, fixed_value, fixed_note in (
+            (1, "Type", project_path.parent.name, "Fixe — determine par le dossier racine"),
+            (2, "Projet", project_path.name, "Fixe — determine par la selection en cours"),
+        ):
+            fixed_row = QHBoxLayout()
+            fixed_row.setSpacing(14)
+            name_lbl = QLabel(f"Colonne {fixed_index} — {fixed_label}")
+            name_lbl.setFont(font(12, 400))
+            name_lbl.setFixedWidth(150)
+            name_lbl.setStyleSheet(f"color: {C['text']}; background: transparent;")
+            fixed_row.addWidget(name_lbl)
+            value_box = QLabel(fixed_value)
+            value_box.setFont(font(11, 400, mono=True))
+            value_box.setStyleSheet(
+                f"background: {C['chrome']}; color: {C['label']}; font-style: italic; "
+                f"border: 1px solid {C['border_soft']}; padding: 0 9px;"
+            )
+            value_box.setFixedHeight(25)
+            fixed_row.addWidget(value_box)
+            note_lbl = QLabel(fixed_note)
+            note_lbl.setFont(font(9, 400))
+            note_lbl.setStyleSheet(f"color: {C['dim']}; background: transparent;")
+            fixed_row.addWidget(note_lbl)
+            fixed_row.addStretch(1)
+            self._body_layout.addLayout(fixed_row)
+
+        # Cartes "Colonne N" cote a cote (voir _ColumnConfigBlock, largeur
+        # fixe) dans leur PROPRE zone de defilement HORIZONTALE, imbriquee
+        # dans la zone de defilement verticale du dialogue — reproduit la
+        # rangee de cartes de la maquette fournie par l'utilisateur.
+        blocks_scroll = QScrollArea(body)
+        blocks_scroll.setWidgetResizable(True)
+        blocks_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        blocks_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        blocks_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        blocks_host = QWidget()
+        blocks_host.setStyleSheet("background: transparent;")
+        self._blocks_container = QHBoxLayout(blocks_host)
+        self._blocks_container.setContentsMargins(0, 0, 0, 0)
+        self._blocks_container.setSpacing(16)
+        blocks_scroll.setWidget(blocks_host)
+        self._body_layout.addWidget(blocks_scroll)
+        self._block_widgets: list[_ColumnConfigBlock] = []
+        self._rebuild_blocks()
+
+        self._body_layout.addStretch(1)
+
+        # "Repertoire de travail" BLOQUEE en bas, HORS de la zone
+        # deroulante (voir `scroll`/`self._body_layout` ci-dessus) — ajoutee
+        # a `panel_layout` directement, entre `scroll` et `btn_row` (voir
+        # plus bas) : reste TOUJOURS visible, quelle que soit la position
+        # de defilement du reste du contenu — voir la remarque de
+        # l'utilisateur, "je veux que la partie repertoire de travail soit
+        # bloquee en bas vers les boutons".
+        work_section = QWidget(panel)
+        work_section.setStyleSheet("background: transparent;")
+        work_layout = QVBoxLayout(work_section)
+        work_layout.setContentsMargins(14, 10, 14, 0)
+        work_layout.setSpacing(8)
+
+        line = QFrame(work_section)
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet(f"background: {C['border_soft']}; border: none;")
+        line.setFixedHeight(1)
+        work_layout.addWidget(line)
+
+        work_label = QLabel("REPERTOIRE DE TRAVAIL")
+        work_label.setFont(font(10, 600, tracking=0.16))
+        work_label.setStyleSheet(f"color: {C['accent']}; background: transparent;")
+        work_layout.addWidget(work_label)
+
+        type_row = QHBoxLayout()
+        type_row.setSpacing(14)
+        type_lbl = QLabel("Type")
+        type_lbl.setFont(font(12, 400))
+        type_lbl.setFixedWidth(60)
+        type_lbl.setStyleSheet(f"color: {C['text']}; background: transparent;")
+        type_row.addWidget(type_lbl)
+        self.work_type_combo = QComboBox()
+        self.work_type_combo.setFixedHeight(26)
+        self.work_type_combo.setStyleSheet(
+            f"QComboBox {{ background: {C['well']}; color: {C['text']}; font-style: italic; "
+            f"border: 1px solid {C['border']}; border-radius: 0px; padding: 3px 8px; }}"
+            f"QComboBox:hover {{ border: 1px solid {C['accent']}; }}"
+            f"QComboBox::drop-down {{ border: none; width: 20px; }}"
+        )
+        for key, info in WORK_DIR_TYPES.items():
+            self.work_type_combo.addItem(info["label"], key)
+        idx = self.work_type_combo.findData(self._work_dir.get("type", DEFAULT_WORK_DIR_TYPE))
+        self.work_type_combo.setCurrentIndex(max(0, idx))
+        type_row.addWidget(self.work_type_combo)
+        type_row.addStretch(1)
+        work_layout.addLayout(type_row)
+
+        self.work_show_dirs_check = QCheckBox("Afficher les repertoires")
+        self.work_show_files_check = QCheckBox("Afficher les fichiers")
+        self.work_show_dirs_check.setChecked(bool(self._work_dir.get("show_dirs", True)))
+        # "Afficher les fichiers" active par defaut ICI aussi (repli True,
+        # PAS False) — voir la remarque de l'utilisateur, "afficher les
+        # fichiers doit etre active par defaut dans cette section" : filet
+        # de securite en plus du defaut deja pose sur `self._work_dir`
+        # (config is None, voir plus haut) — reste vrai meme si `self.
+        # _work_dir` provenait d'un fichier plus ancien sans cette cle.
+        self.work_show_files_check.setChecked(bool(self._work_dir.get("show_files", True)))
+        for cb in (self.work_show_dirs_check, self.work_show_files_check):
+            cb.setStyleSheet(_square_checkbox_qss())
+            work_layout.addWidget(cb)
+
+        work_omit_row = QHBoxLayout()
+        work_omit_row.setSpacing(10)
+        work_dirs_col = QVBoxLayout()
+        work_dirs_col.setSpacing(5)
+        work_dirs_label = QLabel("Repertoires a omettre")
+        work_dirs_label.setFont(font(9, 600, tracking=0.07))
+        work_dirs_label.setStyleSheet(f"color: {C['label']}; background: transparent;")
+        work_dirs_col.addWidget(work_dirs_label)
+        self.work_omit_dirs = _OmitListField(self)
+        self.work_omit_dirs.set_values(self._work_dir.get("omit_dirs"))
+        work_dirs_col.addWidget(self.work_omit_dirs)
+        work_files_col = QVBoxLayout()
+        work_files_col.setSpacing(5)
+        work_files_label = QLabel("Fichiers a omettre")
+        work_files_label.setFont(font(9, 600, tracking=0.07))
+        work_files_label.setStyleSheet(f"color: {C['label']}; background: transparent;")
+        work_files_col.addWidget(work_files_label)
+        self.work_omit_files = _OmitListField(self)
+        self.work_omit_files.set_values(self._work_dir.get("omit_files"))
+        work_files_col.addWidget(self.work_omit_files)
+        work_omit_row.addLayout(work_dirs_col)
+        work_omit_row.addLayout(work_files_col)
+        work_layout.addLayout(work_omit_row)
+
+        work_note = QLabel("Le repertoire de travail peut aussi omettre certains repertoires ou fichiers.")
+        work_note.setFont(font(9, 400))
+        work_note.setStyleSheet(f"color: {C['dim']}; background: transparent;")
+        work_layout.addWidget(work_note)
+
+        panel_layout.addWidget(work_section)
+
+        # Petit espace ENTRE les 2 boutons (pas colles l'un a l'autre),
+        # tous 2 groupes a droite — voir la remarque de l'utilisateur,
+        # "quand je disait separes, je voulais dire un petit espace"
+        # (corrige un 1er essai qui les avait envoyes aux 2 extremites).
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(14, 10, 14, 10)
+        btn_row.setSpacing(10)
+        btn_row.addStretch(1)
+        cancel_btn = QPushButton("Annuler")
+        save_btn = QPushButton("Enregistrer")
+        for b in (cancel_btn, save_btn):
+            b.setFixedHeight(28)
+            b.setCursor(Qt.PointingHandCursor)
+        cancel_btn.setStyleSheet(
+            f"QPushButton {{ background: {C['btn']}; color: {C['text']}; "
+            f"border: 1px solid {C['btn_border']}; border-radius: 4px; padding: 4px 14px; }}"
+            f"QPushButton:hover {{ background: {C['btn_hover']}; }}"
+        )
+        save_btn.setStyleSheet(
+            f"QPushButton {{ background: {C['accent']}; color: {C['accent_text']}; "
+            f"border: none; border-radius: 4px; padding: 4px 14px; }}"
+            f"QPushButton:hover {{ background: {C['accent']}; }}"
+        )
+        cancel_btn.clicked.connect(self.reject)
+        save_btn.clicked.connect(self._on_save)
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(save_btn)
+        panel_layout.addLayout(btn_row)
+
+    def _head_mouse_press(self, event):
+        if event.button() == Qt.LeftButton:
+            start_native_move(self)
+            event.accept()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        apply_dwm_frame(self, WINDOW_RADIUS, C["border"], resizable=True)
+
+    _RESIZE_BORDER = 6
+
+    def nativeEvent(self, eventType, message):
+        """Redimensionnement par les bords (voir PipelineBrowser.nativeEvent/
+        app_style.resize_hit_test, meme mecanisme) — necessite resizable=True
+        dans showEvent ci-dessus (pose WS_THICKFRAME cote Windows)."""
+        if eventType == b"windows_generic_MSG":
+            result = resize_hit_test(self, message, self._RESIZE_BORDER)
+            if result is not None:
+                return result
+        return super().nativeEvent(eventType, message)
+
+    def _current_block_values(self) -> list[dict]:
+        return [b.data() for b in self._block_widgets]
+
+    def _rebuild_blocks(self):
+        # Conserve les valeurs deja saisies, MEME celles temporairement
+        # masquees par un aller-retour du spinner (ex. 5 -> 4 -> 5) : ne met
+        # a jour QUE le prefixe actuellement visible de self._blocks (voir
+        # la remarque de tete, "conserver les valeurs deja saisies") — les
+        # entrees au-dela restent intactes tant qu'on ne les tronque pas
+        # explicitement (jamais ici : seule la SAUVEGARDE ne retient que le
+        # prefixe VISIBLE, voir _on_save/_current_block_values).
+        if self._block_widgets:
+            current = self._current_block_values()
+            self._blocks[:len(current)] = current
+        while self._blocks_container.count():
+            item = self._blocks_container.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        self._block_widgets = []
+        wanted = self.spin.value() - 2
+        while len(self._blocks) < wanted:
+            # Nom par defaut NON VIDE (voir la remarque de l'utilisateur,
+            # "quand je passe d'une base 3 a 4, ca ne fonctionne pas, il
+            # refuse d'augmenter la base") : un bloc cree avec un nom VIDE
+            # se faisait discretement ELIMINER a l'enregistrement (voir
+            # _on_save, `if c["name"]`) des que l'utilisateur oubliait de
+            # le renommer avant de cliquer Enregistrer — le "nombre de
+            # colonnes" retombait alors silencieusement a sa valeur
+            # d'avant, donnant l'impression que le spinner "refusait"
+            # d'augmenter la base alors qu'il l'augmentait bien, seule la
+            # SAUVEGARDE perdait le nouveau niveau sans nom.
+            # focus=True (pas False) : voir la remarque de l'utilisateur,
+            # "pour les colonnes focus, je veux qu'il y ait toutes les
+            # etapes du set entier ... si le projet est un projet base 4,
+            # il doit y avoir 3 colonnes empilees, pour un projet base 5,
+            # 4 colonnes empilees" — un niveau nouvellement ajoute (en
+            # augmentant le spinner) participe donc desormais a la pile
+            # Focus PAR DEFAUT, comme le tout premier niveau ("Sous-
+            # projet") l'a toujours fait ; l'utilisateur reste libre de
+            # decocher "Focus" ligne par ligne s'il veut en exclure un.
+            self._blocks.append({
+                "name": f"Colonne {len(self._blocks) + 3}", "show_dirs": True, "show_files": False,
+                "omit_dirs": [], "omit_files": [], "focus": True,
+            })
+        for i, data in enumerate(self._blocks[:wanted]):
+            block = _ColumnConfigBlock(i, data, self)
+            self._blocks_container.addWidget(block)
+            self._block_widgets.append(block)
+        # Etirement final (voir la rangee HORIZONTALE de cartes ci-dessus,
+        # __init__) : sans lui, peu de cartes s'etalaient toutes seules
+        # sur toute la largeur au lieu de rester tassees a gauche comme
+        # dans la maquette fournie par l'utilisateur.
+        self._blocks_container.addStretch(1)
+
+    def _on_spin_changed(self, _value):
+        self._rebuild_blocks()
+
+    def _on_save(self):
+        columns = self._current_block_values()
+        # Refuse (au lieu d'eliminer silencieusement, voir _rebuild_blocks
+        # pour le detail du bug que ca causait) des qu'UN SEUL bloc visible
+        # n'a pas de nom — jamais un filtre `if c["name"]` muet : perdre un
+        # niveau sans que l'utilisateur le sache est exactement ce qui
+        # donnait l'impression que "ca refuse d'augmenter la base". PAS de
+        # `not columns` ici (contrairement a avant) : une liste VIDE est
+        # desormais une configuration VALIDE ("base 2" — MIN_STEPS=2, voir
+        # sa remarque, Type+Projets seuls) — voir la remarque de
+        # l'utilisateur, "peux-tu faire en sorte de pouvoir setter en base
+        # 2".
+        if any(not c["name"] for c in columns):
+            QMessageBox.warning(self, "Configuration", "Chaque colonne doit avoir un nom.")
+            return
+        work_dir = {
+            "type": self.work_type_combo.currentData() or DEFAULT_WORK_DIR_TYPE,
+            "show_dirs": self.work_show_dirs_check.isChecked(),
+            "show_files": self.work_show_files_check.isChecked(),
+            "omit_dirs": self.work_omit_dirs.values(),
+            "omit_files": self.work_omit_files.values(),
+        }
+        # try/except (voir la remarque de l'utilisateur, "quand j'essaie
+        # d'enregistrer une modification ... il ne se passe rien") : une
+        # ecriture qui echoue (fichier verrouille par un autre programme,
+        # droits insuffisants...) ne doit plus jamais se solder par une
+        # exception NON rattrapee dans ce slot Qt — le dialogue restait
+        # ouvert SANS aucun message, cause exacte de "ca ne prend pas en
+        # compte les modifs" deja rencontree une fois (voir save_project_
+        # columns/_clear_hidden, corrige separement pour le cas HIDDEN sur
+        # Windows) : desormais un message explicite plutot qu'un silence.
+        try:
+            save_project_columns(self.project_path, {
+                "columns": columns, "work_dir": work_dir,
+                "set_enabled": self.set_check.isChecked(),
+                "focus_enabled": self.focus_check_master.isChecked(),
+                "in_over_out_enabled": self.in_over_out_check.isChecked(),
+            })
+        except OSError as exc:
+            QMessageBox.warning(
+                self, "Configuration", f"Impossible d'enregistrer la configuration :\n{exc}")
+            return
+        self.accept()
 
 
 class SquareCaptureOverlay(QWidget):
@@ -2648,7 +5979,8 @@ class _StatusLabel(QLabel):
 
     def __init__(self, name: str, active: bool, parent=None, font_size: int = 10,
                  active_color: str | None = None, idle_color: str | None = None,
-                 font_family: str | None = None, smoothing: str = "current"):
+                 font_family: str | None = None, smoothing: str = "current",
+                 weight: int = 700, italic: bool = False):
         super().__init__(name.upper(), parent)
         self._active = active
         # `font_family` (voir Colonnes > Apercu > Zone titre > Polices >
@@ -2660,7 +5992,7 @@ class _StatusLabel(QLabel):
         # seulement la famille ici, `font()` applique ensuite le lissage
         # demande par-dessus.
         resolved_family = font_family or role_font("info", font_size, 700, tracking=0.08).family()
-        self.setFont(font(font_size, 700, family=resolved_family, tracking=0.08, smoothing=smoothing))
+        self.setFont(font(font_size, weight, family=resolved_family, tracking=0.08, smoothing=smoothing, italic=italic))
         # C["text"]/C["dim"] directement, PAS role_color("info", ...) : ce
         # role peut etre personnalise par l'utilisateur (fenetre de
         # parametres) avec une couleur fixe, qui ecraserait alors les DEUX
@@ -2747,8 +6079,26 @@ class _PreviewBlock(QWidget):
     tu as merger les deux colonnes en une seule, ce que je veux c'est deux
     colonnes separees, une en dessous de l'autre !"."""
 
-    def __init__(self, title: str, pixmap: QPixmap, width: int, path: Path, open_status, parent=None):
+    def __init__(self, title: str, pixmap: QPixmap, width: int, path: Path, open_status,
+                 source_column: "Column" = None, parent=None):
         super().__init__(parent)
+        # Chemin REPRESENTE par ce bloc (le dossier Projet/Sous-projet/
+        # niveau configure actuellement selectionne) — garde ici (self.
+        # _path) pour le menu clic droit (voir _on_context_menu, la
+        # remarque de l'utilisateur, "les fichiers et dossiers de focus ne
+        # fonctionnent pas comme les autres colonnes, notamment pour le
+        # clic droit") : jusqu'ici ce widget n'avait AUCUNE interaction
+        # clic droit du tout, contrairement a une ligne normale (voir
+        # Column._on_context_menu). `source_column` (voir _rename) : la
+        # VRAIE colonne de navigation dont ce bloc reprend la selection
+        # courante — permet de renommer avec la MEME resynchronisation de
+        # la navigation qu'une ligne normale (voir Column._rename_item) —
+        # voir la remarque de l'utilisateur, "je veux que le comportement
+        # des colonnes fonctionne de la meme maniere sur tous les points".
+        self._path = path
+        self._source_column = source_column
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_context_menu)
         # Style EFFECTIF de Colonnes > Apercu (voir app_style.column_style_
         # for/PREVIEW_STACK_TITLE) — "Zone titre" (hauteur/police du titre/
         # police de l'apercu des dossiers) — voir la remarque de
@@ -2764,8 +6114,10 @@ class _PreviewBlock(QWidget):
         # _resolve_font_family/_DualFontSelectField) — voir la remarque de
         # l'utilisateur, "je veux le choix de la police (titre + apercu
         # des dossiers) (choix entre polices appli ou polices systeme)".
+        title_font_weight = 700 if s.get("preview_title_font_bold", True) else 400
+        title_font_italic = bool(s.get("preview_title_font_italic", False))
         title_font_family = _resolve_font_family(
-            (s.get("preview_title_font_family") or "").strip(), title_font_size, 700)
+            (s.get("preview_title_font_family") or "").strip(), title_font_size, title_font_weight)
         # Lissage (voir Colonnes > Texte > Lissage, MEME mecanique
         # toggle+niveau) — voir la remarque de l'utilisateur, "ajoute les
         # niveaux de lissage sur les lignes des polices".
@@ -2776,8 +6128,11 @@ class _PreviewBlock(QWidget):
         status_font_size = int(s.get("preview_status_font_size", 10))
         status_font_color = resolve_color_ref(s.get("preview_status_font_color", "#d6d9dc"))
         status_font_color_idle = resolve_color_ref(s.get("preview_status_font_color_idle", "#5f666b"))
+        status_font_weight = 700 if s.get("preview_status_font_bold", True) else 400
+        status_font_italic = bool(s.get("preview_status_font_italic", False))
         status_font_family = _resolve_font_family(
-            (s.get("preview_status_font_family") or "").strip(), status_font_size, 700, fallback_role="info")
+            (s.get("preview_status_font_family") or "").strip(), status_font_size, status_font_weight,
+            fallback_role="info")
         status_font_smoothing = (
             s.get("preview_status_font_smoothing", "current")
             if s.get("preview_status_font_smoothing_enabled") else "current")
@@ -2813,13 +6168,12 @@ class _PreviewBlock(QWidget):
         status_bar = QWidget()
         status_bar.setFixedHeight(PREVIEW_STATUS_HEIGHT)
         # MEME couleur que le reste du bloc (block_bg, Colonnes > Focus >
-        # Colonnes > Couleur de fond — PLUS de reglage "Zone titre > Fond"
-        # separe, source de confusion/desaccord avec cette seule et unique
-        # couleur) — voir la remarque de l'utilisateur, "voici la couleur
-        # a appliquer sur les zones avec des croix" (pointant precisement
-        # sur "Couleur de fond"). Aucun filet entre les indicateurs et le
-        # titre (border: none, EXPLICITE) — juste explicite ici pour ne
-        # PAS heriter d'un style par defaut.
+        # Colonnes > Couleur de fond) — PAS de fond de selection sous les
+        # items des colonnes Focus (essaye puis retire, voir la remarque
+        # de l'utilisateur, "je ne veux pas de fond de selection sous les
+        # items des colonnes focus"). Aucun filet entre les indicateurs et
+        # le titre (border: none, EXPLICITE) — juste explicite ici pour ne PAS
+        # heriter d'un style par defaut.
         status_bar.setAttribute(Qt.WA_StyledBackground, True)
         status_bar.setStyleSheet(f"background: {block_bg}; border: none;")
         status_layout = QHBoxLayout(status_bar)
@@ -2833,7 +6187,8 @@ class _PreviewBlock(QWidget):
             label = _StatusLabel(
                 name, active, font_size=status_font_size,
                 active_color=status_font_color, idle_color=status_font_color_idle,
-                font_family=status_font_family, smoothing=status_font_smoothing)
+                font_family=status_font_family, smoothing=status_font_smoothing,
+                weight=status_font_weight, italic=status_font_italic)
             if active:
                 label.clicked.connect(lambda p=folder_path: open_status(p))
             status_layout.addWidget(label)
@@ -2851,7 +6206,9 @@ class _PreviewBlock(QWidget):
             int(title_pad.get("left", 14)), int(title_pad.get("top", 0)),
             int(title_pad.get("right", 14)), int(title_pad.get("bottom", 8)))
         name = QLabel(title)
-        name.setFont(font(title_font_size, 700, family=title_font_family, tracking=0.0, smoothing=title_font_smoothing))
+        name.setFont(font(
+            title_font_size, title_font_weight, family=title_font_family, tracking=0.0,
+            smoothing=title_font_smoothing, italic=title_font_italic))
         name.setStyleSheet(f"color: {title_font_color}; background: transparent;")
         # Colle au bas de la barre de titre (juste au-dessus de l'image),
         # pas centre sur toute sa hauteur : plus proche de l'image, plus
@@ -2873,9 +6230,7 @@ class _PreviewBlock(QWidget):
         self._image_wrap = QWidget()
         # MEME couleur que status_bar/title_bar/le reste du bloc (block_bg)
         # — visible dans la marge du Padding de l'image (voir
-        # _image_wrap_layout.setContentsMargins plus bas) — voir la
-        # remarque de l'utilisateur, "voici la couleur a appliquer sur les
-        # zones avec des croix".
+        # _image_wrap_layout.setContentsMargins plus bas).
         self._image_wrap.setAttribute(Qt.WA_StyledBackground, True)
         self._image_wrap.setStyleSheet(f"background: {block_bg}; border: none;")
         self._image_wrap_layout = QVBoxLayout(self._image_wrap)
@@ -2899,6 +6254,10 @@ class _PreviewBlock(QWidget):
         self._border_overlay = _ColumnStyleBorderOverlay(self)
         self._border_overlay.setGeometry(self.rect())
         self._border_overlay.raise_()
+        # APRES la construction de _status_bar/_title_bar/_image_wrap/
+        # self.image (voir _connect_context_menu, sa remarque) : cable le
+        # clic droit EN PLUS sur chacun d'eux.
+        self._connect_context_menu()
 
     def apply_width(self, width: int):
         """Recalcule la largeur/hauteur de l'image (et la hauteur totale du
@@ -2978,6 +6337,136 @@ class _PreviewBlock(QWidget):
         for w in (self._status_bar, self._title_bar, self._image_wrap, self.image):
             w.setMouseTracking(True)
             w.installEventFilter(owner)
+
+    def _on_context_menu(self, pos):
+        """Relais pour self.customContextMenuRequested (voir __init__) —
+        `pos` LOCALE a `self` : voir _show_context_menu pour le VRAI menu,
+        partage avec _connect_context_menu (cable EN PLUS sur chaque
+        widget ENFANT pleine-largeur, voir sa remarque)."""
+        self._show_context_menu(self.mapToGlobal(pos))
+
+    def _connect_context_menu(self):
+        """Cable le menu clic droit EN PLUS sur chaque widget ENFANT
+        pleine-largeur du bloc (statut/zone titre/image — MEME liste que
+        install_resize_filter, MEME raison), pas SEULEMENT sur `self` —
+        voir la remarque de l'utilisateur, "le menu clic droit n'apparait
+        pas dans les colonnes focus" : compter sur la seule PROPAGATION
+        Qt d'un QContextMenuEvent ignore vers le widget PARENT (ce que
+        `self.setContextMenuPolicy` seul suppose) s'est avere peu fiable
+        ici — voir install_resize_filter, qui documente DEJA exactement
+        le meme piege ("un widget ENFANT sous le curseur intercepte
+        l'evenement AVANT que le parent ne le voie") pour le
+        redimensionnement, corrige alors de la MEME facon (installation
+        EXPLICITE sur chaque enfant plutot que de compter sur la
+        remontee). Appelee en FIN de __init__, une fois ces widgets
+        construits (contrairement a self.setContextMenuPolicy, deja pose
+        plus haut des la construction)."""
+        for child in (self._status_bar, self._title_bar, self._image_wrap, self.image):
+            child.setContextMenuPolicy(Qt.CustomContextMenu)
+            child.customContextMenuRequested.connect(
+                lambda pos, w=child: self._show_context_menu(w.mapToGlobal(pos)))
+
+    def _show_context_menu(self, global_pos):
+        """Menu clic droit du bloc Focus (voir _on_context_menu/
+        _connect_context_menu, `global_pos` deja en coordonnees GLOBALES,
+        source unique partagee par tous les points d'entree) — voir la
+        remarque de tete de classe, "les fichiers et dossiers de focus ne
+        fonctionnent pas comme les autres colonnes, notamment pour le
+        clic droit" : ce bloc n'avait jusqu'ici AUCUNE interaction clic
+        droit, contrairement a une ligne normale (voir Column.
+        _on_context_menu). MEME ensemble complet d'actions qu'une ligne
+        DOSSIER normale desormais (voir _rename, la remarque de
+        l'utilisateur, "je veux que le comportement des colonnes
+        fonctionne de la meme maniere sur tous les points") — Renommer +
+        Afficher dans l'explorateur + image personnalisee (vignette de
+        PROJET, exactement celle affichee ici, voir
+        project_thumbnail_pixmap) + Copier/Copier le chemin."""
+        path = self._path
+        menu = QMenu(self)
+        menu.setFont(font(11, 400))
+        act_rename = menu.addAction("Renommer") if self._source_column is not None else None
+        act_reveal = menu.addAction("Afficher dans l'explorateur")
+        menu.addSeparator()
+        has_custom = project_thumbnail_path(path).is_file()
+        act_change_thumb = menu.addAction("Changer l'image..." if has_custom else "Ajouter un apercu...")
+        act_capture_thumb = menu.addAction("Capturer une zone d'ecran...")
+        act_reset_thumb = menu.addAction("Reinitialiser l'image") if has_custom else None
+        menu.addSeparator()
+        act_copy_file = menu.addAction("Copier")
+        act_copy_path = menu.addAction("Copier le chemin")
+        chosen = menu.exec(global_pos)
+        if act_rename is not None and chosen is act_rename:
+            self._rename()
+        elif chosen is act_reveal:
+            reveal_in_file_manager(path)
+        elif chosen is act_change_thumb:
+            _prompt_change_thumbnail(self, path, self._refresh_thumbnail)
+        elif chosen is act_capture_thumb:
+            _prompt_capture_thumbnail(self, path, self._refresh_thumbnail)
+        elif act_reset_thumb is not None and chosen is act_reset_thumb:
+            _prompt_reset_thumbnail(self, path, self._refresh_thumbnail)
+        elif chosen is act_copy_file:
+            mime = QMimeData()
+            mime.setUrls([QUrl.fromLocalFile(str(path))])
+            QApplication.clipboard().setMimeData(mime)
+        elif chosen is act_copy_path:
+            QApplication.clipboard().setText(str(path))
+
+    def _rename(self):
+        """Renomme le dossier REPRESENTE PAR LA SELECTION COURANTE de la
+        VRAIE colonne source (voir __init__/_source_column) — MEME
+        validations que Column._rename_item (caracteres interdits,
+        collision de nom, erreur disque), pour un comportement identique
+        a une ligne normale. La resynchronisation de la navigation
+        (colonnes filles construites depuis l'ANCIEN chemin, redessin du
+        bloc Focus lui-meme...) n'est PAS geree ICI a la main : comme pour
+        Column._rename_item, on se contente de RAFRAICHIR la vraie
+        colonne source puis d'y RESELECTIONNER l'item renomme —
+        currentItemChanged declenche alors normalement Column.
+        _on_current_changed -> PipelineBrowser.on_selected, qui fait deja
+        tout le reste (prune_after + reconstruction, y compris ce bloc
+        Focus lui-meme via update_preview_stack) — exactement le meme
+        chemin qu'un Renommer sur une ligne normale, aucune duplication de
+        logique."""
+        column = self._source_column
+        if column is None:
+            return
+        path = self._path
+        new_name, ok = QInputDialog.getText(self, "Renommer", "Nouveau nom :", QLineEdit.Normal, path.name)
+        if not ok:
+            return
+        new_name = new_name.strip()
+        if not new_name or new_name == path.name:
+            return
+        if any(ch in new_name for ch in '\\/:*?"<>|'):
+            QMessageBox.warning(self, "Renommer", "Le nom contient des caracteres interdits.")
+            return
+        new_path = path.with_name(new_name)
+        if new_path.exists():
+            QMessageBox.warning(self, "Renommer", f"« {new_name} » existe deja.")
+            return
+        try:
+            path.rename(new_path)
+        except OSError as exc:
+            QMessageBox.warning(self, "Renommer", f"Impossible de renommer :\n{exc}")
+            return
+        column.refresh()
+        for i in range(column.list.count()):
+            it = column.list.item(i)
+            if it.data(ROLE_PATH) == str(new_path):
+                column.list.setCurrentItem(it)
+                break
+
+    def _refresh_thumbnail(self):
+        """Recharge la vignette (voir project_thumbnail_pixmap, cache par
+        date de modification — deja invalide des l'ecriture/suppression du
+        fichier, voir _prompt_change_thumbnail/_prompt_capture_thumbnail/
+        _prompt_reset_thumbnail) apres une modification depuis CE bloc —
+        contrairement a une ligne normale (self.list.viewport().update(),
+        qui redessine une DELEGATE a partir du modele), ce bloc affiche
+        l'image directement dans un widget deja construit, il faut donc
+        explicitement lui repasser le nouveau pixmap."""
+        self.image.set_source_pixmap(project_thumbnail_pixmap(self._path))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -3177,13 +6666,104 @@ class Column(QWidget):
 
     def __init__(self, directory: Path, title: str, parent=None,
                  source_dirs: list[Path] | None = None, display_title: str | None = None,
+                 style_title: str | None = None,
                  user_width: int | None = None, on_resize=None,
                  group_kind: str | None = None, on_reorder=None,
                  user_height: int | None = None, on_height_resize=None, fill_height: bool = False,
                  on_height_resize_begin=None, on_height_resize_end=None,
-                 source_labels: list[str] | None = None):
+                 source_labels: list[str] | None = None,
+                 is_focus_level: bool | None = None,
+                 show_dirs: bool = True, show_files: bool = True,
+                 omit_dirs: frozenset = frozenset(), omit_files: frozenset = frozenset(),
+                 only_recognized_software: bool = False,
+                 on_group_maximize=None, on_group_equalize=None):
         super().__init__(parent)
         self.directory = directory
+        # Filtre "que des repertoires logiciel reconnus" (voir refresh()) —
+        # remplace un test litteral `group_kind == "logiciels"` : un simple
+        # booleen explicite, sans rapport avec l'identite group_kind (voir
+        # la remarque de l'utilisateur, "base toi sur les colonnes creees
+        # avant les focus" — group_kind ne pilote plus que le
+        # reordonnancement/redimensionnement partage entre colonnes voisines,
+        # jamais le contenu affiche).
+        self._only_recognized_software = only_recognized_software
+        # Hauteur de ligne PROPRE a ce dossier (voir load_layout_settings/
+        # row_resize_begin/update/end, Colonnes.effective_row_height) —
+        # SEULEMENT pour une colonne de navigation REELLE (group_kind=None,
+        # PAS une colonne fantome du groupe IN/OVER/OUT/LOGICIELS, dont
+        # `directory` n'est qu'un repli parmi plusieurs sources fusionnees,
+        # voir source_dirs) : Ctrl+glisser sur une TELLE colonne enregistre
+        # desormais la hauteur choisie DANS ce dossier (fichier cache
+        # .pipeline_layout.json), pas dans un reglage GLOBAL partage entre
+        # TOUTES les colonnes du meme style — voir la remarque de
+        # l'utilisateur, "le dimensionnement en hauteur ... doit etre
+        # enregistre en temps reel et ce dependant du [sous-]dossier ...
+        # jamais les mm suivant le sous dossier precedent". None (repli) :
+        # aucun reglage propre a ce dossier, suit la valeur GENERALE (voir
+        # effective_row_height) — comportement INCHANGE tant qu'aucun
+        # dossier n'a encore ete ajuste a la main.
+        # Punaise d'en-tete (voir _toggle_pin/refresh_header, la remarque de
+        # l'utilisateur, "punaise_02.png lorsque l'on clique dessus, les
+        # valeurs de dimensions de colonnes et de lignes sont alors
+        # overridees par les valeurs du json ... lorsque l'on rappuie ...
+        # prend en compte les valeurs par defaut des settings") : couche
+        # ADDITIVE et PRIORITAIRE sur tout le reste (largeur/hauteur
+        # "normales" ci-dessus/generales) — cles DEDIEES (pinned*, jamais
+        # les memes que row_height/_user_width) pour ne RIEN changer au
+        # comportement existant tant que la punaise n'a jamais ete
+        # activee sur ce dossier precis. CALCULEE AVANT _folder_row_height
+        # ci-dessous (voir sa remarque) : la lecture de "row_height" en
+        # depend desormais.
+        layout_data = load_layout_settings(directory)
+        self._pin_active = bool(layout_data.get("pinned", False))
+        self._pin_column_width = layout_data.get("pinned_column_width") if self._pin_active else None
+        self._pin_row_height = layout_data.get("pinned_row_height") if self._pin_active else None
+
+        self._folder_row_height: int | None = None
+        # Ne charge "row_height" QUE si la punaise est active — voir
+        # row_resize_end, qui n'ecrit desormais PLUS cette cle du tout hors
+        # punaise (seules Type/Focus s'auto-enregistrent, ailleurs). Sans ce
+        # garde-fou, une valeur ECRITE AVANT ce changement (ancien
+        # comportement : toute colonne auto-enregistrait sans punaise)
+        # restait lue indefiniment ici, ce qui affichait une hauteur figee
+        # (ex. 80px, le plafond ROW_RESIZE_MAX_HEIGHT) sans rapport avec le
+        # reglage general — voir la remarque de l'utilisateur, "certaines
+        # de mes colonnes affichent des hauteurs de ligne a 80px et je ne
+        # comprends pas d'ou vient cette valeur".
+        if self._pin_active:
+            raw_height = layout_data.get("row_height")
+            if isinstance(raw_height, (int, float)):
+                self._folder_row_height = int(raw_height)
+
+        # Menu contextuel "Afficher l'apercu"/"Afficher l'icone"/"Taille de
+        # l'icone" (voir _on_context_menu) : None (repli) = valeur GENERALE
+        # des reglages (comportement INCHANGE) ; MEME regle de persistance
+        # que la hauteur/largeur de ligne ci-dessus — n'est charge que si
+        # la punaise est active, SAUF "Type" (jamais de punaise, mais
+        # auto-enregistre quand meme, voir _should_autosave_context_
+        # override) — voir la remarque de l'utilisateur, "tous les
+        # parametres du menu contextuel ne s'enregistrent pas
+        # automatiquement dans la colonne de type".
+        self._show_icon_override: bool | None = None
+        self._show_preview_override: bool | None = None
+        self._icon_size_override: int | None = None
+        self._icon_padding_left_override: int | None = None
+        self._text_padding_left_override: int | None = None
+        _style_title_for_gate = style_title if style_title is not None else title
+        if self._pin_active or _style_title_for_gate == "Type":
+            if isinstance(layout_data.get("show_icon"), bool):
+                self._show_icon_override = layout_data["show_icon"]
+            if isinstance(layout_data.get("show_preview"), bool):
+                self._show_preview_override = layout_data["show_preview"]
+            raw_icon_size = layout_data.get("icon_size")
+            if isinstance(raw_icon_size, (int, float)):
+                self._icon_size_override = int(raw_icon_size)
+            raw_icon_pad = layout_data.get("icon_padding_left")
+            if isinstance(raw_icon_pad, (int, float)):
+                self._icon_padding_left_override = int(raw_icon_pad)
+            raw_text_pad = layout_data.get("text_padding_left")
+            if isinstance(raw_text_pad, (int, float)):
+                self._text_padding_left_override = int(raw_text_pad)
         # `source_dirs` (voir IN/OVER/OUT, PipelineBrowser.update_preview_
         # stack) : colonne dont le contenu est le MERGE de plusieurs
         # dossiers sources (ex. le "in" du Projet ET celui du Sous-projet
@@ -3221,6 +6801,18 @@ class Column(QWidget):
         # NORMALE (pas de glisser d'en-tete du tout).
         self._group_kind = group_kind
         self._on_reorder = on_reorder
+        # Boutons d'entete "Agrandir"/"Egaliser" (voir __init__ plus bas,
+        # dans header_layout) — SEULEMENT pour une colonne du groupe
+        # IN/OVER/OUT/LOGICIELS (group_kind is not None) : voir la remarque
+        # de l'utilisateur, "dans les 4 colonnes ... je veux dans l'entete
+        # un bouton qui me permette d'agrandir au maximum la fenetre en
+        # cours et de minimiser les autres ... je veux un autre bouton pour
+        # mettre les 4 colonnes a exactement la meme hauteur". Column ne
+        # connait que SES PROPRES voisines via ces callbacks (MEME
+        # principe que on_reorder/on_height_resize) — PipelineBrowser seule
+        # a acces aux 4 colonnes du groupe a la fois.
+        self._on_group_maximize = on_group_maximize
+        self._on_group_equalize = on_group_equalize
         # `user_height`/`on_height_resize(_begin/_end)` : glisser le bord
         # BAS de CETTE colonne ne fait bouger qu'ELLE ET sa voisine
         # IMMEDIATEMENT SUIVANTE (voir PipelineBrowser.
@@ -3262,15 +6854,56 @@ class Column(QWidget):
         self.column_title = title
         # `display_title` (voir PreviewColumn, meme convention) : texte
         # d'entete affiche, SEPARE de `title`/self.column_title (la cle de
-        # STYLE/COLUMN_SETTINGS) — permet a IN/OVER/OUT de partager le style
-        # "Type" (liste plate, sans vignette ni icone logiciel) tout en
-        # affichant leur propre libelle.
+        # STYLE/COLUMN_SETTINGS par defaut) — permet a IN/OVER/OUT de
+        # partager le style "Type" (liste plate, sans vignette ni icone
+        # logiciel) tout en affichant leur propre libelle.
+        # `style_title` (nouveau, voir PipelineBrowser.on_selected chaine
+        # CONFIGUREE/settings_window "INTERMEDIAIRE") : repli symetrique a
+        # `display_title`, mais pour la cle de STYLE cette fois — un niveau
+        # de chaine CONFIGUREE (nom quelconque choisi par l'utilisateur, ex.
+        # "test1") garde `column_title`/`display_title` = son propre nom
+        # (identite/annotations "(test1)", voir update_preview_stack), MAIS
+        # `style_title` = "Sous-projet" pour suivre le MEME reglage que
+        # l'onglet General > Colonnes > INTERMEDIAIRE (voir la remarque de
+        # l'utilisateur, "le tab sous projets doit maintenant se nommer
+        # 'INTERMEDIAIRE', et doit controler toutes les colonnes entre celle
+        # de projet et focus") plutot que de retomber sur le bucket
+        # generique "Contenu" (voir _col_key) comme n'importe quel titre
+        # inconnu. None (repli, TOUTE colonne EXISTANTE avant ce reglage —
+        # Type/Projets/Sous-projet legacy/Logiciels/Contenu/groupe) : MEME
+        # valeur que `title`, comportement rigoureusement INCHANGE.
+        self.style_title = style_title if style_title is not None else title
         self.has_thumbnails = title in THUMBNAIL_COLUMN_LABELS
-        # Repli/depli (voir set_collapsed) : seules Type/Projets/Sous-projet
-        # sont concernees (voir COLLAPSIBLE_COLUMN_TITLES et
-        # PipelineBrowser._sync_collapse_state) — Logiciels/Contenu n'ont pas
-        # d'icone et ignorent silencieusement tout appel a set_collapsed.
-        self.collapsible = title in COLLAPSIBLE_COLUMN_TITLES
+        # `is_focus_level` (voir update_preview_stack, group_columns du
+        # groupe IN/OVER/OUT/LOGICIELS) : participation a la pile Focus,
+        # DECOUPLEE de `has_thumbnails` (qui pilote le RENDU — tuile a
+        # vignette vs liste plate) — un niveau de la chaine CONFIGUREE (voir
+        # PipelineBrowser.on_selected/load_project_columns) peut etre en
+        # liste plate ET quand meme contribuer a la pile Focus (son propre
+        # toggle "Focus", voir ColumnConfigDialog). None (repli, colonnes
+        # "normales" Type/Projets/Sous-projet/Logiciels/Contenu) : MEME
+        # valeur que has_thumbnails — comportement D'AVANT ce reglage
+        # INCHANGE (seules Projets/Sous-projet participaient a la pile) —
+        # voir la remarque de l'utilisateur, "le toggle focus [est]
+        # independant par colonne".
+        self.is_focus_level = self.has_thumbnails if is_focus_level is None else is_focus_level
+        # `show_dirs`/`show_files`/`omit_dirs`/`omit_files` (voir refresh(),
+        # ColumnConfigDialog) : filtres de CONTENU d'un niveau de la chaine
+        # CONFIGUREE — True/True/vide (comportement INCHANGE, tout est
+        # affiche) pour toute colonne NORMALE.
+        self._show_dirs = show_dirs
+        self._show_files = show_files
+        self._omit_dirs = {n.lower() for n in omit_dirs}
+        self._omit_files = {n.lower() for n in omit_files}
+        # Repli/depli (voir set_collapsed) : toute colonne de navigation
+        # NORMALE (group_kind=None — Type/Projets/tout niveau configure,
+        # PAS une colonne fantome du groupe IN/OVER/OUT/LOGICIELS) est
+        # structurellement repliable — c'est PipelineBrowser.
+        # _apply_project_columns_collapsed qui decide LESQUELLES replier
+        # (les N premieres de self.columns, voir _chain_expected_total),
+        # pas un titre fixe (voir la remarque de l'utilisateur, "toutes les
+        # colonnes avant les colonnes de focus", N quelconque).
+        self.collapsible = group_kind is None
         self.collapsed = False
         self._expanded_width = None
         self._width_anim = None
@@ -3279,14 +6912,10 @@ class Column(QWidget):
         self.title_label.setFont(role_font("colhead", 10, 600, tracking=0.9, caps=True))
         self.title_label.setStyleSheet(f"color: {role_color('colhead', C['header'])}; background: transparent;")
 
-        self.count_label = QLabel("")
-        self.count_label.setFont(role_font("info", 10, 400))
-        self.count_label.setStyleSheet(f"color: {role_color('info', C['count'])}; background: transparent;")
-
         # objectName + selecteur ID : voir la remarque sur #TitleBar dans
-        # PipelineBrowser — sans lui, title_label/count_label heriteraient du
-        # border-bottom nu et se retrouveraient chacun souligne sur sa
-        # largeur de texte au lieu du filet courant sur toute la colonne.
+        # PipelineBrowser — sans lui, title_label heriterait du border-
+        # bottom nu et se retrouverait souligne sur sa largeur de texte au
+        # lieu du filet courant sur toute la colonne.
         #
         # header (exterieur, hauteur fixe, JAMAIS stylise) enveloppe
         # header_fill (interieur, c'est LUI qui porte le fond/rayon/cadre de
@@ -3315,7 +6944,64 @@ class Column(QWidget):
         header_layout.setContentsMargins(10, 0, 10, 0)
         header_layout.addWidget(self.title_label)
         header_layout.addStretch(1)
-        header_layout.addWidget(self.count_label)
+        # "Agrandir"/"Egaliser" (voir __init__, on_group_maximize/
+        # on_group_equalize) : SEULEMENT sur une colonne du groupe
+        # IN/OVER/OUT/LOGICIELS — voir la remarque de l'utilisateur, "dans
+        # les 4 colonnes ... un bouton qui me permette d'agrandir au
+        # maximum ... et un autre bouton pour mettre les 4 colonnes a
+        # exactement la meme hauteur". Boutons TEXTE (pas d'icone dediee
+        # existante) — meme taille/meme style transparent que la punaise.
+        if self._group_kind is not None:
+            def _group_header_btn(text: str, tooltip: str, handler) -> QPushButton:
+                btn = QPushButton(text)
+                btn.setFlat(True)
+                btn.setCursor(Qt.PointingHandCursor)
+                btn.setFocusPolicy(Qt.NoFocus)
+                btn.setFixedSize(18, 18)
+                btn.setFont(font(11, 700))
+                btn.setToolTip(tooltip)
+                btn.setStyleSheet(
+                    "QPushButton { background: transparent; border: none; padding: 0; "
+                    f"color: {C['label']}; }}"
+                    "QPushButton:hover { background: rgba(255,255,255,0.12); border-radius: 3px; "
+                    f"color: {C['text']}; }}"
+                )
+                btn.clicked.connect(handler)
+                header_layout.addWidget(btn)
+                return btn
+
+            if on_group_maximize is not None:
+                _group_header_btn(
+                    "⤢", "Agrandir cette colonne au maximum, reduire les autres a leur contenu",
+                    lambda: on_group_maximize(self._group_kind))
+            if on_group_equalize is not None:
+                _group_header_btn(
+                    "≡", "Repartir les 4 colonnes du groupe a hauteur egale",
+                    lambda: on_group_equalize())
+        # Punaise (voir _toggle_pin/_pin_icon_pixmap) : sur TOUTE colonne
+        # SAUF "Type" et les colonnes Focus (celles-ci ne passent jamais
+        # par Column, voir PreviewColumn/_PreviewBlock — exclusion donc
+        # automatique, aucune condition a poser ici pour elles) — voir la
+        # remarque de l'utilisateur, "je viens de te coller deux icones
+        # que j'aimerai que tu places en haut a droite de chaque colonne
+        # sauf : colonne type, colonnes focus".
+        self._pin_btn = None
+        if title != "Type":
+            pin_btn = QPushButton()
+            pin_btn.setFlat(True)
+            pin_btn.setCursor(Qt.PointingHandCursor)
+            pin_btn.setFocusPolicy(Qt.NoFocus)
+            pin_btn.setFixedSize(18, 18)
+            pin_btn.setIconSize(QSize(14, 14))
+            pin_btn.setStyleSheet(
+                "QPushButton { background: transparent; border: none; padding: 0; }"
+                "QPushButton:hover { background: rgba(255,255,255,0.12); border-radius: 3px; }"
+            )
+            pin_btn.setToolTip("Fige la largeur/hauteur de ligne de ce dossier (voir Parametres)")
+            pin_btn.clicked.connect(self._toggle_pin)
+            self._pin_btn = pin_btn
+            header_layout.addWidget(pin_btn)
+        self._refresh_pin_icon()
         header_outer_layout.addWidget(header_fill)
 
         self.list = FileListWidget(self)
@@ -3406,7 +7092,7 @@ class Column(QWidget):
         outer_layout.addWidget(self.card)
         self._outer_layout = outer_layout
 
-        self.setFixedWidth(self._user_width or col_width(title))
+        self.setFixedWidth(self._pin_column_width or self._user_width or col_width(title))
         # Hauteur FIXE (voir GROUP_COLUMN_DEFAULT_HEIGHT) SEULEMENT pour une
         # colonne du groupe IN/OVER/OUT/LOGICIELS QUI N'EST PAS la derniere
         # de l'ordre courant (voir fill_height/set_group_fill_height) : une
@@ -3437,6 +7123,7 @@ class Column(QWidget):
         self._row_resizing = False
         self._row_resize_start_y = 0
         self._row_resize_start_height = 0
+        self._row_resize_row_index = -1
         # Limite doItemsLayout() (recalcule le sizeHint() de CHAQUE ligne,
         # pas un simple repaint) a ~60/s pendant un glisser (largeur OU
         # hauteur de ligne) : sans ca, il se rejoue a CHAQUE evenement
@@ -3471,7 +7158,7 @@ class Column(QWidget):
         # appel plantait avec AttributeError (_group_header_widgets
         # manquant).
         if self._group_kind is not None:
-            self._group_header_widgets = (header, header_fill, self.title_label, self.count_label)
+            self._group_header_widgets = (header, header_fill, self.title_label)
             for w in self._group_header_widgets:
                 w.setMouseTracking(True)
                 w.installEventFilter(self)
@@ -3516,7 +7203,7 @@ class Column(QWidget):
             self._expanded_width = self.width()
             target = 0
         else:
-            target = self._expanded_width or self._user_width or col_width(self.column_title)
+            target = self._expanded_width or self._pin_column_width or self._user_width or col_width(self.style_title)
         if animate:
             self._animate_width(target)
         else:
@@ -3610,6 +7297,26 @@ class Column(QWidget):
         self._layout_throttle_timer.stop()
         self._layout_pending = False
         self.list.doItemsLayout()
+        if self.style_title == "Type":
+            # "Type" n'a jamais de bouton punaise (voir __init__) mais doit
+            # neanmoins s'enregistrer automatiquement — voir la remarque de
+            # l'utilisateur, "les seules colonnes dont les parametres sont
+            # enregistrees automatiquement sont : colonne type, colonnes
+            # focus, colonne inspecteur".
+            _persist_column_width(self.window(), "Type", self.width())
+        elif self._pin_active:
+            # Punaise ACTIVE (voir _toggle_pin) : la largeur qu'on vient de
+            # glisser a la main REMPLACE automatiquement celle figee — voir la
+            # remarque de l'utilisateur, "quand on modifie une valeur quand une
+            # punaise est pinnee, cette valeur doit etre enregistree
+            # automatiquement" (sans repincer/depincer a la main).
+            self._pin_column_width = self.width()
+            _update_layout_setting(self.directory, "pinned_column_width", self._pin_column_width)
+        # Sans punaise et hors "Type" : la largeur n'est PLUS persistee du
+        # tout (voir la remarque de l'utilisateur, "les hauteurs ne peuvent
+        # pas etre enregistrees sauf si on met la punaise" — meme principe
+        # etendu a la largeur) ; elle reste ajustable pour la session
+        # courante via self._user_width (voir refresh_all_columns).
 
     def _in_height_resize_zone(self, y: int) -> bool:
         """Bord BAS d'une colonne du groupe IN/OVER/OUT/LOGICIELS (voir
@@ -3660,7 +7367,14 @@ class Column(QWidget):
             return
         self._group_fill_height = fill
         if fill:
-            self.setMinimumHeight(GROUP_COLUMN_MIN_HEIGHT)
+            # 0 (PAS GROUP_COLUMN_MIN_HEIGHT) : voir la remarque de
+            # l'utilisateur, "la colonne du bas (out) a une hauteur
+            # minimum. supprime cette limite" — SEULE la colonne fill
+            # (toujours la DERNIERE de l'ordre courant) perd cette borne ;
+            # les AUTRES colonnes du groupe gardent la leur (voir
+            # _on_group_height_resized, `max(GROUP_COLUMN_MIN_HEIGHT, ...)`
+            # sur `new_above`, INCHANGE).
+            self.setMinimumHeight(0)
             self.setMaximumHeight(_WIDGET_SIZE_MAX)
         else:
             self.setMinimumHeight(0)
@@ -3676,13 +7390,19 @@ class Column(QWidget):
         """Vrai si `y` (coordonnee LOCALE au viewport de self.list) tombe
         dans la marge de redimensionnement entre 2 lignes, Ctrl enfonce —
         voir la remarque de l'utilisateur, "appuyer sur la touche controle
-        du clavier et cliquer entre deux lignes et glisser". Seules les
-        colonnes a hauteur de ligne UNIFORME/surchargeable (voir
-        _ROW_HEIGHT_RESIZABLE_TITLES) sont concernees — Logiciels/Contenu
-        melangent 2 hauteurs (voir col_plain_height) sans reglage unique a
-        ajuster."""
-        if self.column_title not in _ROW_HEIGHT_RESIZABLE_TITLES:
-            return False
+        du clavier et cliquer entre deux lignes et glisser ... doit etre
+        sur toutes les colonnes". Disponible sur TOUTE colonne (plus de
+        liste de titres fixe — anciennement limite a Type/Projets/Sous-
+        projet, ce qui excluait aussi bien Logiciels/Contenu que toute
+        colonne d'une chaine CONFIGUREE comme "test1"/"test2") : ajuste
+        TOUJOURS `COLUMN_SETTINGS[_col_key(title)]["height"]` (voir
+        row_resize_begin/update, deja generique), c'est-a-dire la hauteur
+        des lignes AVEC vignette/dossier — Logiciels/Contenu melangent 2
+        hauteurs (voir col_plain_height pour les lignes fichier SANS
+        apercu), mais cette 2e hauteur n'est simplement jamais celle que ce
+        geste modifie, aucune ambiguite reelle (voir _persist_row_height
+        pour la persistance, qui ecrit dans le defaut GENERAL pour ces
+        titres-la, faute d'onglet de surcharge dedie)."""
         if not (QApplication.keyboardModifiers() & Qt.ControlModifier):
             return False
         above = self.list.indexAt(QPoint(1, y - COLUMN_RESIZE_MARGIN))
@@ -3691,42 +7411,148 @@ class Column(QWidget):
         below = self.list.indexAt(QPoint(1, y + COLUMN_RESIZE_MARGIN))
         return not below.isValid() or below.row() != above.row()
 
-    def row_resize_begin(self, global_y: int):
+    def effective_row_height(self) -> int:
+        """Hauteur de ligne EFFECTIVE de cette colonne (voir sizeHint des
+        delegates) : la punaise (voir __init__/_pin_row_height/_toggle_pin)
+        d'ABORD si active (prioritaire sur tout le reste), sinon celle
+        propre a `self.directory` si elle a deja ete ajustee a la main
+        (voir __init__/_folder_row_height) — MEME mecanisme pour une
+        colonne du groupe IN/OVER/OUT/LOGICIELS que pour une colonne
+        normale depuis que ces 4 colonnes recoivent une identite de
+        dossier STABLE (voir PipelineBrowser.update_preview_stack,
+        add_group_column) et ne sont plus reconstruites a chaque
+        navigation — plus besoin d'un bucket separe (GROUP_ROW_HEIGHT,
+        supprime) qui les faisait toutes partager la MEME hauteur via le
+        style "Contenu" — voir la remarque de l'utilisateur, "elle
+        intervient sur plusieurs colonnes en meme temps" ; sinon la valeur
+        GENERALE du bucket de style (voir col_row_height/_col_key)."""
+        if self._pin_row_height is not None:
+            return scaled(self._pin_row_height)
+        if self._folder_row_height is not None:
+            return scaled(self._folder_row_height)
+        return col_row_height(self.style_title)
+
+    def group_content_height_hint(self) -> int:
+        """Hauteur NECESSAIRE pour afficher tout le contenu de cette
+        colonne SANS scroll (entete + toutes les lignes + espacement) —
+        voir PipelineBrowser._on_group_maximize, la remarque de
+        l'utilisateur, "agrandir au maximum ... et de minimiser les
+        autres au maximum en fonction de leur contenu". Bornee a
+        GROUP_COLUMN_MIN_HEIGHT/GROUP_COLUMN_MAX_HEIGHT (memes bornes que
+        le redimensionnement manuel, voir _on_group_height_resized) —
+        jamais 0 (colonne vide) ni demesuree (des centaines de lignes)."""
+        header_h = self.header.height()
+        if header_h <= 0:
+            header_h = scaled(int(column_style_for(self.style_title).get("header_height", HEADER_HEIGHT)))
+        count = self.list.count()
+        row_h = self.effective_row_height()
+        spacing = col_spacing(self.style_title)
+        content_h = count * row_h + max(0, count - 1) * spacing
+        return max(GROUP_COLUMN_MIN_HEIGHT, min(GROUP_COLUMN_MAX_HEIGHT, header_h + content_h + 8))
+
+    def row_resize_begin(self, global_y: int, local_y: int | None = None):
         self._row_resizing = True
         self._row_resize_start_y = global_y
-        self._row_resize_start_height = COLUMN_SETTINGS[_col_key(self.column_title)]["height"]
-        _show_resize_width(self, col_row_height(self.column_title))
+        # Ligne au-dessus du bord glisse (voir _in_row_resize_zone, MEME
+        # calcul) : memorisee ICI pour ancrer l'indicateur de hauteur juste
+        # SOUS elle pendant tout le glisser (voir _show_row_resize_
+        # indicator) — voir la remarque de l'utilisateur, "je veux que la
+        # position de l'indicateur de hauteur soit juste au dessous de la
+        # ligne que l'on redimensionne".
+        self._row_resize_row_index = -1
+        if local_y is not None:
+            above = self.list.indexAt(QPoint(1, local_y - COLUMN_RESIZE_MARGIN))
+            if above.isValid():
+                self._row_resize_row_index = above.row()
+        # MEME PRIORITE que effective_row_height() (punaise D'ABORD) : sans
+        # ca, demarrer un glisser sur une colonne PINNEE repartait d'une
+        # hauteur DIFFERENTE de celle reellement affichee (_folder_row_
+        # height/generale, jamais _pin_row_height), faisant "sauter" la
+        # ligne des le tout premier mouvement — voir la remarque de
+        # l'utilisateur, "le redimensionnement des lignes dans les
+        # colonnes se fait mal".
+        # MEME calcul pour une colonne du groupe IN/OVER/OUT/LOGICIELS que
+        # pour une colonne normale (voir effective_row_height, sa remarque) :
+        # ces 4 colonnes ont desormais une identite de dossier STABLE, plus
+        # besoin d'un chemin separe.
+        self._row_resize_start_height = (
+            self._pin_row_height if self._pin_row_height is not None
+            else self._folder_row_height if self._folder_row_height is not None
+            else COLUMN_SETTINGS[_col_key(self.style_title)]["height"])
+        _show_row_resize_indicator(self, self._row_resize_row_index, self.effective_row_height())
 
     def row_resize_update(self, global_y: int):
         delta_screen = global_y - self._row_resize_start_y
         delta_logical = round(delta_screen * 100 / max(1, ui_scale()))
         new_height = max(
             ROW_RESIZE_MIN_HEIGHT, min(ROW_RESIZE_MAX_HEIGHT, self._row_resize_start_height + delta_logical))
-        COLUMN_SETTINGS[_col_key(self.column_title)]["height"] = new_height
+        # Colonne de navigation REELLE OU colonne du groupe IN/OVER/OUT/
+        # LOGICIELS (voir effective_row_height, sa remarque) : la valeur
+        # choisie ici reste PROPRE a ce dossier (identite STABLE meme pour
+        # les 4 colonnes de groupe, voir update_preview_stack/
+        # add_group_column), JAMAIS ecrite dans le bucket de style GLOBAL
+        # (COLUMN_SETTINGS) partage par toutes les colonnes du meme style —
+        # voir la remarque de l'utilisateur, "jamais les mm suivant le sous
+        # dossier precedent"/"elle intervient sur plusieurs colonnes en
+        # meme temps" : une AUTRE colonne du meme style (naviguee vers un
+        # AUTRE dossier, ou un AUTRE kind du groupe) ne doit PAS bouger.
+        self._folder_row_height = new_height
+        # Punaise ACTIVE : _pin_row_height doit AUSSI suivre EN DIRECT (pas
+        # seulement au relachement, voir row_resize_end) — effective_row_
+        # height() le priorise sur _folder_row_height, le laisser fige
+        # pendant tout le glisser figeait l'AFFICHAGE (rien ne bougeait a
+        # l'ecran) meme si la valeur interne changeait bien — voir la
+        # remarque de l'utilisateur, "quand on modifie la hauteur de la
+        # ligne, elle ne se modifie pas en temps reelle tant que la
+        # punaise est activee".
+        if self._pin_active:
+            self._pin_row_height = new_height
         # doItemsLayout() (pas juste un repaint) : sizeHint() de CHAQUE ligne
         # depend de col_row_height(), qu'on vient de changer — un simple
         # viewport().update() garderait les anciennes tailles/positions.
         # _throttled_layout() (pas un appel direct) : voir son commentaire,
         # limite ce recalcul a ~60/s pendant le glisser.
         self._throttled_layout()
-        _show_resize_width(self, scaled(new_height))
-        _sync_settings_dialog_row_height(self.window(), self.column_title, new_height)
+        _show_row_resize_indicator(self, self._row_resize_row_index, new_height)
 
     def row_resize_end(self):
         self._row_resizing = False
-        _hide_resize_width(self)
+        _hide_resize_width(self, "row_height")
         # Purge immediate (voir resize_end, meme raison) : la hauteur du
         # tout dernier mouvement doit s'appliquer sans attendre le prochain
         # timeout de _layout_throttle_timer.
         self._layout_throttle_timer.stop()
         self._layout_pending = False
         self.list.doItemsLayout()
-        # Persiste sur le disque (voir _persist_row_height) : sans ca, la
-        # hauteur choisie ici ne survivrait pas a un redemarrage/reload, ni
-        # a un _apply_settings ulterieur (Colonnes > ... la reecraserait
-        # avec la valeur EFFECTIVE actuelle des reglages, voir
-        # apply_all_settings).
-        _persist_row_height(self.window(), self.column_title, COLUMN_SETTINGS[_col_key(self.column_title)]["height"])
+        if self.style_title == "Type":
+            # "Type" n'a jamais de bouton punaise mais doit neanmoins
+            # s'enregistrer automatiquement — voir la remarque de
+            # l'utilisateur, "les seules colonnes dont les parametres
+            # sont enregistrees automatiquement sont : colonne type,
+            # colonnes focus, colonne inspecteur". Pas de notion de
+            # dossier ici (voir _persist_row_height) : la valeur GLOBALE
+            # de style est mise a jour directement.
+            _persist_row_height(self.window(), "Type", self._folder_row_height)
+        elif self._pin_active:
+            # Punaise ACTIVE (voir _toggle_pin/resize_end, MEME raison) :
+            # persiste DANS CE DOSSIER (voir __init__/_folder_row_height,
+            # la remarque de l'utilisateur, "jamais les mm suivant le
+            # sous dossier precedent") et remplace automatiquement la
+            # valeur figee — voir la remarque de l'utilisateur, "quand
+            # on modifie une valeur quand une punaise est pinnee, cette
+            # valeur doit etre enregistree automatiquement". MEME chemin
+            # pour une colonne du groupe IN/OVER/OUT/LOGICIELS (identite
+            # de dossier STABLE, voir update_preview_stack).
+            _update_layout_setting(self.directory, "row_height", self._folder_row_height)
+            self._pin_row_height = self._folder_row_height
+            _update_layout_setting(self.directory, "pinned_row_height", self._pin_row_height)
+        # Sans punaise et hors "Type" : la hauteur n'est PLUS persistee
+        # (voir la remarque de l'utilisateur, "les hauteurs ne peuvent
+        # pas etre enregistrees sauf si on met la punaise") ; elle reste
+        # ajustable pour la session courante via self._folder_row_height,
+        # qui persiste desormais avec l'INSTANCE (les 4 colonnes de groupe
+        # ne sont plus reconstruites a chaque navigation, voir
+        # update_preview_stack).
 
     def eventFilter(self, obj, event):
         etype = event.type()
@@ -3794,8 +7620,25 @@ class Column(QWidget):
                 return True
             obj.setCursor(Qt.SizeHorCursor if self._in_resize_zone(local_point.x()) else Qt.ArrowCursor)
         elif etype == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+            # Badge numerote (voir _step_badge_rect/_row_preview_left_x/
+            # ProjectTileDelegate.paint, project_step_count) : SEULEMENT sur
+            # "Projets", avant tout autre test de cette branche (desormais
+            # juste AVANT l'apercu, voir _paint_unified_row, PLUS au bord
+            # haut-droit de la ligne — meme calcul de position ici, pour
+            # que le hit-test reste synchronise avec le dessin) — consomme
+            # le clic (return True), aucune selection/navigation ne doit se
+            # declencher.
+            if obj is self.list.viewport() and self.column_title == "Projets":
+                pos = event.position().toPoint()
+                idx = self.list.indexAt(pos)
+                if idx.isValid() and bool(idx.data(ROLE_ISDIR)):
+                    row_rect = self.list.visualRect(idx)
+                    preview_left = _row_preview_left_x(row_rect, column_style_for(self.style_title))
+                    if _step_badge_rect(row_rect, preview_left).contains(pos):
+                        self._open_column_config(Path(idx.data(ROLE_PATH)))
+                        return True
             if obj is self.list.viewport() and self._in_row_resize_zone(int(event.position().y())):
-                self.row_resize_begin(event.globalPosition().toPoint().y())
+                self.row_resize_begin(event.globalPosition().toPoint().y(), int(event.position().y()))
                 return True
             local_point = obj.mapTo(self, event.position().toPoint())
             if self._in_height_resize_zone(local_point.y()):
@@ -3804,6 +7647,33 @@ class Column(QWidget):
             if self._in_resize_zone(local_point.x()):
                 self.resize_begin(event.globalPosition().toPoint().x())
                 return True
+        elif etype == QEvent.MouseButtonPress and event.button() == Qt.RightButton and obj is self.list.viewport():
+            # Consomme le clic DROIT AVANT qu'il n'atteigne
+            # QAbstractItemView.mousePressEvent (comportement Qt PAR
+            # DEFAUT sinon : TOUT clic, gauche OU droit, change la
+            # selection COURANTE de l'item sous le curseur) — voir la
+            # remarque de l'utilisateur, "absolument rien ne se passe,
+            # aucun menu n'apparait du tout" (clic droit sur un fichier/
+            # dossier des colonnes IN/OVER/OUT/LOGICIELS) : CONFIRME —
+            # pour une colonne du groupe (group_kind is not None), un
+            # simple clic droit sur un DOSSIER changeait la selection,
+            # declenchant Column._on_current_changed -> self.selected ->
+            # PipelineBrowser._on_group_item_selected -> _open_group_
+            # folder -> update_preview_stack(), qui DETRUIT ET RECONSTRUIT
+            # tout le groupe — Y COMPRIS CETTE COLONNE ELLE-MEME — AVANT
+            # meme que le QContextMenuEvent (qui suit normalement le
+            # MouseButtonPress droit, PAS lie a lui) n'ait la moindre
+            # chance d'etre livre au widget entre-temps deja detruit : le
+            # clic droit "ne faisait absolument rien" de visible. Retourner
+            # True ICI empeche desormais tout changement de selection au
+            # clic droit (comportement standard des explorateurs de
+            # fichiers, de toute facon plus coherent que le declenchement
+            # de navigation involontaire que ca provoquait deja, sans
+            # degat visible, sur les colonnes NORMALES) — le menu
+            # contextuel (voir customContextMenuRequested/_on_context_menu,
+            # policy Qt.CustomContextMenu deja posee sur self.list) suit
+            # ensuite normalement, sans aucun rapport avec ce MousePress.
+            return True
         elif etype == QEvent.MouseButtonRelease and (self._resizing or self._row_resizing or self._group_height_resizing):
             if self._row_resizing:
                 self.row_resize_end()
@@ -3815,6 +7685,23 @@ class Column(QWidget):
         elif etype == QEvent.Leave and not (self._resizing or self._row_resizing or self._group_height_resizing):
             obj.unsetCursor()
         return False
+
+    def _open_column_config(self, project_path: Path):
+        """Ouvre ColumnConfigDialog pour `project_path` (clic sur le badge
+        numerote, voir eventFilter) — a la fermeture par Enregistrer :
+        `refresh()` (le badge affiche le nouveau project_step_count) et, si
+        `project_path` est ACTUELLEMENT selectionne dans cette colonne,
+        re-emet `selected` pour forcer PipelineBrowser.on_selected a
+        recharger la config et reconstruire la chaine avec les nouveaux
+        niveaux — sans ca, un projet deja ouvert garderait son ancienne
+        chaine jusqu'a un clic explicite ailleurs puis retour."""
+        config = load_project_columns(project_path)
+        dlg = ColumnConfigDialog(project_path, config, self.window())
+        if dlg.exec() == QDialog.Accepted:
+            self.refresh()
+            current = self.list.currentItem()
+            if current is not None and Path(current.data(ROLE_PATH)) == project_path:
+                self.selected.emit(self, project_path)
 
     def _find_group_drop_target(self, global_pos: QPoint) -> "Column | None":
         """Colonne du groupe IN/OVER/OUT/LOGICIELS (voir group_kind) dont le
@@ -3902,19 +7789,80 @@ class Column(QWidget):
             entries = []
             for i, source in enumerate(self._source_dirs):
                 label = self._source_labels[i] if self._source_labels else None
-                entries.extend((path, label) for path in list_entries(source))
+                # Position de CETTE source dans la chaine (2 = Type, voir
+                # ROLE_SOURCE_STEP) : PAS d'etiquette -> pas de palier non
+                # plus (LOGICIELS, source_labels=None).
+                step = (i + 2) if self._source_labels else None
+                entries.extend((path, label, step, False) for path in list_entries(source))
+            if self._only_recognized_software:
+                # Uniquement des REPERTOIRES DE LOGICIEL reconnus (voir
+                # software_icon_key/app_style.custom_softwares) — pas de
+                # fichier isole ni de dossier non reconnu qui trainerait
+                # dans le dossier de travail — voir la remarque de
+                # l'utilisateur, "dans la colonne logiciel, il ne doit y
+                # avoir que des repertoires logiciel".
+                entries = [
+                    (path, label, step, is_shortcut) for path, label, step, is_shortcut in entries
+                    if path.is_dir() and software_icon_key(path.name) is not None
+                ]
         else:
-            # Colonnes a vignettes (Projets/Sous-projet) : in/over/out ne
-            # sont jamais des lignes normales, ils deviennent des colonnes
-            # dediees (voir IN/OVER/OUT ci-dessus, STATUS_FOLDERS).
-            exclude = _STATUS_FOLDER_SET if self.has_thumbnails else None
-            entries = [(path, None) for path in list_entries(self.directory, exclude)]
-        for path, label in entries:
+            # Colonnes REELLES (Type/Projets/Sous-projet/toute colonne "de
+            # set" configuree, focus ou non) : in/over/out ne sont jamais
+            # des lignes normales, ils deviennent des colonnes dediees (voir
+            # IN/OVER/OUT ci-dessus, STATUS_FOLDERS) — INCONDITIONNEL (plus
+            # seulement self.has_thumbnails) : voir la remarque de
+            # l'utilisateur, "si a l'interieur des colonnes de set il y a
+            # un repertoire in out ou over, il n'apparaisse pas dans la
+            # colonne concernee".
+            entries = [(path, None, None, False) for path in list_entries(self.directory, _STATUS_FOLDER_SET)]
+            # Raccourcis (voir load_shortcuts/ROLE_IS_SHORTCUT, Column._on_
+            # context_menu "Ajouter un raccourci") : dossiers d'AILLEURS sur
+            # le disque, affiches comme s'ils etaient physiquement ICI —
+            # propres a CE dossier (jamais pour une colonne du groupe IN/
+            # OVER/OUT/LOGICIELS, source_dirs deja exclu par ce `else`) —
+            # voir la remarque de l'utilisateur, "faire comme si il etait
+            # au meme endroit que les autres repertoires de l'emplacement
+            # actuel". Cible manquante (dossier deplace/supprime depuis) :
+            # ignoree silencieusement, pas d'entree fantome.
+            for shortcut in load_shortcuts(self.directory):
+                target = Path(shortcut.get("target", ""))
+                if target.is_dir():
+                    entries.append((target, None, None, True))
+        # Filtres de contenu (voir __init__ show_dirs/show_files/omit_dirs/
+        # omit_files, ColumnConfigDialog) : SEULEMENT pour un niveau de la
+        # chaine CONFIGUREE — toute colonne NORMALE garde ses valeurs par
+        # defaut (True/True/vide), donc ce bloc ne change RIEN pour elle
+        # (le `if` court-circuite direct au cas commun, entries INCHANGE).
+        if (not self._show_dirs or not self._show_files or self._omit_dirs or self._omit_files
+                or GLOBAL_OMIT_FILE_NAMES or GLOBAL_OMIT_FILE_EXTENSIONS):
+            filtered = []
+            for path, label, step, is_shortcut in entries:
+                is_dir = path.is_dir()
+                if is_dir and not self._show_dirs:
+                    continue
+                if not is_dir and not self._show_files:
+                    continue
+                name_lower = path.name.lower()
+                if is_dir and name_lower in self._omit_dirs:
+                    continue
+                if not is_dir and name_lower in self._omit_files:
+                    continue
+                if not is_dir and (
+                    name_lower in GLOBAL_OMIT_FILE_NAMES
+                    or any(name_lower.endswith("." + extension)
+                           for extension in GLOBAL_OMIT_FILE_EXTENSIONS)
+                ):
+                    continue
+                filtered.append((path, label, step, is_shortcut))
+            entries = filtered
+        for path, label, step, is_shortcut in entries:
             item = QListWidgetItem(path.name)
             item.setData(ROLE_PATH, str(path))
             is_dir = path.is_dir()
             item.setData(ROLE_ISDIR, is_dir)
             item.setData(ROLE_SOURCE_LABEL, label)
+            item.setData(ROLE_SOURCE_STEP, step)
+            item.setData(ROLE_IS_SHORTCUT, is_shortcut)
             meta = ""
             if not is_dir:
                 try:
@@ -3928,7 +7876,6 @@ class Column(QWidget):
             self.list.addItem(item)
             if current and path == current:
                 self.list.setCurrentItem(item)
-        self.count_label.setText(str(len(entries)))
         self.list.blockSignals(False)
 
     def relayout(self, do_layout: bool = True):
@@ -3965,8 +7912,8 @@ class Column(QWidget):
         # voir la remarque de l'utilisateur, "je veux que tu en fasse de
         # meme pour toute les colonnes de l'appli. les settings doivent
         # refletter a 100% ce qui se passe dans l'appli".
-        self.header_fill.setStyleSheet(column_header_qss("ColumnHeader", self.column_title))
-        frame = column_frame_style(self.column_title, self._suppress_left())
+        self.header_fill.setStyleSheet(column_header_qss("ColumnHeader", self.style_title))
+        frame = column_frame_style(self.style_title, self._suppress_left())
         # scaled() ICI, sur le MEME dict que celui repasse tel quel au
         # masque (voir _update_card_mask, qui relit self.card._radius
         # plutot que de recalculer independamment) : sans ca, peinture et
@@ -3982,13 +7929,27 @@ class Column(QWidget):
         self.card.setFrameStyle(
             frame["bg"], scaled_radius, frame["enabled"], frame["colors"], scaled(frame["thickness"], 0))
         self._update_card_mask()
-        self.title_label.setStyleSheet(f"color: {role_color('colhead', C['header'])}; background: transparent;")
-        self.count_label.setStyleSheet(f"color: {role_color('info', C['count'])}; background: transparent;")
+        # PAS de reapplication de self.title_label ici (BUG corrige, voir la
+        # remarque de l'utilisateur, "le titre dans l'entete ne fonctionne
+        # pas dans les settings") : cette ligne existait AVANT le systeme de
+        # surcharge par titre (header_font_color/family/bold/italic/taille,
+        # voir refresh_header ci-dessous) et l'ecrasait INCONDITIONNELLEMENT
+        # avec la couleur GENERIQUE role_color('colhead', ...) — refresh_
+        # colors() est TOUJOURS appelee APRES refresh_header() (voir
+        # PipelineBrowser._apply_settings/add_column/Column.__init__), donc
+        # toute surcharge de "Couleur du titre" pour CETTE colonne (Colonnes
+        # > Type/Projets/.../Logiciels/IN/OVER/OUT/Inspecteur) etait
+        # silencieusement annulee des le refresh SUIVANT. refresh_header()
+        # gere deja CE style correctement (voir sa remarque de tete, `s =
+        # column_style_for(self.style_title)`), y compris le cas SANS
+        # surcharge (repli sur la valeur GENERALE de "header_font_color",
+        # deja identique par defaut a l'ancienne couleur fixe ici) : rien
+        # d'autre a faire.
 
     def _suppress_left(self) -> bool:
         """Voir _column_suppress_left (module-level, factorisee pour etre
         partagee avec PreviewColumn)."""
-        return _column_suppress_left(self, self.column_title)
+        return _column_suppress_left(self, self.style_title)
 
     def refresh_header(self):
         """Reapplique hauteur/padding/police de l'entete (voir HEADER_HEIGHT/
@@ -4000,15 +7961,44 @@ class Column(QWidget):
         Style EFFECTIF de CETTE colonne (voir app_style.column_style_for —
         general, ou surcharge Colonnes > Type pour "Type") plutot que les
         globals HEADER_HEIGHT/HEADER_PADDING partages a l'ancienne."""
-        s = column_style_for(self.column_title)
+        s = column_style_for(self.style_title)
         self.header.setVisible(bool(s.get("header_visible", True)))
         height = int(s.get("header_height", HEADER_HEIGHT))
         padding = int(s.get("header_padding", HEADER_PADDING))
         self.header.setFixedHeight(scaled(height))
         pad = scaled(padding, 0)   # 0 = valeur reglee valide (voir scaled)
         self.header.layout().setContentsMargins(pad, pad, pad, pad)
-        self.title_label.setFont(role_font("colhead", 10, 600, tracking=0.9, caps=True))
-        self.count_label.setFont(role_font("info", 10, 400))
+        # Police/gras/couleur/hauteur du titre (voir COLUMN_FRAME_KEYS/
+        # app_style.column_style_for, Settings > General > Colonnes >
+        # Entetes — OU sa surcharge Colonnes > Type/Projets/Sous-projets,
+        # voir la remarque de l'utilisateur, "mets a jour egalement les
+        # colonnes overidees ... avec tous les nouveaux parametres de
+        # general") — "" (Systeme, aucune surcharge choisie) retombe
+        # EXACTEMENT sur le role "colhead" d'origine (_resolve_font_family,
+        # fallback_role) : comportement INCHANGE tant que l'utilisateur ne
+        # personnalise pas.
+        title_weight = 700 if s.get("header_font_bold", True) else 500
+        title_size = int(s.get("header_font_size", 10))
+        title_italic = bool(s.get("header_font_italic", False))
+        title_smoothing = (
+            s.get("header_font_antialias_override", "current")
+            if s.get("header_font_antialias_override_enabled") else "current")
+        title_family = _resolve_font_family(
+            (s.get("header_font_family") or "").strip(), title_size, title_weight, fallback_role="colhead")
+        self.title_label.setFont(font(
+            title_size, title_weight, tracking=0.9, caps=True, family=title_family,
+            smoothing=title_smoothing, italic=title_italic))
+        self.title_label.setStyleSheet(
+            f"color: {resolve_color_ref(s.get('header_font_color', '#9aa1a7'))}; background: transparent;")
+        # Padding droit des icones (voir __init__, bouton punaise) :
+        # marge droite DIRECTEMENT pilotee par ce reglage (PAS 10 + la
+        # valeur — voir la remarque de l'utilisateur, "je veux que la
+        # valeur 0 soit tres collee contre le bord de la colonne") —
+        # seulement si une icone existe reellement sur cette colonne
+        # (jamais "Type"/les colonnes Focus, voir __init__).
+        if self._pin_btn is not None:
+            self.header_fill.layout().setContentsMargins(
+                10, 0, int(s.get("header_icon_right_padding", 0)), 0)
         # Espace avant le 1er item (voir __init__/self.header_gap_spacer,
         # Colonnes > Texte) : cle "item_*", donc seulement definie pour
         # "Type" (voir app_style.column_style_for) — 0 pour toute autre
@@ -4052,7 +8042,7 @@ class Column(QWidget):
         # droite — le double de la valeur reglee — voir la remarque de
         # l'utilisateur, "la distance entre 2 colonnes doit etre la valeur
         # du padding et non celle du padding*2".
-        col_pad = dict(column_padding_for(self.column_title))
+        col_pad = dict(column_padding_for(self.style_title))
         if self._suppress_left():
             col_pad["left"] = 0
         self._outer_layout.setContentsMargins(
@@ -4060,6 +8050,42 @@ class Column(QWidget):
             scaled(col_pad["right"], 0), scaled(col_pad["bottom"], 0),
         )
         self._update_card_mask()
+
+    def _refresh_pin_icon(self):
+        """Applique l'icone punaise (01 par defaut, 02 si active, voir
+        _toggle_pin/_pin_icon_pixmap) — no-op sur "Type" (pas de bouton,
+        voir __init__)."""
+        if self._pin_btn is not None:
+            self._pin_btn.setIcon(QIcon(_pin_icon_pixmap(self._pin_active, 14)))
+
+    def _toggle_pin(self):
+        """Punaise d'en-tete — voir __init__/effective_row_height, la
+        remarque de l'utilisateur, "punaise_02.png lorsque l'on clique
+        dessus, les valeurs de dimensions de colonnes et de lignes sont
+        alors overridees par les valeurs du json se trouvant a la base du
+        repertoire en cours ... lorsque l'on rappuie sur cette icone,
+        l'icone redevient punaise_01.png et prend en compte les valeurs
+        par defaut des settings". Desactiver NE SUPPRIME PAS les valeurs
+        enregistrees (juste `pinned: False`) : rappuyer plus tard restaure
+        exactement la largeur/hauteur figees precedemment, sans avoir a
+        redimensionner de nouveau a la main."""
+        if self._pin_active:
+            self._pin_active = False
+            self._pin_column_width = None
+            self._pin_row_height = None
+            _update_layout_setting(self.directory, "pinned", False)
+        else:
+            self._pin_active = True
+            self._pin_column_width = self.width()
+            self._pin_row_height = self.effective_row_height()
+            data = load_layout_settings(self.directory)
+            data["pinned"] = True
+            data["pinned_column_width"] = self._pin_column_width
+            data["pinned_row_height"] = self._pin_row_height
+            save_layout_settings(self.directory, data)
+        self._refresh_pin_icon()
+        self.setFixedWidth(self._pin_column_width or self._user_width or col_width(self.style_title))
+        self.list.doItemsLayout()
 
     def _update_card_mask(self):
         """Decoupe VRAIMENT self.card (fond + TOUS ses enfants — entete ET
@@ -4172,22 +8198,73 @@ class Column(QWidget):
             menu = QMenu(self)
             menu.setFont(font(11, 400))
             act_new_folder = menu.addAction("Nouveau dossier")
+            act_new_text_file = menu.addAction("Nouveau document texte") if self._show_files else None
+            act_add_shortcut = menu.addAction("Ajouter un raccourci...")
             act_paste = None
             if QApplication.clipboard().mimeData().hasUrls():
                 menu.addSeparator()
                 act_paste = menu.addAction("Coller")
             chosen = menu.exec(self.list.mapToGlobal(pos))
             if chosen is act_new_folder:
-                self._create_folder()
+                # QTimer.singleShot(0, ...) (PAS un appel direct) : ouvrir
+                # une QInputDialog SYNCHRONE juste apres la fermeture du
+                # QMenu (meme pile d'appel, meme evenement souris) lui
+                # laissait parfois recevoir le RELACHEMENT de CE MEME clic
+                # (celui qui vient de fermer le menu), la refermant aussitot
+                # — voir la remarque de l'utilisateur, "des fois (notamment
+                # quand on vient juste de creer un repertoire) la petite
+                # fenetre qui demande le nom du repertoire apparait et
+                # disparait aussitot". Reporter d'un tour de boucle
+                # d'evenements laisse ce relachement etre traite normalement
+                # AVANT que la boite de dialogue n'existe.
+                QTimer.singleShot(0, self._create_folder)
+            elif chosen is act_new_text_file:
+                QTimer.singleShot(0, self._create_text_file)
+            elif chosen is act_add_shortcut:
+                # 150ms (PAS 0) : ce menu ouvre un QFileDialog (via
+                # _add_shortcut), pas seulement une QInputDialog — voir
+                # _prompt_change_thumbnail, la MEME remarque ("un simple
+                # tour de boucle Qt ne suffit pas a laisser Windows
+                # relacher completement le grab souris/clavier NATIF du
+                # menu contextuel tout juste ferme").
+                QTimer.singleShot(150, self._add_shortcut)
             elif act_paste is not None and chosen is act_paste:
                 self._paste_items()
             return
         path = Path(item.data(ROLE_PATH))
+        if item.data(ROLE_IS_SHORTCUT):
+            # Menu REDUIT (voir ROLE_IS_SHORTCUT) : "Renommer"/vignette
+            # agiraient par erreur sur la VRAIE cible, situee ailleurs sur
+            # le disque — seul "Retirer le raccourci" retire l'ENTREE,
+            # jamais le dossier cible lui-meme.
+            menu = QMenu(self)
+            menu.setFont(font(11, 400))
+            act_open = menu.addAction("Ouvrir")
+            act_reveal = menu.addAction("Afficher dans l'explorateur")
+            menu.addSeparator()
+            act_copy_path = menu.addAction("Copier le chemin")
+            menu.addSeparator()
+            act_remove_shortcut = menu.addAction("Retirer le raccourci")
+            chosen = menu.exec(self.list.mapToGlobal(pos))
+            if chosen is act_open:
+                self.activated.emit(path)
+            elif chosen is act_reveal:
+                reveal_in_file_manager(path)
+            elif chosen is act_copy_path:
+                QApplication.clipboard().setText(str(path))
+            elif chosen is act_remove_shortcut:
+                remove_shortcut(self.directory, path)
+                self.refresh()
+            return
         menu = QMenu(self)
         menu.setFont(font(11, 400))
         act_open = menu.addAction("Ouvrir")
         act_rename = menu.addAction("Renommer")
         act_reveal = menu.addAction("Afficher dans l'explorateur")
+        act_render_preview = None
+        if path.is_file() and path.suffix.lower() in RENDERABLE_3D_EXTENSIONS:
+            menu.addSeparator()
+            act_render_preview = menu.addAction("Générer le rendu de l'aperçu")
         act_change_thumb = None
         act_capture_thumb = None
         act_reset_thumb = None
@@ -4210,18 +8287,45 @@ class Column(QWidget):
             if has_custom:
                 act_reset_thumb = menu.addAction("Reinitialiser l'image")
 
-        act_change_icon = None
-        act_capture_icon = None
-        act_reset_icon = None
-        software_key = None
-        if self.column_title == SOFTWARE_COLUMN_LABEL and item.data(ROLE_ISDIR):
-            software_key = software_icon_key(path.name)
-            if software_key is not None:
-                menu.addSeparator()
-                act_change_icon = menu.addAction("Changer l'icone du logiciel...")
-                act_capture_icon = menu.addAction("Capturer une zone d'ecran (icone)...")
-                if custom_software_icon_path(software_key).is_file():
-                    act_reset_icon = menu.addAction("Reinitialiser l'icone du logiciel")
+        menu.addSeparator()
+        # "Afficher l'apercu"/"Afficher l'icone"/"Taille de l'icone" (voir
+        # __init__ _show_icon_override/_show_preview_override/
+        # _icon_size_override, _paint_unified_row) — valeur de depart =
+        # celle EFFECTIVEMENT affichee (override deja actif, sinon le
+        # reglage GENERAL) ; toute modification s'applique tout de suite
+        # (session courante), et n'est ENREGISTREE (.pipeline_layout.json)
+        # que si la punaise est active — voir la remarque de l'utilisateur,
+        # "la valeur doit etre celle par defaut, et s'il y a changement
+        # elle doit etre enregistree quand la colonne est pinnee
+        # seulement".
+        current_icon_visible = (
+            self._show_icon_override if self._show_icon_override is not None
+            else bool(column_style_for(self.style_title).get("item_icon_enabled", True)))
+        current_preview_visible = (
+            self._show_preview_override if self._show_preview_override is not None else True)
+        act_show_icon = menu.addAction("Afficher l'icone")
+        act_show_icon.setCheckable(True)
+        act_show_icon.setChecked(current_icon_visible)
+        act_show_icon.toggled.connect(self._set_show_icon_override)
+        act_show_preview = menu.addAction("Afficher l'apercu")
+        act_show_preview.setCheckable(True)
+        act_show_preview.setChecked(current_preview_visible)
+        act_show_preview.toggled.connect(self._set_show_preview_override)
+
+        default_icon_size = int(column_style_for(self.style_title).get("item_icon_size") or 0) or 32
+        self._add_context_slider(
+            menu, "Taille de l'icone", self._icon_size_override or default_icon_size,
+            8, 128, self._set_icon_size_override)
+
+        default_icon_pad = int(column_style_for(self.style_title).get("item_icon_padding_left") or 0)
+        self._add_context_slider(
+            menu, "Padding gauche de l'icone", self._icon_padding_left_override or default_icon_pad,
+            0, 64, self._set_icon_padding_left_override)
+
+        default_text_pad = int(column_style_for(self.style_title).get("item_text_padding") or 8)
+        self._add_context_slider(
+            menu, "Padding gauche du texte", self._text_padding_left_override or default_text_pad,
+            0, 64, self._set_text_padding_left_override)
 
         menu.addSeparator()
         act_copy_file = menu.addAction("Copier")
@@ -4233,24 +8337,94 @@ class Column(QWidget):
             self._rename_item(path)
         elif chosen is act_reveal:
             reveal_in_file_manager(path)
+        elif act_render_preview is not None and chosen is act_render_preview:
+            try:
+                mtime = path.stat().st_mtime
+                path_key = str(path)
+                _MANUAL_3D_PREVIEW_REQUESTS.add(path_key)
+                _STALE_PREVIEW_PATHS.add(path_key)
+                self.selected.emit(self, path)
+            except OSError:
+                pass
         elif act_change_thumb is not None and chosen is act_change_thumb:
             self._change_thumbnail(path)
         elif act_capture_thumb is not None and chosen is act_capture_thumb:
             self._capture_thumbnail(path)
         elif act_reset_thumb is not None and chosen is act_reset_thumb:
             self._reset_thumbnail(path)
-        elif act_change_icon is not None and chosen is act_change_icon:
-            self._change_software_icon(software_key)
-        elif act_capture_icon is not None and chosen is act_capture_icon:
-            self._capture_software_icon(software_key)
-        elif act_reset_icon is not None and chosen is act_reset_icon:
-            self._reset_software_icon(software_key)
         elif chosen is act_copy_file:
             mime = QMimeData()
             mime.setUrls([QUrl.fromLocalFile(str(path))])
             QApplication.clipboard().setMimeData(mime)
         elif chosen is act_copy_path:
             QApplication.clipboard().setText(str(path))
+
+    def _add_context_slider(self, menu: QMenu, label_text: str, value: int, vmin: int, vmax: int, on_change):
+        """Ligne "slider + valeur px en temps reel" du menu contextuel
+        (voir _on_context_menu, "Taille de l'icone"/"Padding gauche de
+        l'icone"/"Padding gauche du texte") — reutilise TEL QUEL le
+        _SliderField de la fenetre de parametres (slider + boite de
+        saisie px, deja avec sa valeur en temps reel) — voir la remarque
+        de l'utilisateur, "je veux que le style [du slider] soit celui des
+        settings" (remplace l'ancien QSlider habille a la main). Import
+        DIFFERE (jamais au niveau module, meme raison que settings_window
+        important pipeline_browser) : sans danger ici, appele bien apres
+        que les deux modules soient charges."""
+        import settings_window as sw
+
+        action = QWidgetAction(menu)
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(12, 4, 12, 4)
+        layout.setSpacing(8)
+        label = QLabel(label_text)
+        label.setFont(font(11, 400))
+        field = sw._SliderField(vmin, vmax, value, slider_width=120, box_width=60)
+        field.valueChanged.connect(on_change)
+        layout.addWidget(label)
+        layout.addWidget(field, 1)
+        action.setDefaultWidget(widget)
+        menu.addAction(action)
+
+    def _should_autosave_context_override(self) -> bool:
+        """Vrai si CE reglage du menu contextuel doit s'enregistrer SANS
+        punaise — "Type" n'a jamais de bouton punaise (voir __init__) mais
+        doit neanmoins s'enregistrer automatiquement, comme sa largeur/sa
+        hauteur de ligne (voir _persist_column_width/row_resize_end) — voir
+        la remarque de l'utilisateur, "tous les parametres du menu
+        contextuel ne s'enregistrent pas automatiquement dans la colonne
+        de type"."""
+        return self._pin_active or self.style_title == "Type"
+
+    def _set_show_icon_override(self, value: bool):
+        self._show_icon_override = value
+        self.list.viewport().update()
+        if self._should_autosave_context_override():
+            _update_layout_setting(self.directory, "show_icon", value)
+
+    def _set_show_preview_override(self, value: bool):
+        self._show_preview_override = value
+        self.list.viewport().update()
+        if self._should_autosave_context_override():
+            _update_layout_setting(self.directory, "show_preview", value)
+
+    def _set_icon_size_override(self, value: int):
+        self._icon_size_override = value
+        self.list.viewport().update()
+        if self._should_autosave_context_override():
+            _update_layout_setting(self.directory, "icon_size", value)
+
+    def _set_icon_padding_left_override(self, value: int):
+        self._icon_padding_left_override = value
+        self.list.viewport().update()
+        if self._should_autosave_context_override():
+            _update_layout_setting(self.directory, "icon_padding_left", value)
+
+    def _set_text_padding_left_override(self, value: int):
+        self._text_padding_left_override = value
+        self.list.viewport().update()
+        if self._should_autosave_context_override():
+            _update_layout_setting(self.directory, "text_padding_left", value)
 
     def _create_folder(self):
         name, ok = QInputDialog.getText(
@@ -4264,12 +8438,39 @@ class Column(QWidget):
         if any(ch in name for ch in '\\/:*?"<>|'):
             QMessageBox.warning(self, "Nouveau dossier", "Le nom contient des caracteres interdits.")
             return
-        new_path = self.directory / name
+        target_dir = self.directory
+        if self._source_dirs is not None and self._source_labels and len(self._source_dirs) > 1:
+            # Colonne IN/OVER/OUT (contenu FUSIONNE de plusieurs colonnes de
+            # set, voir __init__/PipelineBrowser.update_preview_stack) :
+            # `self.directory` n'est qu'un repli parmi plusieurs sources
+            # possibles — demande a QUEL NIVEAU (quelle colonne de set
+            # actuellement affichee) ce nouveau dossier doit reellement
+            # etre cree sur le disque, plutot que de choisir silencieusement
+            # le premier — voir la remarque de l'utilisateur, "je veux
+            # pouvoir creer des repertoires dans les colonnes in over et
+            # out. quand c'est le cas, je veux que le soft me demande a
+            # quel niveau (quelle colonne) il doit les enregistrer".
+            choice, ok_level = QInputDialog.getItem(
+                self, "Nouveau dossier", "A quel niveau enregistrer ce dossier ?",
+                self._source_labels, 0, False,
+            )
+            if not ok_level:
+                return
+            target_dir = self._source_dirs[self._source_labels.index(choice)]
+        new_path = target_dir / name
         if new_path.exists():
             QMessageBox.warning(self, "Nouveau dossier", f"« {name} » existe deja.")
             return
         try:
-            new_path.mkdir()
+            # parents=True : `target_dir` (repli sur un NIVEAU DE SET
+            # choisi, voir ci-dessus) peut lui-meme ne pas encore exister
+            # (in/over/out jamais cree pour ce niveau precis) — voir la
+            # remarque de l'utilisateur, capture a l'appui, "il y a un
+            # probleme quand on cree un repertoire alors que la hierarchie
+            # n'est pas encore creee ... que toute la hierarchie soit
+            # creee en meme temps que le repertoire" (WinError 3, "chemin
+            # d'acces introuvable").
+            new_path.mkdir(parents=True)
         except OSError as exc:
             QMessageBox.warning(self, "Nouveau dossier", f"Impossible de creer le dossier :\n{exc}")
             return
@@ -4280,145 +8481,93 @@ class Column(QWidget):
                 self.list.setCurrentItem(it)
                 break
 
-    def _change_thumbnail(self, path: Path):
-        chosen, _ = QFileDialog.getOpenFileName(
-            self, "Choisir une image", str(path),
-            "Images (*.png *.jpg *.jpeg *.bmp *.webp *.gif *.tif *.tiff)",
+    def _create_text_file(self):
+        """"Nouveau document texte" (voir _on_context_menu) : cree un fichier
+        .txt vierge, MEME mecanique que _create_folder (nom/caracteres
+        interdits/choix du niveau pour une colonne IN/OVER/OUT fusionnee/
+        creation des dossiers parents manquants) — voir la remarque de
+        l'utilisateur, "dans les colonnes ou le texte est permis, merci
+        d'ajouter une option 'nouveau document texte' qui permet de creer
+        un fichier txt vierge"."""
+        name, ok = QInputDialog.getText(
+            self, "Nouveau document texte", "Nom du fichier :", QLineEdit.Normal, "Nouveau document texte"
         )
+        if not ok:
+            return
+        name = name.strip()
+        if not name:
+            return
+        if any(ch in name for ch in '\\/:*?"<>|'):
+            QMessageBox.warning(self, "Nouveau document texte", "Le nom contient des caracteres interdits.")
+            return
+        if not name.lower().endswith(".txt"):
+            name += ".txt"
+        target_dir = self.directory
+        if self._source_dirs is not None and self._source_labels and len(self._source_dirs) > 1:
+            choice, ok_level = QInputDialog.getItem(
+                self, "Nouveau document texte", "A quel niveau enregistrer ce fichier ?",
+                self._source_labels, 0, False,
+            )
+            if not ok_level:
+                return
+            target_dir = self._source_dirs[self._source_labels.index(choice)]
+        new_path = target_dir / name
+        if new_path.exists():
+            QMessageBox.warning(self, "Nouveau document texte", f"« {name} » existe deja.")
+            return
+        try:
+            new_path.parent.mkdir(parents=True, exist_ok=True)
+            new_path.write_text("", encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.warning(self, "Nouveau document texte", f"Impossible de creer le fichier :\n{exc}")
+            return
+        self.refresh()
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            if it.data(ROLE_PATH) == str(new_path):
+                self.list.setCurrentItem(it)
+                break
+
+    def _add_shortcut(self):
+        """"Ajouter un raccourci" (voir _on_context_menu, ROLE_IS_SHORTCUT/
+        load_shortcuts/add_shortcut) : va chercher un repertoire A
+        N'IMPORTE QUEL autre emplacement du disque et l'affiche comme s'il
+        etait physiquement dans CE dossier — voir la remarque de
+        l'utilisateur, "aller chercher un repertoire dans un emplacement
+        autre ... et de faire comme si il etait au meme endroit que les
+        autres repertoires de l'emplacement actuel"."""
+        target_dir = self.directory
+        if self._source_dirs is not None and self._source_labels and len(self._source_dirs) > 1:
+            # MEME choix de niveau que _create_folder, MEME raison (colonne
+            # IN/OVER/OUT, contenu fusionne de plusieurs colonnes de set).
+            choice, ok_level = QInputDialog.getItem(
+                self, "Ajouter un raccourci", "A quel niveau enregistrer ce raccourci ?",
+                self._source_labels, 0, False,
+            )
+            if not ok_level:
+                return
+            target_dir = self._source_dirs[self._source_labels.index(choice)]
+        chosen = QFileDialog.getExistingDirectory(self, "Choisir un repertoire", str(target_dir))
         if not chosen:
             return
-        pix = QPixmap(chosen)
-        if pix.isNull():
-            QMessageBox.warning(self, "Image", "Impossible de charger cette image.")
+        chosen_path = Path(chosen)
+        if chosen_path == target_dir or chosen_path.parent == target_dir:
+            QMessageBox.warning(self, "Ajouter un raccourci", "Ce repertoire est deja ici.")
             return
-        self._save_thumbnail_pixmap(path, pix)
+        add_shortcut(target_dir, chosen_path)
+        self.refresh()
+
+    def _change_thumbnail(self, path: Path):
+        _prompt_change_thumbnail(self, path, lambda: self.list.viewport().update())
 
     def _capture_thumbnail(self, path: Path):
-        """Ouvre un selecteur de zone carree (un par ecran connecte) pour
-        capturer une vignette de projet directement depuis l'affichage."""
-        win = self.window()
-        was_visible = win.isVisible()
-        if was_visible:
-            win.hide()
-        QApplication.processEvents()
-
-        def start_overlay():
-            capture = MultiScreenCapture()
-            self._capture_overlay = capture  # garde une reference tant que les fenetres sont ouvertes
-
-            def finish():
-                if was_visible:
-                    win.show()
-                self._capture_overlay = None
-
-            def on_captured(pix: QPixmap):
-                finish()
-                self._save_thumbnail_pixmap(path, pix)
-
-            capture.captured.connect(on_captured)
-            capture.cancelled.connect(finish)
-
-        # Laisse le temps a la fenetre principale de disparaitre avant la
-        # capture, sinon elle apparait encore dans la vignette.
-        QTimer.singleShot(150, start_overlay)
+        _prompt_capture_thumbnail(self, path, lambda: self.list.viewport().update())
 
     def _save_thumbnail_pixmap(self, path: Path, pix: QPixmap):
-        if pix.isNull():
-            return
-        if max(pix.width(), pix.height()) > THUMBNAIL_MAX_DIM:
-            pix = pix.scaled(
-                THUMBNAIL_MAX_DIM, THUMBNAIL_MAX_DIM,
-                Qt.KeepAspectRatio, Qt.SmoothTransformation,
-            )
-        dest = project_thumbnail_path(path)
-        if not pix.save(str(dest), "PNG"):
-            QMessageBox.warning(self, "Image", "Impossible d'enregistrer la vignette.")
-            return
-        _set_hidden(dest)
-        self.list.viewport().update()
+        _save_thumbnail_pixmap_for(path, pix, self, lambda: self.list.viewport().update())
 
     def _reset_thumbnail(self, path: Path):
-        thumb = project_thumbnail_path(path)
-        if thumb.exists():
-            try:
-                thumb.unlink()
-            except OSError as exc:
-                QMessageBox.warning(self, "Image", f"Impossible de supprimer la vignette :\n{exc}")
-                return
-        self.list.viewport().update()
-
-    def _change_software_icon(self, key: str):
-        """Icone perso pour un logiciel : globale (voir custom_software_icon_path),
-        s'applique donc partout ou ce logiciel apparait, pas seulement ici."""
-        chosen, _ = QFileDialog.getOpenFileName(
-            self, "Choisir une image", "",
-            "Images (*.png *.jpg *.jpeg *.bmp *.webp *.gif *.tif *.tiff)",
-        )
-        if not chosen:
-            return
-        pix = QPixmap(chosen)
-        if pix.isNull():
-            QMessageBox.warning(self, "Icone", "Impossible de charger cette image.")
-            return
-        self._save_software_icon_pixmap(key, pix)
-
-    def _capture_software_icon(self, key: str):
-        win = self.window()
-        was_visible = win.isVisible()
-        if was_visible:
-            win.hide()
-        QApplication.processEvents()
-
-        def start_overlay():
-            capture = MultiScreenCapture()
-            self._capture_overlay = capture
-
-            def finish():
-                if was_visible:
-                    win.show()
-                self._capture_overlay = None
-
-            def on_captured(pix: QPixmap):
-                finish()
-                self._save_software_icon_pixmap(key, pix)
-
-            capture.captured.connect(on_captured)
-            capture.cancelled.connect(finish)
-
-        QTimer.singleShot(150, start_overlay)
-
-    def _save_software_icon_pixmap(self, key: str, pix: QPixmap):
-        if pix.isNull():
-            return
-        if max(pix.width(), pix.height()) > CUSTOM_SOFTWARE_ICON_MAX_DIM:
-            pix = pix.scaled(
-                CUSTOM_SOFTWARE_ICON_MAX_DIM, CUSTOM_SOFTWARE_ICON_MAX_DIM,
-                Qt.KeepAspectRatio, Qt.SmoothTransformation,
-            )
-        dest = custom_software_icon_path(key)
-        try:
-            was_new = not dest.parent.is_dir()
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            if was_new:
-                _set_hidden(dest.parent)
-        except OSError as exc:
-            QMessageBox.warning(self, "Icone", f"Impossible de creer le dossier de configuration :\n{exc}")
-            return
-        if not pix.save(str(dest), "PNG"):
-            QMessageBox.warning(self, "Icone", "Impossible d'enregistrer l'icone.")
-            return
-        _set_hidden(dest)
-        self.list.viewport().update()
-
-    def _reset_software_icon(self, key: str):
-        dest = custom_software_icon_path(key)
-        if dest.exists():
-            try:
-                dest.unlink()
-            except OSError as exc:
-                QMessageBox.warning(self, "Icone", f"Impossible de supprimer l'icone :\n{exc}")
-                return
-        self.list.viewport().update()
+        _prompt_reset_thumbnail(self, path, lambda: self.list.viewport().update())
 
     def _unique_dest_path(self, src: Path, dest_dir: Path | None = None) -> Path:
         """Chemin de destination dans `dest_dir` (par defaut ce dossier), en
@@ -4653,7 +8802,7 @@ class PreviewColumn(QWidget):
             )
             self.toggle_btn.setCursor(Qt.ArrowCursor)
             self.toggle_btn.setFlat(True)
-            self.toggle_btn.setToolTip("Replier Type/Projets/Sous-projet")
+            self.toggle_btn.setToolTip("Replier les colonnes de set")
             # Taille/fond/bordure/police-ou-icone : voir refresh_toggle_
             # style (Colonnes > Apercu > Bouton repliement) — voir la
             # remarque de l'utilisateur, "ajouter les settings de style du
@@ -4732,6 +8881,13 @@ class PreviewColumn(QWidget):
     def resize_end(self):
         self._resizing = False
         _hide_resize_width(self)
+        # Les colonnes Focus (empilees Projets/Sous-projet) n'ont pas de
+        # bouton punaise (pas de Column/dossier unique auquel s'accrocher)
+        # mais doivent neanmoins s'enregistrer automatiquement — voir la
+        # remarque de l'utilisateur, "les seules colonnes dont les
+        # parametres sont enregistrees automatiquement sont : colonne type,
+        # colonnes focus, colonne inspecteur".
+        _persist_column_width(self.window(), PREVIEW_STACK_TITLE, self.width())
 
     def set_width_external(self, new_width: int):
         """Applique une largeur decidee AILLEURS (voir PipelineBrowser.
@@ -4843,6 +8999,25 @@ class PreviewColumn(QWidget):
         self.header.setFixedHeight(scaled(height))
         pad = scaled(padding, 0)
         self.header.layout().setContentsMargins(pad, pad, pad, pad)
+        # Police/gras/couleur/taille du titre (voir Column.refresh_header,
+        # MEME logique/MEMES cles — bug corrige au passage, voir la
+        # remarque de l'utilisateur, "le titre dans l'entete ne fonctionne
+        # pas dans les settings") : cette colonne fantome N'APPLIQUAIT
+        # JAMAIS ces surcharges (header_font_color/family/bold/italic/
+        # taille), malgre son propre onglet de surcharge Colonnes > Focus.
+        title_weight = 700 if s.get("header_font_bold", True) else 500
+        title_size = int(s.get("header_font_size", 10))
+        title_italic = bool(s.get("header_font_italic", False))
+        title_smoothing = (
+            s.get("header_font_antialias_override", "current")
+            if s.get("header_font_antialias_override_enabled") else "current")
+        title_family = _resolve_font_family(
+            (s.get("header_font_family") or "").strip(), title_size, title_weight, fallback_role="colhead")
+        self.title_label.setFont(font(
+            title_size, title_weight, tracking=0.9, caps=True, family=title_family,
+            smoothing=title_smoothing, italic=title_italic))
+        self.title_label.setStyleSheet(
+            f"color: {resolve_color_ref(s.get('header_font_color', '#9aa1a7'))}; background: transparent;")
         # PAS de stylesheet explicite sur self.header : transparent par
         # defaut, la marge du Padding d'entete revele donc deja le fond de
         # self.card (column_bg_color, voir refresh_colors/_paint_bordered_
@@ -4902,7 +9077,9 @@ class PreviewColumn(QWidget):
 
     def refresh_colors(self):
         self.header_fill.setStyleSheet(column_header_qss("PreviewColumnHeader", self.column_title))
-        self.title_label.setStyleSheet(f"color: {role_color('colhead', C['header'])}; background: transparent;")
+        # PAS de reapplication de self.title_label ici — voir Column.
+        # refresh_colors, MEME correctif/MEME raison (refresh_header,
+        # toujours appele AVANT, gere deja ce style correctement).
         frame = column_frame_style(self.column_title, self._suppress_left())
         scaled_radius = {k: scaled(v, 0) for k, v in frame["radius"].items()}
         self.card.setFrameStyle(
@@ -4946,15 +9123,14 @@ class PreviewColumn(QWidget):
 
     def set_toggle_state(self, collapsed: bool):
         """Met a jour l'icone (voir __init__, `on_toggle`) apres un repli/
-        depli de Type/Projets/Sous-projet declenche depuis ailleurs (par
-        exemple automatiquement, voir PipelineBrowser._sync_collapse_state)
-        — sans effet si cette instance n'a pas d'icone (fantome
-        "Logiciels")."""
+        depli des colonnes de set declenche depuis ailleurs (par exemple
+        automatiquement, voir PipelineBrowser._sync_collapse_state) — sans
+        effet si cette instance n'a pas d'icone (fantome "Logiciels")."""
         if self.toggle_btn is None:
             return
         self.toggle_btn.set_kind("dchevron_left" if collapsed else "dchevron_right")
         self.toggle_btn.setToolTip(
-            "Deplier Type/Projets/Sous-projet" if collapsed else "Replier Type/Projets/Sous-projet"
+            "Deplier les colonnes de set" if collapsed else "Replier les colonnes de set"
         )
 
     def _clear_preview_layout(self):
@@ -4985,7 +9161,7 @@ class PreviewColumn(QWidget):
         self._card_layout.activate()
         return self._inner.width() - 1
 
-    def set_preview_block(self, title: str, pixmap: QPixmap, path: Path, open_status):
+    def set_preview_block(self, title: str, pixmap: QPixmap, path: Path, open_status, source_column: "Column"):
         """Peuple cette colonne fantome avec UN SEUL niveau d'apercu (voir
         _PreviewBlock) — cette colonne EST "Projets" ou "Sous-projet" a
         elle seule (self.column_title, passe a la construction, voir
@@ -4997,9 +9173,11 @@ class PreviewColumn(QWidget):
         cote et PAS fusionnees en une seule — voir la remarque de
         l'utilisateur, "non, tu as merger les deux colonnes en une seule,
         ce que je veux c'est deux colonnes separees, une en dessous de
-        l'autre !"."""
+        l'autre !". `source_column` (voir _PreviewBlock._rename/
+        update_preview_stack) : la VRAIE colonne de navigation dont ce
+        bloc reprend la selection courante."""
         self._clear_preview_layout()
-        block = _PreviewBlock(title, pixmap, self._content_width(), path, open_status)
+        block = _PreviewBlock(title, pixmap, self._content_width(), path, open_status, source_column)
         # Sans ceci, la bordure de redimensionnement (voir resize_begin/
         # _in_resize_zone) est inaccessible a la souris des qu'elle
         # survole ce bloc (voir install_resize_filter).
@@ -5056,6 +9234,241 @@ def read_text_preview(path: Path) -> str | None:
     if truncated:
         lines.append("…")
     return "\n".join(lines)
+
+
+def pur_embedded_image_ranges(path: Path, mtime: float | None = None) -> list[tuple[int, int, str]]:
+    """Indexe les JPEG/PNG embarques d'un .pur sans les decoder ni les copier."""
+    key = str(path)
+    if mtime is None:
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return []
+    cached = _PUR_IMAGE_INDEX_CACHE.get(key)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    ranges: list[tuple[int, int, str]] = []
+    jpeg_signature = b"\xff\xd8\xff"
+    png_signature = b"\x89PNG\r\n\x1a\n"
+    try:
+        with path.open("rb") as stream:
+            if path.stat().st_size == 0:
+                return []
+            with mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as data:
+                # PureRef 2.x a change de conteneur : les marqueurs JPEG
+                # apparaissent aussi dans des donnees internes et ne
+                # delimitent pas des images autonomes. Le premier JPEG de
+                # l'en-tete est la vignette valide de la planche.
+                header = data[4:96].decode("utf-16-be", errors="ignore")
+                if re.search(r"\b2\.\d+", header):
+                    start = data.find(jpeg_signature)
+                    if start >= 0:
+                        eoi = data.find(b"\xff\xd9", start + 3)
+                        if eoi >= 0:
+                            image = QImage.fromData(data[start:eoi + 2])
+                            if not image.isNull():
+                                ranges.append((start, eoi + 2, "JPEG"))
+                    _bounded_cache_set(_PUR_IMAGE_INDEX_CACHE, key, (mtime, ranges), max_entries=24)
+                    return ranges
+                position = 0
+                size = len(data)
+                while position < size and len(ranges) < PUR_MAX_EMBEDDED_IMAGES:
+                    jpeg_at = data.find(jpeg_signature, position)
+                    png_at = data.find(png_signature, position)
+                    candidates = [(offset, fmt) for offset, fmt in ((jpeg_at, "JPEG"), (png_at, "PNG"))
+                                  if offset >= 0]
+                    if not candidates:
+                        break
+                    start, fmt = min(candidates)
+                    if fmt == "JPEG":
+                        eoi = data.find(b"\xff\xd9", start + 3)
+                        if eoi < 0:
+                            position = start + len(jpeg_signature)
+                            continue
+                        end = eoi + 2
+                    else:
+                        # Parcourt la structure PNG jusqu'au chunk IEND pour
+                        # ne pas confondre son contenu avec d'autres images.
+                        cursor = start + len(png_signature)
+                        end = -1
+                        while cursor + 12 <= size:
+                            chunk_size = int.from_bytes(data[cursor:cursor + 4], "big")
+                            chunk_type = data[cursor + 4:cursor + 8]
+                            next_chunk = cursor + 12 + chunk_size
+                            if next_chunk > size:
+                                break
+                            if chunk_type == b"IEND":
+                                end = next_chunk
+                                break
+                            cursor = next_chunk
+                        if end < 0:
+                            position = start + len(png_signature)
+                            continue
+                    ranges.append((start, end, fmt))
+                    position = end
+    except (OSError, ValueError):
+        return []
+    _bounded_cache_set(_PUR_IMAGE_INDEX_CACHE, key, (mtime, ranges), max_entries=24)
+    return ranges
+
+
+def pur_file_major_version(path: Path) -> int | None:
+    """Retourne la version du conteneur PureRef depuis son en-tete."""
+    try:
+        with path.open("rb") as stream:
+            header = stream.read(96)
+        text = header[4:].decode("utf-16-be", errors="ignore")
+        match = re.search(r"^\s*(\d+)\.\d+", text)
+        return int(match.group(1)) if match else None
+    except OSError:
+        return None
+
+
+class _PureRefExportSignals(QObject):
+    progress = Signal(str, float, object)
+    finished = Signal(str, float, object, str)
+
+
+class _PureRefExportTask(QRunnable):
+    """Exporte les images d'une planche PureRef 2.x via son CLI officiel."""
+    def __init__(self, path: Path, mtime: float):
+        super().__init__()
+        self.path = path
+        self.mtime = mtime
+        self.signals = _PureRefExportSignals()
+
+    @staticmethod
+    def _running_pids() -> set[int]:
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq PureRef.exe", "/FO", "CSV", "/NH"],
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+            return {int(value) for value in re.findall(r'"PureRef.exe","(\d+)"', result.stdout)}
+        except (OSError, subprocess.SubprocessError):
+            return set()
+
+    @staticmethod
+    def _executable() -> str | None:
+        candidates = [
+            shutil.which("PureRef.exe"),
+            str(Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "PureRef" / "PureRef.exe"),
+            str(Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "PureRef" / "PureRef.exe"),
+            str(Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "PureRef" / "PureRef.exe"),
+        ]
+        return next((candidate for candidate in candidates if candidate and Path(candidate).is_file()), None)
+
+    def run(self):
+        exported: list[str] = []
+        error = ""
+        launched_pid: int | None = None
+        try:
+            digest = hashlib.sha256(f"{self.path}|{self.mtime}".encode("utf-8", errors="replace")).hexdigest()
+            output_dir = FILE_IMAGE_DISK_CACHE_DIR / "pureref_images" / digest
+            cached_files = sorted(output_dir.glob("*.png"), key=lambda item: item.name.casefold()) if output_dir.is_dir() else []
+            exported = [str(item) for item in cached_files if item.is_file() and item.stat().st_size > 0]
+            complete_marker = output_dir / ".export_complete"
+            if exported and complete_marker.is_file():
+                self.signals.finished.emit(str(self.path), self.mtime, exported, "")
+                return
+            executable = self._executable()
+            if executable is None:
+                raise RuntimeError("PureRef n'est pas installé à un emplacement détectable.")
+            before = self._running_pids()
+            if before:
+                raise RuntimeError("Ferme PureRef pour permettre l'export sans modifier sa scène ouverte.")
+
+            output_dir.mkdir(parents=True, exist_ok=True)
+            for old_file in output_dir.iterdir():
+                if old_file.is_file():
+                    old_file.unlink(missing_ok=True)
+            normalized_path = self.path.resolve().as_posix()
+            normalized_output = output_dir.resolve().as_posix()
+            command = [
+                executable,
+                "-c", f"load;{normalized_path}",
+                "-c", f"exportImages;{normalized_output};false;%2",
+            ]
+            startup_info = None
+            if os.name == "nt":
+                startup_info = subprocess.STARTUPINFO()
+                startup_info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startup_info.wShowWindow = 0
+            process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL, close_fds=True, startupinfo=startup_info)
+            launched_pid = process.pid
+            deadline = time.monotonic() + 600
+            last_signature = None
+            stable_since = None
+            last_progress_count = 0
+            while time.monotonic() < deadline:
+                files = sorted(output_dir.glob("*.png"), key=lambda item: item.name.casefold())
+                file_stats = [(item, item.stat()) for item in files if item.is_file()]
+                signature = tuple((item.name, stat.st_size) for item, stat in file_stats)
+                stable_files = [str(item) for item, stat in file_stats
+                                if stat.st_size > 0 and time.time() - stat.st_mtime >= 0.75]
+                if len(stable_files) > last_progress_count:
+                    last_progress_count = len(stable_files)
+                    self.signals.progress.emit(str(self.path), self.mtime, stable_files)
+                if signature and signature == last_signature:
+                    if stable_since is None:
+                        stable_since = time.monotonic()
+                    elif time.monotonic() - stable_since >= 3.0:
+                        exported = [str(item) for item in files if item.is_file() and item.stat().st_size > 0]
+                        complete_marker.touch()
+                        break
+                else:
+                    last_signature = signature
+                    stable_since = None
+                time.sleep(0.25)
+            if not exported:
+                raise RuntimeError("PureRef n'a retourné aucune image (délai dépassé ou scène illisible).")
+        except Exception as exc:
+            error = str(exc)
+        finally:
+            # Le CLI PureRef reste parfois ouvert après avoir terminé ses
+            # commandes. Ne fermer que le PID retourné par notre Popen.
+            if launched_pid is not None and launched_pid in self._running_pids():
+                try:
+                    subprocess.run(["taskkill", "/PID", str(launched_pid), "/T", "/F"],
+                                   capture_output=True, timeout=5, check=False)
+                except (OSError, subprocess.SubprocessError):
+                    pass
+        self.signals.finished.emit(str(self.path), self.mtime, exported, error)
+
+
+_PUR_EXPORT_POOL = QThreadPool()
+_PUR_EXPORT_POOL.setMaxThreadCount(1)
+
+
+def read_pur_embedded_image(path: Path, image_range: tuple[int, int, str]) -> QImage | None:
+    """Decode uniquement l'image PureRef selectionnee, pas les autres."""
+    start, end, fmt = image_range
+    try:
+        with path.open("rb") as stream:
+            stream.seek(start)
+            raw = stream.read(end - start)
+    except OSError:
+        return None
+    image = QImage.fromData(raw)
+    if image.isNull():
+        return None
+    if max(image.width(), image.height()) > 1600:
+        image = image.scaled(1600, 1600, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    return image
+
+
+def read_pur_exported_image(path: Path) -> QImage | None:
+    """Charge une image exportee sans decoder sa pleine resolution en memoire."""
+    reader = QImageReader(str(path))
+    reader.setAutoTransform(True)
+    size = reader.size()
+    if size.isValid() and max(size.width(), size.height()) > 1600:
+        scale = 1600 / max(size.width(), size.height())
+        reader.setScaledSize(QSize(max(1, round(size.width() * scale)),
+                                   max(1, round(size.height() * scale))))
+    image = reader.read()
+    return None if image.isNull() else image
 
 
 # ==========================================================================
@@ -5132,19 +9545,124 @@ class DetailPanel(QWidget):
         self.name = QLabel("")
         self.name.setFont(role_font("folders", 12, 600, tracking=0.12))
         self.name.setStyleSheet(f"color: {role_color('folders', C['text'])}; background: transparent;")
+        self.name_row = QWidget()
+        name_row_layout = QHBoxLayout(self.name_row)
+        name_row_layout.setContentsMargins(0, 0, 0, 0)
+        name_row_layout.setSpacing(6)
+        name_row_layout.addWidget(self.name, 1)
+        self.open_render_log_button = QPushButton("Ouvrir le journal")
+        self.open_render_log_button.setToolTip("Ouvrir le journal des rendus automatiques")
+        self.open_render_log_button.setCursor(Qt.PointingHandCursor)
+        self.open_render_log_button.setFixedHeight(scaled(24))
+        self.open_render_log_button.setStyleSheet(
+            f"QPushButton {{ background: {C['btn']}; color: {C['text']}; border: 1px solid {C['btn_border']}; "
+            f"border-radius: 3px; padding: 0 7px; font-size: 10px; }}"
+            f"QPushButton:hover {{ background: {C['btn_hover']}; border-color: {C['btn_hover_bd']}; }}"
+        )
+        self.open_render_log_button.clicked.connect(self.open_preview_render_log)
+        name_row_layout.addWidget(self.open_render_log_button)
+
+        self.pur_navigation = QWidget()
+        pur_nav_layout = QHBoxLayout(self.pur_navigation)
+        pur_nav_layout.setContentsMargins(0, 0, 0, 0)
+        pur_nav_layout.setSpacing(6)
+        self.pur_previous_button = QPushButton("‹")
+        self.pur_next_button = QPushButton("›")
+        for button in (self.pur_previous_button, self.pur_next_button):
+            button.setCursor(Qt.PointingHandCursor)
+            button.setFixedSize(scaled(28), scaled(24))
+            button.setStyleSheet(
+                f"QPushButton {{ background: {C['btn']}; color: {C['text']}; "
+                f"border: 1px solid {C['btn_border']}; border-radius: 3px; font-size: 16px; }}"
+                f"QPushButton:hover {{ background: {C['btn_hover']}; border-color: {C['btn_hover_bd']}; }}"
+                f"QPushButton:disabled {{ color: {C['dim']}; }}"
+            )
+        self.pur_image_counter = QLabel("")
+        self.pur_image_counter.setAlignment(Qt.AlignCenter)
+        self.pur_image_counter.setStyleSheet(
+            f"color: {role_color('info', '#aab1b6')}; background: transparent;"
+        )
+        pur_nav_layout.addStretch(1)
+        pur_nav_layout.addWidget(self.pur_previous_button)
+        pur_nav_layout.addWidget(self.pur_image_counter)
+        pur_nav_layout.addWidget(self.pur_next_button)
+        pur_nav_layout.addStretch(1)
+        self.pur_navigation.hide()
+        self.pur_previous_button.clicked.connect(lambda: self._navigate_pur_image(-1))
+        self.pur_next_button.clicked.connect(lambda: self._navigate_pur_image(1))
 
         self.well = QFrame()
-        self.well.setFixedHeight(PREVIEW_MIN_HEIGHT)
+        self.well.setMinimumHeight(PREVIEW_MIN_HEIGHT)
+        self.well.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.well.setStyleSheet(
             f"background: {C['well']}; border: 1px solid #282c30;"
         )
         self._preview_pixmap: QPixmap | None = None
+        self._preview_request_path: str | None = None
+        self._current_path: str | None = None
+        self._pur_image_path: str | None = None
+        self._pur_image_ranges: list[tuple[int, int, str]] = []
+        self._pur_exported_images: list[str] = []
+        self._pur_export_task: _PureRefExportTask | None = None
+        self._pur_image_index = 0
+        self._preview_generation_paths: set[str] = set()
+        self._auto_preview_paths: set[str] = set()
+        self._auto_preview_log_count = 0
         self.well_label = QLabel(self.well)
         self.well_label.setAlignment(Qt.AlignCenter)
         self.well_label.setStyleSheet("background: transparent; border: none;")
+        self.preview_info_table = _TableFrame()
+        self.preview_info_table.setFixedHeight(96)
+        self._preview_info_cell_layouts = []
+        info_layout = QGridLayout(self.preview_info_table)
+        info_layout.setContentsMargins(1, 1, 1, 1)
+        info_layout.setSpacing(0)
+        info_layout.setHorizontalSpacing(1)
+        info_layout.setVerticalSpacing(1)
+        for column in range(3):
+            info_layout.setColumnStretch(column, 1)
+        self.preview_dimensions_value = QLabel("—")
+        self.preview_dimensions_value.setObjectName("PreviewInfoValue")
+        self.preview_dimensions_value.setWordWrap(True)
+        self.preview_log = QPlainTextEdit(self.well)
+        self.preview_log.setReadOnly(True)
+        self.preview_log.setFrameShape(QFrame.NoFrame)
+        self.preview_log.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.preview_log.setMaximumBlockCount(1200)
+        self.preview_log.setFont(font(9, 400, mono=True, smoothing="none"))
+        self.preview_log.setStyleSheet(
+            "QPlainTextEdit { background: transparent; color: #00ff00; border: none; padding: 5px; }"
+        )
         well_layout = QVBoxLayout(self.well)
         well_layout.setContentsMargins(0, 0, 0, 0)
+        well_layout.setSpacing(0)
         well_layout.addWidget(self.well_label)
+        well_layout.addWidget(self.preview_log)
+        self.preview_log.hide()
+        self.preview_progress = QWidget(self.well)
+        progress_layout = QVBoxLayout(self.preview_progress)
+        progress_layout.setContentsMargins(18, 14, 18, 14)
+        progress_layout.setSpacing(8)
+        self.preview_progress_label = QLabel("Génération de l’aperçu…")
+        self.preview_progress_label.setAlignment(Qt.AlignCenter)
+        self.preview_progress_label.setStyleSheet(
+            f"color: {role_color('info', '#aab1b6')}; background: transparent; border: none;"
+        )
+        self.preview_progress_bar = QProgressBar()
+        self.preview_progress_bar.setRange(0, 0)
+        self.preview_progress_bar.setTextVisible(False)
+        self.preview_progress_bar.setFixedHeight(5)
+        self.preview_progress_bar.setStyleSheet(
+            "QProgressBar { background: #282c30; border: none; border-radius: 2px; }"
+            "QProgressBar::chunk { background: #7fa8cf; border-radius: 2px; }"
+        )
+        progress_layout.addWidget(self.preview_progress_label)
+        progress_layout.addWidget(self.preview_progress_bar)
+        self.preview_progress.hide()
+        well_layout.addWidget(self.preview_progress)
+        _PREVIEW_DECODE_MANAGER.started.connect(self._on_preview_generation_started)
+        _PREVIEW_DECODE_MANAGER.progress.connect(self._on_preview_generation_progress)
+        _PREVIEW_DECODE_MANAGER.ready.connect(self._on_3d_preview_ready)
 
         # Extrait de contenu pour les fichiers texte/code (voir
         # TEXT_PREVIEW_EXTENSIONS/read_text_preview) : remplace le "well"
@@ -5180,36 +9698,73 @@ class DetailPanel(QWidget):
         self._video_player.setVideoOutput(self.video_widget)
         self._video_player.setLoops(QMediaPlayer.Loops.Infinite)
 
-        grid = QGridLayout()
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(4)
         self.values: dict[str, QLabel] = {}
         self.key_labels: dict[str, QLabel] = {}
-        for row, key in enumerate(self.FIELDS):
-            key_label = QLabel(key)
-            key_label.setFont(role_font("info", 11, 400))
-            key_label.setStyleSheet(f"color: {role_color('info', C['dim'])}; background: transparent;")
+        for key in self.FIELDS:
+            key_label = QLabel(key.upper())
+            key_label.setObjectName("PreviewInfoHeading")
+            key_label.setFont(role_font("info", 9, 600))
             self.key_labels[key] = key_label
             value = QLabel("")
+            value.setObjectName("PreviewInfoValue")
             value.setFont(role_font("info", 11, 400))
-            value.setStyleSheet(f"color: {role_color('info', '#aab1b6')}; background: transparent;")
             value.setWordWrap(True)
-            grid.addWidget(key_label, row, 0, Qt.AlignTop)
-            grid.addWidget(value, row, 1)
             self.values[key] = value
-        grid.setColumnStretch(1, 1)
+
+        def add_info_cell(key: str, row: int, column: int, column_span: int = 1):
+            cell = QWidget(self.preview_info_table)
+            cell.setStyleSheet(f"background: {M['table_row_a']};")
+            cell_layout = QVBoxLayout(cell)
+            cell_layout.setContentsMargins(6, 3, 6, 3)
+            cell_layout.setSpacing(1)
+            self._preview_info_cell_layouts.append(cell_layout)
+            cell_layout.addWidget(self.key_labels[key])
+            cell_layout.addWidget(self.values[key])
+            info_layout.addWidget(cell, row, column, 1, column_span)
+
+        add_info_cell("kind", 0, 0)
+        add_info_cell("size", 0, 1)
+        add_info_cell("modified", 0, 2)
+        add_info_cell("path", 1, 0, 2)
+        dimensions_cell = QWidget(self.preview_info_table)
+        dimensions_cell.setStyleSheet(f"background: {M['table_row_a']};")
+        dimensions_layout = QVBoxLayout(dimensions_cell)
+        dimensions_layout.setContentsMargins(6, 3, 6, 3)
+        dimensions_layout.setSpacing(1)
+        self._preview_info_cell_layouts.append(dimensions_layout)
+        self.preview_dimensions_heading = QLabel("DIMENSIONS · RATIO · TAILLE")
+        self.preview_dimensions_heading.setObjectName("PreviewInfoHeading")
+        self.preview_dimensions_heading.setFont(role_font("info", 9, 600))
+        dimensions_heading_row = QHBoxLayout()
+        dimensions_heading_row.setContentsMargins(0, 0, 0, 0)
+        dimensions_heading_row.setSpacing(5)
+        dimensions_heading_row.addWidget(self.preview_dimensions_heading)
+        dimensions_heading_row.addStretch(1)
+        self.preview_stale_badge = QLabel("PÉRIMÉ")
+        self.preview_stale_badge.setFont(role_font("info2", 8, 700))
+        self.preview_stale_badge.setToolTip("Aperçu conservé en attendant sa régénération")
+        self.preview_stale_badge.setStyleSheet(
+            "color: #1d1608; background: #e5b85c; border-radius: 2px; padding: 1px 5px;"
+        )
+        self.preview_stale_badge.hide()
+        dimensions_heading_row.addWidget(self.preview_stale_badge)
+        dimensions_layout.addLayout(dimensions_heading_row)
+        dimensions_layout.addWidget(self.preview_dimensions_value)
+        info_layout.addWidget(dimensions_cell, 1, 2)
+        info_layout.setRowStretch(0, 1)
+        info_layout.setRowStretch(1, 1)
+        self._apply_preview_table_style()
 
         content = QVBoxLayout()
         self._content_layout = content
         content.setContentsMargins(16, 14, 16, 14)
         content.setSpacing(8)
-        content.addWidget(self.name)
-        content.addWidget(self.well)
+        content.addWidget(self.name_row)
+        content.addWidget(self.preview_info_table)
+        content.addWidget(self.pur_navigation)
+        content.addWidget(self.well, 1)
         content.addWidget(self.text_preview)
         content.addWidget(self.video_widget)
-        content.addLayout(grid)
-        content.addStretch(1)
 
         # self.card/self._inner : MEME structure a 2 niveaux que Column.card/
         # Column._content (voir leurs remarques respectives) — self.card
@@ -5245,6 +9800,20 @@ class DetailPanel(QWidget):
         outer_layout.addWidget(self.card)
         self._outer_layout = outer_layout
 
+        # self.card couvre TOUTE la surface de self (outer_layout, marges a
+        # 0, voir plus haut) : sans ceci, la bordure GAUCHE de redimensionnement
+        # (voir mousePressEvent/mouseMoveEvent ci-dessous) n'etait JAMAIS
+        # accessible a la souris — self.card (et self._inner/header par-
+        # dessus) interceptait tout mouvement/clic AVANT qu'ils n'atteignent
+        # self — voir la remarque de l'utilisateur, "la selection du bord de
+        # la colonne inspecteur est toujours aussi peinible a selectionner
+        # pour la redimension". MEME mecanique que PreviewColumn.eventFilter
+        # (voir sa docstring de tete, MEME correctif deja applique la-bas).
+        self.card.setMouseTracking(True)
+        self.card.installEventFilter(self)
+        self.header.setMouseTracking(True)
+        self.header.installEventFilter(self)
+
         self.clear()
         self.refresh_header()
         self.refresh_colors()
@@ -5265,6 +9834,27 @@ class DetailPanel(QWidget):
         self.header.setFixedHeight(scaled(height))
         pad = scaled(padding, 0)   # 0 = valeur reglee valide (voir scaled)
         self.header.layout().setContentsMargins(pad, pad, pad, pad)
+        # Police/gras/couleur/taille du titre (voir Column.refresh_header,
+        # MEME logique/MEMES cles — bug corrige au passage, voir la
+        # remarque de l'utilisateur, "le titre dans l'entete ne fonctionne
+        # pas dans les settings") : cette methode n'appliquait jusqu'ici QUE
+        # hauteur/padding/bordure, jamais la police/couleur du titre (voir
+        # refresh_fonts, qui la fixait a la couleur GENERIQUE role_color
+        # sans jamais lire de surcharge) — desormais l'onglet Colonnes >
+        # Inspecteur > Entetes > "Couleur du titre" fonctionne enfin ici.
+        title_weight = 700 if s.get("header_font_bold", True) else 500
+        title_size = int(s.get("header_font_size", 10))
+        title_italic = bool(s.get("header_font_italic", False))
+        title_smoothing = (
+            s.get("header_font_antialias_override", "current")
+            if s.get("header_font_antialias_override_enabled") else "current")
+        title_family = _resolve_font_family(
+            (s.get("header_font_family") or "").strip(), title_size, title_weight, fallback_role="colhead")
+        self.header_title.setFont(font(
+            title_size, title_weight, tracking=0.9, caps=True, family=title_family,
+            smoothing=title_smoothing, italic=title_italic))
+        self.header_title.setStyleSheet(
+            f"color: {resolve_color_ref(s.get('header_font_color', '#9aa1a7'))}; background: transparent;")
 
         # Bordure du CADRE : reserve, sur CHAQUE cote EFFECTIVEMENT peint, la
         # meme epaisseur que celle reellement dessinee la (voir Column.
@@ -5340,37 +9930,78 @@ class DetailPanel(QWidget):
         available = scroll.viewport().width() - columns_layout.sizeHint().width()
         return max(DETAIL_PANEL_MIN_WIDTH, available)
 
+    def _in_resize_zone(self, x: int) -> bool:
+        """Bord GAUCHE (contrairement a Column/PreviewColumn, bord DROIT —
+        l'inspecteur est TOUJOURS la DERNIERE colonne de la rangee, voir
+        _suppress_left)."""
+        return 0 <= x <= COLUMN_RESIZE_MARGIN
+
+    def _resize_begin(self, global_x: int):
+        self._resizing = True
+        self._resize_start_x = global_x
+        self._resize_start_width = self.width()
+        _show_resize_width(self, self.width())
+
+    def _resize_update(self, global_x: int):
+        delta = global_x - self._resize_start_x
+        new_width = max(
+            DETAIL_PANEL_MIN_WIDTH,
+            min(self._max_width(), self._resize_start_width - delta),
+        )
+        self.setFixedWidth(new_width)
+        _show_resize_width(self, new_width)
+
+    def _resize_end(self):
+        self._resizing = False
+        _hide_resize_width(self)
+        _persist_detail_panel_width(self.window(), self.width())
+
+    def eventFilter(self, obj, event):
+        """MEME mecanique que PreviewColumn.eventFilter/Column.eventFilter
+        (voir leur docstring de tete) : installe sur self.card/self.header
+        (voir __init__) — sans cela, ces widgets ENFANTS, qui couvrent TOUTE
+        la surface de self, interceptent l'evenement souris AVANT que self
+        ne le voie, rendant la bordure de redimensionnement inaccessible —
+        voir la remarque de l'utilisateur, "la selection du bord de la
+        colonne inspecteur est toujours aussi peinible a selectionner pour
+        la redimension"."""
+        etype = event.type()
+        if etype == QEvent.MouseMove:
+            if self._resizing:
+                self._resize_update(event.globalPosition().toPoint().x())
+                return True
+            local_x = obj.mapTo(self, event.position().toPoint()).x()
+            obj.setCursor(Qt.SizeHorCursor if self._in_resize_zone(local_x) else Qt.ArrowCursor)
+        elif etype == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+            local_x = obj.mapTo(self, event.position().toPoint()).x()
+            if self._in_resize_zone(local_x):
+                self._resize_begin(event.globalPosition().toPoint().x())
+                return True
+        elif etype == QEvent.MouseButtonRelease and self._resizing:
+            self._resize_end()
+            return True
+        elif etype == QEvent.Leave and not self._resizing:
+            obj.unsetCursor()
+        return False
+
     def mouseMoveEvent(self, event):
         x = event.position().toPoint().x()
         if self._resizing:
-            delta = event.globalPosition().toPoint().x() - self._resize_start_x
-            new_width = max(
-                DETAIL_PANEL_MIN_WIDTH,
-                min(self._max_width(), self._resize_start_width - delta),
-            )
-            self.setFixedWidth(new_width)
-            _show_resize_width(self, new_width)
+            self._resize_update(event.globalPosition().toPoint().x())
             return
-        if x <= COLUMN_RESIZE_MARGIN:
-            self.setCursor(Qt.SizeHorCursor)
-        else:
-            self.unsetCursor()
+        self.setCursor(Qt.SizeHorCursor if self._in_resize_zone(x) else Qt.ArrowCursor)
         super().mouseMoveEvent(event)
 
     def mousePressEvent(self, event):
         x = event.position().toPoint().x()
-        if event.button() == Qt.LeftButton and x <= COLUMN_RESIZE_MARGIN:
-            self._resizing = True
-            self._resize_start_x = event.globalPosition().toPoint().x()
-            self._resize_start_width = self.width()
-            _show_resize_width(self, self.width())
+        if event.button() == Qt.LeftButton and self._in_resize_zone(x):
+            self._resize_begin(event.globalPosition().toPoint().x())
             return
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
         if self._resizing:
-            self._resizing = False
-            _hide_resize_width(self)
+            self._resize_end()
             return
         super().mouseReleaseEvent(event)
 
@@ -5390,12 +10021,24 @@ class DetailPanel(QWidget):
         self.video_widget.hide()
 
     def clear(self):
+        self._preview_request_path = None
+        self._current_path = None
+        self._pur_image_path = None
+        self._pur_image_ranges = []
+        self._pur_exported_images = []
+        self._pur_image_index = 0
+        self.pur_navigation.hide()
         self.name.setText("")
         self.badge.setText("")
+        self.preview_dimensions_value.setText("—")
+        self.preview_stale_badge.hide()
         self.well.hide()
         self._preview_pixmap = None
-        self.well.setFixedHeight(PREVIEW_MIN_HEIGHT)
+        self.well.setMinimumHeight(PREVIEW_MIN_HEIGHT)
         self.well_label.clear()
+        self.well_label.show()
+        self.preview_log.hide()
+        self.preview_progress.hide()
         self.text_preview.hide()
         self.text_preview.clear()
         self._stop_video()
@@ -5407,19 +10050,34 @@ class DetailPanel(QWidget):
         ce panneau, contrairement aux colonnes, n'est pas reconstruit par
         PipelineBrowser.reload() apres un changement de reglages. Geometrie
         de l'entete (hauteur/padding) desormais dans refresh_header, PAS
-        ici (voir sa docstring)."""
-        self.header_title.setFont(role_font("colhead", 10, 600, tracking=0.9, caps=True))
-        self.header_title.setStyleSheet(f"color: {role_color('colhead', C['header'])}; background: transparent;")
+        ici (voir sa docstring). Police/couleur du TITRE d'entete
+        (self.header_title) AUSSI desormais dans refresh_header (bug
+        corrige, voir sa remarque) — cette methode-ci ne touche plus qu'au
+        NOM du fichier/dossier selectionne et aux champs de detail."""
         self.name.setFont(role_font("folders" if is_dir else "files", 12, 600, tracking=0.12))
         self.name.setStyleSheet(
             f"color: {role_color('folders' if is_dir else 'files', C['text'])}; background: transparent;"
         )
+        self.open_render_log_button.setFont(role_font("buttons", 10, 500))
         for key_label in self.key_labels.values():
-            key_label.setFont(role_font("info", 11, 400))
-            key_label.setStyleSheet(f"color: {role_color('info', C['dim'])}; background: transparent;")
+            key_label.setFont(role_font("info", 9, 600))
+            key_label.setStyleSheet(
+                f"color: {M['table_head_fg']}; background: transparent; border: none;"
+            )
         for value in self.values.values():
             value.setFont(role_font("info2", 11, 400))
-            value.setStyleSheet(f"color: {role_color('info2', '#aab1b6')}; background: transparent;")
+            value.setStyleSheet(
+                f"color: {M['value_fg']}; background: transparent; border: none;"
+            )
+        self.preview_dimensions_heading.setFont(role_font("info", 9, 600))
+        self.preview_dimensions_heading.setStyleSheet(
+            f"color: {M['table_head_fg']}; background: transparent; border: none;"
+        )
+        self.preview_dimensions_value.setFont(role_font("info2", 11, 400))
+        self.preview_dimensions_value.setStyleSheet(
+            f"color: {M['value_fg']}; background: transparent; border: none;"
+        )
+        self.preview_stale_badge.setFont(role_font("info2", 8, 700))
 
     def refresh_colors(self):
         """Reapplique les couleurs — MEME logique que Column.refresh_colors
@@ -5436,7 +10094,54 @@ class DetailPanel(QWidget):
             frame["bg"], scaled_radius, frame["enabled"], frame["colors"], scaled(frame["thickness"], 0))
         self._update_card_mask()
         self.well.setStyleSheet(f"background: {C['well']}; border: 1px solid #282c30;")
+        self._apply_preview_table_style()
+        self.open_render_log_button.setStyleSheet(
+            f"QPushButton {{ background: {C['btn']}; color: {C['text']}; border: 1px solid {C['btn_border']}; "
+            f"border-radius: 3px; padding: 0 7px; font-size: 10px; }}"
+            f"QPushButton:hover {{ background: {C['btn_hover']}; border-color: {C['btn_hover_bd']}; }}"
+        )
         self.refresh_fonts(True if not self.values["kind"].text() else self.values["kind"].text() == "Dossier")
+
+    def _apply_preview_table_style(self):
+        """Applique au tableau de l'inspecteur les reglages des tableaux Parametres."""
+        settings = load_settings()
+        colors = settings.get("colors") or {}
+        _sync_dynamic_M(colors)
+        self.preview_info_table.setRadius(int(settings.get("table_radius", 0)))
+        border_enabled = _coerce_side_enabled(settings.get("table_border_enabled", True))
+        border_colors = {
+            side: resolve_color_ref(value, M["panel_border"])
+            for side, value in (settings.get("table_border") or {}).items()
+        }
+        self.preview_info_table.setBorder(
+            border_enabled, border_colors, int(settings.get("table_border_thickness", 1))
+        )
+        padding = settings.get("table_cell_padding") or {}
+        margins = (
+            max(0, int(padding.get("left", 14))),
+            max(0, int(padding.get("top", 8))),
+            max(0, int(padding.get("right", 14))),
+            max(0, int(padding.get("bottom", 8))),
+        )
+        for layout in self._preview_info_cell_layouts:
+            layout.setContentsMargins(*margins)
+        for cell in self.preview_info_table.findChildren(QWidget):
+            if isinstance(cell, QLabel):
+                continue
+            cell.setStyleSheet(f"background: {M['table_row_a']};")
+        heading_style = (
+            f"color: {M['table_head_fg']}; background: transparent; border: none; "
+            "padding: 0; font-size: 9px;"
+        )
+        value_style = (
+            f"color: {M['value_fg']}; background: transparent; border: none; "
+            "padding: 0; font-size: 11px;"
+        )
+        for label in self.preview_info_table.findChildren(QLabel):
+            if label.objectName() == "PreviewInfoHeading":
+                label.setStyleSheet(heading_style)
+            elif label.objectName() == "PreviewInfoValue":
+                label.setStyleSheet(value_style)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -5444,12 +10149,18 @@ class DetailPanel(QWidget):
 
     def _update_preview(self):
         if self._preview_pixmap is None:
-            self.well.setFixedHeight(PREVIEW_MIN_HEIGHT)
+            self.well.setMinimumHeight(PREVIEW_MIN_HEIGHT)
+            self.preview_dimensions_value.setText("—")
+            if self.preview_log.isVisible():
+                return
+            if self.preview_progress.isVisible():
+                return
             self.well_label.clear()
             return
         pw, ph = self._preview_pixmap.width(), self._preview_pixmap.height()
         if pw <= 0 or ph <= 0:
-            self.well.setFixedHeight(PREVIEW_MIN_HEIGHT)
+            self.well.setMinimumHeight(PREVIEW_MIN_HEIGHT)
+            self.preview_dimensions_value.setText("—")
             self.well_label.clear()
             return
         # Largeur disponible = largeur du panneau moins ses marges (16 de
@@ -5459,11 +10170,277 @@ class DetailPanel(QWidget):
         scale = min(1.0, avail_w / pw, PREVIEW_MAX_HEIGHT / ph)
         final_w = max(1, round(pw * scale))
         final_h = max(1, round(ph * scale))
-        self.well.setFixedHeight(max(final_h, PREVIEW_MIN_HEIGHT))
+        ratio_gcd = math.gcd(final_w, final_h)
+        self.preview_dimensions_value.setText(
+            f"{final_w} × {final_h} px · {final_w // ratio_gcd}:{final_h // ratio_gcd} · {scale * 100:.0f}%"
+        )
+        self.well.setMinimumHeight(max(final_h, PREVIEW_MIN_HEIGHT))
         scaled = self._preview_pixmap.scaled(
             final_w, final_h, Qt.KeepAspectRatio, Qt.SmoothTransformation
         )
         self.well_label.setPixmap(scaled)
+
+    def _refresh_preview_stale_badge(self, path: Path | None = None):
+        key = str(path) if path is not None else self._current_path
+        self.preview_stale_badge.setVisible(bool(key and self._preview_pixmap is not None and key in _STALE_PREVIEW_PATHS))
+
+    def _navigate_pur_image(self, step: int):
+        if self._pur_image_path != self._current_path:
+            return
+        direction = -1 if step < 0 else 1
+        index = self._pur_image_index + step if step else self._pur_image_index
+        total = len(self._pur_exported_images) or len(self._pur_image_ranges)
+        while 0 <= index < total:
+            if self._pur_exported_images:
+                image = read_pur_exported_image(Path(self._pur_exported_images[index]))
+            else:
+                image = read_pur_embedded_image(Path(self._pur_image_path), self._pur_image_ranges[index])
+            if image is not None and not image.isNull():
+                self._pur_image_index = index
+                self._preview_pixmap = QPixmap.fromImage(image)
+                suffix = " (extraction en cours)" if self._pur_export_task is not None else ""
+                self.pur_image_counter.setText(f"Image {index + 1} / {total}{suffix}")
+                self.pur_previous_button.setEnabled(index > 0)
+                self.pur_next_button.setEnabled(index + 1 < total)
+                self.well.show()
+                self.well_label.show()
+                self._update_preview()
+                return
+            index += direction
+        self.pur_previous_button.setEnabled(index > 0)
+        self.pur_next_button.setEnabled(False if direction > 0 else index + 1 < total)
+
+    def _start_pur_export(self, path: Path, mtime: float):
+        current = self._pur_export_task
+        if current is not None and str(current.path) == str(path) and current.mtime == mtime:
+            return
+        task = _PureRefExportTask(path, mtime)
+        task.signals.progress.connect(self._on_pur_export_progress)
+        task.signals.finished.connect(self._on_pur_export_finished)
+        self._pur_export_task = task
+        _PUR_EXPORT_POOL.start(task)
+
+    def _on_pur_export_progress(self, path_str: str, mtime: float, files):
+        if path_str != self._current_path or path_str != self._pur_image_path:
+            return
+        try:
+            if Path(path_str).stat().st_mtime != mtime:
+                return
+        except OSError:
+            return
+        self._pur_exported_images = list(files)
+        self.pur_next_button.setEnabled(self._pur_image_index + 1 < len(files))
+        self._navigate_pur_image(0)
+
+    def _on_pur_export_finished(self, path_str: str, mtime: float, files, error: str):
+        if self._pur_export_task is not None and str(self._pur_export_task.path) == path_str:
+            self._pur_export_task = None
+        if path_str != self._current_path or path_str != self._pur_image_path:
+            return
+        try:
+            current_mtime = Path(path_str).stat().st_mtime
+        except OSError:
+            return
+        if current_mtime != mtime:
+            return
+        if files:
+            self._pur_exported_images = list(files)
+            self._pur_image_index = min(self._pur_image_index, len(files) - 1)
+            self.pur_next_button.setEnabled(self._pur_image_index + 1 < len(files))
+            self._navigate_pur_image(0)
+        elif error:
+            self.pur_image_counter.setText(error)
+            self.pur_previous_button.setEnabled(False)
+            self.pur_next_button.setEnabled(False)
+
+    def _start_3d_preview(self, path: Path):
+        """Affiche la barre d'activite et lance le rendu OBJ/ABC en arriere-plan."""
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return
+        self._preview_request_path = str(path)
+        self._preview_pixmap = None
+        self.well_label.clear()
+        _PREVIEW_DECODE_MANAGER.request(path, mtime, force_render=True)
+        if str(path) in _PREVIEW_DECODE_MANAGER.active and str(path) not in self._preview_generation_paths:
+            self._on_preview_generation_started(str(path))
+
+    def prepare_auto_preview_log(self, path: Path):
+        """Marque le prochain rendu automatique avant le signal started."""
+        self._auto_preview_paths.add(str(path))
+
+    def open_preview_render_log(self):
+        """Ouvre le journal automatique situe a la racine du navigateur."""
+        window = self.window()
+        root_field = getattr(window, "root_field", None)
+        if root_field is None:
+            return
+        path = Path(root_field.text().strip()) / "pipeline_preview_render.log"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch(exist_ok=True)
+        except OSError:
+            return
+        open_path(path)
+
+    def _on_preview_generation_started(self, path_str: str):
+        was_idle = not self._preview_generation_paths
+        self._preview_generation_paths.add(path_str)
+        automatic = path_str in self._auto_preview_paths
+        if self.text_preview.isVisible() or self.video_widget.isVisible():
+            if not automatic:
+                return
+            self.text_preview.hide()
+            self._stop_video()
+            self.well.show()
+        if was_idle:
+            if automatic:
+                if self._auto_preview_log_count == 0:
+                    self.preview_log.clear()
+                else:
+                    self.preview_log.appendPlainText(_IdlePreviewScheduler.LOG_SEPARATOR)
+            else:
+                self.preview_log.clear()
+                self._auto_preview_log_count = 0
+        if automatic:
+            self._auto_preview_log_count += 1
+        self.well.show()
+        self.preview_log.show()
+        self.preview_progress.hide()
+        self.well_label.hide()
+        self.well.setMinimumHeight(PREVIEW_MIN_HEIGHT)
+        self.preview_log.appendPlainText(f"> Aperçu en cours : {path_str}")
+        self.preview_log.ensureCursorVisible()
+
+    def _on_preview_generation_progress(self, path_str: str, percent: int, message: str):
+        if path_str not in self._preview_generation_paths:
+            return
+        if self.text_preview.isVisible() or self.video_widget.isVisible():
+            if path_str not in self._auto_preview_paths:
+                return
+            self.text_preview.hide()
+            self._stop_video()
+            self.well.show()
+        if not self.preview_log.isVisible():
+            self.well.show()
+            self.preview_log.show()
+            self.well_label.hide()
+            self.preview_progress.hide()
+        self.preview_log.appendPlainText(f"[{percent:3d}%] {Path(path_str).name} — {message}")
+        self.preview_log.ensureCursorVisible()
+
+    def _on_3d_preview_ready(self, path_str: str, mtime: float, image):
+        """Met en cache le resultat du worker, puis l'affiche s'il est toujours selectionne."""
+        was_requested = path_str == self._preview_request_path or path_str in self._preview_generation_paths
+        self._preview_generation_paths.discard(path_str)
+        self._auto_preview_paths.discard(path_str)
+        path = Path(path_str)
+        try:
+            still_current_file = path.stat().st_mtime == mtime
+        except OSError:
+            still_current_file = False
+        pix = None
+        if still_current_file and image is not None and not image.isNull():
+            pix = QPixmap.fromImage(image)
+            _bounded_cache_set(_file_image_cache, path_str, (mtime, pix))
+            _STALE_PREVIEW_PATHS.discard(path_str)
+            # Les delegates des colonnes consultent le meme cache; les
+            # repeindre leur fait afficher le rendu qui vient d'etre produit.
+            for widget in QApplication.allWidgets():
+                if isinstance(widget, QAbstractItemView):
+                    widget.viewport().update()
+        if self._preview_request_path == path_str or self._current_path == path_str:
+            if pix is None and path_str in _STALE_PREVIEW_PATHS and still_current_file:
+                pix, _is_stale = _read_preview_pixmap(path, mtime)
+            self._preview_request_path = None
+            if pix is not None and path.suffix.lower() in IMAGE_EXTENSIONS:
+                source_pix = QPixmap(path_str)
+                self._preview_pixmap = source_pix if not source_pix.isNull() else pix
+            else:
+                self._preview_pixmap = pix
+            self._update_preview()
+            self._refresh_preview_stale_badge(path)
+        if not was_requested:
+            return
+        if self._preview_generation_paths:
+            if not self.text_preview.isVisible() and not self.video_widget.isVisible():
+                completion_percent = 100 if pix is not None else 0
+                completion_message = "Aperçu terminé" if pix is not None else "Aperçu indisponible"
+                self.preview_log.appendPlainText(
+                    f"[{completion_percent:3d}%] {path.name} — {completion_message}"
+                )
+                self.preview_log.ensureCursorVisible()
+            return
+        if not self.text_preview.isVisible() and not self.video_widget.isVisible():
+            completion_percent = 100 if pix is not None else 0
+            completion_message = "Aperçu terminé" if pix is not None else "Aperçu indisponible"
+            self.preview_log.appendPlainText(
+                f"[{completion_percent:3d}%] {path.name} — {completion_message}"
+            )
+            self.preview_log.ensureCursorVisible()
+            self.preview_log.hide()
+        self.preview_progress.hide()
+        self.well_label.show()
+        self._update_preview()
+
+    def show_loading_step(self, label: str, depth: int = 0):
+        """Reutilise le "puits" de l'Inspecteur (self.well/well_label, le
+        "carre noir" a cote des metadonnees) comme indicateur de
+        chargement PENDANT la construction de la fenetre de parametres
+        (voir SettingsWindow._report_loading_step, appele entre chaque
+        section) — voir la remarque de l'utilisateur, "la fenetre de
+        settings est toujours tres longue a charger ... peux tu faire une
+        sorte d'animation dans le champ apercu de l'inspecteur et afficher
+        tous les elements que tu charges en temps reel". Chaque etape
+        s'AJOUTE a la suite des precedentes (jamais remplacee), comme un
+        fichier LOG qui se construit ligne par ligne dans un terminal —
+        voir la remarque de l'utilisateur, "fait ca comme si c'etait un
+        vieil ordinateur qui balancait des lignes de code dans un
+        terminal, ne supprime pas les etapes d'avant mais met les
+        suivantes a la ligne"."""
+        if not getattr(self, "_loading_log_lines", None):
+            self._loading_log_lines = []
+            # self.well est CACHE par defaut (voir clear()/show_path()) tant
+            # qu'aucun fichier/dossier n'est selectionne dans l'appli — sans
+            # ce show() explicite, l'animation restait invisible des que la
+            # fenetre de parametres s'ouvrait sans rien de selectionne au
+            # prealable.
+            self.well.show()
+            self.well_label.setPixmap(QPixmap())
+            self.well_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+            self.well_label.setWordWrap(False)
+            # Police CODE de l'appli (mono_family, voir font()), vert pur
+            # (0,255,0) et SANS lissage (smoothing="none", voir font()) —
+            # voir la remarque de l'utilisateur, "je veux que la police
+            # soit code de l'appli, qu'elle soit verte 0,255,0 et qu'elle
+            # ne soit pas lissee".
+            self.well_label.setFont(font(9, 400, mono=True, smoothing="none"))
+            self.well_label.setStyleSheet(
+                "background: transparent; border: none; color: rgb(0, 255, 0); padding: 6px;")
+        # Indentation par niveau (tab = 2 caracteres, voir _report_
+        # construction_step cote settings_window) — voir la remarque de
+        # l'utilisateur, "quand tu load les settings, incrémente les
+        # differents niveaux de settings (tab = 2 carac)".
+        self._loading_log_lines.append(f"{'  ' * max(0, depth)}> {label}")
+        self.well_label.setText("\n".join(self._loading_log_lines))
+        self.well_label.adjustSize()
+        # Se redimensionne selon le contenu, jusqu'a 1000px maxi (PAS une
+        # hauteur fixe) — voir la remarque de l'utilisateur, "je veux que
+        # le carre d'apercu soit plus haut que ca, qu'il se redimensionne
+        # si besoin jusqu'a une hauteur de 1000px maxi".
+        needed = self.well_label.sizeHint().height() + 12
+        self.well.setMinimumHeight(max(PREVIEW_MIN_HEIGHT, min(1000, needed)))
+
+    def clear_loading_step(self):
+        """Restaure l'apparence normale du puits (voir show_loading_step) —
+        _update_preview() y remet la vignette REELLEMENT selectionnee
+        (ou rien), pas besoin de la memoriser a part."""
+        self._loading_log_lines = []
+        self.well_label.setAlignment(Qt.AlignCenter)
+        self.well_label.setWordWrap(False)
+        self.well_label.setStyleSheet("background: transparent; border: none;")
+        self._update_preview()
 
     def _show_video(self, path: Path):
         """Dimensionne le lecteur video sur la frame deja mise en cache
@@ -5484,6 +10461,12 @@ class DetailPanel(QWidget):
         self._video_player.play()
 
     def show_path(self, path: Path):
+        self._current_path = str(path)
+        self._pur_image_path = None
+        self._pur_image_ranges = []
+        self._pur_exported_images = []
+        self._pur_image_index = 0
+        self.pur_navigation.hide()
         self.name.setText(path.name)
         is_dir = path.is_dir()
         self.name.setFont(role_font("folders" if is_dir else "files", 12, 600, tracking=0.12))
@@ -5491,6 +10474,15 @@ class DetailPanel(QWidget):
             f"color: {role_color('folders' if is_dir else 'files', C['text'])}; background: transparent;"
         )
         self._preview_pixmap = None
+        self._preview_request_path = None
+        self.preview_stale_badge.hide()
+        self.preview_progress.hide()
+        if self._preview_generation_paths:
+            self.preview_log.show()
+            self.well_label.hide()
+        else:
+            self.preview_log.hide()
+            self.well_label.show()
         self._stop_video()
         is_text_preview = not is_dir and path.suffix.lower() in TEXT_PREVIEW_EXTENSIONS
         is_video = not is_dir and path.suffix.lower() in VIDEO_EXTENSIONS
@@ -5516,20 +10508,81 @@ class DetailPanel(QWidget):
             if not is_dir:
                 suffix = path.suffix.lower()
                 if suffix in IMAGE_EXTENSIONS:
-                    pix = QPixmap(str(path))
-                    if not pix.isNull():
+                    try:
+                        mtime = path.stat().st_mtime
+                    except OSError:
+                        mtime = None
+                    stale_pix = None
+                    is_stale = False
+                    if mtime is not None:
+                        stale_pix, is_stale = _read_preview_pixmap(path, mtime)
+                    if is_stale and stale_pix is not None:
+                        self._preview_pixmap = stale_pix
+                        file_image_pixmap(path)  # auto-régénère les caches 2D périmés
+                    else:
+                        pix = QPixmap(str(path))
+                        if not pix.isNull():
+                            self._preview_pixmap = pix
+                        file_image_pixmap(path)  # crée le cache 2D manquant
+                elif suffix in OBJ_EXTENSIONS | ABC_EXTENSIONS:
+                    if str(path) in _MANUAL_3D_PREVIEW_REQUESTS:
+                        _MANUAL_3D_PREVIEW_REQUESTS.discard(str(path))
+                        _cached_file_image_pixmap(path)  # charge l'ancien rendu si disponible
+                        self._start_3d_preview(path)
+                    else:
+                        self._preview_pixmap = _cached_file_image_pixmap(path)
+                elif suffix in (BLEND_EXTENSIONS | MAYA_SCENE_EXTENSIONS | FBX_EXTENSIONS):
+                    if str(path) in _MANUAL_3D_PREVIEW_REQUESTS:
+                        _MANUAL_3D_PREVIEW_REQUESTS.discard(str(path))
+                        _cached_file_image_pixmap(path)
+                        self._start_3d_preview(path)
+                    else:
+                        self._preview_pixmap = _cached_file_image_pixmap(path)
+                elif suffix in DWG_EXTENSIONS:
+                    pix = file_image_pixmap(path)
+                    if pix is not None and not pix.isNull():
                         self._preview_pixmap = pix
-                elif suffix in OBJ_EXTENSIONS or suffix in PSD_EXTENSIONS or suffix in EXR_EXTENSIONS:
+                elif suffix in PUR_PREVIEW_EXTENSIONS:
+                    # Indexe les images embarquees sans les decoder, puis
+                    # l'inspecteur ne charge que celle actuellement choisie.
+                    try:
+                        mtime = path.stat().st_mtime
+                    except OSError:
+                        mtime = None
+                    self._pur_image_ranges = pur_embedded_image_ranges(path, mtime)
+                    pur_version = pur_file_major_version(path)
+                    is_pur_v2 = pur_version is not None and pur_version >= 2
+                    if self._pur_image_ranges or is_pur_v2:
+                        self._pur_image_path = str(path)
+                        self.pur_navigation.show()
+                        self.pur_previous_button.setEnabled(False)
+                        self.pur_next_button.setEnabled(len(self._pur_image_ranges) > 1)
+                        if is_pur_v2:
+                            self.pur_image_counter.setText("Extraction des images PureRef…")
+                            self.pur_next_button.setEnabled(False)
+                            if mtime is not None:
+                                self._start_pur_export(path, mtime)
+                        if self._pur_image_ranges:
+                            self._navigate_pur_image(0)
+                        else:
+                            self.well_label.setText("Extraction des images PureRef en cours…")
+                    else:
+                        self.well_label.setText("Aucune image intégrée lisible dans ce fichier PureRef.")
+                elif (suffix in PSD_EXTENSIONS
+                      or suffix in EXR_EXTENSIONS or suffix in HDR_EXTENSIONS
+                      or suffix in TX_EXTENSIONS):
                     # Rendu genere (.obj, voir _decode_obj_image), vignette
                     # embarquee extraite (.psd/.psb, voir
-                    # _decode_psd_thumbnail) ou tone-mapping HDR (.exr, voir
-                    # _decode_exr_image) : pas un fichier que QPixmap sait
-                    # charger directement, passe par le meme cache que les
-                    # cartes-fichier (file_image_pixmap).
+                    # _decode_psd_thumbnail) ou tone-mapping HDR (.exr/.hdr,
+                    # voir _decode_exr_image/_decode_hdr_image) : pas un
+                    # fichier que QPixmap sait charger directement, passe
+                    # par le meme cache que les cartes-fichier
+                    # (file_image_pixmap).
                     pix = file_image_pixmap(path)
                     if pix is not None and not pix.isNull():
                         self._preview_pixmap = pix
             self._update_preview()
+            self._refresh_preview_stale_badge(path)
         try:
             info = path.stat()
             modified = datetime.fromtimestamp(info.st_mtime).strftime("%Y-%m-%d %H:%M")
@@ -5633,12 +10686,19 @@ class IconButton(QPushButton):
             super().paintEvent(event)
             painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
+        rect = self.rect()
+        custom_pix = self._custom_icon_pixmap(rect)
+        if custom_pix is not None:
+            target = QRect(0, 0, custom_pix.width(), custom_pix.height())
+            target.moveCenter(rect.center())
+            painter.drawPixmap(target, custom_pix)
+            painter.end()
+            return
         color = self._hover_color if self.underMouse() else self._color
         pen = QPen(QColor(color))
         pen.setWidthF(1.3)
         pen.setCapStyle(Qt.FlatCap)
         painter.setPen(pen)
-        rect = self.rect()
         cx, cy = rect.center().x(), rect.center().y()
         s = min(rect.width(), rect.height()) * 0.16
         if self._kind == "min":
@@ -5671,6 +10731,23 @@ class IconButton(QPushButton):
                 painter.drawLine(QPointF(ox - sign * ss * 0.5, cy), QPointF(ox + sign * ss * 0.5, cy + ss))
         painter.end()
 
+    def _custom_icon_pixmap(self, rect: QRect) -> QPixmap | None:
+        """Icone perso (voir Settings > ICONES > General) pour ce bouton,
+        si l'utilisateur en a choisi une — sinon None (le glyphe peint ci-
+        dessus reste le rendu par defaut). "gear" (bouton Parametres) suit
+        TOUJOURS sa propre icone si elle existe ; les chevrons de repli
+        (dchevron_left/right) ne la remplacent que si COLLAPSE_TOGGLE_MODE
+        vaut "icone" (voir Settings > Colonnes > Focus > Bouton repliement >
+        "Icone")."""
+        size = int(min(rect.width(), rect.height()) * 0.9)
+        if size <= 0:
+            return None
+        if self._kind == "gear":
+            return custom_ui_icon_pixmap(UI_ICON_SETTINGS_GEAR, size)
+        if self._kind in ("dchevron_left", "dchevron_right") and COLLAPSE_TOGGLE_MODE == "icone":
+            return custom_ui_icon_pixmap(UI_ICON_COLLAPSE_TOGGLE, size)
+        return None
+
 
 # ==========================================================================
 # Barre de titre intrinseque : la fenetre principale est sans decoration
@@ -5702,8 +10779,16 @@ class TitleBar(QWidget):
 
         icon = QLabel()
         self._icon = icon
-        icon.setFixedSize(scaled(9), scaled(9))
-        icon.setStyleSheet(f"border: 1px solid {C['mark_dir_bd']}; background: transparent;")
+        icon_size = scaled(9)
+        icon.setFixedSize(icon_size, icon_size)
+        # Icone perso (voir Settings > ICONES > General, UI_ICON_APP_LOGO)
+        # si l'utilisateur en a choisi une, sinon le carre neutre d'origine.
+        custom_logo = custom_ui_icon_pixmap(UI_ICON_APP_LOGO, icon_size)
+        if custom_logo is not None:
+            icon.setPixmap(custom_logo)
+            icon.setStyleSheet("background: transparent;")
+        else:
+            icon.setStyleSheet(f"border: 1px solid {C['mark_dir_bd']}; background: transparent;")
         # Transparent aux clics : sans ca, cliquer PILE sur l'icone ou le
         # texte du titre (plutot qu'a cote, sur le fond nu de la barre) ne
         # declenche jamais TitleBar.mousePressEvent ci-dessous — un widget
@@ -5817,12 +10902,40 @@ class PipelineBrowser(QMainWindow):
         # selection reste la meme, puis rearme des que Sous-projet perd sa
         # selection (retour en arriere).
         self._auto_collapse_armed = True
+        # Signature du dernier RENDU de update_preview_stack (voir
+        # _preview_style_snapshot/refresh_all_columns) — permet a
+        # refresh_all_columns(rescan=False) de sauter une reconstruction
+        # complete (detruit/recree jusqu'a 6 widgets, RE-SCANNE LE DISQUE :
+        # vignettes/in/over/out/logiciels) quand rien de ce dont depend le
+        # RENDU n'a change depuis le dernier appel — voir la remarque de
+        # l'utilisateur, "gros ralentissements ... les manips sont donc
+        # tres lourdes". None : jamais encore rendu, le premier appel via
+        # cette voie reconstruit TOUJOURS (repli surs).
+        self._last_preview_style_snapshot: str | None = None
         # Groupe IN/OVER/OUT/LOGICIELS (voir update_preview_stack) : 4
         # colonnes fantomes EMPILEES VERTICALEMENT (meme principe que
-        # _preview_stack_wrapper ci-dessous), reconstruites entierement a
-        # chaque navigation — voir _clear_group_stack.
+        # _preview_stack_wrapper ci-dessous) — reconstruites SEULEMENT
+        # quand le contexte de navigation change reellement (voir
+        # _group_context_key ci-dessous), jamais a chaque appel : ces
+        # instances restent stables d'une navigation a l'autre, EXACTEMENT
+        # comme Type/Projets/Sous-projet — voir la remarque de
+        # l'utilisateur, "leur comportement ne fonctionne pas du tout ...
+        # base toi sur les colonnes creees avant les focus".
         self._group_stack_wrapper: QWidget | None = None
         self.group_columns: list[Column] = []
+        # (terminal_path, tuple(levels), work_dir_style) de la DERNIERE
+        # construction reussie du groupe (voir update_preview_stack) — None
+        # tant qu'aucune construction n'a encore eu lieu (repli sur : le
+        # premier appel reconstruit toujours).
+        self._group_context_key: object | None = None
+        # Colonne du groupe IN/OVER/OUT/LOGICIELS la plus RECEMMENT
+        # selectionnee (voir update_active_column/_on_group_item_selected) —
+        # une SEULE des 4 doit apparaitre "focus" (fond bleu) a la fois,
+        # pas les 4 independamment des qu'elles ont chacune une selection —
+        # voir la remarque de l'utilisateur, capture a l'appui, "blender,
+        # reference et screenshots ... ont un fond bleu alors qu'un seul
+        # devrait l'avoir".
+        self._last_active_group_column: Column | None = None
         # Largeur commune aux 4 colonnes du groupe (voir Column.__init__
         # user_width/on_resize, _on_group_column_resized) — MEME principe/
         # MEME raison que _preview_column_user_width plus bas (colonnes
@@ -5847,6 +10960,13 @@ class PipelineBrowser(QMainWindow):
         # — None hors glisser. Scission a 2 (voir leurs remarques) : SEULES
         # ces 2 colonnes-la sont jamais touchees, jamais tout le groupe.
         self._group_height_drag: tuple[Column, Column, int, int] | None = None
+        # Configuration de chaine de navigation DU PROJET COURANT (voir
+        # load_project_columns/on_selected/ColumnConfigDialog) — None tant
+        # qu'aucun projet n'est selectionne OU que le projet selectionne n'a
+        # pas de fichier de configuration (repli sur la chaine legacy fixe,
+        # voir COLUMN_LABELS) — voir la remarque de l'utilisateur, "cette
+        # configuration [doit changer] suivant les besoins de l'utilisateur".
+        self._active_project_config: dict | None = None
         # Ordre d'affichage des 4 colonnes du groupe (voir update_preview_
         # stack/_on_group_reorder) — LOGICIELS en premier par defaut, voir
         # la remarque de l'utilisateur, "la colonne logiciel doit etre en
@@ -5896,6 +11016,29 @@ class PipelineBrowser(QMainWindow):
         # refresh_colors) que lorsque l'un des deux a vraiment change,
         # plutot qu'a chaque cran de n'importe quel slider.
         self._last_style_key = None
+        # app.setStyleSheet (voir refresh_colors/refresh_style) est de
+        # LOIN le poste le plus cher de tout ce rafraichissement — mesure
+        # a plus de 3 SECONDES par appel une fois la fenetre de parametres
+        # ouverte (des milliers de widgets, chacun avec son propre QSS
+        # local a re-cascader) — voir la remarque de l'utilisateur, "il y
+        # a toujours un tres gros problemes de performance dans les
+        # settings". Le gate ci-dessus (style_key) evite de le rejouer
+        # quand RIEN n'a change, mais durant un glisser de COULEUR, la
+        # valeur change reellement a CHAQUE tick (~30ms) : ce gate seul ne
+        # peut donc rien y faire. Regroupe ici les reconstructions
+        # rapprochees (voir _flush_stylesheet_rebuild) : le reste de
+        # refresh_colors (couleurs des colonnes/boutons individuels, DEJA
+        # rapide et DEJA la source principale du retour visuel en direct)
+        # continue de tourner a CHAQUE tick, seul cet appel natif couteux
+        # est repousse a un rythme beaucoup plus lache — invisible a
+        # l'oeil (le style GENERIQUE — boutons/scrollbars/menus — n'est de
+        # toute facon pas ce qu'on regarde en glissant une pastille de
+        # couleur), mais qui evite l'accumulation de secondes de latence.
+        self._pending_stylesheet_rebuild = False
+        self._stylesheet_rebuild_timer = QTimer(self)
+        self._stylesheet_rebuild_timer.setSingleShot(True)
+        self._stylesheet_rebuild_timer.setInterval(250)
+        self._stylesheet_rebuild_timer.timeout.connect(self._flush_stylesheet_rebuild)
 
         # --- barre du haut ---
         self.root_label = QLabel("Root")
@@ -6075,6 +11218,7 @@ class PipelineBrowser(QMainWindow):
         self._apply_native_frame()
 
         self._restore_window_state()
+        self._idle_preview_scheduler = _IdlePreviewScheduler(self)
 
     def _restore_window_state(self):
         """Reapplique la position/taille de fenetre au moment de la derniere
@@ -6168,6 +11312,17 @@ class PipelineBrowser(QMainWindow):
         self.update_preview_stack()
         self._sync_collapse_state()
 
+    def _detach_group_stack(self):
+        """Retire le groupe fantome de columns_layout SANS le detruire
+        (voir add_column) — contrairement a _clear_group_stack, garde
+        `self.group_columns`/`self._group_context_key` intacts : le
+        prochain update_preview_stack (toujours appele juste apres, voir
+        add_column) le REINSERE tel quel si le contexte de navigation n'a
+        pas change, ou le detruira lui-meme via _clear_group_stack si
+        besoin d'une reconstruction complete."""
+        if self._group_stack_wrapper is not None:
+            self.columns_layout.removeWidget(self._group_stack_wrapper)
+
     def _clear_group_stack(self):
         if self._group_stack_wrapper is not None:
             self.columns_layout.removeWidget(self._group_stack_wrapper)
@@ -6175,6 +11330,8 @@ class PipelineBrowser(QMainWindow):
             self._group_stack_wrapper.deleteLater()
             self._group_stack_wrapper = None
         self.group_columns = []
+        self._group_context_key = None
+        self._last_active_group_column = None
 
     def _clear_image_preview_columns(self):
         if self._preview_stack_wrapper is not None:
@@ -6184,27 +11341,69 @@ class PipelineBrowser(QMainWindow):
             self._preview_stack_wrapper = None
         self.image_preview_columns = []
 
-    def add_column(self, directory: Path, depth: int, title: str | None = None):
+    def add_column(self, directory: Path, depth: int, title: str | None = None,
+                   is_focus_level: bool | None = None,
+                   show_dirs: bool = True, show_files: bool = True,
+                   omit_dirs: frozenset = frozenset(), omit_files: frozenset = frozenset(),
+                   style_title: str | None = None, display_title: str | None = None):
         # `title` : impose un intitule (voir _open_group_folder, qui ouvre
         # un dossier in/over/out/logiciel sans rapport avec ce que la profondeur
         # suggererait normalement — pas question d'afficher "SOUS-PROJET" au
         # dessus du contenu de "in"). None (cas normal) : intitule deduit de
-        # la profondeur, comme avant.
+        # la profondeur, comme avant. `is_focus_level`/`show_dirs`/`show_files`/
+        # `omit_dirs`/`omit_files` (voir Column.__init__, on_selected) :
+        # SEULEMENT fournis pour un niveau de la chaine CONFIGUREE (voir
+        # load_project_columns) — valeurs par defaut = comportement INCHANGE
+        # pour tout le reste (Type/Sous-projet legacy/Logiciels/Contenu).
+        # `style_title` (voir Column.style_title/on_selected) : cle de STYLE
+        # SEPAREE du nom affiche — utilisee pour qu'un niveau de chaine
+        # CONFIGUREE (nom quelconque, ex. "test1") suive quand meme le
+        # reglage General > Colonnes > INTERMEDIAIRE (voir la remarque de
+        # l'utilisateur, "doit controler toutes les colonnes entre celle de
+        # projet et focus"). None (repli, comportement INCHANGE) : style_title
+        # = title, comme avant ce reglage.
+        normal_navigation = title is None
         if title is None:
             title = COLUMN_LABELS[depth] if depth < len(COLUMN_LABELS) else "Contenu"
-        column = Column(directory, title)
+        if display_title is None and normal_navigation and depth > 1:
+            # En-tete DYNAMIQUE pour toute colonne "de set" APRES Type ET
+            # Projets (Type garde son titre fixe, aucune colonne
+            # PRECEDENTE dont reprendre le nom ; "Projets" doit lui
+            # TOUJOURS s'appeler ainsi — voir la remarque de l'utilisateur,
+            # "la deuxieme colonne doit toujours s'appeler PROJETS", une
+            # correction de la demande initiale "dans les colonnes de set
+            # le nom des colonnes correspond au nom du repertoire
+            # selectionne") : `directory` EST precisement le dossier
+            # SELECTIONNE dans la colonne precedente (celui dont cette
+            # nouvelle colonne liste le contenu). Seulement en navigation
+            # NORMALE (`title` deja None avant l'affectation ci-dessus) :
+            # PAS pour _open_group_folder, qui fixe deja lui-meme son
+            # propre display_title (voir sa remarque).
+            display_title = directory.name
+        column = Column(
+            directory, title, is_focus_level=is_focus_level, style_title=style_title,
+            display_title=display_title,
+            show_dirs=show_dirs, show_files=show_files, omit_dirs=omit_dirs, omit_files=omit_files)
         column.selected.connect(self.on_selected)
         column.activated.connect(self.on_activated)
         self.columns.append(column)
         # Le groupe fantome IN/OVER/OUT/LOGICIELS (voir update_preview_
         # stack) peut occuper cet emplacement depuis la selection
-        # precedente : le retirer avant d'ajouter la vraie colonne, sinon
-        # celle-ci se retrouverait ajoutee APRES lui dans columns_layout
-        # (ordre visuel casse). image_preview_column, elle, n'est PAS
-        # retiree ici : c'est une colonne permanente qui doit rester juste
-        # avant celle qu'on ajoute (voir update_preview_stack, qui la
-        # reconstruit a la bonne position a chaque appel).
-        self._clear_group_stack()
+        # precedente : le RETIRER (pas le DETRUIRE, voir _detach_group_
+        # stack) avant d'ajouter la vraie colonne, sinon celle-ci se
+        # retrouverait ajoutee APRES lui dans columns_layout (ordre visuel
+        # casse). image_preview_column, elle, n'est PAS retiree ici : c'est
+        # une colonne permanente qui doit rester juste avant celle qu'on
+        # ajoute (voir update_preview_stack, qui la reconstruit a la bonne
+        # position a chaque appel). update_preview_stack (appele juste
+        # apres, a la fin de on_selected/_open_group_folder) le REINSERE
+        # a la bonne position SANS le reconstruire si le contexte de
+        # navigation n'a pas change (voir sa remarque, la remarque de
+        # l'utilisateur "base toi sur les colonnes creees avant les
+        # focus") — un _clear_group_stack() (destructeur) ici aurait
+        # recree les 4 colonnes a CHAQUE _open_group_folder, y compris pour
+        # une simple creation de dossier qui re-selectionne l'element cree.
+        self._detach_group_stack()
         self.columns_layout.addWidget(column)
         # _suppress_left() (voir Column._containing_layout) a besoin que la
         # colonne soit DEJA dans columns_layout pour detecter correctement
@@ -6263,7 +11462,15 @@ class PipelineBrowser(QMainWindow):
             # slider pour la previsualisation en direct) ecrasait aussitot
             # tout redimensionnement manuel par la largeur par defaut.
             if not column.collapsed:
-                column.setFixedWidth(column._user_width or col_width(column.column_title))
+                # _pin_column_width (voir Column._toggle_pin) EN PREMIER :
+                # sans lui, tout changement de reglage (n'importe quel
+                # champ de la fenetre de parametres, voir _apply_settings)
+                # ecrasait aussitot la largeur FIGEE d'une colonne pinnee —
+                # voir la remarque de l'utilisateur, "quand on fait une
+                # modif dans les settings, ca annule toutes les valeurs
+                # des colonnes qui sont pinnees".
+                column.setFixedWidth(
+                    column._pin_column_width or column._user_width or col_width(column.style_title))
             else:
                 column.setFixedWidth(0)
             column.refresh_header()
@@ -6284,9 +11491,25 @@ class PipelineBrowser(QMainWindow):
                 # previsualisation en direct, voir rescan=False plus bas).
                 column.list.doItemsLayout()
             else:
-                do_layout = relayout_titles is None or column.column_title in relayout_titles
+                do_layout = relayout_titles is None or column.style_title in relayout_titles
                 column.relayout(do_layout=do_layout)
-        self.update_preview_stack()
+        if rescan:
+            self.update_preview_stack()
+        else:
+            # Gate (voir _preview_style_snapshot/la remarque de tete de
+            # cette methode) : SEULEMENT pour la previsualisation en direct
+            # des parametres (rescan=False, seul appelant de cette
+            # branche) — sauter la reconstruction complete du groupe IN/
+            # OVER/OUT/LOGICIELS/des vignettes Focus (destruction/recreation
+            # de jusqu'a 6 widgets + RE-SCAN DU DISQUE) quand rien de ce
+            # qu'elle utilise n'a change depuis le dernier rendu, au lieu de
+            # la rejouer a CHAQUE cran de glisser de N'IMPORTE quel slider
+            # de la fenetre de parametres — voir la remarque de
+            # l'utilisateur, "gros ralentissements ... les manips sont donc
+            # tres lourdes".
+            snapshot = self._preview_style_snapshot()
+            if snapshot != self._last_preview_style_snapshot:
+                self.update_preview_stack()
 
     def update_active_column(self):
         last_selected = -1
@@ -6295,6 +11518,93 @@ class PipelineBrowser(QMainWindow):
                 last_selected = i
         for i, column in enumerate(self.columns):
             column.set_active(i == last_selected)
+        # Colonnes du groupe IN/OVER/OUT/LOGICIELS : UNE SEULE a la fois
+        # doit apparaitre "focus" (voir _last_active_group_column, mis a
+        # jour par _on_group_item_selected a CHAQUE clic sur l'une d'elles)
+        # — pas les 4 independamment des qu'elles ont chacune une
+        # selection (1ere version de ce correctif, revenue sur elle : voir
+        # la remarque de l'utilisateur, capture a l'appui, "blender,
+        # reference et screenshots ... ont un fond bleu alors qu'un seul
+        # devrait l'avoir").
+        for column in self.group_columns:
+            column.set_active(
+                column is self._last_active_group_column and column.current_path() is not None)
+
+    def _chain_expected_total(self) -> int:
+        """Nombre de colonnes REELLES requises pour que la chaine de
+        navigation soit complete (Type + Projets + niveaux configures, voir
+        load_project_columns/self._active_project_config) — 3 (Type,
+        Projets, Sous-projet) si aucune config (chaine legacy). Utilise a
+        la fois par update_preview_stack (position des vignettes/du groupe)
+        et _open_group_folder (position ou du contenu ouvert depuis ce
+        groupe doit s'inserer) — voir leurs remarques, "ancrer sur la FIN
+        DE LA CHAINE REQUISE, pas sur le dernier niveau focus"."""
+        active_config = self._active_project_config
+        if active_config is None:
+            return 3
+        # Toggle "set" DESACTIVE (voir ColumnConfigDialog, la remarque de
+        # l'utilisateur, "si il est a 0, le set ne se fait pas, et on passe
+        # directement de la colonne projets a la colonne apres les
+        # logiciels/in/out/over") : ignore les niveaux configures, comme
+        # une chaine "base 2" (Type+Projets seuls).
+        if not active_config.get("set_enabled", True):
+            return 2
+        return 2 + len(active_config["columns"])
+
+    def _chain_terminal_path(self) -> Path | None:
+        """Chemin actuellement selectionne dans la DERNIERE colonne requise
+        de la chaine (voir _chain_expected_total) — None tant que la chaine
+        n'est pas COMPLETEMENT settee jusqu'au repertoire de travail (soit
+        pas assez de colonnes reelles encore ouvertes, soit rien de
+        selectionne dans la derniere). self.columns[expected_total - 1]
+        (position FIXE), PAS self.columns[-1] : une fois du contenu ouvert
+        depuis le groupe IN/OVER/OUT/LOGICIELS (voir _open_group_folder),
+        self.columns contient des colonnes SUPPLEMENTAIRES apres la chaine
+        — voir update_preview_stack, meme remarque. Partagee par
+        update_preview_stack (afficher ou non les vignettes/le groupe) ET
+        _sync_collapse_state (repli automatique des colonnes de set, voir
+        la remarque de l'utilisateur, "une fois que l'on est sur l'espace
+        de travail")."""
+        expected_total = self._chain_expected_total()
+        if len(self.columns) < expected_total:
+            return None
+        path = self.columns[expected_total - 1].current_path()
+        # Un FICHIER selectionne dans cette colonne ne "sette" PAS le
+        # projet — seul un REPERTOIRE marque l'espace de travail atteint
+        # (voir update_preview_stack/_sync_collapse_state/_on_group_
+        # height_resize_end, tous les 3 appelants) — voir la remarque de
+        # l'utilisateur, "les fichiers ne sont pas des elements de set".
+        if path is not None and not path.is_dir():
+            return None
+        return path
+
+    def _preview_style_snapshot(self) -> str:
+        """Signature LEGERE de tout ce dont depend le RENDU (pas le
+        contenu/la selection, jamais impactes par un simple reglage
+        cosmetique) de update_preview_stack — les 3 styles resolus qu'elle
+        utilise pour construire ses widgets (vignettes Focus, groupe IN/
+        OVER/OUT au style "Contenu", groupe LOGICIELS) plus l'espacement
+        entre colonnes. Comparee par refresh_all_columns(rescan=False,
+        voir sa remarque) pour sauter une reconstruction complete —
+        detruire/recreer jusqu'a 6 widgets et RE-SCANNER LE DISQUE
+        (vignettes/in/over/out/logiciels) — quand AUCUNE de ces 4 valeurs
+        n'a reellement change depuis le dernier rendu, plutot qu'a CHAQUE
+        cran de glisser d'un slider quelconque de la fenetre de parametres,
+        meme sans aucun rapport avec ces colonnes — voir la remarque de
+        l'utilisateur, "gros ralentissements ... les manips sont donc tres
+        lourdes". json.dumps (pas un simple tuple) : ces styles sont des
+        dict (parfois imbriques, bordures/rayons par cote/coin), non
+        hashables tels quels — sort_keys=True pour une representation
+        STABLE (ordre d'iteration du dict sans importance)."""
+        return json.dumps(
+            [
+                column_style_for(PREVIEW_STACK_TITLE),
+                column_style_for("Contenu"),
+                column_style_for("Logiciels"),
+                column_gap(),
+            ],
+            sort_keys=True, default=str,
+        )
 
     def update_preview_stack(self):
         """Recalcule l'apercu empile : un bloc par colonne a vignettes
@@ -6334,13 +11644,79 @@ class PipelineBrowser(QMainWindow):
            contenu dans une VRAIE colonne juste apres le groupe (voir
            _open_group_folder), navigation normale comme partout ailleurs
            dans l'appli."""
-        self._clear_group_stack()
+        # Signature du RENDU en cours (voir _preview_style_snapshot/
+        # refresh_all_columns) : mise a jour ICI, EN PREMIER, quel que soit
+        # le chemin de sortie ci-dessous (chaine incomplete -> vide, ou
+        # reconstruction complete) — reste ainsi TOUJOURS en phase avec ce
+        # qui est REELLEMENT affiche, peu importe quel appelant a declenche
+        # ce rendu (navigation normale, glisser-deposer, ou previsualisation
+        # de reglages).
+        self._last_preview_style_snapshot = self._preview_style_snapshot()
         self._clear_image_preview_columns()
         if not self.columns:
+            self._clear_group_stack()
+            self._group_context_key = None
             return
-        entries: list[tuple[str, QPixmap, Path, object, str]] = []
-        for column in self.columns:
-            if not column.has_thumbnails:
+
+        # Rien n'apparait (ni vignettes, ni groupe IN/OVER/OUT/LOGICIELS)
+        # tant que la chaine n'est pas COMPLETEMENT settee jusqu'au
+        # repertoire de travail (voir load_project_columns/on_selected,
+        # expected_total = Type+Projets+niveaux configures) — voir la
+        # remarque de l'utilisateur, "ne pas faire apparaitre les colonnes
+        # focus tant que le set n'est pas fini jusqu'a l'espace de
+        # travail". AVANT (pas seulement pour softs_dirs comme avant) :
+        # deplace ici, calcule EN PREMIER, pour pouvoir couper court avant
+        # meme de construire les vignettes — un focus PARTIEL (ex.
+        # seulement "Projets" selectionne, avant tout choix dans "Sous-
+        # projet") ne doit plus rien afficher du tout.
+        active_config = self._active_project_config
+        expected_total = self._chain_expected_total()
+        # Toggles "focus"/"in_over_out" (voir ColumnConfigDialog, la
+        # remarque de l'utilisateur, "si il est a 0, on n'affiche pas la
+        # colonne focus"/"in over et out") — True par defaut (chaine legacy
+        # OU champ absent d'une config plus ancienne). Toggle "logiciels"
+        # SUPPRIME (voir la remarque de l'utilisateur, "supprime le toggle
+        # logiciels") — la colonne LOGICIELS du groupe est desormais
+        # TOUJOURS affichee, sans condition.
+        focus_enabled = True if active_config is None else active_config.get("focus_enabled", True)
+        in_over_out_enabled = True if active_config is None else active_config.get("in_over_out_enabled", True)
+        if active_config is None:
+            work_dir_info = WORK_DIR_TYPES[DEFAULT_WORK_DIR_TYPE]
+        else:
+            work_dir_info = WORK_DIR_TYPES.get(
+                active_config["work_dir"]["type"], WORK_DIR_TYPES[DEFAULT_WORK_DIR_TYPE])
+        # _chain_terminal_path (voir sa remarque de tete) : PAS
+        # self.columns[-1] — une fois du contenu ouvert depuis le groupe
+        # IN/OVER/OUT/LOGICIELS (voir _open_group_folder), self.columns
+        # contient des colonnes SUPPLEMENTAIRES apres la chaine, dont le
+        # dernier ne represente plus le niveau REEL terminal.
+        terminal_path = self._chain_terminal_path()
+        if terminal_path is None:
+            self._clear_group_stack()
+            self._group_context_key = None
+            return
+
+        # Hauteurs des colonnes du groupe IN/OVER/OUT/LOGICIELS PROPRES a
+        # CE dossier terminal (voir load_layout_settings/
+        # _on_group_height_resize_end) — remplace INTEGRALEMENT le dict en
+        # memoire (jamais fusionne avec l'ancien contenu) : ce dict est
+        # TOUJOURS synchronise avec le disque a la fin de chaque glisser
+        # (_on_group_height_resize_end persiste immediatement, "temps
+        # reel"), donc jamais de valeur "en attente" a preserver ici — voir
+        # la remarque de l'utilisateur, "le dimensionnement en hauteur des
+        # colonnes de focus doit etre enregistre en temps reel et ce
+        # dependant du [sous-]dossier ... d'un sous dossier a l'autre, les
+        # dimensionnements seront differents".
+        raw_group_heights = load_layout_settings(terminal_path).get("group_heights")
+        self._group_column_user_heights = {}
+        if isinstance(raw_group_heights, dict):
+            for kind, height in raw_group_heights.items():
+                if isinstance(height, (int, float)):
+                    self._group_column_user_heights[kind] = int(height)
+
+        entries: list[tuple[str, QPixmap, Path, object, str, Column]] = []
+        for column in self.columns if focus_enabled else ():
+            if not column.is_focus_level:
                 continue
             path = column.current_path()
             if path is None:
@@ -6351,75 +11727,175 @@ class PipelineBrowser(QMainWindow):
             # de l'utilisateur, "ce n'est pas deux blocs empiles, mais deux
             # colonnes empilees" (chaque bloc doit reprendre l'entete REEL
             # de SA colonne, pas un entete generique commun aux deux).
-            entries.append((path.name, project_thumbnail_pixmap(path), path, open_status, column.column_title))
+            # `column` (6e element, la VRAIE Column source) : voir
+            # _PreviewBlock._rename/set_preview_block, la remarque de
+            # l'utilisateur, "je veux que le comportement des colonnes
+            # fonctionne de la meme maniere sur tous les points" — permet
+            # au bloc Focus de retrouver la VRAIE colonne dont il reprend
+            # la selection, pour y appliquer un Renommer avec la MEME
+            # resynchronisation de la navigation qu'une ligne normale
+            # (voir Column._rename_item : renommer puis re-selectionner
+            # l'item renomme retriggue on_selected/prune_after tout seul).
+            entries.append((path.name, project_thumbnail_pixmap(path), path, open_status, column.column_title, column))
 
-        if not entries:
+        if focus_enabled and not entries:
+            self._clear_group_stack()
+            self._group_context_key = None
             return
 
-        # 1. Vignettes : juste APRES LA DERNIERE COLONNE A VIGNETTES
-        # (Sous-projet, sinon Projets). Surtout pas len(self.columns) : cet
-        # indice pointe apres la derniere colonne REELLE, ce qui rejetait
-        # les images derriere toute colonne ouverte ensuite depuis le
-        # groupe IN/OVER/OUT/LOGICIELS — les colonnes paraissaient "toutes
-        # melangees". Le groupe vient d'etre retire (voir plus haut), donc
-        # a cet instant columns_layout contient exactement self.columns,
+        # 1. Vignettes : juste APRES LA FIN DE LA CHAINE REQUISE (Type +
+        # Projets + niveaux configures, voir expected_total plus haut) —
+        # PAS le dernier niveau FOCUS (un niveau configure peut avoir
+        # focus=False, y compris le DERNIER juste avant le repertoire de
+        # travail : dans ce cas le dernier focus-level est plus TOT dans la
+        # chaine, et ancrer dessus inserait les vignettes/le groupe AU
+        # MILIEU des colonnes reelles au lieu d'apres toutes — voir la
+        # remarque de l'utilisateur, "si nous sommes en presence d'un
+        # projet a 4 etapes avant set, les colonnes de focus devront etre a
+        # la 5eme place"). PAS len(self.columns) non plus : cet indice peut
+        # DEPASSER expected_total une fois du contenu ouvert depuis le
+        # groupe IN/OVER/OUT/LOGICIELS (voir _open_group_folder) — les
+        # vignettes/le groupe doivent rester COLLES juste apres la chaine
+        # requise, pas glisser plus loin derriere ce contenu deja ouvert.
+        # A cet instant columns_layout contient exactement self.columns,
         # dans l'ordre : l'indice de colonne vaut l'indice de layout.
-        anchor = max(i for i, c in enumerate(self.columns) if c.has_thumbnails)
-        # Conteneur vertical UNIQUE (voir _preview_stack_wrapper) : occupe
-        # UNE SEULE place dans columns_layout (horizontal), mais empile ses
-        # colonnes fantomes VERTICALEMENT en son sein — voir la remarque de
-        # l'utilisateur, "deux colonnes separees, une en dessous de
-        # l'autre". Espacement VERTICAL entre elles : meme reglage GENERAL
-        # que "Distance entre colonnes" (column_gap), transpose a la
-        # verticale — coherent avec l'espacement HORIZONTAL habituel entre
-        # colonnes.
-        wrapper = QWidget()
-        wrapper.setStyleSheet("background: transparent;")
-        wrapper_layout = QVBoxLayout(wrapper)
-        wrapper_layout.setContentsMargins(0, 0, 0, 0)
-        wrapper_layout.setSpacing(scaled(max(0, column_gap()), 0))
-        wrapper_layout.setAlignment(Qt.AlignTop)
-        # EXACTEMENT une colonne par entree (Projets, Sous-projet), AUCUNE
-        # autre entete (ni entete generique "Focus" a part, ni 3e colonne
-        # vide) — texte d'entete "Focus <niveau>" (voir _FOCUS_LEVEL_LABEL),
-        # mais STYLE (fond/bordure/rayon/police/padding/image/zone titre/
-        # bouton repliement) TOUJOURS celui de PREVIEW_STACK_TITLE (l'onglet
-        # "Focus" des reglages, PAS "Projets"/"Sous-projets") pour LES DEUX
-        # — voir la remarque de l'utilisateur, "il doit y avoir deux
-        # colonnes, une focus projet et l'autre focus sous projet, je veux
-        # aucune autre entete. a savoir que les settings 'focus' doivent
-        # controler les deux colonnes".
-        for offset, (title, pixmap, path, open_status, level_title) in enumerate(entries):
-            column = PreviewColumn(
-                PREVIEW_STACK_TITLE, on_toggle=self._toggle_project_columns if offset == 0 else None,
-                user_width=self._preview_column_user_width,
-                on_resize=self._on_preview_column_resized, fit_height=True,
-                display_title=_FOCUS_LEVEL_LABEL.get(level_title, PREVIEW_STACK_TITLE))
-            if offset == 0:
-                column.set_toggle_state(self._project_columns_collapsed)
-            wrapper_layout.addWidget(column)
-            column.set_preview_block(title, pixmap, path, open_status)
-            self.image_preview_columns.append(column)
-        self._preview_stack_wrapper = wrapper
-        self.columns_layout.insertWidget(anchor + 1, wrapper)
+        anchor = expected_total - 1
+        # Toggle "focus" DESACTIVE (voir ColumnConfigDialog, la remarque de
+        # l'utilisateur, "si il est a 0, on n'affiche pas la colonne
+        # focus") : aucune vignette construite, le groupe IN/OVER/OUT/
+        # LOGICIELS vient alors s'inserer JUSTE apres la chaine (anchor+1)
+        # au lieu de anchor+2 (pas de gap laisse par des vignettes
+        # absentes).
+        group_anchor_offset = 2
+        if focus_enabled:
+            # Conteneur vertical UNIQUE (voir _preview_stack_wrapper) : occupe
+            # UNE SEULE place dans columns_layout (horizontal), mais empile ses
+            # colonnes fantomes VERTICALEMENT en son sein — voir la remarque de
+            # l'utilisateur, "deux colonnes separees, une en dessous de
+            # l'autre". Espacement VERTICAL entre elles : meme reglage GENERAL
+            # que "Distance entre colonnes" (column_gap), transpose a la
+            # verticale — coherent avec l'espacement HORIZONTAL habituel entre
+            # colonnes.
+            wrapper = QWidget()
+            wrapper.setStyleSheet("background: transparent;")
+            wrapper_layout = QVBoxLayout(wrapper)
+            wrapper_layout.setContentsMargins(0, 0, 0, 0)
+            wrapper_layout.setSpacing(scaled(max(0, column_gap()), 0))
+            wrapper_layout.setAlignment(Qt.AlignTop)
+            # EXACTEMENT une colonne par entree (Projets, Sous-projet), AUCUNE
+            # autre entete (ni entete generique "Focus" a part, ni 3e colonne
+            # vide) — texte d'entete "Focus <niveau>" (voir _FOCUS_LEVEL_LABEL),
+            # mais STYLE (fond/bordure/rayon/police/padding/image/zone titre/
+            # bouton repliement) TOUJOURS celui de PREVIEW_STACK_TITLE (l'onglet
+            # "Focus" des reglages, PAS "Projets"/"Sous-projets") pour LES DEUX
+            # — voir la remarque de l'utilisateur, "il doit y avoir deux
+            # colonnes, une focus projet et l'autre focus sous projet, je veux
+            # aucune autre entete. a savoir que les settings 'focus' doivent
+            # controler les deux colonnes".
+            for offset, (title, pixmap, path, open_status, level_title, source_column) in enumerate(entries):
+                column = PreviewColumn(
+                    PREVIEW_STACK_TITLE, on_toggle=self._toggle_project_columns if offset == 0 else None,
+                    user_width=self._preview_column_user_width,
+                    on_resize=self._on_preview_column_resized, fit_height=True,
+                    display_title=_FOCUS_LEVEL_LABEL.get(level_title, PREVIEW_STACK_TITLE))
+                if offset == 0:
+                    column.set_toggle_state(self._project_columns_collapsed)
+                wrapper_layout.addWidget(column)
+                column.set_preview_block(title, pixmap, path, open_status, source_column)
+                self.image_preview_columns.append(column)
+            self._preview_stack_wrapper = wrapper
+            self.columns_layout.insertWidget(anchor + 1, wrapper)
+        else:
+            group_anchor_offset = 1
 
         # 2. Groupe IN/OVER/OUT/LOGICIELS : insere JUSTE APRES LES VIGNETTES
-        # (anchor + 2), PAS ajoute en fin (`addWidget`) — meme raison que
+        # (anchor + group_anchor_offset), PAS ajoute en fin (`addWidget`) — meme raison que
         # pour les vignettes ci-dessus : une colonne ouverte depuis une
         # PRECEDENTE navigation dans le groupe peut deja trainer en fin de
         # columns_layout (voir _open_group_folder) au moment ou ce groupe
         # est reconstruit, il doit malgre tout rester colle juste apres les
         # vignettes, pas relegue derriere.
-        levels = [path for (_name, _pix, path, _open, _level) in entries]
-        # LOGICIELS (voir add_group_column plus bas) : seulement une fois
-        # "Sous-projet" REELLEMENT selectionne (pas juste "Projets") — meme
-        # condition que l'ancienne vraie colonne "Logiciels", qui n'existait
-        # jamais avant ce choix (voir COLUMN_LABELS/on_selected) ; sans
-        # cette garde, _softs_subdir(levels[-1]) retombait sur le contenu
-        # BRUT du Projet (repli documente dans _softs_subdir) des que
-        # "Projets" seul etait selectionne, un contenu sans rapport affiche
-        # a tort sous l'entete "LOGICIELS".
-        softs_dirs = [_softs_subdir(levels[-1])] if entries[-1][4] == "Sous-projet" else []
+        # IN/OVER/OUT : fusionne le contenu de CHAQUE colonne "de set"
+        # actuellement selectionnee (Type + Projets + tout niveau
+        # intermediaire configure, FOCUS ou non), pas seulement les niveaux
+        # FOCUS (voir `entries` ci-dessus, qui reste lui limite aux
+        # vignettes) — voir la remarque de l'utilisateur, "que si a
+        # l'interieur des colonnes de set il y a un repertoire in out ou
+        # over, son contenu doit se retrouver dans les colonnes
+        # correspondantes". Borne a expected_total (pas self.columns en
+        # entier) : au-dela, self.columns contient du contenu deja OUVERT
+        # depuis le groupe IN/OVER/OUT/LOGICIELS lui-meme (voir
+        # _open_group_folder) — jamais une source a refusionner ici.
+        status_levels: list[Path] = []
+        level_labels: list[str] = []
+        for column in self.columns[:expected_total]:
+            level_path = column.current_path()
+            if level_path is None:
+                continue
+            status_levels.append(level_path)
+            if column.column_title == "Projets":
+                level_labels.append("projet")
+            elif column.column_title == "Type":
+                level_labels.append("Type")
+            else:
+                level_labels.append(level_path.name)
+        levels = status_levels or [path for (_name, _pix, path, _open, _level, _col) in entries]
+        # LOGICIELS/"Repertoire de travail" (voir add_group_column plus bas) :
+        # `terminal_path`/`expected_total`/`work_dir_info` deja calcules et
+        # verifies EN HAUT de la methode (voir la remarque de tete) — le
+        # groupe n'est construit que lorsque la chaine est deja complete,
+        # `terminal_path` est donc garanti non-None ici.
+        softs_dirs = [_named_subdir(terminal_path, work_dir_info["folder_name"])]
+        work_dir_display = (
+            terminal_path.name if work_dir_info.get("display_from_selection")
+            else work_dir_info["display"]
+        )
+        work_dir_style = work_dir_info["style_title"]
+        work_dir_only_recognized_software = work_dir_info["only_recognized_software"]
+
+        # Reconstruction EVITEE si le contexte de navigation n'a pas change
+        # (meme dossier terminal, memes niveaux fusionnes, meme type de
+        # repertoire de travail) — voir la remarque de tete de cette
+        # methode et celle de l'utilisateur, "leur comportement ne
+        # fonctionne pas du tout ... base toi sur les colonnes creees
+        # avant les focus". AVANT ce correctif, les 4 colonnes etaient
+        # DETRUITES ET RECONSTRUITES a CHAQUE appel de update_preview_stack
+        # (a chaque selection, a chaque previsualisation de reglages en
+        # direct) — exactement comme si Type/Projets/Sous-projet etaient
+        # recrees a chaque clic — leur faisant perdre punaise/overrides de
+        # menu contextuel/etat "actif" en permanence, et forçant un dict
+        # separe (GROUP_ROW_HEIGHT, desormais supprime) pour simuler une
+        # persistance qu'une VRAIE colonne stable obtient gratuitement.
+        # `column.refresh()` (pas un no-op) : capte quand meme un
+        # changement de CONTENU sur le disque (ex. refresh_all_columns
+        # (rescan=True)) sans reconstruire les objets.
+        # Toggle "in_over_out" DESACTIVE (voir ColumnConfigDialog, la
+        # remarque de l'utilisateur, "si il est a 0, on n'affiche pas les
+        # colonnes in over et out") : filtre localement,
+        # self._group_column_order (ordre PERSISTE, voir _on_group_reorder)
+        # reste INCHANGE pour retrouver la meme disposition une fois le
+        # toggle reactive.
+        active_group_order = list(self._group_column_order)
+        if not in_over_out_enabled:
+            active_group_order = [k for k in active_group_order if k not in ("in", "over", "out")]
+        # `in_over_out_enabled` DANS la cle (pas seulement la longueur
+        # comparee juste apres) : sans lui, basculer ce toggle SANS changer
+        # de dossier terminal semblait "contexte inchange" et ne rejouait
+        # que column.refresh() sur les colonnes DEJA existantes, sans
+        # jamais ajouter/retirer les colonnes concernees.
+        context_key = (terminal_path, tuple(levels), work_dir_style, in_over_out_enabled)
+        if context_key == self._group_context_key and len(self.group_columns) == len(active_group_order):
+            for column in self.group_columns:
+                column.refresh()
+            if self._group_stack_wrapper is not None:
+                self.columns_layout.removeWidget(self._group_stack_wrapper)
+                self.columns_layout.insertWidget(anchor + group_anchor_offset, self._group_stack_wrapper)
+            bar = self.scroll.horizontalScrollBar()
+            bar.setValue(bar.maximum())
+            return
+
+        self._clear_group_stack()
+        self._group_context_key = context_key
         group_wrapper = QWidget()
         group_wrapper.setStyleSheet("background: transparent;")
         group_layout = QVBoxLayout(group_wrapper)
@@ -6433,34 +11909,42 @@ class PipelineBrowser(QMainWindow):
         # laissant un vide sous la derniere — voir la remarque de
         # l'utilisateur, "il est important que la derniere colonne aille
         # bien jusqu'en bas de la page".
-        last_kind = self._group_column_order[-1] if self._group_column_order else None
+        last_kind = active_group_order[-1] if active_group_order else None
 
-        # Annotation "(projet)"/"(<nom du sous-projet>)" (voir Column.
-        # __init__ source_labels/ROLE_SOURCE_LABEL) : UNE par niveau
-        # selectionne, PARALLELE a `levels` — "projet" pour le niveau
-        # "Projets", le nom REEL du sous-projet (son propre `title`, deja
-        # `path.name`) pour le niveau "Sous-projet" — voir la remarque de
-        # l'utilisateur, "si c'est projet, le texte doit etre 'projet' et
-        # si c'est sous projet, il doit etre du nom du sous projet".
-        # SEULEMENT pour IN/OVER/OUT (voir add_group_column) : LOGICIELS
-        # n'a qu'UNE SEULE source (le niveau le plus profond, voir
-        # softs_dirs), une annotation n'y aurait aucun sens.
-        level_labels = ["projet" if level_title == "Projets" else title
-                         for (title, _pix, _path, _open, level_title) in entries]
+        # Annotation "(projet)"/"(<nom de la colonne>)" (voir Column.
+        # __init__ source_labels/ROLE_SOURCE_LABEL) : UNE par colonne "de
+        # set" fusionnee, PARALLELE a `levels`/`level_labels` deja calcules
+        # plus haut (voir leur remarque) — SEULEMENT pour IN/OVER/OUT (voir
+        # add_group_column) : LOGICIELS n'a qu'UNE SEULE source (le niveau
+        # le plus profond, voir softs_dirs), une annotation n'y aurait aucun
+        # sens.
 
         def add_group_column(kind: str, display: str, source_dirs: list[Path], style_title: str,
                               source_labels: list[str] | None = None):
             fill = kind == last_kind
+            # Identite de dossier STABLE (pas "source_dirs[0]", qui varie
+            # selon la selection courante ET l'ordre des sources fusionnees)
+            # : "in"/"over"/"out" pointent vers le dossier statut du niveau
+            # le plus profond (deja l'une des sources fusionnees, jamais
+            # synthetique), "logiciels" vers son unique source (softs_dirs,
+            # deja stable) — voir la remarque de l'utilisateur, "base toi
+            # sur les colonnes creees avant les focus" : necessaire pour que
+            # la punaise/la hauteur de ligne/les overrides de menu
+            # contextuel persistent correctement sur le MEME dossier d'une
+            # navigation a l'autre, exactement comme une colonne normale.
+            stable_directory = softs_dirs[0] if kind == "logiciels" else terminal_path / kind
             column = Column(
-                source_dirs[0] if source_dirs else levels[-1], style_title,
+                stable_directory, style_title,
                 source_dirs=source_dirs, source_labels=source_labels, display_title=display,
                 user_width=self._group_column_user_width, on_resize=self._on_group_column_resized,
                 group_kind=kind, on_reorder=self._on_group_reorder,
                 user_height=self._group_column_user_heights.get(kind), on_height_resize=self._on_group_height_resized,
                 on_height_resize_begin=self._on_group_height_resize_begin,
                 on_height_resize_end=self._on_group_height_resize_end,
-                fill_height=fill)
-            column.selected.connect(lambda _col, p, k=kind: self._on_group_item_selected(p, k))
+                fill_height=fill,
+                only_recognized_software=(kind == "logiciels" and work_dir_only_recognized_software),
+                on_group_maximize=self._on_group_maximize, on_group_equalize=self._on_group_equalize)
+            column.selected.connect(lambda col, p, k=kind: self._on_group_item_selected(col, p, k))
             column.activated.connect(self.on_activated)
             group_layout.addWidget(column, 1 if fill else 0)
             self.group_columns.append(column)
@@ -6473,22 +11957,30 @@ class PipelineBrowser(QMainWindow):
         # en haut ... possible de pouvoir glisser deposer ces colonnes afin
         # de pouvoir interchanger leur place ?").
         groups = {
-            "logiciels": (SOFTWARE_COLUMN_LABEL, softs_dirs, SOFTWARE_COLUMN_LABEL, None),
+            "logiciels": (work_dir_display, softs_dirs, work_dir_style, None),
         }
         for status_name in STATUS_FOLDERS:
             source_dirs = [status_folder_state(level, status_name)[1] for level in levels]
-            groups[status_name] = (status_name.upper(), source_dirs, "Contenu", level_labels)
-        for kind in self._group_column_order:
+            # style_title = "IN"/"OVER"/"OUT" (PLUS "Contenu" partage) :
+            # onglet de surcharge DEDIE desormais disponible pour chacune
+            # (voir SettingsWindow._build_columns_page, la remarque de
+            # l'utilisateur, "ajoute ... in over et out"). Le contenu
+            # ouvert AU-DELA (voir _open_group_folder/on_selected, clic
+            # sur une ligne DE ce groupe) reste lui sur le bucket generique
+            # "Contenu", INCHANGE — seule la ligne DU groupe elle-meme
+            # devient independamment stylable.
+            groups[status_name] = (status_name.upper(), source_dirs, status_name.upper(), level_labels)
+        for kind in active_group_order:
             display, source_dirs, style_title, source_labels = groups[kind]
             add_group_column(kind, display, source_dirs, style_title, source_labels)
 
         self._group_stack_wrapper = group_wrapper
-        self.columns_layout.insertWidget(anchor + 2, group_wrapper)
+        self.columns_layout.insertWidget(anchor + group_anchor_offset, group_wrapper)
 
         bar = self.scroll.horizontalScrollBar()
         bar.setValue(bar.maximum())
 
-    def _on_group_item_selected(self, path: Path | None, kind: str) -> None:
+    def _on_group_item_selected(self, column: Column, path: Path | None, kind: str) -> None:
         """Reagit a un clic sur une ligne du groupe IN/OVER/OUT/LOGICIELS
         (voir update_preview_stack) : un dossier ouvre son contenu dans une
         VRAIE colonne suivante (voir _open_group_folder) — navigation
@@ -6496,23 +11988,77 @@ class PipelineBrowser(QMainWindow):
         ici (deja previsualise dans l'inspecteur par la selection normale
         de Column/on_selected — non branche pour ce groupe, voir sa
         remarque) ; double-clic l'ouvre malgre tout via l'application par
-        defaut (voir Column.activated/on_activated, cable separement)."""
+        defaut (voir Column.activated/on_activated, cable separement).
+        `column` (colonne SOURCE, IN/OVER/OUT/LOGICIELS) : recupere
+        l'etiquette d'origine (ROLE_SOURCE_LABEL) de la ligne cliquee sur
+        SON item courant, pour l'ajouter entre parentheses a l'en-tete de
+        la colonne ouverte — voir _open_group_folder/la remarque de
+        l'utilisateur, "pour les titres dans les entetes de colonnes apres
+        in over et out, j'aimerais ajouter aussi la mention entre
+        parenthese"."""
+        # Une SEULE selection de groupe a la fois : les 3 AUTRES groupes
+        # n'ont plus rien a voir avec le point courant des qu'on clique
+        # dans CELUI-CI — deselectionnes ENTIEREMENT (pas seulement rendus
+        # "non focus"), sinon une vieille selection sans rapport (ex.
+        # OVER > textures cliquee il y a longtemps) restait affichee
+        # coloree indefiniment — voir la remarque de l'utilisateur, capture
+        # a l'appui, "le repertoire textures est encore en selection alors
+        # qu'il ne devrait pas du tout".
+        if path is not None:
+            for other in self.group_columns:
+                if other is not column:
+                    other.list.clearSelection()
+                    other.list.setCurrentItem(None)
+        # "focus" BRILLANT reserve au point VRAIMENT courant : un FICHIER
+        # (rien ne s'ouvre plus loin) reste actif ; un DOSSIER ouvre une
+        # VRAIE colonne plus loin qui devient alors le point courant reel —
+        # cette ligne redevient "chemin" (non focus, bleu FONCE) comme une
+        # colonne ancestrale de la chaine normale — voir la remarque de
+        # l'utilisateur, "in/references qui est actuellement en focus
+        # alors qu'il ne devrait pas non plus, il devrait par contre lui
+        # etre en bleu fonce puisqu'il fait partie du cheminement".
+        if path is not None:
+            is_folder = path.is_dir()
+            self._last_active_group_column = None if is_folder else column
+        self.update_active_column()
         if path is None or not path.is_dir():
             return
-        title = "Contenu" if kind == "logiciels" else path.name.upper()
-        self._open_group_folder(path, title)
+        current_item = column.list.currentItem()
+        source_label = current_item.data(ROLE_SOURCE_LABEL) if current_item is not None else None
+        self._open_group_folder(path, source_label=source_label)
 
-    def _open_group_folder(self, path: Path, title: str | None = None) -> None:
+    def _open_group_folder(self, path: Path, title: str | None = None, source_label: str | None = None) -> None:
         """Ouvre `path` (indicateur in/over/out d'un _PreviewBlock, ou une
         ligne de dossier du groupe IN/OVER/OUT/LOGICIELS, voir
         update_preview_stack/_on_group_item_selected) dans une VRAIE
-        colonne juste apres la derniere colonne a vignettes (Sous-projet si
-        elle existe, sinon Projets) — jamais `Column_index`, une colonne
-        arbitraire plus loin : ce groupe est TOUJOURS positionne juste apres
-        les vignettes, quoi que la navigation ait deja ouvert plus loin."""
-        insert_index = max((i for i, c in enumerate(self.columns) if c.has_thumbnails), default=-1)
+        colonne juste apres la FIN DE LA CHAINE REQUISE (voir
+        _chain_expected_total, PAS le dernier niveau focus — meme raison
+        que dans update_preview_stack, un niveau configure peut ne pas etre
+        focus meme en derniere position) — jamais `Column_index`, une
+        colonne arbitraire plus loin : ce groupe est TOUJOURS positionne
+        juste apres la chaine, quoi que la navigation ait deja ouvert plus
+        loin. STYLE toujours le bucket generique "Contenu" (comme toute
+        colonne "au-dela de la chaine", voir on_selected/COLUMN_LABELS) —
+        avant ce correctif, le nom du dossier lui-meme (en capitales)
+        servait AUSSI de cle de style, creant une entree COLUMN_SETTINGS
+        orpheline par nom de dossier different. En-tete AFFICHE, lui,
+        dynamique (voir add_column/display_title) — le nom du dossier
+        SELECTIONNE dans la colonne precedente (ici, la ligne cliquee dans
+        IN/OVER/OUT/LOGICIELS) — voir la remarque de l'utilisateur, "le
+        titre dans les colonnes apres focus doit aussi etre le nom du
+        repertoire de la colonne precedente sauf les colonnes LOGICIELS IN
+        OVER OUT" (ces 4-la restent des colonnes FANTOMES distinctes,
+        jamais construites ici)."""
+        insert_index = self._chain_expected_total() - 1
         self.prune_after(insert_index)
-        self.add_column(path, insert_index + 1, title=title or path.name.upper())
+        # "(<etiquette d'origine>)" (voir source_label/ROLE_SOURCE_LABEL) —
+        # MEME texte que l'annotation de la ligne cliquee dans IN/OVER/OUT,
+        # mais rendu ici dans la couleur STANDARD de l'en-tete (un seul
+        # QLabel, une seule couleur) — voir la remarque de l'utilisateur,
+        # "avec la couleur standard de texte pour l'entete" (PAS la couleur
+        # dediee aux annotations de ligne).
+        display_title = f"{path.name} ({source_label})" if source_label else path.name
+        self.add_column(path, insert_index + 1, title=title or "Contenu", display_title=display_title)
         self.update_active_column()
         self.update_preview_stack()
         self._sync_collapse_state()
@@ -6540,7 +12086,11 @@ class PipelineBrowser(QMainWindow):
         leurs 2 hauteurs de depart. Aucune 3e colonne n'est jamais
         impliquee — voir la remarque de l'utilisateur, "les deux colonnes
         concernees doivent etre seulement les deux colonnes de part et
-        d'autre de la zone de selection pour le slide"."""
+        d'autre de la zone de selection pour le slide" (redemande apres
+        une tentative de simplification "hauteur independante par colonne"
+        qui avait par erreur remplace cette regle — voir _on_group_height_
+        resize_end pour la persistance par dossier, elle INCHANGEE, seule
+        la MECANIQUE du glisser lui-meme revient ici a la regle d'origine)."""
         columns = self.group_columns
         idx = next((i for i, c in enumerate(columns) if c._group_kind == kind), None)
         if idx is None or idx + 1 >= len(columns):
@@ -6588,25 +12138,110 @@ class PipelineBrowser(QMainWindow):
             below._group_user_height = new_below
             below.setFixedHeight(new_below)
             self._group_column_user_heights[below._group_kind] = new_below
-            _show_resize_width(below, new_below, key="group_below")
-        else:
-            # `below` n'a pas de hauteur FIXE a lui appliquer (elle est
-            # etiree, voir set_group_fill_height) : sa taille REELLE ne se
-            # met a jour qu'au prochain passage du layout — force-le ICI
-            # (voir la meme technique dans _reorder_group_columns_animated)
-            # pour que le badge affiche sa valeur A JOUR tout de suite,
-            # PENDANT le glisser, pas seulement au relachement.
-            wrapper = self._group_stack_wrapper
-            if wrapper is not None:
-                wrapper.layout().activate()
-            _show_resize_width(below, below.height(), key="group_below")
         above._group_user_height = new_above
         above.setFixedHeight(new_above)
+        # Force la mise a jour REELLE des positions/tailles AVANT de lire
+        # below.mapToGlobal(...) dans _show_resize_width juste apres (voir
+        # sa remarque, ancre sur le coin de `below`) — voir la remarque de
+        # l'utilisateur, "pourquoi lorsque l'on change la hauteur
+        # l'indication de hauteur de la colonne du bas change de position
+        # si on monte ou si on descend" : SANS ce activate() ICI (deja fait
+        # pour la branche fill_height, mais PAS pour celle-ci), la position
+        # de `below` lue par mapToGlobal restait celle d'AVANT que `above`
+        # n'ait sa NOUVELLE hauteur (setFixedHeight, juste au-dessus, ne
+        # reflue le layout QUE de facon DIFFEREE) — d'ou un badge qui
+        # "sautait" d'une quantite differente selon le sens du glisser (le
+        # decalage accumule dependait de l'historique des positions
+        # PRECEDEMMENT lues, pas de la position REELLE courante).
+        wrapper = self._group_stack_wrapper
+        if wrapper is not None:
+            wrapper.layout().activate()
+        _show_resize_width(below, below.height(), key="group_below")
         self._group_column_user_heights[kind] = new_above
 
     def _on_group_height_resize_end(self) -> None:
         self._group_height_drag = None
         _hide_resize_width(self, key="group_below")
+        # Persiste EN TEMPS REEL (voir load_layout_settings/
+        # update_preview_stack, la remarque de l'utilisateur "doit etre
+        # enregistre en temps reel") dans le dossier TERMINAL courant (voir
+        # _chain_terminal_path) — chaque relachement de glisser ecrit
+        # immediatement le dict COMPLET (les 2 colonnes concernees, voir
+        # _on_group_height_resized) : la PROCHAINE fois que ce MEME dossier
+        # sera navigue, ces hauteurs seront retrouvees telles quelles.
+        terminal = self._chain_terminal_path()
+        if terminal is not None:
+            _update_layout_setting(terminal, "group_heights", dict(self._group_column_user_heights))
+
+    def _on_group_maximize(self, kind: str) -> None:
+        """Bouton d'entete "⤢" (voir Column.__init__ on_group_maximize) :
+        agrandit `kind` au maximum, reduit les 3 AUTRES colonnes du groupe
+        a la hauteur necessaire pour montrer TOUT leur contenu sans scroll
+        (voir Column.group_content_height_hint) — voir la remarque de
+        l'utilisateur, "un bouton qui me permette d'agrandir au maximum la
+        fenetre en cours et de minimiser les autres au maximum en fonction
+        de leur contenu". `layout.setStretchFactor` (PAS de reconstruction,
+        voir _reorder_group_columns_animated pour le meme principe) :
+        seule `kind` recoit desormais le facteur d'etirement, quelle que
+        soit sa position dans l'ordre COURANT (independant de `fill_
+        height`/set_group_fill_height, normalement lie a la DERNIERE
+        position — ce bouton doit fonctionner sur N'IMPORTE LAQUELLE)."""
+        columns = self.group_columns
+        target = next((c for c in columns if c._group_kind == kind), None)
+        wrapper = self._group_stack_wrapper
+        if target is None or wrapper is None:
+            return
+        layout = wrapper.layout()
+        for c in columns:
+            if c is target:
+                continue
+            content_h = c.group_content_height_hint()
+            c._group_fill_height = False
+            c.setMinimumHeight(0)
+            c.setMaximumHeight(_WIDGET_SIZE_MAX)
+            c.setFixedHeight(content_h)
+            c._group_user_height = content_h
+            self._group_column_user_heights[c._group_kind] = content_h
+            layout.setStretchFactor(c, 0)
+        target._group_fill_height = True
+        target.setMinimumHeight(0)
+        target.setMaximumHeight(_WIDGET_SIZE_MAX)
+        layout.setStretchFactor(target, 1)
+        self._group_column_user_heights.pop(kind, None)
+        layout.activate()
+        terminal = self._chain_terminal_path()
+        if terminal is not None:
+            _update_layout_setting(terminal, "group_heights", dict(self._group_column_user_heights))
+
+    def _on_group_equalize(self) -> None:
+        """Bouton d'entete "≡" (voir Column.__init__ on_group_equalize) :
+        repartit la hauteur TOTALE actuelle du groupe (deja exactement
+        celle du conteneur, une colonne l'occupant TOUJOURS en entier —
+        voir fill_height) a PARTS EGALES entre les 4 — voir la remarque de
+        l'utilisateur, "je veux un autre bouton pour mettre les 4 colonnes
+        a exactement la meme hauteur". Aucune des 4 ne garde le facteur
+        d'etirement ensuite (`setStretchFactor(c, 0)` partout) : un
+        redimensionnement MANUEL derriere resterait sans effet sur le
+        conteneur sinon (les 4 sont desormais TOUTES a hauteur FIXE)."""
+        columns = self.group_columns
+        wrapper = self._group_stack_wrapper
+        if not columns or wrapper is None:
+            return
+        layout = wrapper.layout()
+        total = sum(c.height() for c in columns) or GROUP_COLUMN_DEFAULT_HEIGHT * len(columns)
+        equal = max(GROUP_COLUMN_MIN_HEIGHT, total // len(columns))
+        for c in columns:
+            c._group_fill_height = False
+            c.setMinimumHeight(0)
+            c.setMaximumHeight(_WIDGET_SIZE_MAX)
+            c.setFixedHeight(equal)
+            c._group_user_height = equal
+            self._group_column_user_heights[c._group_kind] = equal
+            layout.setStretchFactor(c, 0)
+        layout.activate()
+        terminal = self._chain_terminal_path()
+        if terminal is not None:
+            _update_layout_setting(terminal, "group_heights", dict(self._group_column_user_heights))
 
     def _on_group_reorder(self, source_kind: str, target_kind: str) -> None:
         """Reagit au depot de l'entete `source_kind` sur l'entete
@@ -6688,6 +12323,30 @@ class PipelineBrowser(QMainWindow):
     def on_selected(self, column: Column, path: Path | None):
         index = self.columns.index(column)
         self.prune_after(index)
+        # Configuration de chaine (voir load_project_columns) : (re)lue
+        # UNIQUEMENT quand c'est la colonne Projets elle-meme qui vient
+        # d'etre cliquee — None si aucune selection (repli legacy) ou si ce
+        # projet n'a pas de fichier de configuration — voir la remarque de
+        # tete de _active_project_config. REMISE A None des que "Type"
+        # change de selection : sans ca, une configuration "base 2" (voir
+        # ColumnConfigDialog.MIN_STEPS) restait ACCROCHEE au projet
+        # PRECEDENT tant que "Projets" n'avait pas encore ete recliquee —
+        # voir la remarque de l'utilisateur, "quand je suis sette par
+        # exemple dans bib/houdini en base 2 et que je reviens en 3d des
+        # colonnes disparaissent" : reselectionner "Type" (depth=1,
+        # ajoute TOUJOURS "Projets" via la logique GENERIQUE, jamais
+        # pilotee par une config de projet) tombait alors, a tort, dans la
+        # branche "chaine configuree" du bloc plus bas (index=0 < expected_
+        # total-1, calcule depuis ce config PERIME) avec level_index=-1 —
+        # `config["columns"][-1]` levait IndexError sur une liste VIDE
+        # (base 2), interrompant on_selected APRES le prune_after mais
+        # AVANT de rajouter la nouvelle colonne "Projets" : elle
+        # disparaissait alors purement et simplement, sans jamais
+        # revenir.
+        if column.column_title == "Type":
+            self._active_project_config = None
+        elif column.column_title == "Projets":
+            self._active_project_config = load_project_columns(path) if path is not None else None
         if path is None:
             self.detail.clear()
             self.update_active_column()
@@ -6698,46 +12357,155 @@ class PipelineBrowser(QMainWindow):
         self.detail.show_path(path)
         if path.is_dir():
             depth = index + 1
-            title = COLUMN_LABELS[depth] if depth < len(COLUMN_LABELS) else "Contenu"
-            # "Logiciels" n'est plus une VRAIE colonne de cette chaine :
-            # elle fait desormais partie du groupe fantome IN/OVER/OUT/
-            # LOGICIELS (voir update_preview_stack, appele juste plus bas),
-            # reconstruit a partir de la selection courante — rien a
-            # ajouter ici pour ce depth precis, contrairement aux autres.
-            if title != SOFTWARE_COLUMN_LABEL:
-                self.add_column(path, depth)
+            config = self._active_project_config
+            # `index < expected_total - 1` (PAS juste `config is not None`) :
+            # la chaine CONFIGUREE ne pilote QUE les colonnes ENCORE DANS
+            # la chaine elle-meme (avant le repertoire de travail) — au-
+            # dela (contenu ouvert depuis le groupe fantome IN/OVER/OUT/
+            # LOGICIELS, voir _open_group_folder, ou tout niveau descendu
+            # ENSUITE), la navigation doit rester GENERIQUE et illimitee,
+            # exactement comme en legacy — voir la remarque de
+            # l'utilisateur, "quand on navigue de dossier en dossier, au
+            # bout d'un moment tu ne crees plus de colonnes, comme si tu
+            # avais mis une limite, je veux supprimer cette limite" :
+            # AVANT ce correctif, `level_index < len(columns_cfg)` restait
+            # FAUX pour TOUJOURS des qu'on descendait plus loin que la
+            # chaine configuree elle-meme (son index ne fait QUE croitre),
+            # bloquant silencieusement toute colonne suivante dans une
+            # BRANCHE de contenu ouverte apres le groupe.
+            expected_total = self._chain_expected_total()
+            # `index >= 1` (garde-fou EN PLUS de la remise a None ci-dessus,
+            # voir sa remarque) : depth=1 (index=0, "Type") ajoute TOUJOURS
+            # "Projets" par la logique GENERIQUE plus bas, jamais par la
+            # chaine configuree d'un projet — quel que soit `config`,
+            # level_index (= depth - 2) y serait negatif.
+            if config is not None and index >= 1 and index < expected_total - 1:
+                # Chaine CONFIGUREE (voir ColumnConfigDialog) : depth 2 =
+                # 1er niveau configure (config["columns"][0]), etc. Chaque
+                # niveau pointe vers un sous-dossier au nom FIXE (voir
+                # _named_subdir) — la colonne liste ensuite son CONTENU
+                # (filtre par show_dirs/show_files/omit_dirs/omit_files),
+                # l'utilisateur clique une entree pour descendre — voir la
+                # remarque de l'utilisateur, "chaque colonne configuree
+                # pointe vers un nom de dossier fixe ... la colonne liste
+                # le contenu ... filtre par les options Afficher/Omettre".
+                level_index = depth - 2
+                col_cfg = config["columns"][level_index]
+                child_dir = _named_subdir(path, col_cfg["name"])
+                # style_title="Sous-projet" (voir Column.style_title,
+                # settings_window "INTERMEDIAIRE") : le NOM affiche
+                # reste celui choisi par l'utilisateur (title=col_cfg
+                # ["name"], ex. "test1" — identite/annotations
+                # inchangees), mais l'APPARENCE (hauteur de ligne,
+                # police, couleurs, bordures, padding...) suit TOUJOURS
+                # le MEME reglage General > Colonnes > INTERMEDIAIRE,
+                # quel que soit le nombre de niveaux configures — voir
+                # la remarque de l'utilisateur, "doit controler toutes
+                # les colonnes entre celle de projet et focus" : sans
+                # ca, un titre inconnu retombait sur le bucket
+                # generique "Contenu" (voir _col_key), partage a tort
+                # avec les colonnes fantomes IN/OVER/OUT.
+                self.add_column(
+                    child_dir, depth, title=col_cfg["name"],
+                    is_focus_level=col_cfg["focus"], style_title="Sous-projet",
+                    show_dirs=col_cfg["show_dirs"], show_files=col_cfg["show_files"],
+                    omit_dirs=frozenset(n.lower() for n in col_cfg["omit_dirs"]),
+                    omit_files=frozenset(n.lower() for n in col_cfg["omit_files"]),
+                    # En-tete DYNAMIQUE (voir add_column/la remarque de
+                    # l'utilisateur, "le nom des colonnes correspond au nom
+                    # du repertoire selectionne dans la colonne
+                    # precedente") : `path` est le dossier SELECTIONNE dans
+                    # la colonne precedente — `child_dir` (son contenu
+                    # FIXE, ex. "test1") n'aurait ici aucun rapport.
+                    display_title=path.name)
+            elif config is not None and index == expected_total - 1:
+                # Dernier niveau configure ATTEINT (`column` EST le niveau
+                # terminal, pas encore de contenu ouvert au-dela) — comme
+                # "Logiciels" en legacy, pas de vraie colonne ici, le
+                # groupe fantome (update_preview_stack) gere le
+                # "Repertoire de travail" (config["work_dir"]).
+                pass
+            else:
+                # Legacy (config is None) : `depth` reste ALIGNE sur
+                # COLUMN_LABELS par construction (Type/Projets/Sous-projet/
+                # Logiciels/Contenu, expected_total TOUJOURS 3) — depth 3
+                # ("Logiciels") reste donc le seul et unique endroit ou
+                # sauter l'ajout d'une VRAIE colonne : elle fait partie du
+                # groupe fantome IN/OVER/OUT/LOGICIELS (voir update_preview_
+                # stack), reconstruit a partir de la selection courante.
+                #
+                # Chaine CONFIGUREE (config is not None) : tout ce qui
+                # atteint CETTE branche est du contenu ouvert AU-DELA du
+                # terminal (voir _open_group_folder, puis toute descente
+                # ulterieure) — le terminal lui-meme est deja gere par le
+                # "elif index == expected_total - 1" ci-dessus. `depth` n'y
+                # est PLUS forcement aligne avec COLUMN_LABELS des que "set"
+                # est desactive ou que le nombre de niveaux configures
+                # differe de 1 (voir _chain_expected_total) : y reappliquer
+                # le lookup COLUMN_LABELS/le test SOFTWARE_COLUMN_LABEL
+                # pouvait a tort retomber sur "Logiciels" et sauter
+                # l'ajout — voir la remarque de l'utilisateur, "on ne doit
+                # pas avoir de limite de repertoire quand le set est
+                # desactive, actuellement je ne peux pas aller dans plus de
+                # deux repertoire". Toujours le bucket generique "Contenu"
+                # ici (comme _open_group_folder), jamais de lookup par depth.
+                if config is None:
+                    title = COLUMN_LABELS[depth] if depth < len(COLUMN_LABELS) else "Contenu"
+                    if title != SOFTWARE_COLUMN_LABEL:
+                        self.add_column(path, depth)
+                else:
+                    self.add_column(path, depth, title="Contenu")
         self.update_active_column()
         self.update_preview_stack()
         self._sync_collapse_state()
 
     def _sync_collapse_state(self):
-        """Replie automatiquement Type/Projets/Sous-projet (voir
-        COLLAPSIBLE_COLUMN_TITLES) des que Projet ET Sous-projet sont
-        choisis (la colonne "Sous-projet" a une selection) : ce contexte
-        devient fixe, ces colonnes de navigation n'ont plus besoin de rester
-        deployees. Ne force ce repli qu'UNE fois par selection (voir
-        _auto_collapse_armed) : un depli manuel ensuite (icone sur la
-        colonne des vignettes) n'est pas systematiquement annule tant que
-        la selection reste la meme. Redeploie tout automatiquement des que
-        la selection de Sous-projet est perdue (retour en arriere dans la
-        navigation), pour laisser le choix a nouveau visible, et rearme
-        alors le repli automatique pour la prochaine selection."""
-        sous_projet = next((c for c in self.columns if c.column_title == "Sous-projet"), None)
-        has_selection = sous_projet is not None and sous_projet.current_path() is not None
-        if not has_selection:
+        """Replie automatiquement TOUTES les colonnes de la chaine requise
+        (voir _chain_expected_total/Column.collapsible, PAS une liste de
+        titres fixe — N quelconque : 3 en legacy, ou le nombre de niveaux
+        configures, voir la remarque de l'utilisateur, "si un projet est
+        sur une base 3 etapes, 3 colonnes devront se rabattre, si c'est une
+        base 4, 4 colonnes ... en fait c'est toutes les colonnes avant les
+        colonnes de focus") des que la chaine est COMPLETEMENT settee
+        jusqu'au repertoire de travail (voir _chain_terminal_path) : ce
+        contexte devient fixe, ces colonnes de navigation n'ont plus besoin
+        de rester deployees. Desactivable entierement (voir General >
+        Application, "un toggle qui permet ou pas de rabattre les colonnes
+        de set" — auto_collapse_set_columns()) : dans ce cas, jamais replie
+        automatiquement, mais l'icone de repli MANUEL sur la colonne des
+        vignettes reste disponible (voir _toggle_project_columns). Ne force
+        ce repli qu'UNE fois par selection (voir _auto_collapse_armed) : un
+        depli manuel ensuite (icone sur la colonne des vignettes) n'est pas
+        systematiquement annule tant que la selection reste la meme.
+        Redeploie tout automatiquement des que la chaine n'est plus
+        complete (retour en arriere dans la navigation), pour laisser le
+        choix a nouveau visible, et rearme alors le repli automatique pour
+        la prochaine selection."""
+        active_config = self._active_project_config
+        focus_enabled = True if active_config is None else active_config.get("focus_enabled", True)
+        has_selection = self._chain_terminal_path() is not None
+        if not has_selection or not focus_enabled:
+            # Sans colonne Focus (voir ColumnConfigDialog, toggle "Focus" a
+            # 0), replier les colonnes d'avant n'a plus aucun but (voir sa
+            # remarque de tete : ce repli sert a REVELER la colonne Focus,
+            # qui n'existe pas ici) — les colonnes de la chaine restent donc
+            # TOUJOURS deployees dans ce cas.
             self._auto_collapse_armed = True
             if self._project_columns_collapsed:
                 self._apply_project_columns_collapsed(False)
-        elif self._auto_collapse_armed and not self._project_columns_collapsed:
+        elif auto_collapse_set_columns() and self._auto_collapse_armed and not self._project_columns_collapsed:
             self._apply_project_columns_collapsed(True)
             self._auto_collapse_armed = False
 
     def _toggle_project_columns(self):
         """Reagit a l'icone unique portee par la colonne des vignettes
-        (voir PreviewColumn/update_preview_stack) : bascule Type/Projets/
-        Sous-projet, et desarme le repli automatique pour que ce choix
-        manuel ne soit pas aussitot ecrase par _sync_collapse_state tant
-        que la selection de Sous-projet ne change pas."""
+        (voir PreviewColumn/update_preview_stack) : bascule les colonnes de
+        la chaine (voir _apply_project_columns_collapsed), et desarme le
+        repli automatique pour que ce choix manuel ne soit pas aussitot
+        ecrase par _sync_collapse_state tant que la chaine reste la meme.
+        Toujours disponible, MEME si le repli automatique est desactive
+        (voir auto_collapse_set_columns/_sync_collapse_state) : c'est un
+        geste manuel independant."""
         self._apply_project_columns_collapsed(not self._project_columns_collapsed)
 
     def _on_preview_column_resized(self, new_width: int):
@@ -6758,10 +12526,18 @@ class PipelineBrowser(QMainWindow):
         self._auto_collapse_armed = False
 
     def _apply_project_columns_collapsed(self, collapsed: bool):
+        """Replie/deplie EXACTEMENT les N premieres colonnes de self.columns
+        (voir _chain_expected_total), N = le nombre d'etapes du projet
+        courant — jamais au-dela : une colonne de contenu ouverte depuis le
+        groupe IN/OVER/OUT/LOGICIELS (voir _open_group_folder) reste
+        TOUJOURS deployee, quoi qu'il arrive aux colonnes de set — voir la
+        remarque de l'utilisateur, "attention a bien rabattre toutes
+        colonnes ... c'est toutes les colonnes avant les colonnes de
+        focus"."""
         self._project_columns_collapsed = collapsed
-        for c in self.columns:
-            if c.column_title in COLLAPSIBLE_COLUMN_TITLES:
-                c.set_collapsed(collapsed)
+        expected_total = self._chain_expected_total()
+        for c in self.columns[:expected_total]:
+            c.set_collapsed(collapsed)
         if self.image_preview_columns:
             self.image_preview_columns[0].set_toggle_state(collapsed)
 
@@ -6823,7 +12599,9 @@ class PipelineBrowser(QMainWindow):
         # l'utilisateur, "il y a des ralentissements dans les animations,
         # optimise un maximum".
         prev_geometry = {title: (conf["height"], conf["spacing"]) for title, conf in COLUMN_SETTINGS.items()}
+        prev_omissions = (GLOBAL_OMIT_FILE_NAMES.copy(), GLOBAL_OMIT_FILE_EXTENSIONS.copy())
         apply_all_settings(settings)
+        omissions_changed = prev_omissions != (GLOBAL_OMIT_FILE_NAMES, GLOBAL_OMIT_FILE_EXTENSIONS)
         changed_titles = {
             title for title, conf in COLUMN_SETTINGS.items()
             if (conf["height"], conf["spacing"]) != prev_geometry.get(title)
@@ -6838,16 +12616,45 @@ class PipelineBrowser(QMainWindow):
             self.root_field.setText(settings["root_path"])
             self.reload()
         else:
-            self.refresh_all_columns(rescan=False, relayout_titles=changed_titles)
+            self.refresh_all_columns(
+                rescan=omissions_changed,
+                relayout_titles=None if omissions_changed else changed_titles,
+            )
+        if omissions_changed:
+            hidden_path = self.detail._current_path
+            if hidden_path:
+                name = Path(hidden_path).name.casefold()
+                if (name in GLOBAL_OMIT_FILE_NAMES
+                        or any(name.endswith("." + extension) for extension in GLOBAL_OMIT_FILE_EXTENSIONS)):
+                    self.detail.clear()
+            idle_scheduler = getattr(self, "_idle_preview_scheduler", None)
+            if idle_scheduler is not None:
+                if idle_scheduler.scan_cancel_event is not None:
+                    idle_scheduler.scan_cancel_event.set()
+                idle_scheduler.queue.clear()
+                idle_scheduler.done.clear()
+                if (idle_scheduler.active_key is not None and idle_scheduler.cancel_event is not None):
+                    active_name = Path(idle_scheduler.active_key).name.casefold()
+                    if (active_name in GLOBAL_OMIT_FILE_NAMES
+                            or any(active_name.endswith("." + ext) for ext in GLOBAL_OMIT_FILE_EXTENSIONS)):
+                        idle_scheduler.cancel_event.set()
+                idle_scheduler.last_scan = 0.0
         # app.setStyleSheet (dans refresh_colors -> refresh_style) repolit
         # TOUS les widgets de TOUTES les fenetres de l'appli — le poste le
-        # plus cher, et de loin, de tout ce rafraichissement. Un slider qui
-        # ne touche ni aux couleurs, ni au cadre/rayon des boutons, ni au
+        # plus cher, et de loin, de tout ce rafraichissement (mesure a
+        # plus de 3 SECONDES par appel une fois la fenetre de parametres
+        # ouverte, voir _flush_stylesheet_rebuild). Un slider qui ne
+        # touche ni aux couleurs, ni au cadre/rayon des boutons, ni au
         # cadre/rayon des zones de saisie, ni au rayon des tableaux (largeur
         # de colonne, echelle, hauteur d'entete...) n'a aucune raison de le
         # declencher a chaque cran : seule une vraie difference sur ces
         # points (les seuls que build_stylesheet lit reellement) force la
-        # reconstruction complete de la feuille de style.
+        # reconstruction complete de la feuille de style — MAIS durant un
+        # glisser de COULEUR, cette difference est reelle a CHAQUE tick, ce
+        # gate seul ne suffit donc plus (voir la remarque de l'utilisateur,
+        # "il y a toujours un tres gros problemes de performance") : la
+        # reconstruction elle-meme est donc REGROUPEE (voir
+        # _flush_stylesheet_rebuild), jamais appelee directement ici.
         colors = settings.get("colors") or {}
         style_key = (
             tuple(colors.get(k, C[k]) for k in STYLESHEET_COLOR_KEYS),
@@ -6857,11 +12664,36 @@ class PipelineBrowser(QMainWindow):
             settings.get("input_frame"),
             settings.get("table_radius"),
         )
-        rebuild_stylesheet = style_key != self._last_style_key
-        self._last_style_key = style_key
-        self.refresh_colors(rebuild_stylesheet=rebuild_stylesheet)
+        if style_key != self._last_style_key:
+            self._last_style_key = style_key
+            self._pending_stylesheet_rebuild = True
+            if not self._stylesheet_rebuild_timer.isActive():
+                self._stylesheet_rebuild_timer.start()
+        self.refresh_colors(rebuild_stylesheet=False)
         self.refresh_chrome_sizes()
         self._apply_native_frame()
+
+    def _flush_stylesheet_rebuild(self):
+        """Reconstruction DIFFEREE et REGROUPEE de la feuille de style
+        globale (voir _apply_settings/app_style.refresh_style) — le SEUL
+        appel a ce chemin couteux (mesure a plus de 3 SECONDES une fois la
+        fenetre de parametres ouverte, des milliers de widgets ayant
+        chacun leur propre QSS local a re-cascader contre le nouveau QSS
+        d'appli). `_stylesheet_rebuild_timer` (250ms, singleShot, voir
+        __init__) le declenche au plus tot 250ms apres le DERNIER
+        changement de style_key — pendant un glisser continu de couleur,
+        cela ramene un cout de plusieurs secondes PAR TICK (~30ms) a un
+        seul appel toutes les ~250ms, invisible a l'oeil (le style
+        GENERIQUE — boutons/scrollbars/menus — n'est de toute facon pas ce
+        qu'on regarde en glissant une pastille de couleur ; tout le reste
+        du retour visuel en direct passe par refresh_colors(rebuild_
+        stylesheet=False), deja rejoue a chaque tick, DEJA rapide)."""
+        if not self._pending_stylesheet_rebuild:
+            return
+        self._pending_stylesheet_rebuild = False
+        app = QApplication.instance()
+        if app is not None:
+            refresh_style(app)
 
     def refresh_chrome_sizes(self):
         """Reapplique l'echelle courante (voir app_style.scaled) aux
@@ -6962,12 +12794,111 @@ def apply_all_settings(settings: dict) -> None:
     global WINDOW_RADIUS, BUTTON_RADIUS, HEADER_HEIGHT, HEADER_PADDING
     global PREVIEW_IMAGE_PAD, PREVIEW_IMAGE_RADIUS
     global RESIZE_BADGE_STYLE
+    global STEP_BADGE_STYLE
+    global COLLAPSE_TOGGLE_MODE
+    global SHORTCUT_TEXT_STYLE
+    global DETAIL_PANEL_WIDTH
+    global GLOBAL_OMIT_FILE_NAMES, GLOBAL_OMIT_FILE_EXTENSIONS
+
+    omit_names = settings.get("application_omit_file_names") or []
+    omit_extensions = settings.get("application_omit_extensions") or []
+    if isinstance(omit_names, str):
+        omit_names = omit_names.replace(";", ",").split(",")
+    if isinstance(omit_extensions, str):
+        omit_extensions = omit_extensions.replace(";", ",").split(",")
+    GLOBAL_OMIT_FILE_NAMES = {
+        str(value).strip().casefold()
+        for value in omit_names
+        if str(value).strip()
+    }
+    GLOBAL_OMIT_FILE_EXTENSIONS = {
+        str(value).strip().casefold().removeprefix("*.").lstrip(".")
+        for value in omit_extensions
+        if str(value).strip().lstrip("*.")
+    }
+
+    # Entete de colonne : padding droit des icones + police/gras/couleur/
+    # hauteur du titre (voir Column.refresh_header, app_style.COLUMN_FRAME_
+    # KEYS/column_style_for — desormais des cles GENERALES comme le reste
+    # de cette liste, overridables PAR TITRE, PAS un dict a part) — voir la
+    # remarque de l'utilisateur, "ajoute un slider pour le padding droit
+    # des icones ... choix de la police + gras/regular + couleur" puis
+    # "mets a jour egalement les colonnes overidees ... avec tous les
+    # nouveaux parametres de general".
+
+    # Icone de niveaux (badge numerote, colonne "Projets" — voir
+    # _step_badge_rect/_paint_unified_row, Settings > Colonnes > Projets >
+    # Colonnes > "Icone de niveaux") — voir la remarque de l'utilisateur,
+    # "j'aimerais pouvoir controler l'aspect de cette petite icone".
+    STEP_BADGE_STYLE = {
+        "width": int(settings.get("step_badge_width", 18)),
+        "height": int(settings.get("step_badge_height", 18)),
+        "border_enabled": _coerce_side_enabled(settings.get("step_badge_border_enabled", False)),
+        "border": settings.get("step_badge_border") or {},
+        "border_thickness": int(settings.get("step_badge_border_thickness", 1)),
+        "radius": _radius_dict(settings.get("step_badge_radius", 9)),
+        "colors": {
+            2: settings.get("step_badge_color_base2", "#5c6368"),
+            3: settings.get("step_badge_color_base3", "#5c6368"),
+            4: settings.get("step_badge_color_base4", "#3f6f9f"),
+            5: settings.get("step_badge_color_base5", "#3f6f9f"),
+            6: settings.get("step_badge_color_base6", "#d9822b"),
+            "N": settings.get("step_badge_color_basen", "#5c6368"),
+        },
+        "text_colors": {
+            2: settings.get("step_badge_text_color_base2", "#eef2f5"),
+            3: settings.get("step_badge_text_color_base3", "#eef2f5"),
+            4: settings.get("step_badge_text_color_base4", "#eef2f5"),
+            5: settings.get("step_badge_text_color_base5", "#eef2f5"),
+            6: settings.get("step_badge_text_color_base6", "#eef2f5"),
+            "N": settings.get("step_badge_text_color_basen", "#eef2f5"),
+        },
+        "offset_x": int(settings.get("step_badge_offset_x", 4)),
+        "offset_y": int(settings.get("step_badge_offset_y", 0)),
+        "font_family": settings.get("step_badge_font_family", ""),
+        "font_bold": bool(settings.get("step_badge_font_bold", True)),
+        "font_smoothing_enabled": bool(settings.get("step_badge_font_smoothing_enabled", False)),
+        "font_smoothing": settings.get("step_badge_font_smoothing", "current"),
+        "border_smoothing": bool(settings.get("step_badge_border_smoothing", True)),
+    }
+
+    COLLAPSE_TOGGLE_MODE = settings.get("collapse_toggle_mode", "chevrons")
+
+    # Raccourcis (voir ROLE_IS_SHORTCUT, Settings > RACCOURCI) — General >
+    # RACCOURCI > "Police".
+    SHORTCUT_TEXT_STYLE = {
+        "font_family": settings.get("shortcut_font_family", ""),
+        "font_bold": bool(settings.get("shortcut_font_bold", False)),
+        "font_italic": bool(settings.get("shortcut_font_italic", False)),
+        "color": settings.get("shortcut_color", "#8fb4d5"),
+        "font_size": int(settings.get("shortcut_font_size", 11)),
+        "font_smoothing_enabled": bool(settings.get("shortcut_font_smoothing_enabled", False)),
+        "font_smoothing": settings.get("shortcut_font_smoothing", "current"),
+    }
+    DETAIL_PANEL_WIDTH = int(settings.get("detail_panel_width", 300))
+
+    # Habillage des sliders peints a la main (voir settings_window.
+    # _MiniSlider/_SLIDER_STYLE/_sync_slider_style, General > Geometrie >
+    # Slider "Rail"/"Selecteur") : auparavant synchronise UNIQUEMENT depuis
+    # SettingsWindow.__init__/_apply_slider_style, jamais depuis ce point
+    # d'entree central — un _MiniSlider construit AILLEURS (voir Column.
+    # _add_context_slider, menu contextuel) AVANT la toute premiere
+    # ouverture de la fenetre de parametres dans la session gardait donc
+    # les couleurs par defaut codees en dur, jamais celles enregistrees —
+    # voir la remarque de l'utilisateur, "les sliders des menus contextuels
+    # n'ont pas le style defini dans les settings".
+    _sync_slider_style(settings)
 
     RESIZE_BADGE_STYLE = {
         "position": settings.get("resize_badge_position", "bottom_right"),
         "offset_x": int(settings.get("resize_badge_offset_x", 8)),
         "offset_y": int(settings.get("resize_badge_offset_y", 8)),
         "font_family": settings.get("resize_badge_font_family", ""),
+        "font_bold": bool(settings.get("resize_badge_font_bold", True)),
+        "font_italic": bool(settings.get("resize_badge_font_italic", False)),
+        "font_size": int(settings.get("resize_badge_font_size", 11)),
+        "font_smoothing_enabled": bool(settings.get("resize_badge_font_smoothing_enabled", False)),
+        "font_smoothing": settings.get("resize_badge_font_smoothing", "current"),
         "text_color": settings.get("resize_badge_text_color", "#d6d9dc"),
         "bg_color": settings.get("resize_badge_bg_color", "#202326"),
         "border_enabled": _coerce_side_enabled(settings.get("resize_badge_border_enabled", True)),
@@ -7016,6 +12947,9 @@ def apply_all_settings(settings: dict) -> None:
     set_input_radius(settings.get("input_radius", 0))
     set_table_radius(settings.get("table_radius", 0))
     set_columns_resizable(settings.get("columns_resizable", True))
+    set_auto_collapse_set_columns(settings.get("auto_collapse_set_columns", True))
+    set_custom_softwares(settings.get("custom_softwares", []))
+    set_removed_softwares(settings.get("removed_softwares", []))
     set_column_gap(settings.get("column_gap", 0))
     set_header_style(
         settings.get("header_color", "skinN1"),
@@ -7062,7 +12996,15 @@ def apply_all_settings(settings: dict) -> None:
     # projets et sous projets pour y controler les colonnes respectives").
     overrides_by_title = settings.get("column_overrides_by_title") or {}
     enabled_by_title = settings.get("column_override_enabled_by_title") or {}
-    for real_title in ("Type", "Projets", "Sous-projet"):
+    # "Logiciels"/"IN"/"OVER"/"OUT"/INSPECTOR_TITLE (ajoutes ici, voir la
+    # remarque de l'utilisateur, "ajoute la colonne logiciels dans les
+    # settings, ainsi que in over et out, puis la colonne inspecteur") :
+    # MEME mecanisme "column_overrides_by_title" que Projets/Sous-projet,
+    # chacune avec son propre onglet de surcharge dedie (voir
+    # SettingsWindow._build_columns_page) — plus de repli general-only
+    # special pour elles (voir l'ancienne remarque plus bas, desormais
+    # limitee a "Contenu" seul, le SEUL bucket restant sans onglet dedie).
+    for real_title in ("Type", "Projets", "Sous-projet", "Logiciels", "IN", "OVER", "OUT", INSPECTOR_TITLE):
         if real_title == "Type":
             overrides = settings.get("column_type_overrides") or {}
             override_enabled = settings.get("column_type_override_enabled") or {}
@@ -7098,20 +13040,26 @@ def apply_all_settings(settings: dict) -> None:
         # voir la remarque de l'utilisateur, "le parametre de hauteur de
         # ligne ne prend que la colonne type en compte ... pareil pour
         # espacement entre les lignes".
-        if col_style.get("item_row_height") is not None:
-            COLUMN_SETTINGS[real_title]["height"] = int(col_style["item_row_height"])
-        COLUMN_SETTINGS[real_title]["spacing"] = max(0, int(col_style.get("item_row_spacing") or 0))
-        # Largeur par defaut (voir settings_window.DEFAULT_SETTINGS.
-        # item_column_width, 1er parametre de General > Colonnes > Colonnes,
-        # et son override dans Colonnes > Type/Projets/Sous-projets) : MEME
-        # resolution generale/surcharge PAR TITRE que hauteur/espacement juste au-
-        # dessus — remplace les largeurs fixes codees en dur ci-dessus
-        # (COLUMN_SETTINGS, "width": 140/208/...) des qu'un reglage existe
-        # — voir la remarque de l'utilisateur, "ajoute un parametre de
-        # largeur de colonne par defaut ... et un overide pour chacune des
-        # autres colonnes".
-        if col_style.get("item_column_width") is not None:
-            COLUMN_SETTINGS[real_title]["width"] = int(col_style["item_column_width"])
+        # INSPECTOR_TITLE n'est PAS dans COLUMN_SETTINGS (voir sa remarque
+        # de tete — pas une colonne a LIGNES, DetailPanel n'a pas de
+        # sizeHint/item_row_* a y ecrire, MEME raison que PREVIEW_STACK_
+        # TITLE ci-dessous) : rien de plus a faire pour elle une fois
+        # set_column_style() appele ci-dessus.
+        if real_title in COLUMN_SETTINGS:
+            if col_style.get("item_row_height") is not None:
+                COLUMN_SETTINGS[real_title]["height"] = int(col_style["item_row_height"])
+            COLUMN_SETTINGS[real_title]["spacing"] = max(0, int(col_style.get("item_row_spacing") or 0))
+            # Largeur par defaut (voir settings_window.DEFAULT_SETTINGS.
+            # item_column_width, 1er parametre de General > Colonnes > Colonnes,
+            # et son override dans Colonnes > Type/Projets/Sous-projets) : MEME
+            # resolution generale/surcharge PAR TITRE que hauteur/espacement juste au-
+            # dessus — remplace les largeurs fixes codees en dur ci-dessus
+            # (COLUMN_SETTINGS, "width": 140/208/...) des qu'un reglage existe
+            # — voir la remarque de l'utilisateur, "ajoute un parametre de
+            # largeur de colonne par defaut ... et un overide pour chacune des
+            # autres colonnes".
+            if col_style.get("item_column_width") is not None:
+                COLUMN_SETTINGS[real_title]["width"] = int(col_style["item_column_width"])
 
     # PREVIEW_STACK_TITLE (voir sa remarque de tete/PreviewColumn) : MEME
     # resolution generale/surcharge que ci-dessus (son propre onglet, voir
@@ -7129,19 +13077,19 @@ def apply_all_settings(settings: dict) -> None:
             preview_style[key] = settings.get(key)
     set_column_style(PREVIEW_STACK_TITLE, preview_style)
 
-    # "Logiciels"/"Contenu" n'ont pas d'onglet de surcharge dedie (voir
-    # settings_window._build_columns_page) : suivent directement la
-    # valeur GENERALE, jamais une surcharge PAR TITRE — memes cles que
-    # ci-dessus, meme raison (voir la remarque de l'utilisateur juste au-
-    # dessus).
-    for real_title in ("Logiciels", "Contenu"):
-        if real_title not in COLUMN_SETTINGS:
-            continue
+    # "Contenu" n'a pas d'onglet de surcharge dedie (voir settings_window.
+    # _build_columns_page) : suit directement la valeur GENERALE, jamais
+    # une surcharge PAR TITRE — c'est le SEUL bucket restant dans ce cas
+    # ("Logiciels"/"IN"/"OVER"/"OUT" ont desormais leur propre onglet, voir
+    # la boucle ci-dessus) : c'est le bucket GENERIQUE partage par tout
+    # contenu ouvert au-dela d'une chaine (configuree ou legacy), un nom de
+    # dossier quelconque, jamais un concept fixe a surcharger individuellement.
+    if "Contenu" in COLUMN_SETTINGS:
         if settings.get("item_row_height") is not None:
-            COLUMN_SETTINGS[real_title]["height"] = int(settings.get("item_row_height"))
-        COLUMN_SETTINGS[real_title]["spacing"] = max(0, int(settings.get("item_row_spacing") or 0))
+            COLUMN_SETTINGS["Contenu"]["height"] = int(settings.get("item_row_height"))
+        COLUMN_SETTINGS["Contenu"]["spacing"] = max(0, int(settings.get("item_row_spacing") or 0))
         if settings.get("item_column_width") is not None:
-            COLUMN_SETTINGS[real_title]["width"] = int(settings.get("item_column_width"))
+            COLUMN_SETTINGS["Contenu"]["width"] = int(settings.get("item_column_width"))
 
     header_family = (settings.get("header_font_family") or "").strip()
     if header_family:
