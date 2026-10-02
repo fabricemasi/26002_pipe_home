@@ -29,9 +29,14 @@ if not exist "%VENV%\Scripts\python.exe" (
     )
 )
 
-echo --- Installation / verification de PySide6 ---
+echo --- Installation / verification des dependances de l'application ---
 "%VENV%\Scripts\python.exe" -m pip install --upgrade pip
-"%VENV%\Scripts\python.exe" -m pip install PySide6
+"%VENV%\Scripts\python.exe" -m pip install PySide6 ezdxf matplotlib
+echo.
+
+echo Les apercus DWG necessitent aussi ODA File Converter.
+echo Installez-le depuis https://www.opendesign.com/guestfiles/oda_file_converter
+echo ou definissez ODA_FILE_CONVERTER vers ODAFileConverter.exe.
 echo.
 
 echo --- Lancement de l'application ---

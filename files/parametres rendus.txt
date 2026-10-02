@@ -1,0 +1,64 @@
+LOW POLY :
+- Fichier blender : F:\SYNC\Sync\PROG\26002_pipe_home\files\scene_pour_appercu_01.blend
+- Vue : camera du fichier blender
+- LIGHTING : facteur d'intensite des lights presentes dans la scene : 0.95
+- LIGHTING : path de l'image hdri : F:\PIPELINE\BIB\images\hdri\German_Dirt_Road_Small.hdr
+- LIGHTING : afficher l'image hdri dans le fond du rendu : 0
+- LIGHTING : facteur d'intensite de l'eclairage hdri : 0.01
+- SHADER : appliquer le shader "rendu_apercu" de la scene blender
+- SHADOWS : non
+- RECALCULER LES NORMALES : 1
+- WIREFRAME : oui
+- SUBDIVISIONS : 0
+- Epaisseur du wireframe : 0.7
+- Shade : flat
+- Couleur de base : (0.48, 0.50, 0.53)
+- Couleur du wireframe : (0,0,0,1)
+- Couleur du fond : a appliquer : #3a3a3a
+- CAMERA : near clip = 0.1, far clip = 1000
+- Rendu : eevee
+- Résolution de sortie : 1050 × 1050 px
+- Format : png
+- Transparence du fond : non
+- Notes :
+- - objet Cube sert de bounding box de référence pour le rendu de l'objet
+- - Import du fichier 3D puis sélection des objets de type mesh uniquement
+- - Fusion de tous ces objets en un seul mesh
+- - Application de tous les modifiers avant le calcul de la bounding box y compris subdivision
+- - Calcul de la bounding box globale du modèle
+- - Mise à l’échelle uniforme et centrage automatique du modèle dans le cube.
+- - Masquage au rendu des éléments inutiles : caméra, empties, gizmos, grille, axes et cube de référence.
+- - Positionne un plan sous l'objet, et creer l'ombre de l'objet sur le plas a l'aide d'un matte shader
+
+HIGH POLY :
+- Fichier blender : F:\SYNC\Sync\PROG\26002_pipe_home\files\scene_pour_appercu_02.blend
+- Vue : camera du fichier blender
+- LIGHTING : facteur d'intensite des lights presentes dans la scene : 0.95
+- LIGHTING : path de l'image hdri : F:\PIPELINE\BIB\images\hdri\German_Dirt_Road_Small.hdr
+- LIGHTING : afficher l'image hdri dans le fond du rendu : 0
+- LIGHTING : facteur d'intensite de l'eclairage hdri : 0.5
+- SHADER : appliquer le shader "rendu_apercu" de la scene blender
+- SHADOWS : oui
+- RECALCULER LES NORMALES : 1
+- WIREFRAME : non
+- SUBDIVISIONS : 1
+- Epaisseur du wireframe : 0
+- Shade : smooth
+- Couleur de base : (0.48, 0.50, 0.53)
+- Couleur du wireframe : (0,0,0,0)
+- Couleur du fond : a appliquer : #3a3a3a
+- CAMERA : near clip = 0.1, far clip = 1000
+- Rendu : eevee
+- Résolution de sortie : 1050 × 1050 px
+- Format : png
+- Transparence du fond : non
+- Notes :
+- - objet Cube sert de bounding box de référence pour le rendu de l'objet
+- - Import du fichier 3D puis sélection des objets de type mesh uniquement
+- - Fusion de tous ces objets en un seul mesh
+- - Application de tous les modifiers avant le calcul de la bounding box y compris subdivision
+- - Calcul de la bounding box globale du modèle
+- - Mise à l’échelle uniforme et centrage automatique du modèle dans le cube.
+- - Masquage au rendu des éléments inutiles : caméra, empties, gizmos, grille, axes et cube de référence.
+- - Positionne un plan sous l'objet, et creer l'ombre de l'objet sur le plas a l'aide d'un matte shader
+

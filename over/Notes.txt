@@ -1,0 +1,2 @@
+Gabarits pour les lignes de la fenetre de settings.
+

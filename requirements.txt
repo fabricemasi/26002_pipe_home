@@ -4,3 +4,7 @@ PySide6
 # fonctionne normalement, ces fichiers restent juste sans apercu.
 OpenEXR
 numpy
+# Apercu 2D des fichiers .dwg : requiert aussi ODA File Converter (outil
+# externe) pour convertir le format DWG proprietaire vers DXF.
+ezdxf
+matplotlib

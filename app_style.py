@@ -202,13 +202,14 @@ def scaled(px: float, minimum: int = 1) -> int:
 
 def font(size: int, weight: int = 400, mono: bool = False,
          tracking: float = 0.0, caps: bool = False, family: str | None = None,
-         smoothing: str = "current") -> QFont:
+         smoothing: str = "current", italic: bool = False) -> QFont:
     if family is None:
         family = mono_family() if mono else sans_family()
     f = QFont(family)
     size = max(1, round(size * _UI_SCALE_PERCENT / 100))
     f.setPixelSize(size)
     f.setWeight(QFont.Weight(weight))
+    f.setItalic(italic)
     # En dessous d'environ 18-20px, le moteur de rendu de police de Windows
     # bascule sur un anti-aliasing tres grossier (quelques niveaux de gris
     # seulement) des que le hinting est actif, donnant un texte crenele —
@@ -543,6 +544,62 @@ def columns_resizable() -> bool:
     return _COLUMNS_RESIZABLE
 
 
+_AUTO_COLLAPSE_SET_COLUMNS = True
+
+
+def set_auto_collapse_set_columns(on: bool) -> None:
+    """Repli automatique des colonnes "de set" (Type/Projets/niveaux
+    configures, voir pipeline_browser.PipelineBrowser._sync_collapse_state)
+    des que la chaine de navigation est completement settee jusqu'au
+    repertoire de travail — Fenetre de parametres > General > Application.
+    True par defaut (comportement inchange : ce repli automatique existait
+    deja, ce reglage permet juste de le desactiver). Le repli MANUEL (icone
+    sur la colonne des vignettes) reste toujours disponible, meme
+    desactive."""
+    global _AUTO_COLLAPSE_SET_COLUMNS
+    _AUTO_COLLAPSE_SET_COLUMNS = bool(on)
+
+
+def auto_collapse_set_columns() -> bool:
+    return _AUTO_COLLAPSE_SET_COLUMNS
+
+
+_CUSTOM_SOFTWARE_ENTRIES: list[dict] = []
+
+
+def set_custom_softwares(entries) -> None:
+    """Logiciels AJOUTES par l'utilisateur (voir Fenetre de parametres >
+    General > Logiciel, "+ Ajouter un logiciel...") — chaque entree
+    {"key": nom normalise, "label": nom affiche}, en plus des logiciels
+    RECONNUS d'origine (pipeline_browser.SOFTWARE_ICONS). Stocke ici (pas
+    dans pipeline_browser.py) pour rester lisible depuis settings_window.py
+    SANS import circulaire — les deux modules importent deja app_style.py,
+    jamais l'inverse."""
+    global _CUSTOM_SOFTWARE_ENTRIES
+    _CUSTOM_SOFTWARE_ENTRIES = [dict(e) for e in entries if isinstance(e, dict) and e.get("key")]
+
+
+def custom_softwares() -> list[dict]:
+    return _CUSTOM_SOFTWARE_ENTRIES
+
+
+_REMOVED_SOFTWARE_KEYS: frozenset = frozenset()
+
+
+def set_removed_softwares(keys) -> None:
+    """Logiciels RECONNUS D'ORIGINE (pipeline_browser.SOFTWARE_ICONS) que
+    l'utilisateur a explicitement retires de la liste (voir Fenetre de
+    parametres > General > Logiciel, bouton "Supprimer" sur une ligne
+    d'origine) — ils cessent d'etre reconnus (software_icon_key) jusqu'a
+    ce qu'ils soient re-ajoutes via "+ Ajouter un logiciel..."."""
+    global _REMOVED_SOFTWARE_KEYS
+    _REMOVED_SOFTWARE_KEYS = frozenset(keys)
+
+
+def removed_softwares() -> frozenset:
+    return _REMOVED_SOFTWARE_KEYS
+
+
 # ==========================================================================
 # Palette semantique (11 cles), utilisee par la fenetre de parametres (page
 # "Couleurs", 2 colonnes) et par la resolution de la couleur d'entete
@@ -752,6 +809,14 @@ def header_qss(object_name: str) -> str:
 COLUMN_FRAME_KEYS = [
     "header_visible", "header_height", "header_padding", "header_color", "header_radius",
     "header_border_enabled", "header_border", "header_border_thickness",
+    # Padding droit des icones + police/gras/couleur/hauteur du titre —
+    # ajoutes cote GENERAL (voir pipeline_browser.HEADER_TEXT_STYLE), et
+    # desormais overridables PAR TITRE ici aussi — voir la remarque de
+    # l'utilisateur, "mets a jour egalement les colonnes overidees ...
+    # avec tous les nouveaux parametres de general".
+    "header_icon_right_padding", "header_font_family", "header_font_bold", "header_font_italic",
+    "header_font_color", "header_font_size",
+    "header_font_antialias_override_enabled", "header_font_antialias_override",
     "column_padding", "column_border_enabled", "column_border", "column_border_thickness", "column_border_radius",
     "column_bg_color",
 ]
@@ -770,14 +835,45 @@ COLUMN_FRAME_KEYS = [
 # onglet de surcharge (voir SettingsWindow._build_columns_page).
 PREVIEW_STACK_TITLE = "Focus"
 
+# Titre "virtuel" de la colonne Inspecteur (voir pipeline_browser.
+# DetailPanel) — MEME raison que PREVIEW_STACK_TITLE ci-dessus : definie
+# ici (pas dans pipeline_browser.py) pour que settings_window.py puisse
+# aussi s'y referer, depuis qu'elle a son propre onglet de surcharge (voir
+# SettingsWindow._build_columns_page) — voir la remarque de l'utilisateur,
+# "ajoute ... la colonne inspecteur" (dans les settings, Colonnes > ...).
+INSPECTOR_TITLE = "Inspecteur"
+
 COLUMN_TYPE_OVERRIDE_KEYS = COLUMN_FRAME_KEYS + [
-    "item_font_family", "item_font_size", "item_font_bold", "item_color",
+    "item_font_family", "item_font_size", "item_font_bold", "item_font_italic", "item_color",
     "item_antialias_override_enabled", "item_antialias_override",
-    "item_icon_enabled", "item_row_height", "item_row_spacing", "item_column_width", "item_header_gap",
+    "item_icon_enabled", "item_icon_size", "item_icon_padding_left", "item_row_height", "item_row_spacing",
+    "item_column_width", "item_header_gap",
     "item_text_padding", "item_selection_focus_color", "item_selection_unfocus_color", "item_hover_color",
     "item_idle_color",
     "item_selection_padding", "item_selection_border_enabled", "item_selection_border",
     "item_selection_radius", "item_selection_edge_border",
+    # Non focus/Survol/Non selectionne (voir settings_window._section_
+    # headers, sous-sections dediees) : "clones" de Focus (memes 4
+    # parametres ci-dessus), SAUF override explicite (un toggle par
+    # parametre, voir pipeline_browser._paint_unified_row, `_shape`) — voir
+    # la remarque de l'utilisateur, "non focus survol et non selectionne
+    # sont des clones des focus (sauf la couleur) donc mets leur des
+    # toggles d'override exactement comme dans colonnes/projets/colonnes".
+    "item_selection_unfocus_padding_override", "item_selection_unfocus_padding",
+    "item_selection_unfocus_border_override", "item_selection_unfocus_border_enabled",
+    "item_selection_unfocus_border",
+    "item_selection_unfocus_radius_override", "item_selection_unfocus_radius",
+    "item_selection_unfocus_edge_border_override", "item_selection_unfocus_edge_border",
+    "item_selection_hover_padding_override", "item_selection_hover_padding",
+    "item_selection_hover_border_override", "item_selection_hover_border_enabled",
+    "item_selection_hover_border",
+    "item_selection_hover_radius_override", "item_selection_hover_radius",
+    "item_selection_hover_edge_border_override", "item_selection_hover_edge_border",
+    "item_selection_idle_padding_override", "item_selection_idle_padding",
+    "item_selection_idle_border_override", "item_selection_idle_border_enabled",
+    "item_selection_idle_border",
+    "item_selection_idle_radius_override", "item_selection_idle_radius",
+    "item_selection_idle_edge_border_override", "item_selection_idle_edge_border",
     "item_row_border_enabled", "item_row_border_color", "item_row_border_thickness",
     "item_image_padding", "item_image_border_enabled", "item_image_border",
     "item_image_border_thickness", "item_image_radius", "item_image_ratio",
@@ -796,10 +892,12 @@ COLUMN_TYPE_OVERRIDE_KEYS = COLUMN_FRAME_KEYS + [
     "preview_padding", "preview_radius",
     "preview_title_zone_height",
     "preview_title_font_size", "preview_title_font_color",
-    "preview_title_font_family", "preview_title_font_smoothing_enabled", "preview_title_font_smoothing",
+    "preview_title_font_family", "preview_title_font_bold", "preview_title_font_italic",
+    "preview_title_font_smoothing_enabled", "preview_title_font_smoothing",
     "preview_title_padding",
     "preview_status_font_size", "preview_status_font_color", "preview_status_font_color_idle",
-    "preview_status_font_family", "preview_status_font_smoothing_enabled", "preview_status_font_smoothing",
+    "preview_status_font_family", "preview_status_font_bold", "preview_status_font_italic",
+    "preview_status_font_smoothing_enabled", "preview_status_font_smoothing",
     "preview_status_padding",
     "preview_toggle_width", "preview_toggle_height", "preview_toggle_bg_color",
     "preview_toggle_border_enabled", "preview_toggle_border", "preview_toggle_border_thickness",
