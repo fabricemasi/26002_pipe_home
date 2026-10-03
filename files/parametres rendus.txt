@@ -2,7 +2,7 @@ LOW POLY :
 - Fichier blender : F:\SYNC\Sync\PROG\26002_pipe_home\files\scene_pour_appercu_01.blend
 - Vue : camera du fichier blender
 - LIGHTING : facteur d'intensite des lights presentes dans la scene : 0.95
-- LIGHTING : path de l'image hdri : F:\PIPELINE\BIB\images\hdri\German_Dirt_Road_Small.hdr
+- LIGHTING : path de l'image hdri : F:\SYNC\Sync\IMAGES\hdri\German_Dirt_Road_Small.hdr
 - LIGHTING : afficher l'image hdri dans le fond du rendu : 0
 - LIGHTING : facteur d'intensite de l'eclairage hdri : 0.01
 - SHADER : appliquer le shader "rendu_apercu" de la scene blender
@@ -34,7 +34,7 @@ HIGH POLY :
 - Fichier blender : F:\SYNC\Sync\PROG\26002_pipe_home\files\scene_pour_appercu_02.blend
 - Vue : camera du fichier blender
 - LIGHTING : facteur d'intensite des lights presentes dans la scene : 0.95
-- LIGHTING : path de l'image hdri : F:\PIPELINE\BIB\images\hdri\German_Dirt_Road_Small.hdr
+- LIGHTING : path de l'image hdri : F:\SYNC\Sync\IMAGES\hdri\German_Dirt_Road_Small.hdr
 - LIGHTING : afficher l'image hdri dans le fond du rendu : 0
 - LIGHTING : facteur d'intensite de l'eclairage hdri : 0.5
 - SHADER : appliquer le shader "rendu_apercu" de la scene blender

@@ -1,5 +1,6 @@
 """Aperçus : décodeurs par format, caches mémoire/disque, rendus Blender/Maya et ordonnanceur en tâche de fond."""
 
+import config as _config
 import ctypes
 import hashlib
 import html
@@ -353,16 +354,49 @@ TURNTABLE_FRAME_COUNT = 72
 TURNTABLE_EXTENSIONS = OBJ_EXTENSIONS | ABC_EXTENSIONS | BLEND_EXTENSIONS | MAYA_SCENE_EXTENSIONS | FBX_EXTENSIONS
 
 
+def _cache_slug(text: str, limit: int) -> str:
+    text = re.sub(r"[^0-9a-zà-ÿ._-]+", "_", text.casefold())
+    text = re.sub(r"_{2,}", "_", text).strip("._ ")
+    return text[:limit].rstrip("._ ") or "x"
+
+
+def _cache_label(path: Path) -> str:
+    """Prefixe EXPLICITE des fichiers de cache : « set » (jusqu'a 3 dossiers
+    sous la racine : Type-Projet-Sous-projet) puis nom du fichier source, en
+    minuscules — ex. "3d-_assets-hotrod__hotrod.abc". Permet de retrouver a
+    quoi correspond un fichier du cache sans passer par les fiches JSON."""
+    p = Path(str(path))
+    parts = [x.casefold() for x in p.parts]
+    root_parts = [x.casefold() for x in Path(str(_config.ROOT)).parts]
+    if len(parts) > len(root_parts) and parts[:len(root_parts)] == root_parts:
+        folders = parts[len(root_parts):-1][:3]
+    else:
+        anchor = p.anchor.casefold()
+        folders = [x for x in parts[:-1] if x != anchor][-3:]
+    set_name = "-".join(_cache_slug(x, 24) for x in folders) or "racine"
+    return f"{_cache_slug(set_name, 60)}__{_cache_slug(parts[-1] if parts else '', 50)}"
+
+
+def _cache_digest_of(cache_path: Path) -> str:
+    """Code court (16 car.) d'un fichier de cache, ancien (40 car., sans
+    prefixe) ou nouveau format (<set>__<fichier>__<code>_<mtime>)."""
+    return cache_path.stem.rsplit("__", 1)[-1].split("_", 1)[0][:16]
+
+
+def _cache_glob(digest: str) -> str:
+    return f"*{digest[:16]}*_*.png"
+
+
 def _turntable_cache_path(path: Path, mtime: float, profiles_snapshot=None, render_mode: str = "low") -> Path:
     signature = _file_image_cache_signature(path, render_mode=render_mode, profiles_snapshot=profiles_snapshot)
     digest = hashlib.sha1(f"turntable:{_TURNTABLE_CACHE_VERSION}:{_PREVIEW_CACHE_VERSION}:{path.resolve()}:{mtime}:{signature}".encode()).hexdigest()
-    return FILE_IMAGE_DISK_CACHE_DIR / ("turntable_" + digest)
+    return FILE_IMAGE_DISK_CACHE_DIR / f"{_cache_label(path)}__turntable_{digest[:16]}"
 
 
 def _turntable_metadata_path(path: Path, render_mode: str = "low") -> Path:
     identity = os.path.normcase(str(path.resolve()))
     digest = hashlib.sha1((identity if render_mode == "low" else f"{identity}:high").encode()).hexdigest()
-    return FILE_IMAGE_DISK_CACHE_DIR / ("turntable_latest_" + digest + ".json")
+    return FILE_IMAGE_DISK_CACHE_DIR / f"{_cache_label(path)}__turntable_latest_{digest[:16]}.json"
 
 
 def _turntable_work_path(destination: Path, profile: dict, render_mode: str) -> Path:
@@ -460,7 +494,9 @@ def _file_image_cache_signature(
         profile_digest = hashlib.sha1(
             json.dumps(profile, sort_keys=True, default=str).encode("utf-8")
         ).hexdigest()[:12]
-        template_signature += f":profile_render_v2:{render_mode}:{profile_digest}"
+        # v3 pour les .blend : l'apercu respecte desormais la visibilite de rendu du fichier.
+        render_tag = "v3" if suffix in BLEND_EXTENSIONS else "v2"
+        template_signature += f":profile_render_{render_tag}:{render_mode}:{profile_digest}"
     return template_signature
 
 
@@ -473,12 +509,188 @@ def _file_image_cache_path(
     if signature is None:
         signature = _file_image_cache_signature(path, render_mode, profiles_snapshot)
     digest = hashlib.sha1(f"{version}:{path}{signature}".encode("utf-8")).hexdigest()
-    return FILE_IMAGE_DISK_CACHE_DIR / f"{digest}_{int(mtime)}.png"
+    return FILE_IMAGE_DISK_CACHE_DIR / f"{_cache_label(path)}__{digest[:16]}_{int(mtime)}.png"
 
 
 def _preview_cache_metadata_path(path: Path) -> Path:
     identity = hashlib.sha1(os.path.normcase(str(path.resolve())).encode("utf-8")).hexdigest()
-    return FILE_IMAGE_DISK_CACHE_DIR / f"preview_{identity}.json"
+    return FILE_IMAGE_DISK_CACHE_DIR / f"{_cache_label(path)}__preview_{identity[:16]}.json"
+
+
+def delete_preview_cache(path: Path) -> int:
+    """Supprime tous les apercus en cache du fichier `path` (image low/high,
+    turntables, fiches, rendus partiels) sur le disque ET en memoire ; le
+    fichier source n'est jamais touche. Retourne le nombre d'elements supprimes."""
+    removed = 0
+    key = str(path)
+    for memory_cache in (_file_image_cache, _file_image_column_cache, _file_image_high_cache):
+        memory_cache.pop(key, None)
+    _STALE_PREVIEW_PATHS.discard(key)
+    _PREVIEW_STALE_LOOKUP_MISSES.difference_update({item for item in _PREVIEW_STALE_LOOKUP_MISSES if item[0] == key})
+    prefix = _cache_label(path) + "__"
+    try:
+        entries = [entry for entry in FILE_IMAGE_DISK_CACHE_DIR.iterdir() if entry.name.startswith(prefix)]
+    except OSError:
+        return 0
+    for entry in entries:
+        try:
+            if entry.is_dir():
+                shutil.rmtree(entry)
+            else:
+                entry.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return removed
+
+
+def _keep_cache_digests(path: Path, mtime: float) -> tuple[set, set]:
+    """(codes d'images, codes de turntables) encore valables pour `path` : LOW et HIGH,
+    avec les profils manuels et automatiques courants."""
+    image_codes, turntable_codes = set(), set()
+    for profiles in (None, _AUTOMATIC_RENDER_PROFILES):
+        for mode in ("low", "high"):
+            try:
+                image_codes.add(_cache_digest_of(_file_image_cache_path(path, mtime, render_mode=mode, profiles_snapshot=profiles)))
+                turntable_codes.add(_turntable_cache_path(path, mtime, profiles, mode).name.split("__turntable_", 1)[1][:16])
+            except (OSError, ValueError, IndexError):
+                pass
+    return image_codes, turntable_codes
+
+
+def prune_unused_previews(path: Path, mtime: float | None = None, entries: list | None = None) -> int:
+    """Supprime les images et turntables de cache de `path` devenus inutiles : ceux
+    d'anciens reglages de rendu (profil, modele Blender) qui ne servent plus ni a
+    l'affichage courant ni de repli « perime ». Garde LOW et HIGH actuels et la
+    derniere image enregistree. Retourne le nombre d'elements supprimes."""
+    cache = FILE_IMAGE_DISK_CACHE_DIR
+    prefix = _cache_label(path) + "__"
+    try:
+        mtime = path.stat().st_mtime if mtime is None else mtime
+        names = entries if entries is not None else [e for e in cache.iterdir() if e.name.startswith(prefix)]
+    except OSError:
+        return 0
+    image_codes, turntable_codes = _keep_cache_digests(path, mtime)
+    keep_names = set()
+    for sidecar in (_preview_cache_metadata_path(path), _turntable_metadata_path(path, "low"),
+                    _turntable_metadata_path(path, "high")):
+        try:
+            keep_names.add(Path(json.loads(sidecar.read_text(encoding="utf-8")).get("cache", "")).name)
+        except (OSError, ValueError, TypeError):
+            pass
+    own = [entry for entry in names if entry.name.startswith(prefix)]
+    # Confirmation POSITIVE : on ne supprime que si un element courant de ce type est
+    # bien present (sinon on ne sait pas distinguer l'inutile de l'unique repli).
+    has_current_image = any(e.suffix == ".png" and _cache_digest_of(e) in image_codes for e in own)
+    has_current_turntable = any(
+        e.is_dir() and e.name[len(prefix):].startswith("turntable_") and
+        e.name[len(prefix) + len("turntable_"):][:16] in turntable_codes for e in own)
+    removed = 0
+    for entry in own:
+        if entry.name in keep_names:
+            continue
+        rest = entry.name[len(prefix):]
+        try:
+            if entry.is_dir() and rest.startswith("turntable_") and not rest.startswith("turntable_latest_"):
+                code = rest[len("turntable_"):][:16]
+                if has_current_turntable and code not in turntable_codes:
+                    shutil.rmtree(entry)
+                    removed += 1
+            elif entry.suffix == ".png" and not entry.name.endswith(".tmp.png"):
+                if has_current_image and _cache_digest_of(entry) not in image_codes:
+                    entry.unlink()
+                    removed += 1
+                elif has_current_image and not entry.stem.endswith(f"_{int(mtime)}") and any(
+                        other is not entry and other.suffix == ".png" and other.stem.endswith(f"_{int(mtime)}")
+                        and _cache_digest_of(other) == _cache_digest_of(entry) for other in own):
+                    entry.unlink()   # meme reglage, ancienne date : le rendu a jour existe deja
+                    removed += 1
+        except OSError:
+            pass
+    return removed
+
+
+def sweep_preview_cache(dry_run: bool = False) -> dict:
+    """Balayage complet du cache : pour chaque fichier source connu (fiches), retire ce
+    qui est inutile (voir prune_unused_previews) ; si le fichier source n'existe plus
+    alors que son dossier existe, retire aussi tous ses apercus. Les sources dont le
+    dossier est introuvable (disque debranche) ne sont jamais touchees."""
+    result = {"inutiles": 0, "orphelins": 0}
+    cache = FILE_IMAGE_DISK_CACHE_DIR
+    try:
+        listing = list(cache.iterdir())
+    except OSError:
+        return result
+    by_label = {}
+    for entry in listing:
+        by_label.setdefault(entry.name.rsplit("__", 1)[0], []).append(entry)
+    sidecars = [e for e in listing if "__preview_" in e.name and e.suffix == ".json"]
+    for sidecar in sidecars:
+        try:
+            source = Path(json.loads(sidecar.read_text(encoding="utf-8"))["source"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if source.exists():
+            if dry_run:
+                continue
+            # La fiche garde le chemin en MINUSCULES (normcase) : les codes de cache sont
+            # calcules sur le chemin tel que l'appli le manipule, donc on retablit la casse.
+            real = source.resolve()
+            result["inutiles"] += prune_unused_previews(real, entries=by_label.get(_cache_label(real), []))
+        elif source.parent.exists():
+            for entry in by_label.get(_cache_label(source), []):
+                result["orphelins"] += 1
+                if not dry_run:
+                    try:
+                        shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
+                    except OSError:
+                        pass
+    return result
+
+
+def migrate_cache_names() -> int:
+    """Renomme les anciens fichiers du cache (codes opaques) au format explicite
+    <set>__<fichier>__<code>_<mtime> et rattache leurs fiches JSON au dossier
+    actuel (voir _cache_label). Idempotent ; retourne le nombre de renommages."""
+    cache = FILE_IMAGE_DISK_CACHE_DIR
+    if not cache.is_dir():
+        return 0
+    renamed = 0
+    for meta in list(cache.glob("preview_*.json")):
+        try:
+            payload = json.loads(meta.read_text(encoding="utf-8"))
+            source = Path(payload["source"])
+            old_png = cache / Path(payload.get("cache", "")).name
+            label = _cache_label(source)
+            new_png = old_png
+            if old_png.is_file() and "__" not in old_png.name:
+                digest, _, tail = old_png.stem.partition("_")
+                new_png = cache / f"{label}__{digest[:16]}_{tail}.png"
+                old_png.replace(new_png)
+                renamed += 1
+            payload["cache"] = str(new_png)
+            new_meta = cache / f"{label}__preview_{meta.stem.removeprefix('preview_')[:16]}.json"
+            new_meta.write_text(json.dumps(payload), encoding="utf-8")
+            meta.unlink()
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    for directory in [p for p in cache.glob("turntable_*") if p.is_dir() and "__" not in p.name]:
+        try:
+            manifest = json.loads((directory / "complete.json").read_text(encoding="utf-8"))
+            label = _cache_label(Path(manifest["source"]))
+            new_dir = cache / f"{label}__turntable_{directory.name.split('_')[1][:16]}{directory.name[directory.name.find('_partial_'):] if '_partial_' in directory.name else ''}"
+            directory.replace(new_dir)
+            renamed += 1
+            for latest in cache.glob("turntable_latest_*.json"):
+                data = json.loads(latest.read_text(encoding="utf-8"))
+                if Path(data.get("cache", "")).name == directory.name:
+                    data["cache"] = str(new_dir)
+                    (cache / f"{label}__turntable_latest_{latest.stem.rsplit('_', 1)[1][:16]}.json").write_text(
+                        json.dumps(data), encoding="utf-8")
+                    latest.unlink()
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return renamed
 
 
 def _record_preview_cache(path: Path, source_mtime: float, cache_path: Path) -> None:
@@ -564,16 +776,16 @@ def _find_stale_preview_cache(path: Path, mtime: float, current_path: Path) -> P
         for signature in signatures:
             digests.add(hashlib.sha1(f"{old_version}:{path}{signature}".encode("utf-8")).hexdigest())
     for digest in digests:
-        candidates = list(FILE_IMAGE_DISK_CACHE_DIR.glob(f"{digest}_*.png"))
+        candidates = list(FILE_IMAGE_DISK_CACHE_DIR.glob(_cache_glob(digest)))
         if candidates:
             candidates.sort(key=lambda candidate: candidate.stat().st_mtime, reverse=True)
             return candidates[0]
 
     # Source-only changes keep the same render digest; the old source-mtime
     # suffix remains available until a replacement is written.
-    digest = current_path.stem.rsplit("_", 1)[0]
+    digest = _cache_digest_of(current_path)
     try:
-        candidates = [candidate for candidate in FILE_IMAGE_DISK_CACHE_DIR.glob(f"{digest}_*.png")
+        candidates = [candidate for candidate in FILE_IMAGE_DISK_CACHE_DIR.glob(_cache_glob(digest))
                       if candidate != current_path]
         if candidates:
             candidates.sort(key=lambda candidate: candidate.stat().st_mtime, reverse=True)
@@ -587,9 +799,9 @@ def _prune_stale_disk_cache(cache_path: Path) -> None:
     """Supprime les autres fichiers de cache disque de la meme image (memes
     premiers caracteres de nom, mtime different) que `cache_path`, devenus
     perimes suite a une modification du fichier source."""
-    digest = cache_path.stem.split("_", 1)[0]
+    digest = _cache_digest_of(cache_path)
     try:
-        for stale in FILE_IMAGE_DISK_CACHE_DIR.glob(f"{digest}_*.png"):
+        for stale in FILE_IMAGE_DISK_CACHE_DIR.glob(_cache_glob(digest)):
             if stale != cache_path:
                 try:
                     stale.unlink()
@@ -1269,6 +1481,28 @@ try:
             data_to.scenes = [data_from.scenes[0]]
         source_scene = data_to.scenes[0]
         if source_scene is None: raise RuntimeError("Scene source introuvable")
+        # Visibilite de RENDU du fichier source, relevee AVANT d'exposer les collections
+        # (voir expose_imported_collection) : une collection masquee au rendu ou exclue
+        # du view layer (par exemple "SAVE", qui archive d'anciennes versions du modele)
+        # ne doit pas entrer dans l'apercu, sinon ses objets sont fusionnes avec les
+        # vrais et on obtient plusieurs modeles superposes.
+        renderable_names = set()
+        def collect_renderable(layer_collection, parent_ok):
+            collection = layer_collection.collection
+            ok = parent_ok and not layer_collection.exclude and not collection.hide_render
+            if ok:
+                for source_obj in collection.objects:
+                    if not source_obj.hide_render:
+                        renderable_names.add(source_obj.name)
+            for child_layer in layer_collection.children:
+                collect_renderable(child_layer, ok)
+        try:
+            collect_renderable(source_scene.view_layers[0].layer_collection, True)
+        except (AttributeError, IndexError):
+            renderable_names = set()
+        source_objects = list(source_scene.objects)
+        if not any(o.type == "MESH" and o.name in renderable_names for o in source_objects):
+            renderable_names = {o.name for o in source_objects}   # rien de renderable : on ne filtre pas
         # Une master collection de Scene est un ID embarque : son lien dans
         # une AUTRE scene n'est pas fiable apres sauvegarde/rechargement.
         # Utiliser une vraie collection pour le snapshot de reprise.
@@ -1285,7 +1519,11 @@ try:
                 expose_imported_collection(child)
         expose_imported_collection(imported_collection)
         bpy.context.view_layer.update()
-        for source_obj in source_scene.objects:
+        for source_obj in source_objects:
+            if source_obj.name not in renderable_names:
+                for owner in list(source_obj.users_collection):
+                    owner.objects.unlink(source_obj)
+                continue
             source_obj.hide_render = source_obj.type != "MESH"
     elif kind == "fbx":
         try:
@@ -3118,6 +3356,7 @@ class _PreviewDecodeTask(QRunnable):
                         _set_hidden(cache_path)
                         _prune_stale_disk_cache(cache_path)
                         _record_preview_cache(self.path, self.mtime, cache_path)
+                        prune_unused_previews(self.path, self.mtime)
                         self.output_path = str(cache_path.resolve())
                 except OSError:
                     pass
@@ -3202,6 +3441,10 @@ class _PreviewDecodeTask(QRunnable):
             temporary = metadata.with_suffix(".tmp")
             temporary.write_text(json.dumps({"cache": str(destination.resolve())}), encoding="utf-8")
             temporary.replace(metadata)
+            try:
+                prune_unused_previews(self.path, self.mtime)
+            except OSError:
+                pass
             self.output_path = str((destination / "frame_000.png").resolve())
             # Le snapshot lourd n'est utile que tant que la sequence est
             # incomplete. Ne pas le conserver pour chaque turntable publie.

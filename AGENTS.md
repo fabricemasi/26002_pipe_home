@@ -42,6 +42,7 @@ Les données propres à l'appli sont dans `data/` (réglages, presets, état des
 
 ### Pipeline d'aperçus
 Aperçus asynchrones : `_PreviewDecodeManager` / `_PreviewDecodeTask` (QRunnable), `_IdlePreviewScheduler` (rendu en tâche de fond quand l'appli est inactive). Cache disque dans `data/.pipeline_preview_cache/` (clé = chemin + mtime ; métadonnées, nettoyage des caches périmés). Décodeurs par format : OBJ (numpy/QPainter ou Blender EEVEE), Alembic `.abc` et `.blend` (Blender), `.ma` (mayapy), PSD, EXR/HDR/TX (OpenEXR / oiiotool), vidéo, DWG (ezdxf + ODA File Converter). Les rendus Blender/Maya sont des **scripts Python embarqués dans des chaînes** exécutés en sous-processus (voir `_render_wireframe_eevee`, `_render_ma_wireframe`) — ce code s'exécute dans l'interpréteur de Blender/Maya, pas dans l'appli. Les profils de rendu (low/high…, turntable) viennent de `files/parametres rendus.txt` (`_load_render_profiles`) ; journal de rendu quotidien `pipeline_preview_render_<date>.html` / `.log`.
+Les fichiers du cache ont un nom explicite `<set>__<fichier>__<code16>_<mtime>.png` (set = jusqu'à 3 dossiers sous la racine, voir `_cache_label`) ; turntables `<set>__<fichier>__turntable_<code16>`. `migrate_cache_names()` (appelée par `main()`) renomme les anciens noms opaques.
 
 Outils externes détectés dynamiquement : `BLENDER_EXECUTABLE`, `MAYA_PYTHON_EXECUTABLE`/`MAYA_LOCATION`, `ODA_FILE_CONVERTER`, `oiiotool` dans le PATH. Tous optionnels : l'appli doit rester fonctionnelle sans (fichiers simplement sans aperçu).
 

@@ -2,11 +2,17 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
+import threading
+import time
 from PySide6.QtCore import (
-    QByteArray, QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, Qt, QTimer,
+    QByteArray, QEasingCurve, QEventLoop, QParallelAnimationGroup, QPoint, QPropertyAnimation, QRect, Qt,
+    QTimer,
 )
 from PySide6.QtGui import (
     QAction,
+    QColor,
+    QImage,
+    QPainter,
     QPixmap,
 )
 from PySide6.QtWidgets import (
@@ -38,6 +44,7 @@ from app_style import (
     start_native_move,
     column_style_for,
 )
+import config as _config
 import ui_state
 from config import (
     COLUMN_LABELS,
@@ -98,6 +105,21 @@ from detail_panel import (
 from preview_column import (
     IconButton,
     PreviewColumn,
+)
+from previews import (
+    migrate_cache_names,
+)
+from browser_core import (
+    _FadeOverlay,
+)
+from browser_core import (
+    _SlideOverlay,
+)
+from browser_core import (
+    _HoverPrime,
+)
+from previews import (
+    sweep_preview_cache,
 )
 
 
@@ -246,6 +268,21 @@ class PipelineBrowser(QMainWindow):
         # icone associee sur la colonne des vignettes (voir
         # PreviewColumn.set_toggle_state).
         self._project_columns_collapsed = False
+        self._project_columns_hidden = False
+        self._columns_fade = None
+        self._select_fade = None
+        self._columns_slide = None
+        self._slide_snapshot = None
+        # Prechauffage (voir _prewarm_snapshots) : le 1er usage des boutons de repli /
+        # de masquage doit etre aussi fluide que les suivants, donc les captures
+        # (et le premier rendu a froid des colonnes, ~150 ms) sont faites des que
+        # l'interface se repose, pas au clic.
+        self._prewarm_timer = QTimer(self)
+        self._prewarm_timer.setSingleShot(True)
+        self._prewarm_timer.setInterval(700)
+        self._prewarm_timer.timeout.connect(self._prewarm_snapshots)
+        self._columns_snapshot = None
+        self._columns_epoch = 0
         # Tant que ce drapeau est vrai, la prochaine fois que Sous-projet
         # obtient une selection declenche le repli automatique une fois
         # (voir _sync_collapse_state) — desarme par un repli/depli manuel
@@ -594,28 +631,46 @@ class PipelineBrowser(QMainWindow):
 
     def _navigate_to(self, target: Path):
         """Deplie les colonnes jusqu'a `target` en simulant les selections
-        successives, sans effet si `target` n'existe plus ou n'est pas sous
-        la racine actuellement affichee."""
+        successives (a partir de la PREMIERE colonne, quel que soit l'endroit
+        ou l'on se trouve deja), sans effet si `target` n'existe plus ou n'est
+        pas sous la racine actuellement affichee. Un dossier in/over/out est
+        franchi : la suite se cherche dans les colonnes du groupe IN/OVER/OUT/
+        LOGICIELS, qui ouvrent ensuite leur propre colonne de contenu."""
         root = Path(self.root_field.text())
         try:
             parts = target.relative_to(root).parts
         except ValueError:
             return
         current = root
+        col_index = 0
         for part in parts:
             current = current / part
             if not self.columns:
                 return
-            column = self.columns[-1]
+            if col_index < len(self.columns):
+                candidates = [self.columns[col_index]]
+            else:
+                candidates = [self.columns[-1], *self.group_columns]
             match = None
-            for i in range(column.list.count()):
-                item = column.list.item(i)
-                if Path(item.data(ROLE_PATH)).name == part:
-                    match = item
+            column = None
+            for candidate in candidates:
+                for i in range(candidate.list.count()):
+                    item = candidate.list.item(i)
+                    if Path(item.data(ROLE_PATH)).name == part:
+                        match, column = item, candidate
+                        break
+                if match is not None:
                     break
             if match is None:
+                if part.lower() in STATUS_FOLDERS and current.is_dir():
+                    continue
                 return
-            column.list.setCurrentItem(match)
+            in_group = column in self.group_columns
+            if column.list.currentItem() is match:
+                column.reselect_current()
+            else:
+                column.list.setCurrentItem(match)
+            col_index = len(self.columns) - 1 if in_group else col_index + 1
             if not current.is_dir():
                 return
 
@@ -656,6 +711,7 @@ class PipelineBrowser(QMainWindow):
             self.synced_label.setText("")
             return
         self._project_columns_collapsed = False
+        self._project_columns_hidden = False
         self._auto_collapse_armed = True
         self.add_column(root, 0)
         self.path_label.setText(str(root))
@@ -867,8 +923,20 @@ class PipelineBrowser(QMainWindow):
         for i, column in enumerate(self.columns):
             if column.current_path() is not None:
                 last_selected = i
+        # Un clic dans une colonne du groupe IN/OVER/OUT/LOGICIELS (dossier OU
+        # fichier) y laisse le focus brillant TANT QU'AUCUNE colonne ouverte
+        # apres la chaine n'a de selection — comme une colonne normale, ou la
+        # ligne cliquee reste en focus avant qu'on choisisse plus loin. Sans
+        # ca, revenir cliquer un dossier du groupe donnait le focus a la
+        # ligne de la colonne PRECEDENTE.
+        group_focus = None
+        group_column = self._last_active_group_column
+        if group_column is not None and group_column.current_path() is not None:
+            first_opened = self._chain_expected_total()
+            if not any(c.current_path() is not None for c in self.columns[first_opened:]):
+                group_focus = group_column
         for i, column in enumerate(self.columns):
-            column.set_active(i == last_selected)
+            column.set_active(group_focus is None and i == last_selected)
         # Colonnes du groupe IN/OVER/OUT/LOGICIELS : UNE SEULE a la fois
         # doit apparaitre "focus" (voir _last_active_group_column, mis a
         # jour par _on_group_item_selected a CHAQUE clic sur l'une d'elles)
@@ -878,8 +946,7 @@ class PipelineBrowser(QMainWindow):
         # reference et screenshots ... ont un fond bleu alors qu'un seul
         # devrait l'avoir").
         for column in self.group_columns:
-            column.set_active(
-                column is self._last_active_group_column and column.current_path() is not None)
+            column.set_active(column is group_focus)
 
     def _chain_expected_total(self) -> int:
         """Nombre de colonnes REELLES requises pour que la chaine de
@@ -958,6 +1025,12 @@ class PipelineBrowser(QMainWindow):
         )
 
     def update_preview_stack(self):
+        self._columns_epoch += 1
+        self._prewarm_timer.start()
+        self._update_preview_stack_impl()
+        self._enforce_hidden_columns(final=True)
+
+    def _update_preview_stack_impl(self):
         """Recalcule l'apercu empile : un bloc par colonne a vignettes
         (Projets, Sous-projet) actuellement selectionnee, dans l'ordre de
         navigation, reparti sur DEUX emplacements juste apres la derniere
@@ -1146,11 +1219,17 @@ class PipelineBrowser(QMainWindow):
             for offset, (title, pixmap, path, open_status, level_title, source_column) in enumerate(entries):
                 column = PreviewColumn(
                     PREVIEW_STACK_TITLE, on_toggle=self._toggle_project_columns if offset == 0 else None,
+                    on_hide_columns=self._toggle_project_columns_hidden if offset == 0 else None,
                     user_width=self._preview_column_user_width,
                     on_resize=self._on_preview_column_resized, fit_height=True,
                     display_title=_FOCUS_LEVEL_LABEL.get(level_title, PREVIEW_STACK_TITLE))
                 if offset == 0:
                     column.set_toggle_state(self._project_columns_collapsed)
+                    column.set_hide_state(self._project_columns_hidden)
+                    if column.toggle_btn is not None:
+                        _HoverPrime(column.toggle_btn, self._prime_slide_snapshot)
+                    if column.hide_btn is not None:
+                        _HoverPrime(column.hide_btn, self._prime_fade_snapshot)
                 wrapper_layout.addWidget(column)
                 column.set_preview_block(title, pixmap, path, open_status, source_column)
                 self.image_preview_columns.append(column)
@@ -1360,17 +1439,12 @@ class PipelineBrowser(QMainWindow):
                 if other is not column:
                     other.list.clearSelection()
                     other.list.setCurrentItem(None)
-        # "focus" BRILLANT reserve au point VRAIMENT courant : un FICHIER
-        # (rien ne s'ouvre plus loin) reste actif ; un DOSSIER ouvre une
-        # VRAIE colonne plus loin qui devient alors le point courant reel —
-        # cette ligne redevient "chemin" (non focus, bleu FONCE) comme une
-        # colonne ancestrale de la chaine normale — voir la remarque de
-        # l'utilisateur, "in/references qui est actuellement en focus
-        # alors qu'il ne devrait pas non plus, il devrait par contre lui
-        # etre en bleu fonce puisqu'il fait partie du cheminement".
+        # Focus brillant : la ligne cliquee (dossier ou fichier) le garde tant
+        # qu'aucune colonne ouverte plus loin n'a de selection (voir
+        # update_active_column) ; il passe ensuite a cette colonne, et la ligne
+        # redevient "chemin" (bleu FONCE) comme une colonne ancestrale.
         if path is not None:
-            is_folder = path.is_dir()
-            self._last_active_group_column = None if is_folder else column
+            self._last_active_group_column = column
         self.update_active_column()
         if path is None or not path.is_dir():
             return
@@ -1401,6 +1475,11 @@ class PipelineBrowser(QMainWindow):
         OVER OUT" (ces 4-la restent des colonnes FANTOMES distinctes,
         jamais construites ici)."""
         insert_index = self._chain_expected_total() - 1
+        # Contenu deja ouvert apres le groupe : il s'estompe (voir on_selected).
+        pending = self._select_fade
+        if pending is not None and pending.running:
+            pending.finish_now()
+        fade = self._fade_before_select(self._group_stack_wrapper)
         self.prune_after(insert_index)
         # "(<etiquette d'origine>)" (voir source_label/ROLE_SOURCE_LABEL) —
         # MEME texte que l'annotation de la ligne cliquee dans IN/OVER/OUT,
@@ -1413,6 +1492,11 @@ class PipelineBrowser(QMainWindow):
         self.update_active_column()
         self.update_preview_stack()
         self._sync_collapse_state()
+        self._slide_snapshot = None
+        if len(self.columns) > insert_index + 1:
+            QTimer.singleShot(0, lambda c=self.columns[insert_index + 1]: self._animate_column_in(c))
+        if fade is not None:
+            QTimer.singleShot(0, lambda: self._raise_select_fade(fade))
 
     def _on_group_column_resized(self, new_width: int) -> None:
         """Relais de Column.resize_update pour une colonne du groupe
@@ -1672,7 +1756,74 @@ class PipelineBrowser(QMainWindow):
         group.start()
 
     def on_selected(self, column: Column, path: Path | None):
+        """Si des colonnes sont deja deployees apres `column`, elles s'estompent
+        (de la plus lointaine a la plus proche) pendant que la navigation s'applique
+        et que la nouvelle colonne sort de dessous."""
+        pending = self._select_fade
+        if pending is not None and pending.running:
+            pending.finish_now()
+        overlay = self._fade_before_select(column)
+        self._on_selected_now(column, path)
+        if overlay is not None:
+            # Au-dessus de l'apparition (creee en differe par _on_selected_now) : l'ancien
+            # contenu s'estompe PENDANT que la nouvelle colonne sort de dessous.
+            QTimer.singleShot(0, lambda: self._raise_select_fade(overlay))
+
+    def _raise_select_fade(self, overlay):
+        try:
+            if overlay.running:
+                overlay.raise_()
+        except RuntimeError:
+            pass
+
+    def _fade_before_select(self, column):
+        """`column` : widget apres lequel le contenu deja ouvert s'estompe (une colonne,
+        ou le bloc IN/OVER/OUT/LOGICIELS)."""
+        try:
+            if (column is None or not self.isVisible() or self._project_columns_hidden
+                    or (self._columns_slide is not None and self._columns_slide.running)
+                    or (self._columns_fade is not None and self._columns_fade.running)):
+                return None
+            self.columns_layout.activate()
+            rect = self._columns_visible_rect()
+            viewport = self.scroll.viewport()
+            if rect.isEmpty() or not column.isVisible():
+                return None
+            column_right = column.mapTo(viewport, QPoint(0, 0)).x() - rect.x() + column.width()
+            spans = [span for span in self._column_spans(rect) if span[0] >= column_right]
+            if not spans:
+                return None
+            x0 = spans[0][0]
+            image = viewport.grab(rect).toImage().convertToFormat(QImage.Format_ARGB32_Premultiplied)
+            dpr = image.devicePixelRatio()
+            region = QRect(int(x0 * dpr), 0, image.width() - int(x0 * dpr), image.height())
+            pixmap = QPixmap.fromImage(image.copy(region))
+            pixmap.setDevicePixelRatio(dpr)
+            target = QRect(rect.x() + x0, rect.y(), rect.width() - x0, rect.height())
+            overlay = _FadeOverlay(viewport, pixmap, target, 1.0, 0.0, 520,
+                                   on_done=lambda: setattr(self, "_select_fade", None))
+            overlay.set_spans([(a - x0, b - x0) for a, b in spans])
+            overlay.show()
+            overlay.raise_()
+            self._select_fade = overlay
+            return overlay
+        except RuntimeError:
+            return None
+
+    def _on_selected_now(self, column: Column, path: Path | None):
         index = self.columns.index(column)
+        # Une selection dans une colonne NORMALE reprend le focus brillant au
+        # groupe IN/OVER/OUT/LOGICIELS (voir update_active_column).
+        self._last_active_group_column = None
+        # Revenir sur une colonne de la CHAINE (pas sur un contenu ouvert
+        # apres le groupe) ferme le contenu ouvert : la selection restee dans
+        # IN/OVER/OUT/LOGICIELS n'a plus lieu d'etre (sinon "Claude" gardait
+        # un fond de selection apres un clic sur "notes").
+        if index < self._chain_expected_total():
+            for group_column in self.group_columns:
+                if group_column.current_path() is not None:
+                    group_column.list.clearSelection()
+                    group_column.list.setCurrentItem(None)
         self.prune_after(index)
         # Configuration de chaine (voir load_project_columns) : (re)lue
         # UNIQUEMENT quand c'est la colonne Projets elle-meme qui vient
@@ -1809,6 +1960,62 @@ class PipelineBrowser(QMainWindow):
         self.update_active_column()
         self._sync_collapse_state()
         self.update_preview_stack()
+        self._slide_snapshot = None   # les colonnes de droite ont change : capture perimee
+        if len(self.columns) > index + 1:
+            QTimer.singleShot(0, lambda c=self.columns[index + 1]: self._animate_column_in(c))
+
+    def _animate_column_in(self, column):
+        """Apparition d'une colonne nouvellement ajoutee : meme mouvement que le
+        depliage des colonnes de set (voir _SlideOverlay) — la colonne et ce qui la
+        suit sortent de SOUS la colonne precedente (fixe), avec une ombre portee. Joue sur des
+        captures de l'etat final ; les colonnes de gauche ne bougent pas."""
+        try:
+            if (column not in self.columns or not self.isVisible() or self._project_columns_hidden
+                    or column.width() <= 0 or column.collapsed
+                    or (self._columns_slide is not None and self._columns_slide.running)):
+                return
+            self.columns_layout.activate()
+            bar = self.scroll.horizontalScrollBar()
+            bar.setValue(bar.maximum())
+            viewport = self.scroll.viewport()
+            x = column.mapTo(viewport, QPoint(0, 0)).x()
+            # Le fondu de l'ancien contenu (voir on_selected) est un enfant du viewport :
+            # il serait recopie dans la capture. On le retire le temps de la prise.
+            fade = self._select_fade
+            fade_up = fade is not None and fade.running and fade.isVisible()
+            if fade_up:
+                fade.hide()
+            try:
+                snapshot = self._grab_set_columns_at(x)
+            finally:
+                if fade_up:
+                    fade.show()
+            if snapshot is None:
+                return
+            left, right, x, background, limit = snapshot
+            overlay = _SlideOverlay(
+                viewport, left, right, x - column.width(), x, background, 0.0, 1.0, 200,
+                None, on_done=lambda: setattr(self, "_columns_slide", None), limit=limit,
+                emerge=True)
+            overlay.show()
+            overlay.raise_()
+            self._columns_slide = overlay
+            if fade_up:
+                # La colonne qui sort reste 100 % opaque : le fondu ne la recouvre pas
+                # (son dernier emplacement est conserve une fois l'animation finie).
+                last = {}
+                content_w = max(1, self._columns_visible_rect().right() + 1 - x)
+
+                def covered(slide=overlay):
+                    try:
+                        last["rect"] = slide.right_rect(content_w)
+                    except RuntimeError:
+                        pass
+                    return last.get("rect")
+                fade.set_exclude(covered)
+                fade.raise_()
+        except RuntimeError:
+            pass
 
     def _sync_collapse_state(self):
         """Replie automatiquement TOUTES les colonnes de la chaine requise
@@ -1832,6 +2039,7 @@ class PipelineBrowser(QMainWindow):
         complete (retour en arriere dans la navigation), pour laisser le
         choix a nouveau visible, et rearme alors le repli automatique pour
         la prochaine selection."""
+        self._enforce_hidden_columns()
         active_config = self._active_project_config
         focus_enabled = True if active_config is None else active_config.get("focus_enabled", True)
         has_selection = self._chain_terminal_path() is not None
@@ -1843,10 +2051,215 @@ class PipelineBrowser(QMainWindow):
             # TOUJOURS deployees dans ce cas.
             self._auto_collapse_armed = True
             if self._project_columns_collapsed:
-                self._apply_project_columns_collapsed(False)
+                # Differe aussi (voir plus bas) : jamais de capture ni de boucle
+                # d'evenements au milieu d'une navigation.
+                QTimer.singleShot(0, self._auto_expand_now)
         elif auto_collapse_set_columns() and self._auto_collapse_armed and not self._project_columns_collapsed:
-            self._apply_project_columns_collapsed(True)
+            # Differe d'un tour de boucle : _sync_collapse_state est appelee AVANT que
+            # update_preview_stack ait reconstruit les vignettes/le groupe ; capturer
+            # maintenant figerait un etat intermediaire (puis un saut a l'ecran).
             self._auto_collapse_armed = False
+            QTimer.singleShot(0, self._auto_collapse_now)
+
+    def _toggle_project_columns_hidden(self):
+        """Bouton « masquer les colonnes » (voir PreviewColumn.hide_btn) : TOUTES
+        les colonnes disparaissent en fondu puis quittent la mise en page — leur
+        place est liberee ; seuls les deux boutons restent. Un nouveau clic
+        ramene tout (fondu inverse). Le fondu anime une capture fixe de la zone
+        (voir _FadeOverlay) pendant que les vrais widgets sont deja masques."""
+        self._set_columns_hidden(not self._project_columns_hidden)
+
+    def _hideable_widgets(self) -> list:
+        """Tout ce que columns_layout contient, sauf le conteneur des vignettes
+        Focus (qui porte les boutons)."""
+        widgets = []
+        for i in range(self.columns_layout.count()):
+            widget = self.columns_layout.itemAt(i).widget()
+            if widget is not None and widget is not self._preview_stack_wrapper:
+                widgets.append(widget)
+        return widgets
+
+    def _toggled_widgets(self) -> list:
+        return self._hideable_widgets() + list(self.image_preview_columns[1:])
+
+    def _apply_columns_hidden(self, hidden: bool):
+        """Masque/restaure INSTANTANEMENT ; ne restaure que ce que le bouton a
+        lui-meme masque (une colonne de set deja repliee reste repliee)."""
+        if self.image_preview_columns and self.image_preview_columns[0].hide_btn is not None:
+            # Le focus reste sur le bouton : masquer une liste qui l'a le donnerait a
+            # une autre liste, qui changerait de selection (et rebatirait les colonnes).
+            self.image_preview_columns[0].hide_btn.setFocus()
+        for widget in self._toggled_widgets():
+            if hidden:
+                if widget.isVisible():
+                    widget._hidden_by_toggle = True
+                    widget.setVisible(False)
+            elif getattr(widget, "_hidden_by_toggle", False):
+                widget._hidden_by_toggle = False
+                widget.setVisible(True)
+        if self.image_preview_columns:
+            self.image_preview_columns[0].set_buttons_only(hidden)
+
+    def _columns_visible_rect(self) -> QRect:
+        viewport = self.scroll.viewport()
+        rect = QRect()
+        candidates = [*self._hideable_widgets(), *self.image_preview_columns]
+        if self._preview_stack_wrapper is not None:
+            candidates.append(self._preview_stack_wrapper)
+        for widget in candidates:
+            if widget.isVisible():
+                rect = rect.united(QRect(widget.mapTo(viewport, QPoint(0, 0)), widget.size()))
+        return rect.intersected(viewport.rect())
+
+    def _column_spans(self, rect: QRect) -> list:
+        """Bandes (x0, x1), dans le repere de `rect`, une par colonne visible, de gauche a
+        droite ; elles se touchent (l'espace entre deux colonnes va a la precedente)."""
+        viewport = self.scroll.viewport()
+        candidates = [*self._hideable_widgets(), *self.image_preview_columns]
+        if self._preview_stack_wrapper is not None:
+            candidates.append(self._preview_stack_wrapper)
+        starts = sorted({max(0, widget.mapTo(viewport, QPoint(0, 0)).x() - rect.x())
+                         for widget in candidates if widget.isVisible() and widget.width() > 0})
+        starts = [x for x in starts if x < rect.width()]
+        if len(starts) < 2:
+            return []
+        starts[0] = 0
+        return list(zip(starts, [*starts[1:], rect.width()]))
+
+    def _button_rects(self) -> list:
+        viewport = self.scroll.viewport()
+        rects = []
+        if self.image_preview_columns:
+            pc = self.image_preview_columns[0]
+            for button in (pc.toggle_btn, pc.hide_btn):
+                if button is not None:
+                    rects.append(QRect(button.mapTo(viewport, QPoint(0, 0)), button.size()))
+        return rects
+
+    def _fade_snapshot_fresh(self) -> bool:
+        """La capture « masquer » depend de la taille, de la navigation ET de l'etat
+        replie/deplie des colonnes de set."""
+        cached = self._columns_snapshot
+        return (cached is not None and len(cached) > 5 and cached[2] == self.scroll.viewport().size()
+                and cached[3] == self._columns_epoch and cached[5] == self._project_columns_collapsed
+                and time.monotonic() - cached[4] < 8.0)
+
+    def _grab_columns(self) -> tuple:
+        """Capture de la zone des colonnes dans son etat actuel, avec les boutons
+        effaces (transparents) : ils restent reels et ne s'estompent pas. Les
+        boutons ne sont PAS masques pour la capture : masquer celui qui a le
+        focus le transmettrait a une liste, qui changerait de selection."""
+        if self._columns_slide is not None and self._columns_slide.running:
+            self._columns_slide.finish_now()   # jamais de capture avec un overlay par-dessus
+        rect = self._columns_visible_rect()
+        viewport = self.scroll.viewport()
+        self._columns_spans = self._column_spans(rect)
+        image = viewport.grab(rect).toImage().convertToFormat(QImage.Format_ARGB32_Premultiplied)
+        painter = QPainter(image)
+        painter.setCompositionMode(QPainter.CompositionMode_Clear)
+        for button_rect in self._button_rects():
+            painter.fillRect(button_rect.translated(-rect.topLeft()), Qt.transparent)
+        painter.end()
+        return QPixmap.fromImage(image), rect, viewport.size(), self._columns_epoch
+
+    def _set_columns_hidden(self, hidden: bool, animate: bool = True):
+        if hidden == self._project_columns_hidden or (hidden and not self.image_preview_columns):
+            return
+        self._project_columns_hidden = hidden
+        for preview_column in self.image_preview_columns:
+            preview_column.set_hide_state(hidden)
+        overlay = self._columns_fade
+        if overlay is not None and overlay.running:
+            # Clic pendant un fondu : on repart de l'opacite courante, a l'envers.
+            overlay.retarget(0.0 if hidden else 1.0, None if hidden else self._show_columns_now)
+            return
+        if not animate:
+            self._apply_columns_hidden(hidden)
+            return
+        if hidden:
+            if self._columns_slide is not None:
+                self._columns_slide.finish_now()   # on ne capture jamais un mouvement en cours
+            if not self._fade_snapshot_fresh():
+                self.columns_layout.activate()
+                self._columns_snapshot = (*self._grab_columns(), time.monotonic(), self._project_columns_collapsed)
+            self._apply_columns_hidden(True)
+            self._start_columns_fade(1.0, 0.0, None)
+            return
+        if not self._fade_snapshot_fresh() and self._columns_snapshot is not None and \
+                (self._columns_snapshot[2] != self.scroll.viewport().size()
+                 or self._columns_snapshot[3] != self._columns_epoch
+                 or (len(self._columns_snapshot) > 5 and self._columns_snapshot[5] != self._project_columns_collapsed)):
+            self._columns_snapshot = None
+        snapshot = self._columns_snapshot
+        if snapshot is None:
+            # Capture perimee (navigation ou redimensionnement pendant le masquage) :
+            # on affiche, on capture, on re-masque avant tout rendu a l'ecran.
+            viewport = self.scroll.viewport()
+            viewport.setUpdatesEnabled(False)
+            self.columns_host.setUpdatesEnabled(False)
+            try:
+                self._apply_columns_hidden(False)
+                self.columns_layout.activate()
+                self._columns_snapshot = (*self._grab_columns(), time.monotonic(), self._project_columns_collapsed)
+            finally:
+                self._apply_columns_hidden(True)
+                self.columns_host.setUpdatesEnabled(True)
+                viewport.setUpdatesEnabled(True)
+        self._start_columns_fade(0.0, 1.0, self._show_columns_now)
+
+    def _show_columns_now(self):
+        self._apply_columns_hidden(False)
+
+    def _start_columns_fade(self, start: float, end: float, on_finished):
+        pixmap, rect = self._columns_snapshot[0], self._columns_snapshot[1]
+        self.columns_layout.activate()
+        spans = getattr(self, "_columns_spans", [])
+        overlay = _FadeOverlay(self.scroll.viewport(), pixmap, rect, start, end, 420 if len(spans) > 1 else 260,
+                               on_finished, on_done=lambda: setattr(self, "_columns_fade", None))
+        overlay.set_spans(spans)
+        overlay.set_holes(self._button_rects())
+        overlay.show()
+        overlay.raise_()
+        self._columns_fade = overlay
+
+    def _enforce_hidden_columns(self, final: bool = False):
+        """Garde tout masque pendant que le bouton « masquer » est actif, y
+        compris ce que la navigation vient de (re)construire. Sans colonne
+        Focus (donc sans bouton pour revenir), tout est reaffiche — decision
+        prise uniquement apres une reconstruction COMPLETE des vignettes
+        (`final`), pas pendant l'etat transitoire d'une navigation."""
+        if not self._project_columns_hidden:
+            return
+        if not self.image_preview_columns:
+            if final:
+                self._project_columns_hidden = False
+                self._apply_columns_hidden(False)
+            else:
+                for widget in self._toggled_widgets():
+                    if widget.isVisible():
+                        widget._hidden_by_toggle = True
+                        widget.setVisible(False)
+            return
+        if self._columns_fade is not None and self._columns_fade.running:
+            return
+        self._apply_columns_hidden(True)
+        for preview_column in self.image_preview_columns:
+            preview_column.set_hide_state(True)
+
+    def _auto_expand_now(self):
+        active_config = self._active_project_config
+        focus_enabled = True if active_config is None else active_config.get("focus_enabled", True)
+        if self._project_columns_collapsed and (self._chain_terminal_path() is None or not focus_enabled):
+            self._apply_project_columns_collapsed(False)
+
+    def _auto_collapse_now(self):
+        """Repli automatique differe (voir _sync_collapse_state), re-verifie : la
+        navigation a pu changer entre-temps."""
+        active_config = self._active_project_config
+        focus_enabled = True if active_config is None else active_config.get("focus_enabled", True)
+        if (self._chain_terminal_path() is not None and focus_enabled and auto_collapse_set_columns()
+                and not self._project_columns_collapsed):
+            self._apply_project_columns_collapsed(True)
 
     def _toggle_project_columns(self):
         """Reagit a l'icone unique portee par la colonne des vignettes
@@ -1876,7 +2289,7 @@ class PipelineBrowser(QMainWindow):
                 column.set_width_external(new_width)
         self._auto_collapse_armed = False
 
-    def _apply_project_columns_collapsed(self, collapsed: bool):
+    def _apply_project_columns_collapsed(self, collapsed: bool, animate: bool = True):
         """Replie/deplie EXACTEMENT les N premieres colonnes de self.columns
         (voir _chain_expected_total), N = le nombre d'etapes du projet
         courant — jamais au-dela : une colonne de contenu ouverte depuis le
@@ -1884,13 +2297,213 @@ class PipelineBrowser(QMainWindow):
         TOUJOURS deployee, quoi qu'il arrive aux colonnes de set — voir la
         remarque de l'utilisateur, "attention a bien rabattre toutes
         colonnes ... c'est toutes les colonnes avant les colonnes de
-        focus"."""
+        focus". Le mouvement est joue sur des captures (voir _SlideOverlay) :
+        l'etat final est applique tout de suite, sans animer de largeur reelle
+        (ce qui recalculait toutes les colonnes a chaque image)."""
+        was_collapsed = self._project_columns_collapsed
         self._project_columns_collapsed = collapsed
-        expected_total = self._chain_expected_total()
-        for c in self.columns[:expected_total]:
-            c.set_collapsed(collapsed)
+        self._columns_snapshot = None   # le contenu des colonnes change : capture du fondu perimee
         if self.image_preview_columns:
             self.image_preview_columns[0].set_toggle_state(collapsed)
+        targets = [c for c in self.columns[:self._chain_expected_total()] if c.collapsible]
+        slide = self._columns_slide
+        if slide is not None and slide.running and slide.emerge:
+            slide.finish_now()   # apparition d'une colonne : on la termine, elle ne se « retourne » pas
+            slide = None
+        if slide is not None and slide.running:
+            # Clic pendant le mouvement : repart de la position courante.
+            slide.retarget(0.0 if collapsed else 1.0, None if collapsed else self._expand_columns_now)
+            return
+        if (not animate or self._project_columns_hidden or not targets or was_collapsed == collapsed
+                or not self.isVisible()):
+            for column in self.columns[:self._chain_expected_total()]:
+                column.set_collapsed(collapsed, animate=False)
+            return
+        viewport = self.scroll.viewport()
+        cached = self._slide_snapshot
+        valid = (cached is not None and cached[5] == self._columns_epoch and cached[6] == viewport.size()
+                 and cached[7] == len(targets))
+        if collapsed:
+            if valid and time.monotonic() - cached[8] < 8.0:
+                snapshot = cached[:5]             # amorcee au survol du bouton
+            else:
+                self.columns_layout.activate()
+                QApplication.processEvents(QEventLoop.ExcludeUserInputEvents)
+                snapshot = self._grab_set_columns()   # etat deplie actuel
+            self._set_columns_collapsed_now(True)
+        elif valid:
+            snapshot = cached[:5]                 # capture deja prise au repli : aucun cout au depart
+        else:
+            snapshot = self._grab_expanded_silently()   # etat deplie final, jamais affiche
+        if snapshot is not None and self._snapshot_blank(snapshot):
+            # Capture vide (colonnes pas encore peintes) : on ne l'anime jamais sur un fond
+            # vide. Nouvelle capture, cette fois sans suspendre les mises a jour.
+            self._slide_snapshot = None
+            snapshot = None if collapsed else self._grab_expanded_silently(suspend=False)
+            if snapshot is not None and self._snapshot_blank(snapshot):
+                snapshot = None
+        if snapshot is None:
+            self._set_columns_collapsed_now(collapsed)
+            return
+        self._slide_snapshot = (*snapshot, self._columns_epoch, viewport.size(), len(targets), time.monotonic())
+        left, right, x_expanded, background, limit = snapshot
+        self.columns_layout.activate()
+        x_collapsed = self._set_columns_anchor_x()
+        overlay = _SlideOverlay(
+            viewport, left, right, x_collapsed, x_expanded, background,
+            0.0 if collapsed is False else 1.0, 0.0 if collapsed else 1.0, 200,
+            None if collapsed else self._expand_columns_now,
+            on_done=self._slide_done, limit=limit)
+        overlay.show()
+        overlay.raise_()
+        self._columns_slide = overlay
+
+    def _slide_done(self):
+        self._columns_slide = None
+        self._columns_snapshot = None   # etat final change : toute capture du fondu est perimee
+
+    def _prime_slide_snapshot(self):
+        """Au survol du bouton de repli : prepare la capture de l'etat deplie."""
+        if (self._project_columns_hidden or (self._columns_slide is not None and self._columns_slide.running)
+                or not self.isVisible()):
+            return
+        targets = [c for c in self.columns[:self._chain_expected_total()] if c.collapsible]
+        if self._project_columns_collapsed:
+            # Replie : il faut deplier un instant (sans rien afficher) pour capturer
+            # l'etat deplie. Differe et conditionne a un survol qui dure, pour ne
+            # pas figer l'interface quand la souris ne fait que passer.
+            QTimer.singleShot(60, self._prime_expanded_snapshot)
+            return
+        cached = self._slide_snapshot
+        size = self.scroll.viewport().size()
+        if (not targets or (cached is not None and cached[5] == self._columns_epoch and cached[6] == size
+                            and cached[7] == len(targets) and time.monotonic() - cached[8] < 8.0)):
+            return
+        self.columns_layout.activate()
+        snapshot = self._grab_set_columns()
+        if snapshot is not None:
+            self._slide_snapshot = (*snapshot, self._columns_epoch, size, len(targets), time.monotonic())
+
+    def _prime_expanded_snapshot(self, force: bool = False):
+        column = self.image_preview_columns[0] if self.image_preview_columns else None
+        if (column is None or column.toggle_btn is None or not (force or column.toggle_btn.underMouse())
+                or not self._project_columns_collapsed or self._project_columns_hidden
+                or (self._columns_slide is not None and self._columns_slide.running)):
+            return
+        targets = [c for c in self.columns[:self._chain_expected_total()] if c.collapsible]
+        size = self.scroll.viewport().size()
+        cached = self._slide_snapshot
+        if not targets or (cached is not None and cached[5] == self._columns_epoch and cached[6] == size
+                           and cached[7] == len(targets) and time.monotonic() - cached[8] < 8.0):
+            return
+        snapshot = self._grab_expanded_silently()
+        if snapshot is not None:
+            self._slide_snapshot = (*snapshot, self._columns_epoch, size, len(targets), time.monotonic())
+
+    def _prewarm_snapshots(self):
+        """Apres 700 ms sans navigation : prepare les captures des deux boutons, en
+        deux temps (chacun court) et seulement si l'utilisateur n'est pas en train
+        d'agir (bouton de souris, menu, animation en cours)."""
+        if (not self.isVisible() or self._project_columns_hidden or not self.image_preview_columns
+                or QApplication.mouseButtons() != Qt.NoButton or QApplication.activePopupWidget() is not None
+                or (self._columns_slide is not None and self._columns_slide.running)
+                or (self._columns_fade is not None and self._columns_fade.running)):
+            return
+        self._prime_fade_snapshot()
+        QTimer.singleShot(40, self._prewarm_slide)
+
+    def _prewarm_slide(self):
+        if (not self.isVisible() or self._project_columns_hidden or QApplication.mouseButtons() != Qt.NoButton
+                or QApplication.activePopupWidget() is not None):
+            return
+        if self._project_columns_collapsed:
+            self._prime_expanded_snapshot(force=True)
+        else:
+            self._prime_slide_snapshot()
+
+    def _prime_fade_snapshot(self):
+        """Au survol du bouton « masquer » : prepare la capture des colonnes."""
+        if (self._project_columns_hidden or not self.image_preview_columns or not self.isVisible()
+                or (self._columns_fade is not None and self._columns_fade.running)
+                or (self._columns_slide is not None and self._columns_slide.running)):
+            return
+        if self._fade_snapshot_fresh():
+            return
+        self.columns_layout.activate()
+        self._columns_snapshot = (*self._grab_columns(), time.monotonic(), self._project_columns_collapsed)
+
+    @staticmethod
+    def _snapshot_blank(snapshot) -> bool:
+        """True si la capture des colonnes de set ne contient que la couleur de fond."""
+        left, _right, _x, background, _limit = snapshot
+        if left.isNull():
+            return True
+        image = left.toImage().scaled(48, 48, Qt.IgnoreAspectRatio, Qt.FastTransformation)
+        bg = background.rgb()
+        return all((image.pixel(i, j) & 0xFFFFFF) == (bg & 0xFFFFFF)
+                   for i in range(image.width()) for j in range(image.height()))
+
+    def _grab_expanded_silently(self, suspend: bool = True):
+        """Capture l'etat DEPLIE alors que les colonnes sont repliees, sans que cet etat
+        ne soit jamais affiche : aucun retour a la boucle d'evenements entre le depli
+        et le repli (sinon l'ecran se repeint et les colonnes « clignotent »), et les
+        mises a jour sont suspendues par precaution."""
+        viewport = self.scroll.viewport()
+        host = self.columns_host
+        if suspend:
+            viewport.setUpdatesEnabled(False)
+            host.setUpdatesEnabled(False)
+        try:
+            self._set_columns_collapsed_now(False)
+            self.columns_layout.activate()
+            snapshot = self._grab_set_columns()
+        finally:
+            self._set_columns_collapsed_now(True)
+            if suspend:
+                host.setUpdatesEnabled(True)
+                viewport.setUpdatesEnabled(True)
+        return snapshot
+
+    def _set_columns_collapsed_now(self, collapsed: bool):
+        for column in self.columns[:self._chain_expected_total()]:
+            column.set_collapsed(collapsed, animate=False)
+
+    def _expand_columns_now(self):
+        self._set_columns_collapsed_now(False)
+
+    def _set_columns_anchor_x(self) -> int:
+        """Abscisse (dans le viewport) du 1er widget place APRES les colonnes de set ;
+        a defaut (rien encore a droite, par exemple pendant une navigation), le
+        bord droit des colonnes de set elles-memes."""
+        viewport = self.scroll.viewport()
+        index = self._chain_expected_total()
+        if index < self.columns_layout.count():
+            widget = self.columns_layout.itemAt(index).widget()
+            if widget is not None and widget.isVisible():
+                return max(0, widget.mapTo(viewport, QPoint(0, 0)).x())
+        edge = 0
+        for column in self.columns[:index]:
+            if column.isVisible() and column.width() > 0:
+                edge = max(edge, column.mapTo(viewport, QPoint(column.width(), 0)).x())
+        return edge + self.columns_layout.spacing() if edge else 0
+
+    def _grab_set_columns(self):
+        """(colonnes de set, colonnes a droite JUSQU'A L'INSPECTEUR, abscisse de
+        separation, couleur de fond, abscisse de l'inspecteur) dans l'etat actuel ;
+        None si rien a animer. L'inspecteur n'est jamais capture : il ne bouge pas."""
+        return self._grab_set_columns_at(self._set_columns_anchor_x())
+
+    def _grab_set_columns_at(self, x: int):
+        viewport = self.scroll.viewport()
+        width, height = viewport.width(), viewport.height()
+        limit = width
+        if self.detail.isVisible():
+            limit = min(width, max(0, self.detail.mapTo(viewport, QPoint(0, 0)).x()))
+        if x <= 0 or x > limit or height <= 0:
+            return None
+        left = viewport.grab(QRect(0, 0, x, height))
+        right = viewport.grab(QRect(x, 0, limit - x, height)) if limit - x > 0 else QPixmap()
+        return left, right, x, QColor(C["window"]), limit
 
     def on_activated(self, path: Path):
         open_path(path)
@@ -1910,6 +2523,12 @@ class PipelineBrowser(QMainWindow):
         # WA_DeleteOnClose ci-dessous) : la reference Python devient alors
         # invalide et tout appel dessus (meme isVisible()) leve un
         # RuntimeError qu'il faut absorber pour pouvoir en rouvrir une neuve.
+        # La construction de SettingsWindow est longue et traite des evenements
+        # (voir _report_loading_step) : un 2e clic PENDANT ce temps rappelait
+        # open_settings alors que `_settings_dialog` n'existait pas encore, et ouvrait
+        # une 2e fenetre. Ce drapeau ignore tout appel pendant la construction.
+        if getattr(self, "_settings_opening", False):
+            return
         existing = getattr(self, "_settings_dialog", None)
         if existing is not None:
             try:
@@ -1920,14 +2539,20 @@ class PipelineBrowser(QMainWindow):
                 existing.raise_()
                 existing.activateWindow()
                 return
-        dialog = SettingsWindow(self)
-        dialog.setAttribute(Qt.WA_DeleteOnClose, True)
-        # Non modale : la fenetre principale reste interactive et se
-        # met a jour en direct pendant qu'on ajuste les parametres.
-        dialog.settingsChanged.connect(self._apply_settings)
-        dialog.settingsSaved.connect(self._apply_settings)
-        self._settings_dialog = dialog
-        dialog.show()
+        self._settings_opening = True
+        self.btn_settings.setEnabled(False)
+        try:
+            dialog = SettingsWindow(self)
+            dialog.setAttribute(Qt.WA_DeleteOnClose, True)
+            # Non modale : la fenetre principale reste interactive et se
+            # met a jour en direct pendant qu'on ajuste les parametres.
+            dialog.settingsChanged.connect(self._apply_settings)
+            dialog.settingsSaved.connect(self._apply_settings)
+            self._settings_dialog = dialog
+            dialog.show()
+        finally:
+            self._settings_opening = False
+            self.btn_settings.setEnabled(True)
 
     def _apply_settings(self, settings: dict):
         """Applique des reglages (live, pendant qu'on les ajuste dans la
@@ -2126,10 +2751,33 @@ class PipelineBrowser(QMainWindow):
         self.detail.refresh_colors()
         self.refresh_chrome_fonts()
 
+def _install_qt_message_filter():
+    """Retire deux avertissements Qt inoffensifs qui noyaient la console :
+    - « QWidgetWindow(...) must be a top level window » : une video affichee dans une
+      QScrollArea (la zone des colonnes) rend natifs tous ses parents (comportement
+      de Qt), puis chaque menu ou boite de dialogue ouvert depuis eux le signale ;
+    - les alertes libpng sur le profil colorimetrique de certaines captures PNG.
+    Tous les autres messages restent affiches."""
+    from PySide6.QtCore import QLoggingCategory, qInstallMessageHandler
+    QLoggingCategory.setFilterRules("qt.gui.imageio.warning=false")
+
+    def handler(_mode, _context, message):
+        if "must be a top level window" in message:
+            return
+        sys.stderr.write(message + "\n")
+
+    qInstallMessageHandler(handler)
+
+
 def main():
+    _install_qt_message_filter()
     settings = load_settings()
     apply_all_settings(settings)
     root = Path(settings["root_path"])
+    _config.ROOT = root
+    migrate_cache_names()
+    # Menage du cache en arriere-plan : ni images inutiles ni apercus de fichiers supprimes.
+    threading.Thread(target=sweep_preview_cache, name="preview-cache-sweep", daemon=True).start()
 
     app = QApplication(sys.argv)
     apply_style(app)

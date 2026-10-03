@@ -8,8 +8,7 @@ import subprocess
 import time
 from pathlib import Path
 from PySide6.QtCore import (
-    QEvent, QObject, QPointF, QRunnable, QRect, QRectF, QSize, Qt, QThreadPool,
-    Signal,
+    QEvent, QObject, QPointF, QRunnable, QRect, QRectF, QSize, Qt, QThreadPool, Signal,
 )
 from PySide6.QtGui import (
     QColor,
@@ -83,6 +82,13 @@ from capture_widgets import (
 )
 
 
+def _dim_effect(parent):
+    from PySide6.QtWidgets import QGraphicsOpacityEffect
+    effect = QGraphicsOpacityEffect(parent)
+    effect.setOpacity(0.35)
+    return effect
+
+
 class PreviewColumn(QWidget):
     """Colonne sans contenu de dossier propre, juste un apercu (voir
     PipelineBrowser.update_preview_stack) — utilisee pour
@@ -115,7 +121,7 @@ class PreviewColumn(QWidget):
 
     def __init__(self, title: str, parent=None, on_toggle=None,
                  user_width: int | None = None, on_resize=None, fit_height: bool = False,
-                 display_title: str | None = None):
+                 display_title: str | None = None, on_hide_columns=None):
         super().__init__(parent)
         self.column_title = title
         # `display_title` (texte de l'entete, ex. "Focus Projet"/"Focus
@@ -242,6 +248,20 @@ class PreviewColumn(QWidget):
             # bouton repliement".
             self.toggle_btn.clicked.connect(on_toggle)
             self.toggle_btn.raise_()
+        # Bouton voisin du repli : fait disparaitre (fondu) les colonnes de set
+        # et libere leur place (voir PipelineBrowser._toggle_project_columns_
+        # hidden). Meme style EXACT que toggle_btn (voir refresh_toggle_style,
+        # reglages Colonnes > Apercu > Bouton repliement).
+        self.hide_btn = None
+        if on_hide_columns is not None:
+            self.hide_btn = IconButton(
+                "fade_columns", role_color("buttons", "#c4cacf"), C["text"], parent=self
+            )
+            self.hide_btn.setCursor(Qt.ArrowCursor)
+            self.hide_btn.setFlat(True)
+            self.hide_btn.setToolTip("Masquer les colonnes de set")
+            self.hide_btn.clicked.connect(on_hide_columns)
+            self.hide_btn.raise_()
 
         # Largeur PAR DEFAUT (tant que l'utilisateur n'a pas encore glisse
         # son bord, voir _user_width ci-dessus) : pour le fantome "Fichiers
@@ -333,6 +353,8 @@ class PreviewColumn(QWidget):
         la remarque de l'utilisateur, "deux colonnes separees, une en
         dessous de l'autre"."""
         self._user_width = new_width
+        if getattr(self, "_buttons_only", False):
+            return
         self.setFixedWidth(new_width)
         self._relayout_blocks()
 
@@ -492,6 +514,9 @@ class PreviewColumn(QWidget):
             pos_y = scaled(int(s.get("preview_toggle_y", 34)), 0)
             self.toggle_btn.move(self.card.x() + pos_x, self.card.y() + pos_y)
             self.toggle_btn.raise_()
+            if self.hide_btn is not None:
+                self._place_hide_btn()
+                self.hide_btn.raise_()
         if self._fit_height:
             # Reste coherent si l'entete/le cadre changent (ex. echelle
             # d'interface) SANS reconstruction complete de la colonne — voir
@@ -529,6 +554,8 @@ class PreviewColumn(QWidget):
         self._update_card_mask()
         if self.toggle_btn is not None:
             self.toggle_btn.set_colors(role_color("buttons", "#c4cacf"), C["text"])
+            if self.hide_btn is not None:
+                self.hide_btn.set_colors(role_color("buttons", "#c4cacf"), C["text"])
             self.refresh_toggle_style()
 
     def refresh_toggle_style(self):
@@ -553,6 +580,16 @@ class PreviewColumn(QWidget):
         thickness = scaled(int(s.get("preview_toggle_border_thickness", 1)), 0)
         bg = resolve_color_ref(s.get("preview_toggle_bg_color", "#960f1114"))
         self.toggle_btn.set_frame_style(bg, enabled, colors, thickness, radius)
+        if self.hide_btn is not None:
+            self.hide_btn.setFixedSize(max(1, w), max(1, h))
+            self.hide_btn.set_frame_style(bg, enabled, colors, thickness, radius)
+            self._place_hide_btn()
+
+    def _place_hide_btn(self):
+        """A droite du bouton de repliement."""
+        if self.hide_btn is None or self.toggle_btn is None:
+            return
+        self.hide_btn.move(self.toggle_btn.x() + self.toggle_btn.width() + scaled(4, 0), self.toggle_btn.y())
 
     def set_toggle_state(self, collapsed: bool):
         """Met a jour l'icone (voir __init__, `on_toggle`) apres un repli/
@@ -565,6 +602,49 @@ class PreviewColumn(QWidget):
         self.toggle_btn.setToolTip(
             "Deplier les colonnes de set" if collapsed else "Replier les colonnes de set"
         )
+
+    def set_hide_state(self, hidden: bool):
+        """Icone/infobulle du bouton « masquer les colonnes » selon l'etat."""
+        if self.hide_btn is None:
+            return
+        self.hide_btn.set_kind("show_columns" if hidden else "fade_columns")
+        self.hide_btn.setToolTip("Afficher les colonnes de set" if hidden else "Masquer les colonnes de set")
+
+    def _set_toggle_usable(self, usable: bool):
+        if self.toggle_btn is None:
+            return
+        self.toggle_btn.setEnabled(usable)
+        self.toggle_btn.setGraphicsEffect(None if usable else _dim_effect(self.toggle_btn))
+
+    def set_buttons_only(self, on: bool):
+        """Mode « colonnes masquees » : la carte disparait et la colonne se
+        reduit a l'emprise des deux boutons (leur place ne bouge pas) ; `on=False`
+        restaure tout. Instantane : le fondu est joue par PipelineBrowser."""
+        if on == getattr(self, "_buttons_only", False):
+            return
+        buttons = [b for b in (self.toggle_btn, self.hide_btn) if b is not None]
+        if on:
+            self._buttons_only = True
+            self._place_hide_btn()
+            self._saved_limits = (self.minimumWidth(), self.maximumWidth(), self.minimumHeight(), self.maximumHeight())
+            self.card.hide()
+            right = max((b.geometry().right() for b in buttons), default=0) + scaled(10, 0)
+            bottom = max((b.geometry().bottom() for b in buttons), default=0) + scaled(8, 0)
+            self.setFixedSize(right, bottom)
+            # Colonnes masquees : le bouton de repliement n'a plus d'objet, il reste
+            # visible mais inutilisable (et attenue).
+            self._set_toggle_usable(False)
+        else:
+            self._buttons_only = False
+            self._place_hide_btn()
+            min_w, max_w, min_h, max_h = getattr(self, "_saved_limits", (0, 16777215, 0, 16777215))
+            self.setMinimumSize(min_w, min_h)
+            self.setMaximumSize(max_w, max_h)
+            self.card.show()
+            self._outer_layout.activate()
+            self._set_toggle_usable(True)
+        for b in buttons:
+            b.raise_()
 
     def _clear_preview_layout(self):
         while self.preview_layout.count():
@@ -634,6 +714,8 @@ class PreviewColumn(QWidget):
         pas besoin d'activer quoi que ce soit pour les lire, contrairement
         a une largeur (voir _content_width, MEME distinction que le
         correctif du bug 640x480)."""
+        if getattr(self, "_buttons_only", False):
+            return
         content_height = self.header.height() + sum(
             self.preview_layout.itemAt(i).widget().height()
             for i in range(self.preview_layout.count())
@@ -980,6 +1062,19 @@ class IconButton(QPushButton):
                 x2 = cx + math.cos(ang) * r
                 y2 = cy + math.sin(ang) * r
                 painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+        elif self._kind in ("fade_columns", "show_columns"):
+            # Trois colonnes verticales : opacite decroissante ("fade_columns",
+            # action = faire disparaitre) ou pleines ("show_columns", action =
+            # les ramener).
+            bar_w, bar_h, gap = s * 0.7, s * 2.2, s * 0.55
+            for i in range(3):
+                alpha = 1.0 if self._kind == "show_columns" else (1.0, 0.6, 0.25)[i]
+                bar_color = QColor(color)
+                bar_color.setAlphaF(alpha)
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(bar_color)
+                x = cx + (i - 1) * (bar_w + gap) - bar_w / 2
+                painter.drawRect(QRectF(x, cy - bar_h / 2, bar_w, bar_h))
         elif self._kind in ("dchevron_left", "dchevron_right"):
             # Repli/depli de Type/Projets/Sous-projet (voir
             # Column.set_collapsed) : double chevron ("«"/"»") pointant vers

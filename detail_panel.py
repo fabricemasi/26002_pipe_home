@@ -2,6 +2,9 @@ import json
 import math
 from datetime import datetime
 from pathlib import Path
+from PySide6.QtCore import QMimeData
+from PySide6.QtGui import QImage
+from PySide6.QtWidgets import QMenu
 from PySide6.QtCore import (
     QEvent, Qt, QTimer, QUrl,
 )
@@ -128,6 +131,16 @@ from preview_column import (
     read_pur_exported_image,
     read_text_preview,
 )
+from previews import (
+    delete_preview_cache,
+)
+from previews import (
+    _file_image_cache_path,
+    _find_stale_preview_cache,
+)
+from browser_core import (
+    reveal_in_file_manager,
+)
 
 
 # ==========================================================================
@@ -148,7 +161,7 @@ class _TurntableSlider(_MiniSlider):
 
 class DetailPanel(QWidget):
 
-    FIELDS = ["kind", "size", "modified", "path"]
+    FIELDS = ["kind", "size", "modified"]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -291,8 +304,14 @@ class DetailPanel(QWidget):
         self.well_label = QLabel(self.well)
         self.well_label.setAlignment(Qt.AlignCenter)
         self.well_label.setStyleSheet("background: transparent; border: none;")
+        # Clic droit sur l'apercu (image, turntable ou video) : voir
+        # _show_preview_context_menu.
+        for preview_widget in (self.well, self.well_label):
+            preview_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+            preview_widget.customContextMenuRequested.connect(
+                lambda pos, w=preview_widget: self._show_preview_context_menu(w.mapToGlobal(pos)))
         self.preview_info_table = _TableFrame()
-        self.preview_info_table.setFixedHeight(255)
+        self.preview_info_table.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         self._turntable_frame_paths = []
         self._turntable_frame_index = 0
         self._preview_media_preferences = {}
@@ -377,6 +396,9 @@ class DetailPanel(QWidget):
         # text_preview (voir show_path/_stop_video).
         self.video_widget = QVideoWidget()
         self.video_widget.setStyleSheet("background: black; border: 1px solid #282c30;")
+        self.video_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.video_widget.customContextMenuRequested.connect(
+            lambda pos: self._show_preview_context_menu(self.video_widget.mapToGlobal(pos)))
         self.video_widget.hide()
         self._video_player = QMediaPlayer(self)
         self._video_audio = QAudioOutput(self)
@@ -413,7 +435,6 @@ class DetailPanel(QWidget):
         add_info_cell("kind", 0, 0)
         add_info_cell("size", 0, 1)
         add_info_cell("modified", 0, 2)
-        add_info_cell("path", 1, 0)
         dimensions_cell = QWidget(self.preview_info_table)
         dimensions_cell.setStyleSheet(f"background: {M['table_row_a']};")
         self._preview_info_cells.append(dimensions_cell)
@@ -440,14 +461,19 @@ class DetailPanel(QWidget):
         dimensions_layout.addWidget(self.preview_dimensions_value)
         info_layout.addWidget(dimensions_cell, 1, 2)
         info_layout.setRowStretch(0, 0)
-        info_layout.setRowStretch(1, 1)
+        info_layout.setRowStretch(1, 0)
         self.preview_controls_cell = QWidget(self.preview_info_table)
         self.preview_controls_cell.setStyleSheet(f"background: {M['table_row_a']};")
         self._preview_info_cells.append(self.preview_controls_cell)
-        controls_layout = QVBoxLayout(self.preview_controls_cell)
+        # Cellule des boutons : UNE ligne compacte, aussi haute que la ligne du dessus
+        # (voir _reflow_preview_controls : elle se range sur plusieurs lignes seulement
+        # quand le panneau est trop etroit).
+        controls_layout = QGridLayout(self.preview_controls_cell)
         controls_layout.setContentsMargins(6, 3, 6, 3)
-        controls_layout.setSpacing(3)
+        controls_layout.setHorizontalSpacing(3)
+        controls_layout.setVerticalSpacing(3)
         self._preview_info_cell_layouts.append(controls_layout)
+        self._preview_controls_layout = controls_layout
         self.preview_media_row = QWidget(self.preview_controls_cell)
         media_layout = QHBoxLayout(self.preview_media_row)
         media_layout.setContentsMargins(0, 0, 0, 0)
@@ -462,7 +488,7 @@ class DetailPanel(QWidget):
         }
         media_button_style = (
             f"QPushButton {{ background: {C['btn']}; color: {C['text']}; border: 1px solid {C['btn_border']}; "
-            "border-radius: 3px; padding: 2px; font-size: 9px; min-height: 24px; }"
+            "border-radius: 3px; padding: 0 6px; font-size: 9px; min-height: 18px; max-height: 18px; }"
             f"QPushButton:hover {{ background: {C['btn_hover']}; border-color: {C['btn_hover_bd']}; }}"
             f"QPushButton:checked {{ background: {M['accent']}; color: {M['accent_fg']}; border-color: {M['accent_border']}; }}"
         )
@@ -472,13 +498,12 @@ class DetailPanel(QWidget):
             button.setStyleSheet(media_button_style)
             self.preview_media_group.addButton(button)
             button.clicked.connect(lambda _checked=False, selected=media: self._select_preview_media(selected))
-            media_layout.addWidget(button, 1)
+            media_layout.addWidget(button)
         self.preview_media_buttons["image"].setChecked(True)
-        controls_layout.addWidget(self.preview_media_row)
         self.render_action_buttons = {}
         render_button_style = (
             f"QPushButton {{ background: {C['btn']}; color: {C['text']}; border: 1px solid {C['btn_border']}; "
-            "border-radius: 3px; padding: 1px 2px; font-size: 9px; min-height: 19px; }}"
+            "border-radius: 3px; padding: 0 6px; font-size: 9px; min-height: 18px; max-height: 18px; }"
             f"QPushButton:hover {{ background: {C['btn_hover']}; border-color: {C['btn_hover_bd']}; }}"
             f"QPushButton:disabled {{ color: {C['dim']}; }}"
         )
@@ -490,22 +515,29 @@ class DetailPanel(QWidget):
             button.setCursor(Qt.PointingHandCursor)
             button.setStyleSheet(render_button_style)
             button.clicked.connect(lambda _checked=False, m=media, r=mode: self._render_preview_media(m, r))
-            controls_layout.addWidget(button)
             self.render_action_buttons[(media, mode)] = button
-        controls_layout.addStretch(1)
-        controls_layout.addWidget(self.preview_stale_badge, 0, Qt.AlignLeft)
-        protection_row = QHBoxLayout()
-        protection_row.setContentsMargins(0, 0, 0, 0)
-        protection_row.setSpacing(2)
         self.render_protection_label = QLabel("PROTÉGER LE RENDU")
         self.render_protection_label.setObjectName("PreviewInfoHeading")
         self.render_protection_label.setFont(role_font("info", 8, 600))
-        self.render_protection_label.setWordWrap(True)
+        self.render_protection_label.setWordWrap(False)
+        self.preview_protection_widget = QWidget(self.preview_controls_cell)
+        protection_row = QHBoxLayout(self.preview_protection_widget)
+        protection_row.setContentsMargins(0, 0, 0, 0)
+        protection_row.setSpacing(3)
         protection_row.addWidget(self.render_protection_toggle)
         protection_row.addWidget(self.render_protection_label)
-        protection_row.addStretch(1)
-        controls_layout.addLayout(protection_row)
-        info_layout.addWidget(self.preview_controls_cell, 1, 1)
+        self.preview_stale_badge.setParent(self.preview_controls_cell)
+        self._preview_controls_items = [
+            self.preview_media_row,
+            self.render_action_buttons[("image", "low")], self.render_action_buttons[("image", "high")],
+            self.render_action_buttons[("turntable", "low")], self.render_action_buttons[("turntable", "high")],
+            self.preview_protection_widget, self.preview_stale_badge,
+        ]
+        self._preview_controls_wide = None
+        self._reflow_preview_controls(True)
+        info_layout.addWidget(self.preview_controls_cell, 1, 0, 1, 2)
+        self._info_layout = info_layout
+        self._info_dimensions_cell = dimensions_cell
 
         self.turntable_controls = QWidget()
         turntable_controls_layout = QHBoxLayout(self.turntable_controls)
@@ -552,7 +584,7 @@ class DetailPanel(QWidget):
         turntable_controls_layout.addWidget(self.turntable_counter)
         turntable_controls_layout.addWidget(self.turntable_render_button)
         self.turntable_controls.hide()
-        self.preview_controls_cell.hide()
+        self._set_preview_controls_visible(False)
         self._apply_preview_table_style()
 
         content = QVBoxLayout()
@@ -830,6 +862,111 @@ class DetailPanel(QWidget):
             self.unsetCursor()
         super().leaveEvent(event)
 
+    def _delete_preview(self, path: Path):
+        """Supprime l'APERCU en cache (image, turntable) du fichier affiche,
+        apres confirmation ; le fichier lui-meme n'est jamais touche."""
+        answer = QMessageBox.question(
+            self, "Supprimer l'apercu",
+            f"Supprimer l'apercu (image et turntable) de « {path.name} » ?\n\n"
+            "Le fichier lui-meme n'est pas touche.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer != QMessageBox.Yes:
+            return
+        delete_preview_cache(path)
+        reload_browser = getattr(self.window(), "reload", None)
+        if reload_browser is not None:
+            reload_browser()
+
+    def _set_preview_controls_visible(self, visible: bool):
+        """Affiche/masque la cellule des boutons ; sans elle, la cellule des
+        dimensions occupe toute la ligne."""
+        self.preview_controls_cell.setVisible(visible)
+        layout = getattr(self, "_info_layout", None)
+        cell = getattr(self, "_info_dimensions_cell", None)
+        if layout is None or cell is None:
+            return
+        layout.removeWidget(cell)
+        if visible:
+            layout.addWidget(cell, 1, 2)
+        else:
+            layout.addWidget(cell, 1, 0, 1, 3)
+
+    def _reflow_preview_controls(self, wide: bool):
+        """Range les boutons sur UNE ligne (panneau large) ou sur plusieurs
+        (panneau etroit)."""
+        if getattr(self, "_preview_controls_wide", None) == wide:
+            return
+        self._preview_controls_wide = wide
+        layout = self._preview_controls_layout
+        for item in self._preview_controls_items:
+            layout.removeWidget(item)
+        media, low_i, high_i, low_t, high_t, protection, badge = self._preview_controls_items
+        if wide:
+            for column, item in enumerate(self._preview_controls_items):
+                layout.addWidget(item, 0, column)
+            layout.setColumnStretch(len(self._preview_controls_items), 1)
+        else:
+            layout.setColumnStretch(len(self._preview_controls_items), 0)
+            layout.addWidget(media, 0, 0, 1, 2)
+            layout.addWidget(badge, 0, 2)
+            layout.addWidget(low_i, 1, 0)
+            layout.addWidget(high_i, 1, 1)
+            layout.addWidget(low_t, 2, 0)
+            layout.addWidget(high_t, 2, 1)
+            layout.addWidget(protection, 3, 0, 1, 3)
+
+    def _show_preview_context_menu(self, global_pos):
+        """Menu clic droit de l'apercu (image, turntable ou video) du fichier
+        affiche dans l'inspecteur."""
+        path_text = getattr(self, "_current_path", None)
+        if not path_text:
+            return
+        path = Path(path_text)
+        menu = QMenu(self)
+        menu.setFont(font(11, 400))
+        act_reveal = menu.addAction("Afficher dans l'explorateur")
+        menu.addSeparator()
+        act_copy_file = menu.addAction("Copier l'apercu")
+        act_copy_path = menu.addAction("Copier le chemin de l'apercu")
+        menu.addSeparator()
+        act_delete = menu.addAction("Supprimer l'apercu...")
+        chosen = menu.exec(global_pos)
+        if chosen is act_delete:
+            self._delete_preview(path)
+        elif chosen is act_reveal:
+            reveal_in_file_manager(self._preview_image_path(path))
+        elif chosen is act_copy_file:
+            image_path = self._preview_image_path(path)
+            mime = QMimeData()
+            mime.setUrls([QUrl.fromLocalFile(str(image_path))])
+            image = QImage(str(image_path)) if image_path.suffix.lower() in IMAGE_EXTENSIONS else QImage()
+            if not image.isNull():
+                mime.setImageData(image)
+            QApplication.clipboard().setMimeData(mime)
+        elif chosen is act_copy_path:
+            QApplication.clipboard().setText(str(self._preview_image_path(path)))
+
+    def _preview_image_path(self, path: Path) -> Path:
+        """Chemin du fichier IMAGE affiche : image du cache d'un modele 3D (ou
+        image courante de son turntable) ; sinon le fichier lui-meme (image,
+        video...)."""
+        if path.suffix.lower() not in RENDERABLE_3D_EXTENSIONS:
+            return path
+        if self._selected_preview_media() == "turntable":
+            if self._turntable_frame_paths:
+                index = max(0, min(len(self._turntable_frame_paths) - 1, self._turntable_frame_index))
+                return Path(self._turntable_frame_paths[index])
+            return path
+        try:
+            mode = self._preview_render_modes.get((self._current_path, "image"), "low")
+            mtime = path.stat().st_mtime
+            current = _file_image_cache_path(path, mtime, render_mode=mode)
+            if current.is_file():
+                return current
+            return _find_stale_preview_cache(path, mtime, current) or path
+        except OSError:
+            return path
+
     def _stop_video(self):
         """Coupe la lecture en cours et cache le lecteur : appele avant
         toute selection (voir show_path/clear), pas seulement pour un
@@ -843,7 +980,7 @@ class DetailPanel(QWidget):
     def clear(self):
         self._turntable_timer.stop()
         self._turntable_frame_paths = []
-        self.preview_controls_cell.hide()
+        self._set_preview_controls_visible(False)
         self._preview_request_path = None
         self._current_path = None
         self._pur_image_path = None
@@ -973,6 +1110,7 @@ class DetailPanel(QWidget):
         if handle is not None:
             handle.setGeometry(0, 0, scaled(16), self.height())
             handle.raise_()
+        self._reflow_preview_controls(self.preview_info_table.width() * 2 // 3 >= scaled(520))
         self._update_preview()
 
     def _update_preview(self):
@@ -1589,7 +1727,7 @@ class DetailPanel(QWidget):
         self._current_path = str(path)
         self._refresh_render_action_buttons()
         supports_turntable = not path.is_dir() and path.suffix.lower() in TURNTABLE_EXTENSIONS
-        self.preview_controls_cell.setVisible(supports_turntable)
+        self._set_preview_controls_visible(supports_turntable)
         preferred_media = self._preview_media_preferences.get(str(path), "image")
         self.preview_media_buttons.get(preferred_media, self.preview_image_button).setChecked(True)
         self.turntable_controls.setVisible(supports_turntable and preferred_media == "turntable")
@@ -1742,7 +1880,6 @@ class DetailPanel(QWidget):
         self.values["kind"].setText(kind)
         self.values["size"].setText(size)
         self.values["modified"].setText(modified)
-        self.values["path"].setText(str(path))
         if supports_turntable and preferred_media == "turntable":
             self._select_preview_media()
 

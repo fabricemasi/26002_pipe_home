@@ -108,6 +108,7 @@ from browser_core import (
     load_shortcuts,
     project_thumbnail_path,
     remove_shortcut,
+    save_shortcuts,
     reveal_in_file_manager,
     save_layout_settings,
 )
@@ -1280,6 +1281,13 @@ class Column(QWidget):
                 # plus (LOGICIELS, source_labels=None).
                 step = (i + 2) if self._source_labels else None
                 entries.extend((path, label, step, False) for path in list_entries(source))
+                # Raccourcis propres a CHAQUE source (voir _add_shortcut, qui
+                # enregistre dans la source choisie) : sinon un raccourci cree
+                # depuis IN/OVER/OUT/LOGICIELS restait invisible.
+                for shortcut in load_shortcuts(source):
+                    target = Path(shortcut.get("target", ""))
+                    if target.is_dir():
+                        entries.append((target, label, step, True))
             if self._only_recognized_software:
                 # Uniquement des REPERTOIRES DE LOGICIEL reconnus (voir
                 # software_icon_key/app_style.custom_softwares) — pas de
@@ -1670,6 +1678,13 @@ class Column(QWidget):
         item = self.list.currentItem()
         return Path(item.data(ROLE_PATH)) if item else None
 
+    def reselect_current(self):
+        """Rejoue la selection de la ligne courante (voir FileListWidget.
+        mouseReleaseEvent) : ferme les colonnes a droite et reaffiche son contenu."""
+        item = self.list.currentItem()
+        if item is not None:
+            self.selected.emit(self, Path(item.data(ROLE_PATH)))
+
     def _on_current_changed(self, item, _previous):
         self.selected.emit(self, Path(item.data(ROLE_PATH)) if item else None)
 
@@ -1716,30 +1731,7 @@ class Column(QWidget):
                 self._paste_items()
             return
         path = Path(item.data(ROLE_PATH))
-        if item.data(ROLE_IS_SHORTCUT):
-            # Menu REDUIT (voir ROLE_IS_SHORTCUT) : "Renommer"/vignette
-            # agiraient par erreur sur la VRAIE cible, situee ailleurs sur
-            # le disque — seul "Retirer le raccourci" retire l'ENTREE,
-            # jamais le dossier cible lui-meme.
-            menu = QMenu(self)
-            menu.setFont(font(11, 400))
-            act_open = menu.addAction("Ouvrir")
-            act_reveal = menu.addAction("Afficher dans l'explorateur")
-            menu.addSeparator()
-            act_copy_path = menu.addAction("Copier le chemin")
-            menu.addSeparator()
-            act_remove_shortcut = menu.addAction("Retirer le raccourci")
-            chosen = menu.exec(self.list.mapToGlobal(pos))
-            if chosen is act_open:
-                self.activated.emit(path)
-            elif chosen is act_reveal:
-                reveal_in_file_manager(path)
-            elif chosen is act_copy_path:
-                QApplication.clipboard().setText(str(path))
-            elif chosen is act_remove_shortcut:
-                remove_shortcut(self.directory, path)
-                self.refresh()
-            return
+        is_shortcut = bool(item.data(ROLE_IS_SHORTCUT))
         menu = QMenu(self)
         menu.setFont(font(11, 400))
         act_open = menu.addAction("Ouvrir")
@@ -1816,6 +1808,11 @@ class Column(QWidget):
         menu.addSeparator()
         act_copy_file = menu.addAction("Copier")
         act_copy_path = menu.addAction("Copier le chemin")
+        menu.addSeparator()
+        # Meme menu qu'un dossier standard (renommer/image/copier agissent sur
+        # le dossier CIBLE) ; "Retirer le raccourci" retire seulement l'ENTREE.
+        act_remove_shortcut = menu.addAction("Retirer le raccourci") if is_shortcut else None
+        act_add_shortcut = menu.addAction("Ajouter un raccourci...")
         chosen = menu.exec(self.list.mapToGlobal(pos))
         if chosen is act_open:
             self.activated.emit(path)
@@ -1853,6 +1850,12 @@ class Column(QWidget):
             QApplication.clipboard().setMimeData(mime)
         elif chosen is act_copy_path:
             QApplication.clipboard().setText(str(path))
+        elif act_remove_shortcut is not None and chosen is act_remove_shortcut:
+            for source in (self._source_dirs if self._source_dirs is not None else [self.directory]):
+                remove_shortcut(source, path)
+            self.refresh()
+        elif chosen is act_add_shortcut:
+            QTimer.singleShot(150, self._add_shortcut)
 
     def _add_context_slider(self, menu: QMenu, label_text: str, value: int, vmin: int, vmax: int, on_change):
         """Ligne "slider + valeur px en temps reel" du menu contextuel
@@ -2129,6 +2132,14 @@ class Column(QWidget):
         except OSError as exc:
             QMessageBox.warning(self, "Renommer", f"Impossible de renommer :\n{exc}")
             return
+        # Un raccourci pointant vers ce dossier doit suivre son nouveau nom.
+        for source in (self._source_dirs if self._source_dirs is not None else [self.directory]):
+            shortcuts = load_shortcuts(source)
+            if any(sc.get("target") == str(path) for sc in shortcuts):
+                for sc in shortcuts:
+                    if sc.get("target") == str(path):
+                        sc["target"] = str(new_path)
+                save_shortcuts(source, shortcuts)
         self.refresh()
         for i in range(self.list.count()):
             it = self.list.item(i)

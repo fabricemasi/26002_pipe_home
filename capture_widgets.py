@@ -79,6 +79,25 @@ class FileListWidget(QListWidget):
         self.setAcceptDrops(True)
         self.setDragDropMode(QAbstractItemView.DragDrop)
         self.setDefaultDropAction(Qt.MoveAction)
+        self._press_on_current = None
+
+    # Un clic sur la ligne DEJA selectionnee ne declenche aucun
+    # currentItemChanged : on rejoue alors la selection (voir
+    # Column.reselect_current) pour revenir en arriere dans le chemin, en
+    # fermant les colonnes ouvertes a droite — voir la remarque de
+    # l'utilisateur, "si je clique sur notes il ne se passe rien".
+    def mousePressEvent(self, event):
+        item = self.itemAt(event.position().toPoint())
+        plain_left = event.button() == Qt.LeftButton and event.modifiers() == Qt.NoModifier
+        self._press_on_current = item if (plain_left and item is not None and item is self.currentItem()) else None
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        pressed, self._press_on_current = self._press_on_current, None
+        super().mouseReleaseEvent(event)
+        if (pressed is not None and event.button() == Qt.LeftButton
+                and self.itemAt(event.position().toPoint()) is pressed):
+            self.column.reselect_current()
 
     def mimeData(self, items):
         mime = QMimeData()
