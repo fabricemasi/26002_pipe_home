@@ -55,3 +55,9 @@ Outils externes détectés dynamiquement : `BLENDER_EXECUTABLE`, `MAYA_PYTHON_EX
 - Lignes *arrondi des angles* : une ligne, pas de bouton copier, toggle « lier les 4 » (texte avant, les deux états), 4 sliders avec champ de saisie, valeur mise à jour en temps réel.
 - Lignes *bordures* : pas de bouton copier, toggle « lier les 4 », 4 toggles chacun au-dessus du choix de couleur de son côté.
 Lire `over/Notes.txt` en entier avant de modifier la fenêtre de réglages (`over/Prompts.txt` contient l'historique des demandes).
+
+## Commit et push
+
+- Commit depuis WSL avec `git` (identité globale déjà configurée) ; `git add -u` pour les fichiers suivis, `lancer.sh` (non suivi) n'est pas à ajouter.
+- Le push se fait avec `git.exe push` (Git for Windows, via le Gestionnaire d'identifiants Windows) : un `git push` WSL échoue (« could not read Username for 'https://github.com' »). Sinon, pousser depuis un terminal Windows dans le dossier.
+- Messages de commit en français, terminés par la ligne `Co-Authored-By` demandée par l'environnement.
