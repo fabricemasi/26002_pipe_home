@@ -114,6 +114,7 @@ from browser_core import (
 )
 from browser_core import (
     _SlideOverlay,
+    DETAIL_PANEL_MIN_WIDTH,
 )
 from browser_core import (
     _HoverPrime,
@@ -511,6 +512,7 @@ class PipelineBrowser(QMainWindow):
         self.columns_layout.setSpacing(scaled(max(0, column_gap()), 0))
 
         self.detail = DetailPanel()
+        self._detail_state_width = {}   # {replie: largeur de l'inspecteur} (voir _set_columns_collapsed_now)
 
         # objectName + selecteur ID : le fond au-dela de la derniere colonne
         # (l'espace que la colonne Inspecteur, desormais a largeur fixe, ne
@@ -1757,7 +1759,7 @@ class PipelineBrowser(QMainWindow):
 
     def on_selected(self, column: Column, path: Path | None):
         """Si des colonnes sont deja deployees apres `column`, elles s'estompent
-        (de la plus lointaine a la plus proche) pendant que la navigation s'applique
+        toutes ensemble pendant que la navigation s'applique
         et que la nouvelle colonne sort de dessous."""
         pending = self._select_fade
         if pending is not None and pending.running:
@@ -1802,7 +1804,7 @@ class PipelineBrowser(QMainWindow):
             target = QRect(rect.x() + x0, rect.y(), rect.width() - x0, rect.height())
             overlay = _FadeOverlay(viewport, pixmap, target, 1.0, 0.0, 520,
                                    on_done=lambda: setattr(self, "_select_fade", None))
-            overlay.set_spans([(a - x0, b - x0) for a, b in spans])
+            # Pas de set_spans : l'ancien contenu s'estompe d'un bloc (et non colonne apres colonne).
             overlay.show()
             overlay.raise_()
             self._select_fade = overlay
@@ -2316,14 +2318,14 @@ class PipelineBrowser(QMainWindow):
             return
         if (not animate or self._project_columns_hidden or not targets or was_collapsed == collapsed
                 or not self.isVisible()):
-            for column in self.columns[:self._chain_expected_total()]:
-                column.set_collapsed(collapsed, animate=False)
+            self._set_columns_collapsed_now(collapsed)
             return
         viewport = self.scroll.viewport()
         cached = self._slide_snapshot
         valid = (cached is not None and cached[5] == self._columns_epoch and cached[6] == viewport.size()
                  and cached[7] == len(targets))
         if collapsed:
+            self._detail_state_width[False] = self.detail.width()   # etat deplie reel, avant repli
             if valid and time.monotonic() - cached[8] < 8.0:
                 snapshot = cached[:5]             # amorcee au survol du bouton
             else:
@@ -2349,11 +2351,23 @@ class PipelineBrowser(QMainWindow):
         left, right, x_expanded, background, limit = snapshot
         self.columns_layout.activate()
         x_collapsed = self._set_columns_anchor_x()
+        follow = None
+        overlay_ref = []
+        if self.detail.isVisible():
+            # w_expanded : largeur de l'inspecteur dans la capture (colonnes depliees) ;
+            # w_collapsed : sa largeur colonnes repliees (deja appliquee ici).
+            widths = self._detail_state_width
+            follow = self._detail_follow(
+                overlay_ref, self.detail.width(),
+                widths.get(False, self.detail.width()), limit)
         overlay = _SlideOverlay(
             viewport, left, right, x_collapsed, x_expanded, background,
             0.0 if collapsed is False else 1.0, 0.0 if collapsed else 1.0, 200,
             None if collapsed else self._expand_columns_now,
-            on_done=self._slide_done, limit=limit)
+            on_done=self._slide_done, limit=limit, on_progress=follow)
+        overlay_ref.append(overlay)
+        if follow is not None:
+            follow(overlay._value)
         overlay.show()
         overlay.raise_()
         self._columns_slide = overlay
@@ -2467,6 +2481,39 @@ class PipelineBrowser(QMainWindow):
     def _set_columns_collapsed_now(self, collapsed: bool):
         for column in self.columns[:self._chain_expected_total()]:
             column.set_collapsed(collapsed, animate=False)
+        self._fit_detail_now()
+        # Largeur de l'inspecteur dans chaque etat, memorisee pour l'animation du depliage.
+        self._detail_state_width[collapsed] = self.detail.width()
+
+    def _fit_detail_width(self) -> int:
+        """Largeur de l'inspecteur qui evite tout debordement (donc toute barre de
+        defilement) avec les colonnes dans leur etat actuel : sa largeur voulue, reduite
+        au besoin jusqu'a DETAIL_PANEL_MIN_WIDTH."""
+        self.columns_layout.invalidate()   # sizeHint() est mis en cache : largeurs des colonnes qui viennent de changer
+        available = self.scroll.viewport().width() - self.columns_layout.sizeHint().width()
+        return max(DETAIL_PANEL_MIN_WIDTH, min(self.detail._natural_width, available))
+
+    def _fit_detail_now(self):
+        if not self.detail.isVisible() or self.detail._resizing:
+            return
+        width = self._fit_detail_width()
+        if self.detail.width() != width:
+            self.detail.setFixedWidth(width)
+        self.columns_host.layout().activate()   # replace l'inspecteur (capture, limite)
+
+    def _detail_follow(self, overlay_ref: list, w_collapsed: int, w_expanded: int, limit: int):
+        """Callback de progression du depliage : l'inspecteur se redimensionne en meme
+        temps que les colonnes qui arrivent contre lui, et la capture (limitee a son bord
+        gauche, `limit` quand il vaut `w_expanded`) suit."""
+        def follow(p: float):
+            width = max(1, int(round(w_collapsed + (w_expanded - w_collapsed) * p)))
+            if self.detail.width() != width:
+                self.detail.setFixedWidth(width)
+            overlay = overlay_ref[0] if overlay_ref else None
+            if overlay is not None:
+                viewport = self.scroll.viewport()
+                overlay.setGeometry(QRect(0, 0, max(1, limit + w_expanded - width), viewport.height()))
+        return follow
 
     def _expand_columns_now(self):
         self._set_columns_collapsed_now(False)

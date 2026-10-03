@@ -1543,8 +1543,11 @@ class _SlideOverlay(QWidget):
     def __init__(self, parent, left: QPixmap, right: QPixmap, x_collapsed: int, x_expanded: int,
                  background: QColor, start: float, end: float, duration_ms: int = 200, on_finished=None,
                  on_done=None, limit: int | None = None, retreat: float | None = None, shade: float = 0.45,
-                 emerge: bool = False):
+                 emerge: bool = False, on_progress=None):
         super().__init__(parent)
+        # on_progress(p) : appele a chaque image (et a l'arrivee) — sert a faire suivre
+        # l'inspecteur, qui se redimensionne en meme temps que le mouvement.
+        self._on_progress = on_progress
         # emerge : les colonnes de droite sortent de DESSOUS celles de gauche
         # (qui restent fixes au premier plan) au lieu de glisser par-dessus.
         self._emerge = emerge
@@ -1640,6 +1643,8 @@ class _SlideOverlay(QWidget):
         t = min(1.0, self._clock.elapsed() / (self._duration * max(distance, 0.05)))
         eased = 1.0 - (1.0 - t) ** 3
         self._value = self._from + (self._end - self._from) * eased
+        if self._on_progress is not None:
+            self._on_progress(self._value)
         self.update()
         if t >= 1.0:
             self._complete()
@@ -1653,6 +1658,8 @@ class _SlideOverlay(QWidget):
         _fine_timer(False)
         self.running = False
         self._value = self._end
+        if self._on_progress is not None:
+            self._on_progress(self._value)
         if self._on_finished is not None:
             self._on_finished()
         self.hide()

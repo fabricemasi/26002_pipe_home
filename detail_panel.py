@@ -186,6 +186,10 @@ class DetailPanel(QWidget):
         # mousePressEvent) comme n'importe quelle colonne, via ce meme filet
         # de gauche.
         self.setFixedWidth(ui_state.DETAIL_PANEL_WIDTH)
+        # Largeur « voulue » (choisie a la main) : la largeur reelle peut etre
+        # reduite temporairement pour laisser la place aux colonnes (voir
+        # PipelineBrowser._fit_detail_width).
+        self._natural_width = ui_state.DETAIL_PANEL_WIDTH
         self.setMouseTracking(True)
         self._resizing = False
         self._resize_start_x = 0
@@ -799,6 +803,10 @@ class DetailPanel(QWidget):
             min(self._max_width(), self._resize_start_width - delta),
         )
         self.setFixedWidth(new_width)
+        self._natural_width = new_width
+        win = self.window()
+        if hasattr(win, "_slide_snapshot"):
+            win._slide_snapshot = None   # largeur changee : capture du depliage perimee
         _show_resize_width(self, new_width)
 
     def _resize_end(self):
