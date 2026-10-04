@@ -307,7 +307,7 @@ _WINDOW_STATE_PATH = _DATA_DIR / "pipeline_settings_window_state.json"
 # externe bouge/n'existe pas sur une autre machine.
 _ICONS_DIR = _SCRIPT_DIR / "icons"
 
-def _load_window_geometry() -> str | None:
+def _load_window_geometry(key: str = "geometry") -> str | None:
     """Recharge la geometrie (taille/position) de CETTE fenetre au moment de
     sa derniere fermeture — meme mecanisme que PipelineBrowser (saveGeometry/
     restoreGeometry encodes en base64, voir pipeline_browser.py), mais dans
@@ -317,15 +317,22 @@ def _load_window_geometry() -> str | None:
         if _WINDOW_STATE_PATH.is_file():
             data = json.loads(_WINDOW_STATE_PATH.read_text(encoding="utf-8"))
             if isinstance(data, dict):
-                return data.get("geometry")
+                return data.get(key)
     except (OSError, ValueError):
         pass
     return None
 
-def _save_window_geometry(geometry_b64: str) -> None:
+def _save_window_geometry(geometry_b64: str, key: str = "geometry") -> None:
+    """key : une entree par fenetre de reglages (voir SettingsWindow, mode)."""
     try:
+        data = {}
+        if _WINDOW_STATE_PATH.is_file():
+            loaded = json.loads(_WINDOW_STATE_PATH.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+        data[key] = geometry_b64
         _WINDOW_STATE_PATH.write_text(
-            json.dumps({"geometry": geometry_b64}, indent=2, ensure_ascii=False), encoding="utf-8"
+            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
         )
     except OSError:
         pass

@@ -131,9 +131,10 @@ SHOW_FILE_IMAGE_PREVIEWS = True
 PREVIEW_MIN_HEIGHT = 104   # hauteur de la vignette sans image (ou image tres petite)
 PREVIEW_MAX_HEIGHT = 1200  # affichage natif des apercus OBJ/ABC en 1200 x 1200 px
 
-# Vignettes de dossier (colonnes "Projets" et "Sous-projet") : image
-# personnalisee stockee a la racine du dossier, sinon image par defaut
-# generique.
+# Niveaux "focus" par defaut (colonnes "Projets" et "Sous-projet", voir
+# Column.is_focus_level). Vignette de dossier : image personnalisee stockee a
+# la racine du dossier, sinon image par defaut generique (tuile reservee a
+# "Projets", voir Column.has_thumbnails).
 THUMBNAIL_COLUMN_LABELS = {"Projets", "Sous-projet"}
 THUMBNAIL_FILENAME = ".thumbnail.png"
 THUMBNAIL_MAX_DIM = 1024   # taille max (px) a laquelle une vignette perso est enregistree

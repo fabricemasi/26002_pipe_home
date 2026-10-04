@@ -63,7 +63,7 @@ from browser_core import (
 
 class RowDelegate(QStyledItemDelegate):
     """Icone/image + nom, rendu UNIQUE partage par toutes les colonnes SAUF
-    Projets/Sous-projet (voir ProjectTileDelegate) — voir _paint_unified_row.
+    Projets (voir ProjectTileDelegate) — voir _paint_unified_row.
     L'image affichee (voir paint) est resolue par colonne : apercu
     personnalise (colonne "Type"), icone logiciel reconnu (colonne
     "Logiciels"), ou apercu du fichier lui-meme si previsualisable (voir
@@ -541,7 +541,7 @@ def _paint_unified_row(
         painter.drawText(badge_rect, Qt.AlignCenter, str(step_badge))
 
 class ProjectTileDelegate(QStyledItemDelegate):
-    """Colonnes "Projets"/"Sous-projet" : meme rendu PARTAGE que RowDelegate
+    """Colonne "Projets" : meme rendu PARTAGE que RowDelegate
     (voir _paint_unified_row), avec la vignette de projet (perso si
     presente, voir project_thumbnail_path, sinon image par defaut
     generique) comme image."""

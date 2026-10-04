@@ -6,7 +6,7 @@ from PySide6.QtCore import QMimeData
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QMenu
 from PySide6.QtCore import (
-    QEvent, Qt, QTimer, QUrl,
+    QEvent, QPoint, QRect, QSize, Qt, QTimer, QUrl,
 )
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
@@ -1153,6 +1153,21 @@ class DetailPanel(QWidget):
             final_w, final_h, Qt.KeepAspectRatio, Qt.SmoothTransformation
         )
         self.well_label.setPixmap(scaled)
+
+    def focus_source(self):
+        """Objet en focus (aujourd'hui : l'apercu image/turntable affiche) pour
+        l'animation « masquer les colonnes » : (pixmap pleine taille, QRect de
+        l'image telle qu'affichee, en coordonnees de ce panneau), ou None si
+        rien d'affichable (pas d'apercu, journal de rendu, video...)."""
+        shown = self.well_label.pixmap()
+        if (self._preview_pixmap is None or self._preview_pixmap.isNull() or shown is None or shown.isNull()
+                or not self.well_label.isVisible()):
+            return None
+        dpr = shown.devicePixelRatio() or 1.0
+        w, h = round(shown.width() / dpr), round(shown.height() / dpr)
+        label = self.well_label.rect()
+        top_left = self.well_label.mapTo(self, QPoint((label.width() - w) // 2, (label.height() - h) // 2))
+        return self._preview_pixmap, QRect(top_left, QSize(w, h))
 
     def _refresh_preview_stale_badge(self, path: Path | None = None):
         key = str(path) if path is not None else self._current_path

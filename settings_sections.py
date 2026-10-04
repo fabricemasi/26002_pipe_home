@@ -25,6 +25,7 @@ from app_style import (
     auto_family_for_role,
     installed_font_families,
 )
+from settings_theme import _input_radius, _register_input, _set_text_role, _text_label  # noqa: F401
 from settings_store import (
     M,
     _SLOT_REAL,
@@ -310,8 +311,7 @@ class _SimpleFontTable(QWidget):
             self._row_meta.append((row, bg, i == 0))
 
             name = QLabel(label)
-            name.setFont(_qfont(12, 400))
-            name.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+            _set_text_role(name, "row_label")
             cell = _table_cell(name, 150, row_l, center=True)
             column_cells.setdefault(0, []).append(cell)
             self._cells.append(cell)
@@ -460,13 +460,11 @@ class _ColorGrid(QWidget):
             field = _ColorField(colors.get(real_key, "#000000"), swatch_size=24, title=label)
             cell_l.addWidget(field)
             name = QLabel(label)
-            name.setFont(_qfont(11, 400))
-            name.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+            _set_text_role(name, "inline_label")
             name.setWordWrap(False)
             cell_l.addWidget(name, 1)
             hex_label = QLabel(colors.get(real_key, ""))
-            hex_label.setFont(_qfont(10, 400, mono=True))
-            hex_label.setStyleSheet(f"color: {M['table_head_fg']}; background: transparent;")
+            _set_text_role(hex_label, "table_head_mono")
             cell_l.addWidget(hex_label)
             self._fields_by_real_key.setdefault(real_key, []).append(field)
             self._hex_labels_by_real_key.setdefault(real_key, []).append(hex_label)
@@ -549,8 +547,7 @@ class _CornerRadiusSliders(QWidget):
             wrap_l.setContentsMargins(0, 0, 0, 0)
             wrap_l.setSpacing(3)
             tag = QLabel(letter)
-            tag.setFont(_qfont(9, 600, tracking=0.5))
-            tag.setStyleSheet(f"color: {M['label_dim']}; background: transparent;")
+            _set_text_role(tag, "side_letter")
             wrap_l.addWidget(tag)
             field = _SliderField(minimum, maximum, int(corners.get(key, 0)), slider_width=60, box_width=42)
             field.valueChanged.connect(lambda _v, k=key: self._on_side_changed(k))
@@ -658,7 +655,8 @@ class _HeaderColorField(QWidget):
         super().__init__(parent)
         self._colors = colors
         self._value = current_value if (current_value in _SLOT_LABELS or current_value.startswith("#")) else "skinN1"
-        self._radius = 0
+        self._radius = _input_radius()
+        _register_input(self)
         self._before_pick = self._value
         self._popup: _ColorPickerPopup | None = None
         layout = QHBoxLayout(self)
@@ -676,8 +674,7 @@ class _HeaderColorField(QWidget):
         is_custom = self._is_custom()
 
         app_label = QLabel("Couleur application")
-        app_label.setFont(_qfont(10, 400))
-        app_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        _set_text_role(app_label, "choice_label")
         layout.addWidget(app_label)
         self.app_toggle = _Toggle(not is_custom, show_label=False)
         layout.addWidget(self.app_toggle)
@@ -686,8 +683,7 @@ class _HeaderColorField(QWidget):
         layout.addWidget(self.app_field)
 
         system_label = QLabel("Couleur systeme")
-        system_label.setFont(_qfont(10, 400))
-        system_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        _set_text_role(system_label, "choice_label")
         layout.addWidget(system_label)
         self.system_toggle = _Toggle(is_custom, show_label=False)
         layout.addWidget(self.system_toggle)
@@ -703,9 +699,8 @@ class _HeaderColorField(QWidget):
         hex_l = QHBoxLayout(hex_box)
         hex_l.setContentsMargins(7, 0, 7, 0)
         self.hex_label = QLabel()
-        self.hex_label.setFont(_qfont(11, 400, mono=True))
+        _set_text_role(self.hex_label, "value_muted_mono")
         self.hex_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.hex_label.setStyleSheet(f"color: {M['value_muted']}; background: transparent;")
         hex_l.addWidget(self.hex_label)
         layout.addWidget(hex_box)
 
@@ -876,8 +871,7 @@ class _EdgeBox(QWidget):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._refresh_style()
         label = QLabel("entete", self)
-        label.setFont(_qfont(9, 400, mono=True))
-        label.setStyleSheet(f"color: {M['edge_hint']}; background: transparent;")
+        _set_text_role(label, "edge_hint")
         label.adjustSize()
         label.move((92 - label.width()) // 2, (52 - label.height()) // 2)
         self.bars: dict[str, _EdgeBar] = {}
@@ -1035,8 +1029,7 @@ class _CompactAppOrCustomColorField(QWidget):
         app_stack_l.setContentsMargins(0, 0, 0, 0)
         app_stack_l.setSpacing(2)
         app_label = QLabel("app")
-        app_label.setFont(_qfont(9, 400))
-        app_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        _set_text_role(app_label, "mini_label")
         app_label.setAlignment(Qt.AlignHCenter)
         app_stack_l.addWidget(app_label)
         self.app_toggle = _Toggle(is_slot, show_label=False)
@@ -1054,8 +1047,7 @@ class _CompactAppOrCustomColorField(QWidget):
         sys_stack_l.setContentsMargins(0, 0, 0, 0)
         sys_stack_l.setSpacing(2)
         sys_label = QLabel("sys")
-        sys_label.setFont(_qfont(9, 400))
-        sys_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        _set_text_role(sys_label, "mini_label")
         sys_label.setAlignment(Qt.AlignHCenter)
         sys_stack_l.addWidget(sys_label)
         self.system_toggle = _Toggle(not is_slot, show_label=False)
@@ -1261,9 +1253,8 @@ class _SideColorsField(QWidget):
             self.fields[key] = field
             wrap_l.addWidget(field, 0, Qt.AlignHCenter)
             tag = QLabel(letter)
-            tag.setFont(_qfont(9, 600, tracking=0.5))
+            _set_text_role(tag, "side_letter")
             tag.setAlignment(Qt.AlignHCenter)
-            tag.setStyleSheet(f"color: {M['label_dim']}; background: transparent;")
             wrap_l.addWidget(tag)
             layout.addWidget(wrap)
         self._refresh_field_states()
@@ -1417,8 +1408,7 @@ class _ToggleSideColorsField(QWidget):
         self.thickness_field = thickness_field
         if thickness_field is not None:
             thickness_label_w = QLabel(thickness_label)
-            thickness_label_w.setFont(_qfont(11, 400))
-            thickness_label_w.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+            _set_text_role(thickness_label_w, "inline_label")
             layout.addWidget(thickness_label_w)
             layout.addWidget(thickness_field)
         layout.addStretch(1)
@@ -1496,8 +1486,7 @@ class _SidePaddingField(QWidget):
             wrap_l.setContentsMargins(0, 0, 0, 0)
             wrap_l.setSpacing(3)
             tag = QLabel(letter)
-            tag.setFont(_qfont(9, 600, tracking=0.5))
-            tag.setStyleSheet(f"color: {M['label_dim']}; background: transparent;")
+            _set_text_role(tag, "side_letter")
             wrap_l.addWidget(tag)
             field = _SliderField(minimum, maximum, int(sides.get(key, 0)), slider_width=60, box_width=42)
             field.valueChanged.connect(lambda _v, k=key: self._on_side_changed(k))
@@ -1653,16 +1642,14 @@ class _GeoTable(QWidget):
             row, row_l = _table_row(bg, first=(i == 0))
             self._row_meta.append((row, bg, i == 0))
             name = QLabel(label)
-            name.setFont(_qfont(12, 400))
-            name.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+            _set_text_role(name, "row_label")
             self._cells.append(_table_cell(name, 0, row_l, center=True))
             if frame_toggle is not None:
                 cell = _table_cell(frame_toggle, 150, row_l, center=True)
                 frame_toggle.toggled.connect(lambda _c: self.changed.emit())
             else:
                 dash = QLabel("—")
-                dash.setFont(_qfont(10, 400, mono=True))
-                dash.setStyleSheet(f"color: {M['dash']}; background: transparent;")
+                _set_text_role(dash, "dash")
                 cell = _table_cell(dash, 150, row_l, center=True)
             column_cells.setdefault(1, []).append(cell)
             self._cells.append(cell)
@@ -1747,8 +1734,7 @@ class _TablePreview(QWidget):
             self._row_meta.append((row, bg, i == 0))
             for col in (0, 1):
                 value = QLabel(str(i * 2 + col + 1))
-                value.setFont(_qfont(11, 400, mono=True))
-                value.setStyleSheet(f"color: {M['value_muted']}; background: transparent;")
+                _set_text_role(value, "value_muted_mono")
                 self._cells.append(_table_cell(value, 100, row_l, center=True))
             _lock_min_height(row)
             layout.addWidget(row)
@@ -1833,8 +1819,7 @@ class _PresetListRow(QWidget):
         layout.setContentsMargins(12, 0, 6, 0)
         layout.setSpacing(8)
         label = QLabel(name)
-        label.setFont(_qfont(11, 400))
-        label.setStyleSheet(f"color: {M['value_fg']}; background: transparent;")
+        _set_text_role(label, "value")
         layout.addWidget(label, 1)
         del_btn = QPushButton("×")
         del_btn.setFlat(True)

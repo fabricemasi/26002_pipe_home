@@ -1,3 +1,5 @@
+from contextlib import contextmanager
+
 from PySide6.QtCore import (
     QEvent, QObject, Qt, Signal,
 )
@@ -16,6 +18,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from settings_theme import _set_text_role, _text_label  # noqa: F401
 from settings_store import (
     M,
     _ICONS_DIR,
@@ -54,15 +57,13 @@ def _label_block(text: str, note: str = "") -> QWidget:
     layout.setSpacing(1)
     name = QLabel(text)
     name.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-    name.setFont(_qfont(12, 400))
-    name.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+    _set_text_role(name, "row_label")
     layout.addWidget(name)
     if note:
         sub = QLabel(note)
         sub.setWordWrap(True)
         sub.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        sub.setFont(_qfont(10, 400))
-        sub.setStyleSheet(f"color: {M['row_note']}; background: transparent;")
+        _set_text_role(sub, "row_note")
         layout.addWidget(sub)
     return box
 
@@ -265,7 +266,68 @@ def _report_construction_step(title: str, depth: int = 0):
     if _ACTIVE_LOADING_WINDOW is not None:
         _ACTIVE_LOADING_WINDOW._report_loading_step(title, depth=depth)
 
-class _Section(QWidget):
+# Parent par defaut des _Section construites SANS parent explicite (voir
+# _section_host, SettingsWindow._build_content) : une section qui nait deja
+# a sa place n'est plus re-stylee en entier quand on la range dans la page
+# (rattacher un sous-arbre deja construit re-applique les feuilles de style
+# de tous ses widgets).
+_SECTION_HOST = None
+
+
+@contextmanager
+def _section_host(widget: QWidget):
+    global _SECTION_HOST
+    previous, _SECTION_HOST = _SECTION_HOST, widget
+    try:
+        yield
+    finally:
+        _SECTION_HOST = previous
+
+class _BodyMixin:
+    """Corps d'une _Section/_SubSection. Les TITRES (sous-sections, seules ou
+    dans un conteneur) se placent a leur retrait ABSOLU : un retrait de 0 aligne
+    tous les titres, quel que soit leur niveau ou leur imbrication. Le reste du
+    contenu (tableaux...) est decale pour commencer sous le texte du titre."""
+
+    def _init_body(self, offset: int):
+        self._body_layout.setContentsMargins(0, 0, 0, 0)
+        self._body_rows: list[QHBoxLayout] = []
+        self._body_offset = offset
+
+    @staticmethod
+    def _holds_titles(widget: QWidget) -> bool:
+        if isinstance(widget, _SubSection):
+            return True
+        layout = widget.layout()
+        if layout is None:
+            return False
+        found = False
+        for i in range(layout.count()):
+            item = layout.itemAt(i).widget()
+            if isinstance(item, _SubSection):
+                found = True
+            elif item is not None and item.layout() is not None:
+                return False
+        return found
+
+    def _add_body(self, widget: QWidget):
+        if self._holds_titles(widget):
+            self._body_layout.addWidget(widget)
+            return
+        row = QHBoxLayout()
+        row.setContentsMargins(self._body_offset, 0, 0, 0)
+        row.setSpacing(0)
+        row.addWidget(widget)
+        self._body_rows.append(row)
+        self._body_layout.addLayout(row)
+
+    def set_body_offset(self, offset: int):
+        self._body_offset = offset
+        for row in self._body_rows:
+            row.setContentsMargins(offset, 0, 0, 0)
+
+
+class _Section(_BodyMixin, QWidget):
     """Section de la page : titre bleu petites capitales + note optionnelle,
     PAS de filet horizontal (la maquette n'en a pas ici, contrairement a
     l'ancien _Group) — juste un espacement genereux (voir SettingsWindow.
@@ -281,7 +343,7 @@ class _Section(QWidget):
     collapsedChanged = Signal(bool)
 
     def __init__(self, title: str, note: str = "", parent=None):
-        super().__init__(parent)
+        super().__init__(parent if parent is not None else _SECTION_HOST)
         _report_construction_step(title)
         self._collapsed = False
         self._layout = QVBoxLayout(self)
@@ -314,8 +376,7 @@ class _Section(QWidget):
         head_l.addWidget(name)
         if note:
             note_label = QLabel(note)
-            note_label.setFont(_qfont(10, 400))
-            note_label.setStyleSheet(f"color: {M['group_note']}; background: transparent;")
+            _set_text_role(note_label, "note")
             head_l.addWidget(note_label)
         head_l.addStretch(1)
         head.clicked.connect(self.toggle)
@@ -329,14 +390,14 @@ class _Section(QWidget):
         # d'indentation que le titre de section ... correspondant" : sans
         # cela, le contenu (tableaux compris) demarrait a 0, decale a
         # gauche du titre au-dessus.
-        self._body_layout.setContentsMargins(self._title_indent + 16 + 10, 0, 0, 0)
+        self._init_body(self._title_indent + 16 + 10)
         self._body_layout.setSpacing(0)
         self._layout.addWidget(self._body)
 
         self._refresh_chevron()
 
     def add(self, widget: QWidget):
-        self._body_layout.addWidget(widget)
+        self._add_body(widget)
 
     def toggle(self):
         self.set_collapsed(not self._collapsed)
@@ -346,7 +407,7 @@ class _Section(QWidget):
             return
         self._collapsed = collapsed
         self._body.setVisible(not collapsed)
-        self._head_layout.setContentsMargins(0, 0, 0, 0 if collapsed else 10)
+        self._head_layout.setContentsMargins(self._title_indent, 0, 0, 0 if collapsed else 10)
         # activate() (pas juste invalidate(), ni compter sur le prochain
         # passage de l'event loop) : FORCE ce layout precis, dont on vient
         # de changer les marges, a se recalculer TOUT DE SUITE. Sans ca, le
@@ -415,7 +476,7 @@ class _Section(QWidget):
         # les menus deroulants (▾) de cette fenetre (voir _SelectField).
         self._chevron.setCollapsed(self._collapsed)
 
-class _SubSection(QWidget):
+class _SubSection(_BodyMixin, QWidget):
     """Sous-groupe repliable A L'INTERIEUR d'une _Section (voir SettingsWindow.
     _sub_heading, dont ceci prend desormais la place partout ou un sous-titre
     precedait un SEUL bloc de contenu — Colonnes/Entetes/Texte/Selection,
@@ -479,13 +540,13 @@ class _SubSection(QWidget):
         self._body_layout = QVBoxLayout(self._body)
         # MEME raison que _Section ci-dessus : retrait GAUCHE aligne sur le
         # debut du TEXTE du titre (retrait du bandeau + chevron + espacement).
-        self._body_layout.setContentsMargins(self._left_margin + 11 + 6, 0, 0, 0)
+        self._init_body(self._left_margin + 11 + 6)
         self._body_layout.setSpacing(0)
         layout.addWidget(self._body)
         self._refresh_chevron()
 
     def add(self, widget: QWidget):
-        self._body_layout.addWidget(widget)
+        self._add_body(widget)
         # Verrouille tout de suite le plancher de hauteur de CE sous-groupe
         # sur son contenu REEL (voir refresh_layout, meme necessite que
         # _Section) -- systematique, sans rien demander a l'appelant : la
@@ -1118,8 +1179,7 @@ def _build_font_gabarit_row(
     bold_pair_l.setContentsMargins(0, 0, 0, 0)
     bold_pair_l.setSpacing(4)
     bold_label = QLabel("gras")
-    bold_label.setFont(_qfont(11, 400))
-    bold_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+    _set_text_role(bold_label, "inline_label")
     bold_pair_l.addWidget(bold_label)
     bold_pair_l.addWidget(bold_field)
     row_l.addWidget(bold_pair)
@@ -1130,14 +1190,12 @@ def _build_font_gabarit_row(
         italic_pair_l.setContentsMargins(0, 0, 0, 0)
         italic_pair_l.setSpacing(4)
         italic_label = QLabel("italique")
-        italic_label.setFont(_qfont(11, 400))
-        italic_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        _set_text_role(italic_label, "inline_label")
         italic_pair_l.addWidget(italic_label)
         italic_pair_l.addWidget(italic_field)
         row_l.addWidget(italic_pair)
     height_label = QLabel("Hauteur")
-    height_label.setFont(_qfont(11, 400))
-    height_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+    _set_text_role(height_label, "inline_label")
     row_l.addWidget(height_label)
     row_l.addWidget(height_field)
     row_l.addWidget(smoothing_field)
@@ -1160,12 +1218,120 @@ def _build_linked_sides_toggle(linked: bool, label: str = "lier les 4") -> tuple
     row_l.setContentsMargins(0, 0, 0, 0)
     row_l.setSpacing(8)
     lbl = QLabel(label)
-    lbl.setFont(_qfont(11, 400))
-    lbl.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+    _set_text_role(lbl, "inline_label")
     row_l.addWidget(lbl)
     toggle = _Toggle(linked, show_label=False)
     row_l.addWidget(toggle)
     return row, toggle
+
+# ==========================================================================
+# Tableaux fermes sans entete (_build_flat_table/_build_override_flat_table) :
+# chacun s'INSCRIT a sa construction et recoit aussitot le style courant
+# (Geometrie > Tableaux : coins arrondis, bordure, padding des cellules),
+# puis le suit en direct — y compris les tableaux construits plus tard
+# (pages de surcharge par colonne...). Plus aucune liste a tenir a jour.
+# ==========================================================================
+import weakref
+
+# None = pas encore regle (la fenetre de reglages les pose a sa construction).
+_FLAT_TABLE_STYLE: dict = {"radius": None, "border": None, "padding": None}
+_FLAT_TABLES: "weakref.WeakSet[QWidget]" = weakref.WeakSet()
+
+
+def _style_flat_table(frame: QWidget) -> None:
+    rows = frame._flat_rows
+    radius = _FLAT_TABLE_STYLE["radius"]
+    if radius is not None:
+        frame.setRadius(radius)
+        last = len(rows) - 1
+        for i, (row, _bg, first) in enumerate(rows):
+            bg = M["table_row_a"] if i % 2 == 0 else M["table_row_b"]
+            _restyle_table_row(row, bg, first,
+                               top_radius=(radius if i == 0 else 0),
+                               bottom_radius=(radius if i == last else 0))
+    if _FLAT_TABLE_STYLE["border"] is not None:
+        frame.setBorder(*_FLAT_TABLE_STYLE["border"])
+    padding = _FLAT_TABLE_STYLE["padding"]
+    if padding is not None:
+        for row, _bg, _first in rows:
+            row.layout().setContentsMargins(*padding)
+            row.setMinimumHeight(0)
+            _lock_min_height(row)
+
+
+def _prestyle_flat_frame(frame: QWidget) -> None:
+    """Pose le style courant sur un cadre encore VIDE (voir _build_flat_table) :
+    restyler un widget re-applique les feuilles de style de tout son sous-
+    arbre, quasi gratuit tant qu'il n'a pas d'enfants. _register_flat_table
+    (meme CSS, voir _apply_stylesheet_cached) n'a alors plus rien a refaire."""
+    if _FLAT_TABLE_STYLE["border"] is not None:
+        frame.setBorder(*_FLAT_TABLE_STYLE["border"])
+    if _FLAT_TABLE_STYLE["radius"] is not None:
+        frame.setRadius(_FLAT_TABLE_STYLE["radius"])
+
+
+def _prestyle_flat_row(row: QWidget, index: int, count: int) -> None:
+    """Meme principe que _prestyle_flat_frame pour une ligne encore vide :
+    exactement le style que lui donnera _style_flat_table."""
+    radius = _FLAT_TABLE_STYLE["radius"]
+    if radius is not None:
+        _restyle_table_row(row, M["table_row_a"] if index % 2 == 0 else M["table_row_b"], index == 0,
+                           top_radius=(radius if index == 0 else 0),
+                           bottom_radius=(radius if index == count - 1 else 0))
+
+
+def _register_flat_table(frame: QWidget, row_meta: list) -> None:
+    frame._flat_rows = row_meta
+    _FLAT_TABLES.add(frame)
+    _style_flat_table(frame)
+
+
+def _flat_tables(root: QWidget | None = None) -> list[QWidget]:
+    """Tableaux inscrits encore vivants (dans `root` s'il est donne)."""
+    alive = []
+    for frame in list(_FLAT_TABLES):
+        try:
+            if root is None or root.isAncestorOf(frame):
+                alive.append(frame)
+        except RuntimeError:   # objet Qt deja detruit
+            _FLAT_TABLES.discard(frame)
+    return alive
+
+
+def _seed_flat_tables_style(radius: int, border: tuple) -> None:
+    """Pose le style de depart SANS restyler les tableaux existants : appele
+    avant la construction de la fenetre, pour que chaque tableau naisse
+    directement avec (voir _prestyle_flat_frame)."""
+    _FLAT_TABLE_STYLE["radius"] = radius
+    _FLAT_TABLE_STYLE["border"] = border
+
+
+@contextmanager
+def _flat_tables_padding(padding: tuple):
+    """Padding pose sur les tableaux construits PENDANT ce bloc seulement
+    (fenetre "general", qui n'a pas la section Tableaux pour l'appliquer) :
+    le reglage partage n'est pas modifie pour les autres fenetres."""
+    previous = _FLAT_TABLE_STYLE["padding"]
+    _FLAT_TABLE_STYLE["padding"] = padding
+    try:
+        yield
+    finally:
+        _FLAT_TABLE_STYLE["padding"] = previous
+
+
+def _set_flat_tables_style(radius: int | None = None, border: tuple | None = None,
+                           padding: tuple | None = None) -> None:
+    """radius ; border = (cotes actifs, couleurs, epaisseur) ; padding =
+    (gauche, haut, droite, bas). Un argument omis garde sa valeur."""
+    for key, value in (("radius", radius), ("border", border), ("padding", padding)):
+        if value is not None:
+            _FLAT_TABLE_STYLE[key] = value
+    for frame in _flat_tables():
+        try:
+            _style_flat_table(frame)
+        except RuntimeError:   # fenetre fermee dont les lignes sont deja detruites
+            _FLAT_TABLES.discard(frame)
+
 
 def _build_flat_table(
     rows: list[tuple[str, QWidget]],
@@ -1186,12 +1352,14 @@ def _build_flat_table(
     au bord droit (voir la remarque de l'utilisateur, qui a tranche
     explicitement pour cette option)."""
     frame, layout = _table_frame()
+    _prestyle_flat_frame(frame)
     row_meta: list[tuple[QWidget, str, bool]] = []
     label_blocks: list[QWidget] = []
     rows_widgets: list[QWidget] = []
     for i, (label, control) in enumerate(rows):
         bg = M["table_row_a"] if i % 2 else M["table_row_b"]
         row, row_l = _table_row(bg, first=(i == 0))
+        _prestyle_flat_row(row, i, len(rows))
         row_meta.append((row, bg, i == 0))
         row_l.setContentsMargins(14, 8, 14, 8)
         row_l.setSpacing(14)
@@ -1225,6 +1393,7 @@ def _build_flat_table(
     # voir la remarque de l'utilisateur, capture a l'appui, "corrige
     # l'ecrasement du tableau ... que tu le prennes systematiquement en
     # compte pour tous les tableaux".
+    _register_flat_table(frame, row_meta)   # avant le verrou : le padding courant change la hauteur
     _lock_min_height(frame)
     return frame, row_meta, resizer
 
@@ -1254,12 +1423,14 @@ def _build_override_flat_table(
     fixe, glisser la frontiere libelle/controle ne doit faire bouger que le
     texte, pas le toggle."""
     frame, layout = _table_frame()
+    _prestyle_flat_frame(frame)
     row_meta: list[tuple[QWidget, str, bool]] = []
     label_blocks: list[QWidget] = []
     rows_widgets: list[QWidget] = []
     for i, (label, control, toggle) in enumerate(rows):
         bg = M["table_row_a"] if i % 2 else M["table_row_b"]
         row, row_l = _table_row(bg, first=(i == 0))
+        _prestyle_flat_row(row, i, len(rows))
         row_meta.append((row, bg, i == 0))
         row_l.setContentsMargins(14, 8, 14, 8)
         row_l.setSpacing(14)
@@ -1299,5 +1470,6 @@ def _build_override_flat_table(
     # la remarque de l'utilisateur, "corrige l'ecrasement du tableau ...
     # que tu le prennes systematiquement en compte pour tous les
     # tableaux").
+    _register_flat_table(frame, row_meta)   # avant le verrou : le padding courant change la hauteur
     _lock_min_height(frame)
     return frame, row_meta, resizer

@@ -1517,13 +1517,19 @@ class _FadeOverlay(QWidget):
         _fine_timer(False)
         self.running = False
         self._value = self._end
-        if self._on_finished is not None:
-            self._on_finished()
-        if not self.hold:   # hold : le proprietaire le retire (pas de trou avant la suite)
-            self.hide()
-            self.deleteLater()
-        if self._on_done is not None:
-            self._on_done()
+        # try/finally : une erreur dans un rappel ne doit jamais laisser l'image
+        # figee par-dessus les colonnes (ni le proprietaire croire le fondu en cours).
+        try:
+            if self._on_finished is not None:
+                self._on_finished()
+        finally:
+            try:
+                if not self.hold:   # hold : le proprietaire le retire (pas de trou avant la suite)
+                    self.hide()
+                    self.deleteLater()
+            finally:
+                if self._on_done is not None:
+                    self._on_done()
 
 
 class _SlideOverlay(QWidget):
@@ -1643,8 +1649,13 @@ class _SlideOverlay(QWidget):
         t = min(1.0, self._clock.elapsed() / (self._duration * max(distance, 0.05)))
         eased = 1.0 - (1.0 - t) ** 3
         self._value = self._from + (self._end - self._from) * eased
-        if self._on_progress is not None:
-            self._on_progress(self._value)
+        try:
+            if self._on_progress is not None:
+                self._on_progress(self._value)
+        except Exception:
+            # Rappel en erreur : on termine plutot que de rester bloque en cours.
+            self._complete()
+            raise
         self.update()
         if t >= 1.0:
             self._complete()
@@ -1654,19 +1665,34 @@ class _SlideOverlay(QWidget):
             self._complete()
 
     def _complete(self):
+        if not self.running:
+            return
         self._timer.stop()
         _fine_timer(False)
         self.running = False
         self._value = self._end
-        if self._on_progress is not None:
-            self._on_progress(self._value)
-        if self._on_finished is not None:
-            self._on_finished()
-        self.hide()
-        self.deleteLater()
-        if self._on_done is not None:
-            self._on_done()
+        # Meme garantie que _FadeOverlay._finish : l'overlay disparait toujours.
+        try:
+            if self._on_progress is not None:
+                self._on_progress(self._value)
+            if self._on_finished is not None:
+                self._on_finished()
+        finally:
+            try:
+                self.hide()
+                self.deleteLater()
+            finally:
+                if self._on_done is not None:
+                    self._on_done()
 
+
+def open_in_file_manager(path: Path):
+    """Ouvre le dossier `path` lui-meme dans l'explorateur (double-clic sur un
+    dossier, voir PipelineBrowser.on_activated)."""
+    if sys.platform == "win32":
+        subprocess.Popen(["explorer", str(path)])
+    else:
+        open_path(path)
 
 def reveal_in_file_manager(path: Path):
     if sys.platform == "win32":

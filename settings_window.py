@@ -41,6 +41,7 @@ from app_style import (
     resize_hit_test,
     start_native_move,
 )
+from settings_theme import _set_button_radius, _set_input_radius, _set_text_role, _text_label  # noqa: F401
 from settings_store import (
     DEFAULT_SETTINGS,
     M,
@@ -108,6 +109,7 @@ from settings_colorpicker import (
 )
 from settings_layout import (
     _set_active_loading_window,
+    _section_host,
     _FlatColumnResizer,
     _SECTION_GAP_COLLAPSED,
     _SECTION_GAP_EXPANDED,
@@ -119,9 +121,13 @@ from settings_layout import (
     _build_flat_table,
     _build_font_gabarit_row,
     _build_override_flat_table,
+    _flat_tables,
     _lock_min_height,
     _make_accordion,
     _section_preview_wrap,
+    _set_flat_tables_style,
+    _seed_flat_tables_style,
+    _flat_tables_padding,
     _stack_subsections,
     _table_row,
 )
@@ -134,7 +140,7 @@ from settings_layout import (
 class _SettingsTitleBar(QWidget):
     closeClicked = Signal()
 
-    def __init__(self, dialog: QDialog, parent=None):
+    def __init__(self, dialog: QDialog, parent=None, title: str = "Parametres generaux"):
         super().__init__(parent)
         self._dialog = dialog
         self.setFixedHeight(28)
@@ -162,9 +168,8 @@ class _SettingsTitleBar(QWidget):
         else:
             dot.setStyleSheet(f"border: 1px solid {M['dot_border']}; background: transparent;")
         layout.addWidget(dot)
-        title = QLabel("Parametres generaux")
-        title.setFont(_qfont(11, 400))
-        title.setStyleSheet(f"color: {M['title_fg']}; background: transparent;")
+        title = QLabel(title)
+        _set_text_role(title, "window_title")
         layout.addWidget(title)
         layout.addStretch(1)
         self.dirty_label = QLabel("")
@@ -351,8 +356,27 @@ class SettingsWindow(QDialog):
     settingsChanged = Signal(dict)
     settingsSaved = Signal(dict)
 
-    def __init__(self, parent=None):
+    # Deux fenetres de reglages (voir PipelineBrowser.open_settings) :
+    # "visuel" = aspect de l'application (onglets General + Colonnes, sans
+    # la section Application) ; "general" = tout le reste (section
+    # Application seule). "tout" = ancien comportement (tests, sondes).
+    # "visuel" construit TOUS les controles (_current_values/
+    # _connect_live_updates les lisent sans garde) : la section Application
+    # y est simplement rangee dans un conteneur cache. "general" ne construit
+    # que la section Application (voir _light).
+    MODES = ("tout", "visuel", "general")
+    _MODE_TITLES = {"tout": "Parametres generaux", "visuel": "Parametres visuels",
+                    "general": "Parametres generaux"}
+    _GENERAL_SECTIONS = ("_section_application",)
+
+    def __init__(self, parent=None, mode: str = "tout"):
         super().__init__(parent)
+        self._mode = mode if mode in self.MODES else "tout"
+        # Mode "general" : seule la section Application est construite (une
+        # poignee de champs, au lieu des ~5000 widgets de la fenetre
+        # complete) ; _current_values/_apply_values_to_controls/
+        # _connect_live_updates ne touchent alors qu'a ses champs.
+        self._light = self._mode == "general"
         _set_active_loading_window(self)
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -372,17 +396,32 @@ class SettingsWindow(QDialog):
         # _load_window_geometry) — DOIT venir apres resize/setMinimumSize
         # ci-dessus, qui ne servent alors que de valeurs par defaut au tout
         # premier lancement (aucun fichier d'etat encore ecrit).
-        geometry_b64 = _load_window_geometry()
+        geometry_b64 = _load_window_geometry(self._geometry_key())
         if geometry_b64:
             try:
                 self.restoreGeometry(QByteArray.fromBase64(geometry_b64.encode("ascii")))
             except (ValueError, TypeError):
                 pass
+        elif self._mode == "general" and parent is not None:
+            # Premiere ouverture : decalee pour ne pas masquer la fenetre visuelle.
+            self.move(parent.x() + 80, parent.y() + 60)
 
         self.settings = load_settings()
         self._original_settings = json.loads(json.dumps(self.settings))
+        # Avant toute construction : chaque zone de saisie lit ce rayon a sa creation.
+        _set_input_radius(int(self.settings.get("input_radius", 0)))
+        _set_button_radius(int(self.settings.get("button_radius", 0)))
+        # Idem pour les tableaux sans entete (voir _prestyle_flat_frame) : un
+        # tableau style APRES avoir ete rempli re-style tout son contenu.
+        _seed_flat_tables_style(
+            int(self.settings.get("table_radius", 0)),
+            (_coerce_side_enabled(self.settings.get("table_border_enabled", True)),
+             {k: _resolve_color_value(v, self.settings["colors"])
+              for k, v in (self.settings.get("table_border") or {}).items()},
+             int(self.settings.get("table_border_thickness", 1))))
         self._saved = False
         self._dirty = False
+        self._style_sig = self._style_signature(self.settings)
         # Liste vivante des logiciels AJOUTES (voir _section_logiciels) —
         # pas de "control" Qt unique ne peut porter une LISTE de longueur
         # variable (contrairement au reste de _current_values()), gardee a
@@ -466,21 +505,45 @@ class SettingsWindow(QDialog):
         root.setContentsMargins(1, 1, 1, 1)
         root.setSpacing(0)
 
-        self.titlebar = _SettingsTitleBar(self)
+        self.titlebar = _SettingsTitleBar(self, title=self._MODE_TITLES[self._mode])
         self.titlebar.closeClicked.connect(self.reject)
         root.addWidget(self.titlebar)
 
         root.addWidget(self._build_toolbar())
-        root.addWidget(self._build_main_tabbar())
+        # Conteneur cache des widgets construits mais non affiches dans ce mode.
+        self._hidden_holder = QWidget(panel)
+        self._hidden_holder.hide()
+        main_tabbar = self._build_main_tabbar()
+        root.addWidget(main_tabbar)
 
-        body = QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(0)
-        self._main_stack = QStackedWidget()
-        self._main_stack.addWidget(self._build_content())       # 0: General
-        self._main_stack.addWidget(self._build_columns_page())  # 1: Colonnes
-        body.addWidget(self._main_stack, 1)
-        root.addLayout(body, 1)
+        # PERFORMANCES : construction de HAUT EN BAS. Rattacher a un parent un
+        # sous-arbre deja construit re-applique les feuilles de style de TOUS
+        # ses widgets (QStyleSheetStyle::repolish, ~35us/widget) : construit
+        # de bas en haut, chaque widget etait re-style une fois par niveau
+        # d'assemblage. La pile (puis chaque page, chaque section, voir
+        # _build_content/_SECTION_HOST) est donc deja a sa place AVANT d'etre
+        # remplie.
+        self._main_stack = QStackedWidget(panel)
+        root.addWidget(self._main_stack, 1)
+        if self._light:
+            # Tableaux > Padding des cellules / Colonnes dimensionnables :
+            # normalement appliques par des sections absentes de ce mode.
+            sides = self.settings.get("table_cell_padding") or {}
+            pad = {k: max(0, min(32, int(sides.get(k, 0)))) for k in ("left", "top", "right", "bottom")}
+            if self.settings.get("table_cell_padding_linked", False):
+                pad = dict.fromkeys(pad, pad["left"])
+            with _flat_tables_padding((pad["left"], pad["top"], pad["right"], pad["bottom"])):
+                content_page = self._build_content(self._main_stack)
+            for resizer in self._flat_resizers:
+                resizer.setResizable(bool(self.settings.get("columns_resizable", True)))
+        else:
+            content_page = self._build_content(self._main_stack)
+        self._main_stack.addWidget(content_page)                # 0: General
+        if self._light:
+            # Une seule page (Application) : pas d'onglets ni de Colonnes.
+            main_tabbar.hide()
+        else:
+            self._main_stack.addWidget(self._build_columns_page(self._main_stack))  # 1: Colonnes
 
         root.addWidget(self._build_bottom_bar())
 
@@ -501,8 +564,7 @@ class SettingsWindow(QDialog):
         layout.setSpacing(8)
 
         tag = QLabel("Preset")
-        tag.setFont(_qfont(9, 600, tracking=0.7))
-        tag.setStyleSheet(f"color: {M['label_dim']}; background: transparent;")
+        _set_text_role(tag, "tag")
         layout.addWidget(tag)
 
         # Double-clic pour renommer (en plus du bouton "Renommer" ci-dessous
@@ -529,11 +591,8 @@ class SettingsWindow(QDialog):
         # preset actif (ou ouvre "Nouveau preset..." s'il n'y en a pas
         # encore un de charge) — voir la remarque de l'utilisateur, capture
         # a l'appui.
-        # radius=self.settings[...] (pas encore self.geo_table, construit
-        # PLUS TARD dans __init__ — voir _connect_live_updates/
-        # _apply_button_radius pour le suivi en direct du slider ensuite).
-        save_btn = _Btn("Enregistrer", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=26,
-                         radius=int(self.settings.get("button_radius", 0)))
+        # Rayon : suivi automatique de Geometrie > Boutons (voir settings_theme).
+        save_btn = _Btn("Enregistrer", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=26)
         save_btn.clicked.connect(self._save_current_preset)
         layout.addWidget(save_btn)
         self._preset_save_btn = save_btn
@@ -562,8 +621,7 @@ class SettingsWindow(QDialog):
         layout.addStretch(1)
 
         path_label = QLabel(f"{_PRESETS_PATH.name} · {_PRESETS_PATH.parent}")
-        path_label.setFont(_qfont(10, 400, mono=True))
-        path_label.setStyleSheet(f"color: {M['group_note']}; background: transparent;")
+        _set_text_role(path_label, "note_mono")
         layout.addWidget(path_label)
 
         self._sync_preset_box()
@@ -615,9 +673,7 @@ class SettingsWindow(QDialog):
         # inutile de le suivre en direct comme les boutons persistants, voir
         # _apply_button_radius).
         new_btn = _Btn("+  Nouveau preset…", "transparent", "", M["value_fg"], M["btn_hover"],
-                       height=30, weight=500, padding="0 12px",
-                       radius=self.geo_table.button_radius_field.value())
-        new_btn.setStyleSheet(new_btn.styleSheet() + "QPushButton { text-align: left; }")
+                       height=30, weight=500, padding="0 12px", align_left=True)
         new_btn.clicked.connect(lambda: (popup.close(), self._save_preset_as()))
         layout.addWidget(new_btn)
 
@@ -882,6 +938,30 @@ class SettingsWindow(QDialog):
                 _coerce_corner_radius(seed("item_selection_radius", 0)))
             f["item_selection_edge_border"].setChecked(bool(seed("item_selection_edge_border", True)))
 
+    def _apply_application_values(self):
+        """Champs de la section Application (seuls construits en mode
+        "general", voir _light), depuis self.settings."""
+        self.root_field.setText(self.settings.get("root_path", DEFAULT_SETTINGS["root_path"]))
+        self.default_preset_field.setValue(self.settings.get("default_preset") or "(Aucun)")
+        self.scale_field.setValue(int(self.settings.get("ui_scale", 100)))
+        self.auto_collapse_set_columns_field.setChecked(
+            bool(self.settings.get("auto_collapse_set_columns", True)))
+        self.omit_file_names_field.set_values(_omit_file_values(self.settings))
+        self.omit_dir_names_field.set_values(self.settings.get("application_omit_dir_names"))
+        self.window_radius_toggle.setChecked(int(self.settings.get("window_radius", 0)) > 0)
+
+    def _application_values(self) -> dict:
+        return {
+            "root_path": self.root_field.text().strip() or DEFAULT_SETTINGS["root_path"],
+            "default_preset": "" if self.default_preset_field.value() == "(Aucun)" else self.default_preset_field.value(),
+            "ui_scale": self.scale_field.value(),
+            "auto_collapse_set_columns": self.auto_collapse_set_columns_field.isChecked(),
+            "application_omit_file_names": self.omit_file_names_field.values(),
+            "application_omit_extensions": [],
+            "application_omit_dir_names": self.omit_dir_names_field.values(),
+            "window_radius": self._window_radius_value(),
+        }
+
     def _apply_values_to_controls(self, data: dict):
         """Reapplique un dict complet de reglages sur TOUS les controles —
         utilise par Valeurs par defaut et le chargement d'un preset.
@@ -911,6 +991,9 @@ class SettingsWindow(QDialog):
         if "header_border_enabled" not in data and "header_edges" in data:
             data["header_border_enabled"] = data["header_edges"]
         self.settings.update(data)
+        if self._light:
+            self._apply_application_values()
+            return
 
         for level in (1, 2, 3, 4, 5):
             prefix = f"title_level{level}"
@@ -934,13 +1017,7 @@ class SettingsWindow(QDialog):
         if hasattr(self, "_logiciels_section"):
             self._rebuild_logiciels_table()
 
-        self.root_field.setText(self.settings.get("root_path", DEFAULT_SETTINGS["root_path"]))
-        self.default_preset_field.setValue(self.settings.get("default_preset") or "(Aucun)")
-        self.scale_field.setValue(int(self.settings.get("ui_scale", 100)))
-        self.auto_collapse_set_columns_field.setChecked(
-            bool(self.settings.get("auto_collapse_set_columns", True)))
-        self.omit_file_names_field.set_values(_omit_file_values(self.settings))
-        self.omit_dir_names_field.set_values(self.settings.get("application_omit_dir_names"))
+        self._apply_application_values()
         for key, entry in self.font_table.rows.items():
             conf = self.settings.get(key) or {}
             family = conf.get("family") or "Systeme"
@@ -1107,7 +1184,6 @@ class SettingsWindow(QDialog):
         self.toggle_style_field.setValue(self.settings.get("toggle_style", "toggle1"))
         self._apply_toggle_shape_values("toggle1")
         self._apply_toggle_shape_values("toggle2")
-        self.window_radius_toggle.setChecked(int(self.settings.get("window_radius", 0)) > 0)
         self.geo_table.input_frame_toggle.setChecked(bool(self.settings.get("input_frame", True)))
         self.geo_table.input_radius_field.setValue(int(self.settings.get("input_radius", 0)))
         self.geo_table.button_frame_toggle.setChecked(bool(self.settings.get("button_frame", True)))
@@ -1179,10 +1255,7 @@ class SettingsWindow(QDialog):
         self._main_tabs.changed.connect(self._on_main_tab_changed)
         return bar
 
-    def _on_main_tab_changed(self, index: int):
-        self._main_stack.setCurrentIndex(index)
-
-    def _build_columns_page(self) -> QWidget:
+    def _build_columns_page(self, parent: QWidget | None = None) -> QWidget:
         """Onglet Colonnes : barre d'onglets internes Type/Projets/Sous-
         projets, chacune avec sa propre page (voir _build_column_type_page —
         seule construite pour l'instant, voir la remarque de l'utilisateur :
@@ -1191,7 +1264,7 @@ class SettingsWindow(QDialog):
         repassee dans l'onglet General, sous Geometrie — voir la remarque
         de l'utilisateur : "deplace la section entetes dans l'onglet
         general juste au dessous de geometrie"."""
-        page = QWidget()
+        page = QWidget(parent)
         page.setStyleSheet(f"background: {M['panel_bg']};")
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1208,7 +1281,8 @@ class SettingsWindow(QDialog):
         subbar_l.addWidget(self._columns_tabs)
         layout.addWidget(subbar)
 
-        self._columns_stack = QStackedWidget()
+        self._columns_stack = QStackedWidget(page)
+        layout.addWidget(self._columns_stack, 1)
         # "INTERMEDIAIRE" (onglet, voir la remarque de l'utilisateur, "le
         # tab sous projets doit maintenant se nommer 'INTERMEDIAIRE', et
         # doit controler toutes les colonnes entre celle de projet et
@@ -1270,20 +1344,24 @@ class SettingsWindow(QDialog):
         for idx in range(3):
             tab_title, _real_title = self._columns_subpage_specs[idx]
             self._columns_stack.addWidget(self._build_column_placeholder_page(tab_title))
-        self._columns_stack.addWidget(self._build_column_override_page(PREVIEW_STACK_TITLE, PREVIEW_STACK_TITLE))
+        self._columns_stack.addWidget(
+            self._build_column_override_page(PREVIEW_STACK_TITLE, PREVIEW_STACK_TITLE, self._columns_stack))
         for idx in range(4, 9):
             tab_title, _real_title = self._columns_subpage_specs[idx]
             self._columns_stack.addWidget(self._build_column_placeholder_page(tab_title))
         self._columns_tabs.changed.connect(self._on_columns_tab_changed)
         # `_TabStrip` n'emet `changed` que sur un CLIC : le sous-onglet visible
-        # par defaut a l'ouverture (index 0 = Type) restait donc sur son
-        # placeholder "Aucun reglage" tant qu'on ne cliquait pas ailleurs puis
-        # revenait — voir la remarque de l'utilisateur, "j'ai un message comme
-        # quoi il n'y a pas de parametres pour la colonne type". Construire
-        # explicitement la page reellement affichee au demarrage.
-        self._on_columns_tab_changed(self._columns_tabs._index)
-        layout.addWidget(self._columns_stack, 1)
+        # par defaut (index 0 = Type) est construit au PREMIER affichage de
+        # l'onglet Colonnes (voir _on_main_tab_changed), pas ici — ~2.4s
+        # epargnees a chaque ouverture quand cet onglet n'est pas consulte.
         return page
+
+    def _on_main_tab_changed(self, index: int):
+        if index == 1:
+            # Construit (une seule fois) le sous-onglet affiche, voir
+            # _build_columns_page.
+            self._on_columns_tab_changed(self._columns_tabs._index)
+        self._main_stack.setCurrentIndex(index)
 
     def _on_columns_tab_changed(self, index: int):
         spec = self._columns_subpage_specs.get(index)
@@ -1293,7 +1371,8 @@ class SettingsWindow(QDialog):
             placeholder = self._columns_stack.widget(index)
             self._columns_stack.removeWidget(placeholder)
             placeholder.deleteLater()
-            self._columns_stack.insertWidget(index, self._build_column_override_page(tab_title, real_title))
+            self._columns_stack.insertWidget(
+                index, self._build_column_override_page(tab_title, real_title, self._columns_stack))
         self._columns_stack.setCurrentIndex(index)
 
     def _build_column_placeholder_page(self, title: str) -> QWidget:
@@ -1306,8 +1385,7 @@ class SettingsWindow(QDialog):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(20, 18, 18, 26)
         note = QLabel(f"Aucun reglage \"{title}\" pour le moment.")
-        note.setFont(_qfont(12, 400))
-        note.setStyleSheet(f"color: {M['group_note']}; background: transparent;")
+        _set_text_role(note, "placeholder")
         layout.addWidget(note)
         layout.addStretch(1)
         return page
@@ -1355,7 +1433,8 @@ class SettingsWindow(QDialog):
         linked_map = self._override_store("linked", title)
         return bool(linked_map.get(key, self.settings.get(f"{key}_linked", True)))
 
-    def _build_column_override_page(self, tab_title: str, real_title: str) -> QWidget:
+    def _build_column_override_page(self, tab_title: str, real_title: str,
+                                    parent: QWidget | None = None) -> QWidget:
         """Onglet Colonnes > Type/Projets/Sous-projets : surcharge,
         PARAMETRE PAR PARAMETRE, la section "Colonnes" de l'onglet General
         (voir _section_headers) sur LA colonne `real_title` — meme 4
@@ -1386,17 +1465,20 @@ class SettingsWindow(QDialog):
         depuis le MEME champ/le MEME toggle, voir _current_values/
         _apply_column_type_preview) gardent la reference a chaque widget
         pour le reste de la fenetre, UN dict PAR colonne reelle."""
-        page = QWidget()
+        # Construite de haut en bas, deja dans la pile (voir __init__) :
+        # page -> scroller -> inner sont rattaches AVANT d'etre remplis.
+        page = QWidget(parent)
         page.setStyleSheet(f"background: {M['panel_bg']};")
         outer = QVBoxLayout(page)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        scroller = _NoSqueezeScrollArea()
+        scroller = _NoSqueezeScrollArea(page)
         scroller.setWidgetResizable(True)
         scroller.setFrameShape(QFrame.NoFrame)
         scroller.setStyleSheet(f"background: {M['panel_bg']};")
-        inner = QWidget()
+        outer.addWidget(scroller)
+        inner = QWidget(scroller.viewport())
         layout = QVBoxLayout(inner)
         layout.setContentsMargins(20, 18, 18, 26)
         layout.setSpacing(18)
@@ -2125,9 +2207,8 @@ class SettingsWindow(QDialog):
                 cell_l.setSpacing(4)
                 cell_l.setAlignment(Qt.AlignHCenter)
                 num_label = QLabel(str(n))
-                num_label.setFont(_qfont(10, 600, mono=True))
+                _set_text_role(num_label, "note_mono_bold")
                 num_label.setAlignment(Qt.AlignHCenter)
-                num_label.setStyleSheet(f"color: {M['group_note']}; background: transparent;")
                 cell_l.addWidget(num_label)
                 cell_l.addWidget(text_f)
                 cell_l.addWidget(bg_f)
@@ -2249,7 +2330,6 @@ class SettingsWindow(QDialog):
 
         layout.addStretch(1)
         scroller.setWidget(inner)
-        outer.addWidget(scroller)
         self._connect_column_type_overrides(real_title)
         return page
 
@@ -2330,18 +2410,21 @@ class SettingsWindow(QDialog):
                 detail.clear_loading_step()
         QApplication.processEvents()
 
-    def _build_content(self) -> QWidget:
+    def _build_content(self, parent: QWidget | None = None) -> QWidget:
         # _NoSqueezeScrollArea (pas QScrollArea nu) : la fenetre reste
         # redimensionnable librement (y compris plus bas que le contenu),
         # mais une scrollbar verticale apparait alors a droite au lieu de
         # tasser les lignes de reglage les unes contre les autres — voir la
         # remarque de l'utilisateur, capture a l'appui.
-        scroller = _NoSqueezeScrollArea()
+        # Construite de haut en bas (voir __init__) : scroller et inner sont
+        # rattaches AVANT d'etre remplis, chaque section naissant directement
+        # dans inner (voir _section_host).
+        scroller = _NoSqueezeScrollArea(parent)
         self._content_scroller = scroller
         scroller.setWidgetResizable(True)
         scroller.setFrameShape(QFrame.NoFrame)
         scroller.setStyleSheet(f"background: {M['panel_bg']};")
-        inner = QWidget()
+        inner = QWidget(scroller.viewport())
         layout = QVBoxLayout(inner)
         layout.setContentsMargins(20, 18, 18, 26)
         # Pas de layout.setSpacing() fixe ici : ca imposerait le MEME
@@ -2367,7 +2450,20 @@ class SettingsWindow(QDialog):
             self._section_toggles, self._section_slider, self._section_icones,
             self._section_raccourci,
         ]
-        sections = [builder() for builder in section_builders]
+        if self._light:
+            section_builders = [self._section_application]
+        with _section_host(inner):
+            sections = [builder() for builder in section_builders]
+        if self._mode != "tout":
+            # Sections montrees dans ce mode ; les autres sont rangees.
+            general_only = {getattr(self, name) for name in self._GENERAL_SECTIONS}
+            shown = []
+            for builder, section in zip(section_builders, sections):
+                if (builder in general_only) == (self._mode == "general"):
+                    shown.append(section)
+                else:
+                    section.setParent(self._hidden_holder)
+            sections = shown
         # TOUTES repliees par defaut a l'ouverture, "Application" y compris
         # — voir la remarque de l'utilisateur, "je veux que toutes les
         # sections (y compris sous sections) soient repliees a l'ouverture
@@ -2376,7 +2472,7 @@ class SettingsWindow(QDialog):
         # spaceur de chaque section lit is_collapsed() a sa creation pour
         # partir a la bonne hauteur.
         for section in sections:
-            section.set_collapsed(True)
+            section.set_collapsed(self._mode != "general")
         for i, section in enumerate(sections):
             layout.addWidget(section)
             if i == len(sections) - 1:
@@ -2413,7 +2509,8 @@ class SettingsWindow(QDialog):
         l'utilisateur, "je veux homogeneiser les textes des sections et
         sous sections"."""
         section = _Section("TITRE")
-        rows: list[tuple[str, QWidget]] = []
+        font_rows: list[tuple[str, QWidget]] = []
+        indent_rows: list[tuple[str, QWidget]] = []
         for level in (1, 2, 3, 4, 5):
             prefix = f"title_level{level}"
             family_field = _DualFontSelectField(
@@ -2441,12 +2538,23 @@ class SettingsWindow(QDialog):
             setattr(self, f"{prefix}_indent_field", indent_field)
             row_widget = _build_font_gabarit_row(
                 family_field, bold_field, size_field, smoothing_field, color_field, italic_field=italic_field)
-            rows.append((f"Police titre niveau {level}", row_widget))
-            rows.append((f"Retrait titre niveau {level} (indentation)", indent_field))
-        frame, self._titre_row_meta, resizer = _build_flat_table(rows)
-        self._flat_resizers.append(resizer)
-        self.titre_table_frame = frame
-        section.add(frame)
+            font_rows.append((f"Police titre niveau {level}", row_widget))
+            indent_rows.append((f"Retrait titre niveau {level} (indentation)", indent_field))
+        # Polices et retraits dans deux sous-sections distinctes.
+        subs = []
+        for name, rows in (("Polices", font_rows), ("Retraits", indent_rows)):
+            frame, _, resizer = _build_flat_table(rows)
+            self._flat_resizers.append(resizer)
+            sub = _SubSection(name, level=2)
+            sub.add(frame)
+            sub.collapsedChanged.connect(section.refresh_min_height)
+            subs.append(sub)
+        self.titre_table_frame = subs[0]
+        wrap = QWidget()
+        wrap_l = QVBoxLayout(wrap)
+        wrap_l.setContentsMargins(0, 0, 0, 0)
+        _stack_subsections(wrap_l, subs)
+        section.add(wrap)
         return section
 
     def _current_title_level_values(self) -> dict:
@@ -2485,7 +2593,7 @@ class SettingsWindow(QDialog):
             indent = _title_indent(1)
             section._title_indent = indent
             section._head_layout.setContentsMargins(indent, 0, 0, 0 if section._collapsed else 10)
-            section._body_layout.setContentsMargins(indent + 16 + 10, 0, 0, 0)
+            section.set_body_offset(indent + 16 + 10)
         for sub in self.findChildren(_SubSection):
             level = sub._level
             sub._name_label.setFont(_title_font(level))
@@ -2494,7 +2602,7 @@ class SettingsWindow(QDialog):
             indent = _subsection_left_margin(level)
             sub._left_margin = indent
             sub._head_layout.setContentsMargins(indent, 0, 0, 0 if sub._collapsed else 6)
-            sub._body_layout.setContentsMargins(indent + 11 + 6, 0, 0, 0)
+            sub.set_body_offset(indent + 11 + 6)
         self._mark_dirty()
 
     def _section_application(self) -> _Section:
@@ -2506,8 +2614,7 @@ class SettingsWindow(QDialog):
         self._refresh_root_field_style()
         # radius=self.settings[...] (self.geo_table pas encore construit a
         # ce stade — voir _apply_button_radius pour le suivi en direct).
-        browse_btn = _Btn("Parcourir", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=25,
-                           radius=int(self.settings.get("button_radius", 0)))
+        browse_btn = _Btn("Parcourir", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=25)
         browse_btn.clicked.connect(self._browse_root)
         self._browse_btn = browse_btn
         # Largeur FIXE (pas le sizeHint naturel du bouton) : le bloc de
@@ -2585,15 +2692,14 @@ class SettingsWindow(QDialog):
         window_radius_row_l.setSpacing(8)
         window_radius_row_l.addWidget(self.window_radius_toggle)
         window_radius_label = QLabel("Coins arrondi")
-        window_radius_label.setFont(_qfont(12, 400))
-        window_radius_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        _set_text_role(window_radius_label, "row_label")
         window_radius_row_l.addWidget(window_radius_label)
         window_radius_row_l.addStretch(1)
 
         # Tableau ferme (voir _build_flat_table — meme technique que
         # Colonnes/Sliders) plutot que 2 _Row nues, pour rester coherent
         # avec le reste de la fenetre — voir la remarque de l'utilisateur.
-        self.app_table_frame, self._app_table_row_meta, resizer = _build_flat_table([
+        self.app_table_frame, _, resizer = _build_flat_table([
             ("Racine par defaut", root_row),
             ("Preset par defaut", self.default_preset_field),
             ("Scale interface", self.scale_field),
@@ -2817,7 +2923,7 @@ class SettingsWindow(QDialog):
         # technique deja utilisee pour Toggles > Cadre/Coche et Sliders >
         # Rail/Selecteur) — voir la remarque de l'utilisateur, "peux tu
         # mettre ces tableaux cote a cote stp".
-        columns_frame, self._columns_table_row_meta, columns_resizer = _build_flat_table([
+        columns_frame, _, columns_resizer = _build_flat_table([
             ("Largeur par defaut", self.item_column_width_field),
             ("Distance entre colonnes", self.column_gap_field),
             ("Padding", self.column_padding_field),
@@ -2881,7 +2987,7 @@ class SettingsWindow(QDialog):
             bool(self.settings.get("resize_badge_border_radius_linked", True)),
             _coerce_corner_radius(self.settings.get("resize_badge_border_radius", 4)), maximum=20)
 
-        resize_badge_frame, self._resize_badge_table_row_meta, resize_badge_resizer = _build_flat_table([
+        resize_badge_frame, _, resize_badge_resizer = _build_flat_table([
             ("Position", self.resize_badge_position_field),
             ("Police", resize_badge_font_row),
             ("Couleur de fond", self.resize_badge_bg_color_field),
@@ -2894,7 +3000,7 @@ class SettingsWindow(QDialog):
         resize_badge_sub.add(resize_badge_frame)
         resize_badge_sub.collapsedChanged.connect(section.refresh_min_height)
 
-        headers_frame, self._headers_table_row_meta, headers_resizer = _build_flat_table([
+        headers_frame, _, headers_resizer = _build_flat_table([
             ("Afficher", self.header_visible_field),
             ("Hauteur des entetes", self.header_height_field),
             ("Padding des entetes", self.header_padding_field),
@@ -3000,7 +3106,7 @@ class SettingsWindow(QDialog):
 
         # 1) "Lignes" : hauteur, espacement, espace avant le 1er item,
         # bordure entre les lignes.
-        lines_frame, self._item_lines_row_meta, lines_resizer = _build_flat_table([
+        lines_frame, _, lines_resizer = _build_flat_table([
             ("Hauteur de ligne", item_text_rows[1][1]),
             ("Espacement entre les lignes", item_text_rows[4][1]),
             ("Espace avant le premier item", self.item_header_gap_field),
@@ -3016,7 +3122,7 @@ class SettingsWindow(QDialog):
         item_police_row = _build_font_gabarit_row(
             self.item_font_field, self.item_font_bold_field, self.item_font_size_field,
             self.item_antialias_field, item_text_rows[0][1], italic_field=self.item_font_italic_field)
-        text_frame, self._item_text_row_meta, text_resizer = _build_flat_table([
+        text_frame, _, text_resizer = _build_flat_table([
             ("Police", item_police_row),
             ("Padding gauche", item_text_rows[5][1]),
         ])
@@ -3026,7 +3132,7 @@ class SettingsWindow(QDialog):
         text_2nd_sub.add(text_frame)
 
         # 3) "Icone" : taille par defaut + padding gauche.
-        icon_frame, self._item_icon_row_meta, icon_resizer = _build_flat_table([
+        icon_frame, _, icon_resizer = _build_flat_table([
             ("Taille de l'icone par defaut (0 = hauteur de la ligne)", item_text_rows[2][1]),
             ("Padding gauche", item_text_rows[3][1]),
         ])
@@ -3060,7 +3166,7 @@ class SettingsWindow(QDialog):
             20, 500, int(round(float(self.settings.get("item_image_ratio", 1.0)) * 100)),
             slider_width=200, box_width=68)
 
-        image_frame, self._item_image_row_meta, image_resizer = _build_flat_table([
+        image_frame, _, image_resizer = _build_flat_table([
             ("Padding", self.item_image_padding_field),
             ("Bordure", self.item_image_border_field),
             ("Rayon des angles", self.item_image_radius_field),
@@ -3116,7 +3222,7 @@ class SettingsWindow(QDialog):
         self.item_selection_edge_border_field = _Toggle(
             bool(self.settings.get("item_selection_edge_border", True)), style_override="toggle1")
 
-        focus_frame, self._item_selection_row_meta, focus_resizer = _build_flat_table([
+        focus_frame, _, focus_resizer = _build_flat_table([
             ("Couleur", self.item_selection_focus_field),
             ("Padding du selecteur", self.item_selection_padding_field),
             ("Bordures du selecteur", self.item_selection_border_field),
@@ -3244,7 +3350,7 @@ class SettingsWindow(QDialog):
         # l'utilisateur, "ajoute couleur d'entete pour les tableaux".
         self.table_head_color_field = _HeaderColorField(
             self.settings["colors"], self.settings.get("table_head_color", "tableHead"))
-        frame, self._tables_row_meta, resizer = _build_flat_table([
+        frame, _, resizer = _build_flat_table([
             ("Colonnes dimensionnables", self.columns_resizable_toggle),
             ("Bordure", self.table_border_field),
             ("Rayon des angles", self.table_radius_field),
@@ -3276,7 +3382,7 @@ class SettingsWindow(QDialog):
         self.toggle_preview = _Toggle(True)
         section.add(_section_preview_wrap(self.toggle_preview))
         self.toggle_style_field = _ToggleStylePicker(self.settings.get("toggle_style", "toggle1"))
-        style_frame, self._toggles_row_meta, resizer = _build_flat_table([
+        style_frame, _, resizer = _build_flat_table([
             ("Style", self.toggle_style_field),
         ])
         self._flat_resizers.append(resizer)
@@ -3297,7 +3403,6 @@ class SettingsWindow(QDialog):
         # sans etre le style COURANT (voir _current_values, qui boucle sur
         # TOUS les prefixes independamment de l'affichage).
         self._toggle_widgets: dict[str, dict[str, QWidget]] = {}
-        self._toggle_frames: dict[str, dict[str, tuple]] = {}
         self._toggle_style_pages: dict[str, QWidget] = {}
         style_subs = []
         for prefix, label in (("toggle1", "Toggle 1"), ("toggle2", "Toggle 2")):
@@ -3312,14 +3417,13 @@ class SettingsWindow(QDialog):
             # l'arbre (voir _activate_layout_tree), peu importe la
             # profondeur — un simple branchement direct suffit donc a
             # CHAQUE niveau.
-            columns_wrap, widgets, frames = self._build_toggle_shape_tables(prefix, section.refresh_min_height)
+            columns_wrap, widgets, _frames = self._build_toggle_shape_tables(prefix, section.refresh_min_height)
             style_sub.add(columns_wrap)
             style_sub.set_collapsed(True)  # voir _stack_subsections, meme raison
             style_sub.collapsedChanged.connect(section.refresh_min_height)
             page_l.addWidget(style_sub)
             section.add(page)
             self._toggle_widgets[prefix] = widgets
-            self._toggle_frames[prefix] = frames
             self._toggle_style_pages[prefix] = page
             style_subs.append(style_sub)
         _make_accordion(style_subs)
@@ -3473,7 +3577,7 @@ class SettingsWindow(QDialog):
         self.slider_thumb_radius_field = _CornerRadiusField(
             bool(self.settings.get("slider_thumb_radius_linked", True)),
             _coerce_corner_radius(self.settings.get("slider_thumb_radius", 0)), maximum=16)
-        self.slider_thumb_frame, self._slider_thumb_row_meta, resizer = _build_flat_table([
+        self.slider_thumb_frame, _, resizer = _build_flat_table([
             ("Largeur", self.slider_thumb_width_field),
             ("Hauteur", self.slider_thumb_height_field),
             ("Couleur", self.slider_thumb_color_field),
@@ -3504,7 +3608,7 @@ class SettingsWindow(QDialog):
         self.slider_track_radius_field = _CornerRadiusField(
             bool(self.settings.get("slider_track_radius_linked", True)),
             _coerce_corner_radius(self.settings.get("slider_track_radius", 0)), maximum=16)
-        self.slider_rail_frame, self._slider_rail_row_meta, resizer = _build_flat_table([
+        self.slider_rail_frame, _, resizer = _build_flat_table([
             ("Hauteur", self.slider_track_height_field),
             ("Rail parcouru", self.slider_track_fill_field),
             ("Rail a parcourir", self.slider_track_empty_field),
@@ -3646,24 +3750,23 @@ class SettingsWindow(QDialog):
     def _build_icones_general_body(self, sub: "_SubSection"):
         pass
 
-        radius = int(self.settings.get("button_radius", 0))
         frame, layout = _table_frame()
         self._ui_icon_avatars = {}
 
         index = 0
-        self._build_ui_icon_pin_row(layout, index, radius)
+        self._build_ui_icon_pin_row(layout, index)
         index += 1
         import previews as pb_previews
         for ui_suffix, label_text in self._UI_ICON_ROWS:
             ui_key = getattr(pb_previews, f"UI_ICON_{ui_suffix.upper()}")
-            self._build_ui_icon_row(layout, index, ui_key, label_text, radius)
+            self._build_ui_icon_row(layout, index, ui_key, label_text)
             index += 1
 
         _lock_min_height(frame)
         sub.add(frame)
         sub.refresh_layout()
 
-    def _build_ui_icon_row(self, layout: QVBoxLayout, index: int, ui_key: str, label_text: str, radius: int):
+    def _build_ui_icon_row(self, layout: QVBoxLayout, index: int, ui_key: str, label_text: str):
         bg = M["table_row_a"] if index % 2 else M["table_row_b"]
         row, row_l = _table_row(bg, first=(index == 0))
         row_l.setContentsMargins(14, 6, 14, 6)
@@ -3677,27 +3780,26 @@ class SettingsWindow(QDialog):
         row_l.addWidget(avatar, 0)
 
         name = QLabel(label_text)
-        name.setFont(_qfont(11, 400))
-        name.setStyleSheet(f"color: {M['value_fg']}; background: transparent;")
+        _set_text_role(name, "value")
         row_l.addWidget(name, 1)
 
         change_btn = _Btn(
             "Changer l'icone...", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"],
-            height=25, radius=radius,
+            height=25,
         )
         change_btn.clicked.connect(lambda _=False, k=ui_key, av=avatar: self._change_ui_icon(k, av))
         row_l.addWidget(change_btn, 0)
 
         capture_btn = _Btn(
             "Capturer une zone d'ecran...", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"],
-            height=25, radius=radius,
+            height=25,
         )
         capture_btn.clicked.connect(lambda _=False, k=ui_key, av=avatar: self._capture_ui_icon(k, av))
         row_l.addWidget(capture_btn, 0)
 
         reset_btn = _Btn(
             "Reinitialiser", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"],
-            height=25, radius=radius,
+            height=25,
         )
         reset_btn.clicked.connect(lambda _=False, k=ui_key, av=avatar: self._reset_ui_icon(k, av))
         row_l.addWidget(reset_btn, 0)
@@ -3705,7 +3807,7 @@ class SettingsWindow(QDialog):
         _lock_min_height(row)
         layout.addWidget(row)
 
-    def _build_ui_icon_pin_row(self, layout: QVBoxLayout, index: int, radius: int):
+    def _build_ui_icon_pin_row(self, layout: QVBoxLayout, index: int):
         """Ligne "Punaise" avec les 2 etats (non attachee/attachee) sur la
         MEME ligne, voir la remarque de l'utilisateur, "punaise non
         attachee, + punaise attachee sur la mm ligne"."""
@@ -3717,8 +3819,7 @@ class SettingsWindow(QDialog):
         row_l.setSpacing(16)
 
         name = QLabel("Punaise")
-        name.setFont(_qfont(11, 400))
-        name.setStyleSheet(f"color: {M['value_fg']}; background: transparent;")
+        _set_text_role(name, "value")
         row_l.addWidget(name, 0)
         row_l.addStretch(1)
 
@@ -3728,8 +3829,7 @@ class SettingsWindow(QDialog):
             group_l.setContentsMargins(0, 0, 0, 0)
             group_l.setSpacing(6)
             sub_name = QLabel(sub_label)
-            sub_name.setFont(_qfont(10, 400))
-            sub_name.setStyleSheet(f"color: {M['group_note']}; background: transparent;")
+            _set_text_role(sub_name, "note")
             group_l.addWidget(sub_name)
             avatar = QLabel()
             avatar.setFixedSize(24, 24)
@@ -3738,15 +3838,15 @@ class SettingsWindow(QDialog):
             self._ui_icon_avatars[ui_key] = avatar
             group_l.addWidget(avatar)
             change_btn = _Btn(
-                "Changer...", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=25, radius=radius)
+                "Changer...", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=25)
             change_btn.clicked.connect(lambda _=False, k=ui_key, av=avatar: self._change_ui_icon(k, av))
             group_l.addWidget(change_btn)
             capture_btn = _Btn(
-                "Capturer...", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=25, radius=radius)
+                "Capturer...", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=25)
             capture_btn.clicked.connect(lambda _=False, k=ui_key, av=avatar: self._capture_ui_icon(k, av))
             group_l.addWidget(capture_btn)
             reset_btn = _Btn(
-                "Reinit.", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=25, radius=radius)
+                "Reinit.", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=25)
             reset_btn.clicked.connect(lambda _=False, k=ui_key, av=avatar: self._reset_ui_icon(k, av))
             group_l.addWidget(reset_btn)
             row_l.addWidget(group)
@@ -3853,7 +3953,6 @@ class SettingsWindow(QDialog):
         keys = [k for k in sorted(pb_previews.SOFTWARE_ICONS.keys()) if k not in self._removed_softwares] + [
             e["key"] for e in self._custom_softwares if e["key"] not in pb_previews.SOFTWARE_ICONS
         ]
-        radius = int(self.settings.get("button_radius", 0))
 
         for i, key in enumerate(keys):
             bg = M["table_row_a"] if i % 2 else M["table_row_b"]
@@ -3875,20 +3974,19 @@ class SettingsWindow(QDialog):
             row_l.addWidget(avatar, 0)
 
             name = QLabel(labels.get(key, key))
-            name.setFont(_qfont(11, 400))
-            name.setStyleSheet(f"color: {M['value_fg']}; background: transparent;")
+            _set_text_role(name, "value")
             row_l.addWidget(name, 1)
 
             change_btn = _Btn(
                 "Changer l'icone...", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"],
-                height=25, radius=radius,
+                height=25,
             )
             change_btn.clicked.connect(lambda _=False, k=key, av=avatar: self._change_logiciel_icon(k, av))
             row_l.addWidget(change_btn, 0)
 
             capture_btn = _Btn(
                 "Capturer une zone d'ecran...", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"],
-                height=25, radius=radius,
+                height=25,
             )
             capture_btn.clicked.connect(lambda _=False, k=key, av=avatar: self._capture_logiciel_icon(k, av))
             row_l.addWidget(capture_btn, 0)
@@ -3907,7 +4005,7 @@ class SettingsWindow(QDialog):
             is_custom = key not in pb_previews.SOFTWARE_ICONS
             delete_btn = _Btn(
                 "Supprimer", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"],
-                height=25, radius=radius,
+                height=25,
             )
             delete_btn.clicked.connect(lambda _=False, k=key, custom=is_custom: self._delete_logiciel(k, custom))
             row_l.addWidget(delete_btn, 0)
@@ -3920,9 +4018,8 @@ class SettingsWindow(QDialog):
         add_l.setContentsMargins(14, 6, 14, 6)
         add_btn = _Btn(
             "+  Ajouter un logiciel...", "transparent", "", M["value_fg"], M["btn_hover"],
-            height=28, weight=500, padding="0 12px", radius=radius,
+            height=28, weight=500, padding="0 12px", align_left=True,
         )
-        add_btn.setStyleSheet(add_btn.styleSheet() + "QPushButton { text-align: left; }")
         add_btn.clicked.connect(self._add_logiciel)
         add_l.addWidget(add_btn, 0)
         add_l.addStretch(1)
@@ -4076,26 +4173,25 @@ class SettingsWindow(QDialog):
         # radius=self.geo_table... : construite APRES _build_content() (voir
         # __init__), self.geo_table existe deja ici — voir aussi
         # _apply_button_radius pour le suivi en direct du slider ensuite.
-        btn_radius = self.geo_table.button_radius_field.value()
 
         reset_btn = _Btn("Valeurs par defaut", "transparent", M["btn_border"], M["reset_fg"], M["btn_bg"],
-                          height=27, padding="0 12px", radius=btn_radius)
+                          height=27, padding="0 12px")
         reset_btn.clicked.connect(self._reset_defaults)
         layout.addWidget(reset_btn)
         layout.addStretch(1)
 
         apply_btn = _Btn("Appliquer", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"],
-                          height=27, padding="0 13px", radius=btn_radius)
+                          height=27, padding="0 13px")
         apply_btn.clicked.connect(self._on_apply)
         layout.addWidget(apply_btn)
 
         cancel_btn = _Btn("Annuler", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"],
-                           height=27, padding="0 13px", radius=btn_radius)
+                           height=27, padding="0 13px")
         cancel_btn.clicked.connect(self.reject)
         layout.addWidget(cancel_btn)
 
         save_btn = _Btn("Enregistrer", M["accent"], M["accent_border"], M["accent_fg"], M["accent_hover"],
-                        height=27, weight=600, padding="0 17px", radius=btn_radius)
+                        height=27, weight=600, padding="0 17px")
         save_btn.clicked.connect(self._on_save)
         layout.addWidget(save_btn)
 
@@ -4131,6 +4227,9 @@ class SettingsWindow(QDialog):
         return self._WINDOW_RADIUS_ON if self.window_radius_toggle.isChecked() else 0
 
     def _apply_panel_radius(self, radius: int):
+        # Les fenetres de reglages n'ont jamais de coins arrondis, quel que
+        # soit "window_radius" (qui ne concerne que la fenetre principale).
+        radius = 0
         # Peint a la main (_PanelFrame), pas en QSS — voir sa remarque de
         # tete de classe : ce widget porte tout le contenu de la fenetre,
         # un setStyleSheet dessus recalculait le style de ~300 descendants
@@ -4155,7 +4254,19 @@ class SettingsWindow(QDialog):
                 return result
         return super().nativeEvent(eventType, message)
 
+    def _connect_application_updates(self):
+        self.root_field.textChanged.connect(self._mark_dirty)
+        self.default_preset_field.changed.connect(self._mark_dirty)
+        self.scale_field.valueChanged.connect(self._mark_dirty)
+        self.auto_collapse_set_columns_field.toggled.connect(self._mark_dirty)
+        self.omit_file_names_field.changed.connect(self._mark_dirty)
+        self.omit_dir_names_field.changed.connect(self._mark_dirty)
+        self.window_radius_toggle.toggled.connect(self._on_window_radius_changed)
+
     def _connect_live_updates(self):
+        if self._light:
+            self._connect_application_updates()
+            return
         # TITRE (voir _section_titre/_apply_title_level_style) : tout
         # changement de police/couleur/retrait restyle EN DIRECT toutes les
         # _Section/_SubSection deja construites de cette fenetre.
@@ -4171,12 +4282,7 @@ class SettingsWindow(QDialog):
         # La racine par defaut suivait auparavant seulement Appliquer/
         # Enregistrer (voir _on_apply) ; l'utilisateur veut desormais que
         # TOUT changement se repercute en direct, sans exception.
-        self.root_field.textChanged.connect(self._mark_dirty)
-        self.default_preset_field.changed.connect(self._mark_dirty)
-        self.scale_field.valueChanged.connect(self._mark_dirty)
-        self.auto_collapse_set_columns_field.toggled.connect(self._mark_dirty)
-        self.omit_file_names_field.changed.connect(self._mark_dirty)
-        self.omit_dir_names_field.changed.connect(self._mark_dirty)
+        self._connect_application_updates()
         self.font_table.changed.connect(self._mark_dirty)
         # _on_colors_changed reapplique le style de TOUTE la fenetre
         # (tableaux, menus, cadre natif...) — correct mais couteux, et
@@ -4422,7 +4528,6 @@ class SettingsWindow(QDialog):
             ):
                 w[key].changed.connect(self._on_toggle_style_changed)
         self.geo_table.changed.connect(self._on_window_radius_changed)
-        self.window_radius_toggle.toggled.connect(self._on_window_radius_changed)
         # Geometrie > Slider (voir _section_geometry) : contrairement aux
         # AUTRES reglages ci-dessus, ceux-la doivent aussi rejouer l'habillage
         # de TOUS les _MiniSlider deja construits (voir _apply_slider_style) —
@@ -4492,17 +4597,8 @@ class SettingsWindow(QDialog):
             self._button_radius_pending = None
 
     def _apply_button_radius(self, radius: int):
-        # Les boutons "Copier" (gabarits bordures/padding/coins arrondis)
-        # ont ete supprimes (voir _build_linked_sides_toggle/la remarque de
-        # l'utilisateur, "Pas de bouton copier") — ne reste ici QUE les
-        # boutons PERSISTANTS de cette fenetre (barre du bas, Parcourir,
-        # preset).
-        for btn in (
-            self._preset_save_btn, self._browse_btn,
-            self._bottombar_reset_btn, self._bottombar_apply_btn,
-            self._bottombar_cancel_btn, self._bottombar_save_btn,
-        ):
-            btn.setRadius(radius)
+        """Tous les _Btn suivent (inscription automatique, voir settings_theme)."""
+        _set_button_radius(radius)
 
     def _apply_columns_resizable(self, enabled: bool):
         """Tableaux > Colonnes dimensionnables : active/desactive le
@@ -4625,32 +4721,10 @@ class SettingsWindow(QDialog):
 
     def _apply_dropdown_radius(self, radius: int):
         """Applique le rayon a TOUTES les boites habillees comme une zone de
-        saisie (voir _SelectField/_HeaderColorField/_SliderField.setRadius) :
-        pas seulement les vrais QLineEdit de la fenetre principale, mais
-        aussi les menus deroulants, les boites de valeur des sliders, et la
-        boite de preset — voir la remarque de l'utilisateur, capture a
-        l'appui."""
-        for entry in self.font_table.rows.values():
-            entry["field"].setRadius(radius)
-        self.header_color_field.setRadius(radius)
-        self.table_head_color_field.setRadius(radius)
-        self.item_font_field.setRadius(radius)
-        for slider_field in (
-            self.scale_field, self.header_height_field, self.header_padding_field,
-            self.header_radius_field, self.header_border_thickness_field,
-            self.column_gap_field, self.column_border_thickness_field, self.column_border_radius_field,
-            self.geo_table.input_radius_field, self.geo_table.button_radius_field,
-            self.table_radius_field, self.slider_thumb_width_field,
-            self.slider_thumb_height_field, self.slider_track_height_field,
-            self.slider_thumb_radius_field, self.slider_track_radius_field,
-            self.item_row_height_field, self.item_row_spacing_field, self.item_text_padding_field,
-            self.item_row_border_field.thickness_field, self.item_image_border_thickness_field,
-            self.item_image_radius_field, self.item_selection_radius_field,
-            self.item_font_size_field, self.item_header_gap_field,
-        ):
-            slider_field.setRadius(radius)
-        self.cell_padding_field.setRadius(radius)
-        self.item_selection_padding_field.setRadius(radius)
+        saisie (boites de valeur des sliders, menus deroulants, boites hex,
+        boite de preset) : chacune s'est inscrite a sa creation (voir
+        settings_theme._register_input), aucune liste a tenir ici."""
+        _set_input_radius(radius)
         self._sync_preset_box()
 
     def _apply_column_preview(self, *_args):
@@ -4699,87 +4773,26 @@ class SettingsWindow(QDialog):
         self._apply_table_radius(self.table_radius_field.value())
 
     def _apply_table_radius(self, radius: int):
-        """Slider Geometrie > Tableaux > Coins arrondis (voir _TableFrame) :
-        arrondit les 3 tableaux "fermes" de cette fenetre (Polices, Entetes,
-        Geometrie — celui-ci y compris, voir la remarque de tete de
-        _TableFrame) — voir la remarque de l'utilisateur, capture a
-        l'appui. Prepare aussi le rayon des futurs tableaux STANDARD de
-        l'appli principale, s'il en apparait un jour (voir app_style.
-        set_table_radius, applique par pipeline_browser.apply_all_settings).
+        """Geometrie > Tableaux > Coins arrondis : les 4 tableaux a entete
+        (Polices, Geometrie, apercu, Couleurs), plus TOUS les tableaux fermes
+        sans entete, inscrits a leur construction (voir
+        settings_layout._register_flat_table). La premiere ligne d'un tableau
+        sans entete porte les coins hauts, la derniere les coins bas.
 
-        Polices et Geometrie ont chacun leur propre entete de colonnes (voir
-        _table_header) qui porte les coins hauts ; le tableau Entetes n'en a
-        pas (une seule "valeur" par ligne, voir _section_headers) — c'est
-        alors sa PREMIERE ligne qui doit porter les coins hauts, en plus de
-        la derniere qui porte toujours les coins bas."""
+        La bordure est rejouee ici aussi : cette fonction est rappelee apres
+        un changement de couleur (voir _refresh_dynamic_colors), et une
+        couleur de bordure « @<slot> » doit suivre la palette en direct."""
         self.font_table.apply_radius(radius)
         self.geo_table.apply_radius(radius)
         self.table_preview.apply_radius(radius)
         self.color_grid.setRadius(radius)
-        # Table Application (voir _build_flat_table, meme technique que la
-        # table Entetes/Colonnes ci-dessous).
-        self._app_table_row_meta = self._restyle_flat_table(self.app_table_frame, self._app_table_row_meta, radius)
-        # Table Tableaux (voir _section_tables, meme technique).
-        self._tables_row_meta = self._restyle_flat_table(self.tables_table_frame, self._tables_row_meta, radius)
-        # Table Toggles > Style (voir _section_toggles, meme technique) —
-        # trouvee manquante ici (comme dans _apply_cell_padding, meme
-        # lacune) en verifiant TOUS les tableaux un par un suite a la
-        # remarque de l'utilisateur.
-        self._toggles_row_meta = self._restyle_flat_table(self.toggles_table_frame, self._toggles_row_meta, radius)
-        # 2 tableaux Colonnes/Entetes (voir _section_headers, meme technique
-        # _build_flat_table que les tables Application/Tableaux ci-dessus —
-        # remplace l'ancien tableau UNIQUE "Entetes", voir la remarque de
-        # l'utilisateur, "fait deux tableaux plutot qu'un").
-        self._columns_table_row_meta = self._restyle_flat_table(
-            self.columns_table_frame, self._columns_table_row_meta, radius)
-        self._headers_table_row_meta = self._restyle_flat_table(
-            self.headers_table_frame, self._headers_table_row_meta, radius)
-        # Tableaux Lignes/Texte/Icone/Apercu/Selection de Items (voir
-        # _section_items, meme technique — "Texte" scindee en 4 sous-
-        # sous-sections, voir la remarque de l'utilisateur sur ce refactor).
-        self._titre_row_meta = self._restyle_flat_table(
-            self.titre_table_frame, self._titre_row_meta, radius)
-        self._item_lines_row_meta = self._restyle_flat_table(
-            self.item_lines_frame, self._item_lines_row_meta, radius)
-        self._item_text_row_meta = self._restyle_flat_table(
-            self.item_text_frame, self._item_text_row_meta, radius)
-        self._item_icon_row_meta = self._restyle_flat_table(
-            self.item_icon_frame, self._item_icon_row_meta, radius)
-        self._item_image_row_meta = self._restyle_flat_table(
-            self.item_image_frame, self._item_image_row_meta, radius)
-        self._item_selection_row_meta = self._restyle_flat_table(
-            self.item_selection_frame, self._item_selection_row_meta, radius)
-        # Les 2 sous-tables de Geometrie > Slider (voir _build_flat_table,
-        # meme technique que la table Entetes ci-dessus) suivent le meme
-        # rayon.
-        self._slider_thumb_row_meta = self._restyle_flat_table(
-            self.slider_thumb_frame, self._slider_thumb_row_meta, radius)
-        self._slider_rail_row_meta = self._restyle_flat_table(
-            self.slider_rail_frame, self._slider_rail_row_meta, radius)
-        # Les 4 sous-tables Cadre/Coche de Toggle 1/Toggle 2 (voir
-        # _build_toggle_shape_tables, meme technique) suivent le meme
-        # rayon.
-        for frames in self._toggle_frames.values():
-            for shape in ("outer", "coche"):
-                frame, meta = frames[shape]
-                frames[shape] = (frame, self._restyle_flat_table(frame, meta, radius))
-        # Bordure (voir _apply_table_border) rejouee ICI, PAS seulement sur
-        # son propre changement de champ : _apply_table_radius est deja
-        # rappelee apres un changement de couleur (voir _refresh_dynamic_
-        # colors) — la bordure doit alors, elle aussi, suivre une couleur
-        # "@<slot>" live, MEME raison qu'ici pour le rayon.
+        _set_flat_tables_style(radius=radius)
         self._apply_table_border()
 
     def _apply_table_border(self, *_args):
-        """Tableaux > Bordure/Epaisseur de bordure (voir _TableFrame.
-        setBorder) : MEME liste de tableaux "fermes" que _apply_table_
-        radius juste au-dessus (tous ceux qui ont un cadre _TableFrame) —
-        voir la remarque de l'utilisateur, "ajoute dans la section tableau
-        un parametre bordure comme celui des toggles". _resolve_color_
-        value/live_colors : MEME raison que pour Colonnes/Toggles > Bordure
-        (une couleur "@<slot>" doit suivre la palette LIVE pendant un
-        glisser de la page Couleurs, pas seulement self.settings["colors"],
-        perime jusqu'a l'Enregistrer)."""
+        """Tableaux > Bordure/Epaisseur de bordure, sur les memes tableaux que
+        _apply_table_radius. Couleurs resolues sur la palette EN DIRECT
+        (glisser dans la page Couleurs), pas seulement self.settings."""
         enabled = self.table_border_field.sidesEnabledValue()
         live_colors = dict(self.settings["colors"])
         live_colors.update(self.color_grid.value())
@@ -4788,113 +4801,29 @@ class SettingsWindow(QDialog):
         self.font_table.apply_border(enabled, colors, thickness)
         self.geo_table.apply_border(enabled, colors, thickness)
         self.table_preview.apply_border(enabled, colors, thickness)
-        self.app_table_frame.setBorder(enabled, colors, thickness)
-        self.tables_table_frame.setBorder(enabled, colors, thickness)
-        self.toggles_table_frame.setBorder(enabled, colors, thickness)
-        self.columns_table_frame.setBorder(enabled, colors, thickness)
-        self.headers_table_frame.setBorder(enabled, colors, thickness)
-        self.titre_table_frame.setBorder(enabled, colors, thickness)
-        self.item_lines_frame.setBorder(enabled, colors, thickness)
-        self.item_text_frame.setBorder(enabled, colors, thickness)
-        self.item_icon_frame.setBorder(enabled, colors, thickness)
-        self.item_image_frame.setBorder(enabled, colors, thickness)
-        self.item_selection_frame.setBorder(enabled, colors, thickness)
-        self.slider_thumb_frame.setBorder(enabled, colors, thickness)
-        self.slider_rail_frame.setBorder(enabled, colors, thickness)
-        for frames in self._toggle_frames.values():
-            for shape in ("outer", "coche"):
-                frame, _meta = frames[shape]
-                frame.setBorder(enabled, colors, thickness)
+        _set_flat_tables_style(border=(enabled, colors, thickness))
 
     def _apply_cell_padding(self, sides: dict):
-        """Tableaux > Padding des cellules (voir _CellPaddingField) :
-        s'applique a TOUS les tableaux de cette fenetre — les tableaux "1
-        valeur par ligne" (_build_flat_table/_section_headers, voir
-        _table_row), la grille Couleurs (voir _ColorGrid) ET, depuis la
-        remarque de l'utilisateur ("je ne vois pas pourquoi ca ne
-        fonctionnerait pas"), Polices/Geometrie aussi (voir _table_cell,
-        _SimpleFontTable.setCellPadding/_GeoTable.setCellPadding) — leur
-        entete (voir _ResizableTableHeader.setCellPadding) suit le GAUCHE/
-        DROITE pour rester aligne avec les colonnes en dessous."""
+        """Tableaux > Padding des cellules : TOUS les tableaux de cette
+        fenetre — tableaux fermes sans entete (inscrits, voir
+        settings_layout._register_flat_table), grille Couleurs, Polices et
+        Geometrie (leur entete suit le gauche/droite pour rester aligne)."""
         left = int(sides.get("left", 14))
         top = int(sides.get("top", 8))
         right = int(sides.get("right", 14))
         bottom = int(sides.get("bottom", 8))
-        rows = [
-            *self._app_table_row_meta,
-            *self._tables_row_meta,
-            *self._columns_table_row_meta,
-            *self._headers_table_row_meta,
-            *self._titre_row_meta,
-            *self._item_lines_row_meta,
-            *self._item_text_row_meta,
-            *self._item_icon_row_meta,
-            *self._item_image_row_meta,
-            *self._item_selection_row_meta,
-            *self._slider_thumb_row_meta,
-            *self._slider_rail_row_meta,
-            # Toggles > Style (voir _section_toggles) : ce petit tableau a
-            # 1 seule ligne ("Style") etait oublie ici (deja oublie aussi
-            # de _apply_table_radius, meme tableau, meme lacune anterieure
-            # a cette fonction) — trouve en verifiant TOUS les tableaux un
-            # par un suite a la remarque de l'utilisateur.
-            *self._toggles_row_meta,
-        ]
-        for frames in self._toggle_frames.values():
-            for shape in ("outer", "coche"):
-                _frame, meta = frames[shape]
-                rows.extend(meta)
-        for row, _bg, _first in rows:
-            row.layout().setContentsMargins(left, top, right, bottom)
-            # _lock_min_height (voir sa docstring) RE-appele ici, pas
-            # seulement a la construction de la ligne : son minimumHeight
-            # fige reste sinon celui calcule pour l'ANCIEN padding — ce
-            # qu'il faut pour un padding AGRANDI en direct (sans ca,
-            # l'espace de contenu reellement disponible passait sous zero,
-            # rendant texte/controle quasiment invisibles) mais _lock_min_
-            # height() prend le MAX avec la valeur figee EXISTANTE (voir sa
-            # docstring : c'est la protection voulue face a un contenu qui
-            # vient d'apparaitre, pas face a un padding qui vient de
-            # RETRECIR) — sans remettre ce plancher a zero d'abord, un
-            # padding reduit ne redescendait donc jamais (aucun effet visible
-            # en diminuant Haut/Bas, seul Gauche/Droite — pas concernes par
-            # une hauteur minimale — reagissaient) — voir la remarque de
-            # l'utilisateur.
-            row.setMinimumHeight(0)
-            _lock_min_height(row)
-        # Grille Couleurs (voir _ColorGrid) : meme correctif que ci-dessus,
-        # sur ses cellules plutot que des lignes de tableau — chacune a
-        # aussi son propre minimumHeight fige (voir _ColorGrid.__init__,
-        # ou _lock_min_height est deja appele a la construction pour EVITER
-        # le tassement des pastilles, remarque de l'utilisateur precedente).
+        _set_flat_tables_style(padding=(left, top, right, bottom))
         for cell, _row, _col in self.color_grid._cells:
             cell.layout().setContentsMargins(left, top, right, bottom)
             cell.setMinimumHeight(0)
             _lock_min_height(cell)
-        # Polices/Geometrie (voir la remarque de l'utilisateur) : chacun
-        # gere son propre padding (Gauche/Droite repercute aussi sur son
-        # entete, voir _SimpleFontTable/_GeoTable.setCellPadding).
         self.font_table.setCellPadding(sides)
         self.geo_table.setCellPadding(sides)
         self.table_preview.setCellPadding(sides)
-        # TOUS les cadres de tableau touches ci-dessus : voir
-        # _refresh_content_layout, qui a besoin que chacun ait deja
-        # digere son (ses) changement(s) de ligne/cellule AVANT de
-        # remonter la chaine plus haut (section, ascenseur).
-        frames = [
-            self.app_table_frame, self.tables_table_frame,
-            self.columns_table_frame, self.headers_table_frame,
-            self.titre_table_frame,
-            self.item_lines_frame, self.item_text_frame, self.item_icon_frame,
-            self.item_image_frame, self.item_selection_frame,
-            self.slider_thumb_frame, self.slider_rail_frame, self.toggles_table_frame,
-            self.color_grid.wrap, self.font_table.frame, self.geo_table.frame_wrap,
-            self.table_preview.frame,
-        ]
-        for toggle_frames in self._toggle_frames.values():
-            for shape in ("outer", "coche"):
-                frames.append(toggle_frames[shape][0])
-        self._refresh_content_layout(frames)
+        self._refresh_content_layout([
+            *_flat_tables(self),
+            self.color_grid.wrap, self.font_table.frame, self.geo_table.frame_wrap, self.table_preview.frame,
+        ])
 
     def _refresh_content_layout(self, frames: list[QWidget] = ()):
         """A appeler apres tout changement qui modifie la hauteur d'un
@@ -4943,23 +4872,6 @@ class SettingsWindow(QDialog):
     def _on_cell_padding_changed(self):
         self._apply_cell_padding(self.cell_padding_field.sidesValue())
         self._mark_dirty()
-
-    def _restyle_flat_table(self, frame: QWidget, row_meta: list, radius: int) -> list:
-        """Factorise le meme recalcul que la boucle ci-dessus (table Entetes),
-        pour les tableaux batis via _build_flat_table (voir Geometrie >
-        Slider)."""
-        frame.setRadius(radius)
-        last = len(row_meta) - 1
-        new_meta = []
-        for i, (row, _old_bg, first) in enumerate(row_meta):
-            bg = M["table_row_a"] if i % 2 == 0 else M["table_row_b"]
-            _restyle_table_row(
-                row, bg, first,
-                top_radius=(radius if i == 0 else 0),
-                bottom_radius=(radius if i == last else 0),
-            )
-            new_meta.append((row, bg, first))
-        return new_meta
 
     def _on_slider_style_changed(self, *_args):
         self._apply_slider_style()
@@ -5289,20 +5201,19 @@ class SettingsWindow(QDialog):
         return out
 
     def _current_values(self) -> dict:
+        if self._light:
+            # Seuls les champs Application existent : le reste est repris tel
+            # quel (et _on_save n'ecrit que ce qui a change).
+            out = dict(self.settings)
+            out.update(self._application_values())
+            return out
         colors = dict(self.settings["colors"])
         colors.update(self.color_grid.value())
         geo = self.geo_table.value()
         out = dict(self.settings)
         out.update(self._current_title_level_values())
+        out.update(self._application_values())
         out.update({
-            "root_path": self.root_field.text().strip() or DEFAULT_SETTINGS["root_path"],
-            "default_preset": "" if self.default_preset_field.value() == "(Aucun)" else self.default_preset_field.value(),
-            "ui_scale": self.scale_field.value(),
-            "auto_collapse_set_columns": self.auto_collapse_set_columns_field.isChecked(),
-            "application_omit_file_names": self.omit_file_names_field.values(),
-            "application_omit_extensions": [],
-            "application_omit_dir_names": self.omit_dir_names_field.values(),
-            "window_radius": self._window_radius_value(),
             "colors": colors,
             "header_visible": self.header_visible_field.isChecked(),
             "header_height": self.header_height_field.value(),
@@ -5506,7 +5417,15 @@ class SettingsWindow(QDialog):
         self._preview_now()
 
     def _on_save(self):
-        self.settings = self._current_values()
+        values = self._current_values()
+        if self._mode == "tout":
+            self.settings = values
+        else:
+            # Deux fenetres peuvent etre ouvertes : on ne reporte sur le
+            # disque que ce que CETTE fenetre a modifie, sans ecraser les
+            # reglages enregistres entre-temps par l'autre.
+            self.settings = load_settings()
+            self.settings.update({k: v for k, v in values.items() if v != self._original_settings.get(k)})
         save_settings(self.settings)
         # Met AUSSI a jour le preset ACTIF sur le disque, s'il y en a un
         # (voir _save_current_preset, MEME logique) : sans ca, ce bouton
@@ -5526,15 +5445,67 @@ class SettingsWindow(QDialog):
             presets[self._current_preset] = self.settings
             _save_presets(presets)
         self._saved = True
+        self._style_sig = self._style_signature(load_settings())
         self._dirty = False
         self.titlebar.set_dirty(False)
         self._sync_preset_box()
         self.settingsSaved.emit(self.settings)
         self.accept()
 
+    # Reglages qui habillent la fenetre elle-meme (couleurs, sliders, toggles,
+    # titres, arrondis, tableaux). Les controles qui les posent n'existent pas
+    # tous dans chaque mode : si l'un d'eux change sur le disque entre deux
+    # ouvertures, la fenetre cachee est perimee (voir is_stale).
+    _STYLE_PREFIXES = ("colors", "slider_", "toggle", "title_level", "input_radius",
+                       "button_radius", "window_radius", "table_", "font", "text_")
+
+    @classmethod
+    def _style_signature(cls, settings: dict) -> str:
+        return json.dumps({k: v for k, v in settings.items() if k.startswith(cls._STYLE_PREFIXES)},
+                          sort_keys=True, default=str)
+
+    def is_stale(self) -> bool:
+        """Vrai si l'habillage enregistre differe de celui avec lequel cette
+        fenetre a ete construite : reopen() ne le rejouerait pas, il faut la
+        reconstruire."""
+        return self._style_signature(load_settings()) != self._style_sig
+
+    def reopen(self):
+        """Remet la fenetre, gardee cachee apres sa fermeture (voir
+        PipelineBrowser._open_settings), dans l'etat d'une ouverture neuve :
+        reglages relus sur le disque, rien de modifie. Evite de reconstruire
+        ses milliers de widgets a chaque ouverture."""
+        self.settings = load_settings()
+        self._original_settings = json.loads(json.dumps(self.settings))
+        _set_input_radius(int(self.settings.get("input_radius", 0)))
+        _set_button_radius(int(self.settings.get("button_radius", 0)))
+        self._saved = False
+        self._apply_values_to_controls(self.settings)
+        default_preset = self.settings.get("default_preset")
+        self._current_preset = default_preset if default_preset in _load_presets() else "Personnalise"
+        self._refresh_default_preset_options()
+        # Les changements regroupes (couleurs, rayons...) que ces valeurs
+        # viennent de declencher s'appliquent tout de suite : arrives apres,
+        # ils marqueraient la fenetre comme modifiee.
+        for name in ("_colors_changed_timer", "_dropdown_radius_timer",
+                     "_button_radius_timer", "_column_type_preview_timer"):
+            timer = getattr(self, name, None)
+            if timer is not None and timer.isActive():
+                timer.stop()
+                timer.timeout.emit()
+        # Les valeurs posees sont celles que l'appli applique deja : rien a
+        # previsualiser, et la fenetre n'a rien de modifie.
+        self._live_timer.stop()
+        self._live_pending = False
+        self._dirty = False
+        self.titlebar.set_dirty(False)
+        self._sync_preset_box()
+
     def reject(self):
         if not self._saved:
             self.settingsChanged.emit(self._original_settings)
+            _set_input_radius(int(self._original_settings.get("input_radius", 0)))
+            _set_button_radius(int(self._original_settings.get("button_radius", 0)))
         self._save_window_geometry()
         super().reject()
 
@@ -5542,8 +5513,11 @@ class SettingsWindow(QDialog):
         self._save_window_geometry()
         super().accept()
 
+    def _geometry_key(self) -> str:
+        return "geometry_general" if self._mode == "general" else "geometry"
+
     def _save_window_geometry(self):
-        _save_window_geometry(bytes(self.saveGeometry().toBase64()).decode("ascii"))
+        _save_window_geometry(bytes(self.saveGeometry().toBase64()).decode("ascii"), self._geometry_key())
 
 def main():
     from app_style import apply_style

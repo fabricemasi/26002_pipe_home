@@ -35,10 +35,13 @@ from app_style import (
     _hex_to_alpha,
     _hex_to_rgb,
     apply_dwm_frame,
-    get_button_radius,
     get_input_radius,
     installed_font_families,
     ITEM_FONT_ROLE_LABELS,
+)
+from settings_theme import (  # noqa: F401 (reexportes)
+    _input_radius, _qfont, _register_input, _register_radius, _set_button_radius, _set_input_radius,
+    _set_text_role, _text_label,
 )
 from settings_store import (
     M,
@@ -54,42 +57,24 @@ from settings_store import (
 # Petits widgets reproduisant les controles de la maquette.
 # ==========================================================================
 
-def _qfont(size: int, weight: int = 400, mono: bool = False, tracking: float = 0.0) -> QFont:
-    f = QFont("Consolas" if mono else "Segoe UI")
-    f.setPixelSize(size)
-    f.setWeight(QFont.Weight(weight))
-    if tracking:
-        f.setLetterSpacing(QFont.AbsoluteSpacing, tracking)
-    return f
 
 class _Btn(QPushButton):
-    """Bouton rectangulaire plat (voir la meme classe dans l'ancienne
-    fenetre — inchangee, deja fidele). radius=0 par defaut (angle droit) ;
-    le popup couleur passe explicitement get_button_radius() pour ses
-    propres boutons (Reinitialiser/Annuler/Valider), qui restaient a angle
-    droit alors que les icones d'en-tete du meme popup (pipette...), elles,
-    suivent deja ce rayon (heritee du QSS global de l'appli, faute de
-    fond/bordure propres) — incoherent visuellement, voir la remarque de
-    l'utilisateur, capture annotee a l'appui : memes arrondis que
-    l'interface principale pour les boutons.
-
-    setRadius (voir SettingsWindow._apply_button_radius) : TOUS les autres
-    boutons persistants de cette fenetre (barre du bas, Parcourir, presets)
-    passaient bien radius=0 explicitement a la construction et ne le
-    reconsideraient plus jamais ensuite — orphelins de Geometrie > Boutons
-    > Coins arrondis quoi qu'il arrive, voir la remarque de l'utilisateur,
-    capture a l'appui ("leur bordure radius est a 0 alors que dans les
-    settings il a une valeur")."""
+    """Bouton rectangulaire plat. Son arrondi suit TOUJOURS Geometrie >
+    Boutons > Coins arrondis (inscription automatique, voir
+    settings_theme._register_radius) : ne jamais le fixer a la main."""
 
     def __init__(self, text: str, bg: str, border: str, fg: str, hover: str,
-                 height: int = 24, weight: int = 500, padding: str = "0 11px", radius: int = 0, parent=None):
+                 height: int = 24, weight: int = 500, padding: str = "0 11px", align_left: bool = False,
+                 parent=None):
         super().__init__(text, parent)
         self.setFixedHeight(height)
         self.setCursor(Qt.ArrowCursor)
         self.setFocusPolicy(Qt.NoFocus)
         self.setFont(_qfont(11, weight))
         self._bg, self._border, self._fg, self._hover, self._padding = bg, border, fg, hover, padding
-        self._radius = max(0, int(radius))
+        self._align_left = align_left
+        # Rayon : Geometrie > Boutons > Coins arrondis, suivi en direct (voir settings_theme).
+        self._radius = _register_radius(self, "button")
         self._refresh_style()
 
     def _refresh_style(self):
@@ -98,6 +83,7 @@ class _Btn(QPushButton):
             f"QPushButton {{ background: {self._bg}; {border_rule} border-radius: {self._radius}px; "
             f"color: {self._fg}; padding: {self._padding}; }}"
             f"QPushButton:hover {{ background: {self._hover}; }}"
+            + ("QPushButton { text-align: left; }" if self._align_left else "")
         )
 
     def setRadius(self, radius: int):
@@ -340,7 +326,8 @@ class _SliderField(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
         self.slider = _MiniSlider(minimum, maximum, value, slider_width)
-        self._radius = 0
+        self._radius = _input_radius()
+        _register_input(self)
         self.box = box = QWidget()
         box.setObjectName("SliderValueBox")
         box.setAttribute(Qt.WA_StyledBackground, True)
@@ -358,8 +345,7 @@ class _SliderField(QWidget):
         self.value_label.setStyleSheet(f"background: transparent; border: none; padding: 0; color: {M['value_text']};")
         self.value_label.editingFinished.connect(self._on_text_edited)
         unit_label = QLabel(unit)
-        unit_label.setFont(_qfont(9, 400, mono=True))
-        unit_label.setStyleSheet(f"color: {M['unit']}; background: transparent;")
+        _set_text_role(unit_label, "unit")
         box_l.addWidget(self.value_label, 1)
         box_l.addWidget(unit_label)
         layout.addWidget(self.slider)
@@ -418,11 +404,11 @@ class _RatioSliderField(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         prefix = QLabel("1/")
-        prefix.setFont(_qfont(11, 400, mono=True))
-        prefix.setStyleSheet(f"color: {M['unit']}; background: transparent;")
+        _set_text_role(prefix, "unit_large")
         layout.addWidget(prefix)
         self.slider = _MiniSlider(minimum, maximum, value_pct, slider_width)
-        self._radius = 0
+        self._radius = _input_radius()
+        _register_input(self)
         self._min, self._max = minimum, maximum
         self.box = box = QWidget()
         box.setObjectName("SliderValueBox")
@@ -505,9 +491,8 @@ class _SteppedSliderField(QWidget):
         layout.setSpacing(18)
         self.slider = _MiniSlider(0, len(labels) - 1, value, slider_width)
         self.value_label = QLabel(labels[value])
-        self.value_label.setFont(_qfont(11, 400))
+        _set_text_role(self.value_label, "value_muted")
         self.value_label.setFixedWidth(box_width)
-        self.value_label.setStyleSheet(f"color: {M['value_muted']}; background: transparent;")
         layout.addWidget(self.slider)
         layout.addWidget(self.value_label)
         self.slider.valueChanged.connect(self._on_change)
@@ -548,8 +533,7 @@ class _OverrideSmoothingField(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(2)
         title = QLabel("niveau de lissage")
-        title.setFont(_qfont(9, 400))
-        title.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        _set_text_role(title, "mini_label")
         title.setAlignment(Qt.AlignHCenter)
         outer.addWidget(title)
         step = _ITEM_FONT_SMOOTHING_STEPS.index(smoothing) if smoothing in _ITEM_FONT_SMOOTHING_STEPS else 2
@@ -641,7 +625,8 @@ class _SelectField(QPushButton):
         super().__init__(parent)
         self._options = options
         self._value = current if current in options else options[0]
-        self._radius = 0
+        self._radius = _input_radius()
+        _register_input(self)
         self.setFixedSize(width, 25)
         self.setCursor(Qt.ArrowCursor)
         self.setFocusPolicy(Qt.NoFocus)
@@ -814,8 +799,7 @@ class _DualFontSelectField(QWidget):
         app_stack_l.setContentsMargins(0, 0, 0, 0)
         app_stack_l.setSpacing(2)
         app_label = QLabel("app")
-        app_label.setFont(_qfont(9, 400))
-        app_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        _set_text_role(app_label, "mini_label")
         app_label.setAlignment(Qt.AlignHCenter)
         app_stack_l.addWidget(app_label)
         self.soft_toggle = _Toggle(is_soft, show_label=False)
@@ -833,8 +817,7 @@ class _DualFontSelectField(QWidget):
         sys_stack_l.setContentsMargins(0, 0, 0, 0)
         sys_stack_l.setSpacing(2)
         sys_label = QLabel("sys")
-        sys_label.setFont(_qfont(9, 400))
-        sys_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        _set_text_role(sys_label, "mini_label")
         sys_label.setAlignment(Qt.AlignHCenter)
         sys_stack_l.addWidget(sys_label)
         self.system_toggle = _Toggle(not is_soft, show_label=False)
@@ -1593,9 +1576,8 @@ class _ToggleStyleCard(QWidget):
         layout.setContentsMargins(16, 10, 16, 10)
         layout.setSpacing(8)
         title = QLabel(label)
-        title.setFont(_qfont(11, 600))
+        _set_text_role(title, "card_title")
         title.setAlignment(Qt.AlignHCenter)
-        title.setStyleSheet(f"color: {M['value_fg']}; background: transparent;")
         layout.addWidget(title, 0, Qt.AlignHCenter)
         self.preview = _ToggleShapePreview(style_key)
         layout.addWidget(self.preview, 0, Qt.AlignHCenter)
@@ -1682,9 +1664,8 @@ class _CornerPositionCard(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         title = QLabel(label)
-        title.setFont(_qfont(11, 600))
+        _set_text_role(title, "card_title")
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet(f"color: {M['value_fg']}; background: transparent;")
         layout.addWidget(title, 0, Qt.AlignCenter)
         self._refresh_style()
 
@@ -1773,8 +1754,7 @@ class _ResizeBadgePositionField(QWidget):
 
         def labeled_slider(text: str, value: int) -> tuple[QLabel, _SliderField]:
             label = QLabel(text)
-            label.setFont(_qfont(11, 600))
-            label.setStyleSheet(f"color: {M['value_fg']}; background: transparent;")
+            _set_text_role(label, "card_title")
             slider = _SliderField(0, 64, value, slider_width=90, box_width=48)
             return label, slider
 
@@ -2454,12 +2434,10 @@ class _ColorPickerPopup(QWidget):
         head_l.setContentsMargins(10, 0, 8, 0)
         head_l.setSpacing(8)
         tag = QLabel("COULEUR")
-        tag.setFont(_qfont(9, 600, tracking=0.7))
-        tag.setStyleSheet(f"color: {M['toggle_on_fg']}; background: transparent;")
+        _set_text_role(tag, "tag_accent")
         head_l.addWidget(tag)
         title_label = QLabel(title)
-        title_label.setFont(_qfont(11, 600))
-        title_label.setStyleSheet(f"color: {M['value_fg']}; background: transparent;")
+        _set_text_role(title_label, "card_title")
         title_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         head_l.addWidget(title_label, 1)
         pipette_btn = _PipetteButton(M["label_dim"])
@@ -2570,8 +2548,7 @@ class _ColorPickerPopup(QWidget):
         hex_l.setContentsMargins(9, 0, 9, 0)
         hex_l.setSpacing(9)
         hex_tag = QLabel("HEX")
-        hex_tag.setFont(_qfont(9, 400, mono=True))
-        hex_tag.setStyleSheet(f"color: {M['label_dim']}; background: transparent;")
+        _set_text_role(hex_tag, "hex_tag")
         hex_l.addWidget(hex_tag)
         self.hex_edit = QLineEdit()
         self.hex_edit.setFont(_qfont(13, 400, mono=True))
@@ -2597,21 +2574,19 @@ class _ColorPickerPopup(QWidget):
         foot_l = QHBoxLayout(foot)
         foot_l.setContentsMargins(12, 0, 12, 0)
         foot_l.setSpacing(6)
-        btn_radius = get_button_radius()
         reset_btn = _Btn("Reinitialiser", "transparent", M["btn_border"], M["reset_fg"], M["btn_bg"],
-                          height=25, padding="0 10px", radius=btn_radius)
+                          height=25, padding="0 10px")
         reset_btn.clicked.connect(self._on_reset)
         foot_l.addWidget(reset_btn)
         foot_l.addStretch(1)
-        cancel_btn = _Btn("Annuler", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=25,
-                           radius=btn_radius)
+        cancel_btn = _Btn("Annuler", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=25)
         cancel_btn.clicked.connect(self._on_cancel)
         foot_l.addWidget(cancel_btn)
         # Pas de bordure (voir la remarque de l'utilisateur, capture
         # annotee a l'appui, "supprime bordure") — fond plein uniquement,
         # comme un bouton primaire de l'appli principale.
         ok_btn = _Btn("Valider", M["accent"], "", M["accent_fg"], M["accent_hover"],
-                      height=25, weight=600, padding="0 14px", radius=btn_radius)
+                      height=25, weight=600, padding="0 14px")
         ok_btn.clicked.connect(self._on_commit)
         foot_l.addWidget(ok_btn)
         outer.addWidget(foot)
@@ -2622,8 +2597,7 @@ class _ColorPickerPopup(QWidget):
 
     def _tag_label(self, text: str) -> QLabel:
         label = QLabel(text)
-        label.setFont(_qfont(9, 600, tracking=0.7))
-        label.setStyleSheet(f"color: {M['label_dim']}; background: transparent;")
+        _set_text_role(label, "tag")
         return label
 
     def _divider(self) -> QWidget:
@@ -2637,8 +2611,7 @@ class _ColorPickerPopup(QWidget):
         row.setSpacing(9)
         name = QLabel(label)
         name.setFixedWidth(70)
-        name.setFont(_qfont(11, 400))
-        name.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        _set_text_role(name, "inline_label")
         row.addWidget(name)
         slider = _GradientSlider(checkerboard=checkerboard)
         row.addWidget(slider, 1)
@@ -2664,14 +2637,12 @@ class _ColorPickerPopup(QWidget):
         box_l.setContentsMargins(9, 0, 9, 0)
         box_l.setSpacing(2)
         val_label = QLabel("0")
-        val_label.setFont(_qfont(11, 400, mono=True))
+        _set_text_role(val_label, "value_mono")
         val_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        val_label.setStyleSheet(f"color: {M['value_text']}; background: transparent;")
         box_l.addWidget(val_label, 1)
         if unit:
             unit_label = QLabel(unit)
-            unit_label.setFont(_qfont(9, 400, mono=True))
-            unit_label.setStyleSheet(f"color: {M['unit']}; background: transparent;")
+            _set_text_role(unit_label, "unit")
             box_l.addWidget(unit_label)
         row.addWidget(box)
         return row, slider, val_label
@@ -3125,8 +3096,7 @@ class _AppOrCustomColorField(QWidget):
         is_slot = value.startswith("@")
 
         app_label = QLabel("Couleur application")
-        app_label.setFont(_qfont(10, 400))
-        app_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        _set_text_role(app_label, "choice_label")
         layout.addWidget(app_label)
         self.app_toggle = _Toggle(is_slot, show_label=False)
         layout.addWidget(self.app_toggle)
@@ -3135,8 +3105,7 @@ class _AppOrCustomColorField(QWidget):
         layout.addWidget(self.app_field)
 
         system_label = QLabel("Couleur systeme")
-        system_label.setFont(_qfont(10, 400))
-        system_label.setStyleSheet(f"color: {M['row_label']}; background: transparent;")
+        _set_text_role(system_label, "choice_label")
         layout.addWidget(system_label)
         self.system_toggle = _Toggle(not is_slot, show_label=False)
         layout.addWidget(self.system_toggle)

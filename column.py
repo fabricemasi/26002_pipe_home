@@ -139,7 +139,7 @@ class Column(QWidget):
     def __init__(self, directory: Path, title: str, parent=None,
                  source_dirs: list[Path] | None = None, display_title: str | None = None,
                  style_title: str | None = None,
-                 user_width: int | None = None, on_resize=None,
+                 user_width: int | None = None, on_resize=None, on_resize_end=None,
                  group_kind: str | None = None, on_reorder=None,
                  user_height: int | None = None, on_height_resize=None, fill_height: bool = False,
                  on_height_resize_begin=None, on_height_resize_end=None,
@@ -263,6 +263,9 @@ class Column(QWidget):
         # localement par resize_update, voir sa remarque).
         self._user_width = user_width
         self._on_resize = on_resize
+        # Relais de fin de glisser (groupe : enregistre la largeur commune des
+        # colonnes pinnees voisines, voir PipelineBrowser._on_group_column_resize_end).
+        self._on_resize_end = on_resize_end
         # `group_kind`/`on_reorder` : active le glisser-deposer de l'ENTETE
         # (pas le contenu de la liste, deja pris par FileListWidget) pour
         # interchanger la place de cette colonne avec une AUTRE colonne du
@@ -345,7 +348,11 @@ class Column(QWidget):
         # Type/Projets/Sous-projet legacy/Logiciels/Contenu/groupe) : MEME
         # valeur que `title`, comportement rigoureusement INCHANGE.
         self.style_title = style_title if style_title is not None else title
-        self.has_thumbnails = title in THUMBNAIL_COLUMN_LABELS
+        # Tuile a vignette de projet (ProjectTileDelegate, compte d'elements) :
+        # SEULEMENT "Projets". Toute autre colonne (Sous-projet, niveaux
+        # configures, contenu) se comporte comme les colonnes ouvertes apres
+        # IN/OVER/OUT : RowDelegate, apercus des fichiers, meme menu.
+        self.has_thumbnails = title == "Projets"
         # `is_focus_level` (voir update_preview_stack, group_columns du
         # groupe IN/OVER/OUT/LOGICIELS) : participation a la pile Focus,
         # DECOUPLEE de `has_thumbnails` (qui pilote le RENDU — tuile a
@@ -358,7 +365,7 @@ class Column(QWidget):
         # INCHANGE (seules Projets/Sous-projet participaient a la pile) —
         # voir la remarque de l'utilisateur, "le toggle focus [est]
         # independant par colonne".
-        self.is_focus_level = self.has_thumbnails if is_focus_level is None else is_focus_level
+        self.is_focus_level = (title in THUMBNAIL_COLUMN_LABELS) if is_focus_level is None else is_focus_level
         # `show_dirs`/`show_files`/`omit_dirs`/`omit_files` (voir refresh(),
         # ColumnConfigDialog) : filtres de CONTENU d'un niveau de la chaine
         # CONFIGUREE — True/True/vide (comportement INCHANGE, tout est
@@ -799,6 +806,8 @@ class Column(QWidget):
             # automatiquement" (sans repincer/depincer a la main).
             self._pin_column_width = self.width()
             _update_layout_setting(self.directory, "pinned_column_width", self._pin_column_width)
+        if self._on_resize_end is not None:
+            self._on_resize_end()
         # Sans punaise et hors "Type" : la largeur n'est PLUS persistee du
         # tout (voir la remarque de l'utilisateur, "les hauteurs ne peuvent
         # pas etre enregistrees sauf si on met la punaise" — meme principe
@@ -1578,6 +1587,9 @@ class Column(QWidget):
         self._refresh_pin_icon()
         self.setFixedWidth(self._pin_column_width or self._user_width or col_width(self.style_title))
         self.list.doItemsLayout()
+        if self._on_resize is not None:
+            # Colonne du groupe : les voisines suivent la largeur (commune).
+            self._on_resize(self.width())
 
     def _update_card_mask(self):
         """Decoupe VRAIMENT self.card (fond + TOUS ses enfants — entete ET

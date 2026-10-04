@@ -81,11 +81,27 @@ class FileListWidget(QListWidget):
         self.setDefaultDropAction(Qt.MoveAction)
         self._press_on_current = None
 
+    # Qt donne le focus a la 1re ligne quand une liste SANS ligne courante
+    # recoit le focus (fermeture du menu contextuel, ouverture/fermeture de
+    # la fenetre de saisie "Nouveau dossier"...) : cette selection
+    # involontaire lancait une navigation. On l'annule, en silence.
+    def focusInEvent(self, event):
+        if self.currentItem() is not None:
+            super().focusInEvent(event)
+            return
+        self.blockSignals(True)
+        try:
+            super().focusInEvent(event)
+            if self.currentItem() is not None:
+                self.setCurrentItem(None)
+                self.clearSelection()
+        finally:
+            self.blockSignals(False)
+
     # Un clic sur la ligne DEJA selectionnee ne declenche aucun
-    # currentItemChanged : on rejoue alors la selection (voir
-    # Column.reselect_current) pour revenir en arriere dans le chemin, en
-    # fermant les colonnes ouvertes a droite — voir la remarque de
-    # l'utilisateur, "si je clique sur notes il ne se passe rien".
+    # currentItemChanged : la fenetre decide quoi faire (voir
+    # PipelineBrowser.on_reclicked) — rien si une seule colonne est ouverte
+    # apres celle-ci, sinon on revient a cette seule colonne suivante.
     def mousePressEvent(self, event):
         item = self.itemAt(event.position().toPoint())
         plain_left = event.button() == Qt.LeftButton and event.modifiers() == Qt.NoModifier
@@ -97,7 +113,9 @@ class FileListWidget(QListWidget):
         super().mouseReleaseEvent(event)
         if (pressed is not None and event.button() == Qt.LeftButton
                 and self.itemAt(event.position().toPoint()) is pressed):
-            self.column.reselect_current()
+            handler = getattr(self.column.window(), "on_reclicked", None)
+            if handler is not None:
+                handler(self.column)
 
     def mimeData(self, items):
         mime = QMimeData()

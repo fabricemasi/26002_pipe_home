@@ -5,7 +5,7 @@ from pathlib import Path
 import threading
 import time
 from PySide6.QtCore import (
-    QByteArray, QEasingCurve, QEventLoop, QParallelAnimationGroup, QPoint, QPropertyAnimation, QRect, Qt,
+    QByteArray, QEasingCurve, QEventLoop, QParallelAnimationGroup, QPoint, QPropertyAnimation, QRect, QRectF, Qt,
     QTimer,
 )
 from PySide6.QtGui import (
@@ -89,6 +89,7 @@ from browser_core import (
     col_width,
     load_layout_settings,
     load_project_columns,
+    open_in_file_manager,
     open_path,
     project_thumbnail_pixmap,
     status_folder_state,
@@ -112,6 +113,15 @@ from previews import (
 from browser_core import (
     _FadeOverlay,
 )
+from focus import FocusOverlay
+import shiboken6
+
+
+def _anim_running(overlay) -> bool:
+    """Overlay d'animation (fondu, glissement) reellement en cours. Un overlay
+    detruit sans etre alle au bout (objet Qt supprime) ne compte pas : sinon
+    son drapeau `running` reste vrai et bloque toutes les animations suivantes."""
+    return overlay is not None and overlay.running and shiboken6.isValid(overlay)
 from browser_core import (
     _SlideOverlay,
     DETAIL_PANEL_MIN_WIDTH,
@@ -130,6 +140,14 @@ from previews import (
 # deplacement, reduction/agrandissement/fermeture — avec le meme habillage
 # sombre que le reste de l'appli plutot que le chrome blanc/bleu de Windows.
 # ==========================================================================
+
+def _set_qss(widget, qss: str) -> None:
+    """setStyleSheet seulement si la feuille change : sur un conteneur qui
+    porte toute la fenetre, Qt repolit tous les descendants meme pour un
+    texte identique (~7 ms par appel, rejoue a chaque cran de slider)."""
+    if widget.styleSheet() != qss:
+        widget.setStyleSheet(qss)
+
 
 class TitleBar(QWidget):
 
@@ -271,6 +289,8 @@ class PipelineBrowser(QMainWindow):
         self._project_columns_collapsed = False
         self._project_columns_hidden = False
         self._columns_fade = None
+        self._focus_overlay = None    # objet en focus au centre (voir _start_focus_overlay)
+        self._focus_src = None        # (pixmap, QRect dans le viewport) de l'objet dans l'inspecteur
         self._select_fade = None
         self._columns_slide = None
         self._slide_snapshot = None
@@ -447,19 +467,23 @@ class PipelineBrowser(QMainWindow):
         # Symbol...) ne le rendait de facon fiable a cette taille — meme
         # correctif que pour les boutons min/max/close de TitleBar.
         self.btn_settings = IconButton("gear", role_color("buttons", "#c4cacf"), C["text"])
-        for btn in (self.btn_browse, self.btn_reload, self.btn_last_place, self.btn_settings):
+        self.btn_style = IconButton("sliders", role_color("buttons", "#c4cacf"), C["text"])
+        for btn in (self.btn_browse, self.btn_reload, self.btn_last_place, self.btn_style, self.btn_settings):
             btn.setFont(role_font("buttons", 11, 500))
             btn.setFixedHeight(scaled(24))
             btn.setCursor(Qt.ArrowCursor)
         for btn in (self.btn_browse, self.btn_reload, self.btn_last_place):
             btn.setStyleSheet(f"color: {role_color('buttons', '#c4cacf')};")
         self.btn_settings.setFixedWidth(scaled(28))
-        self.btn_settings.setToolTip("Parametres")
+        self.btn_style.setFixedWidth(scaled(28))
+        self.btn_style.setToolTip("Parametres visuels")
+        self.btn_settings.setToolTip("Parametres generaux")
         self.btn_last_place.setToolTip("Revenir a l'endroit ouvert a la derniere fermeture")
         self.btn_browse.clicked.connect(self.browse_root)
         self.btn_reload.clicked.connect(self.reload)
         self.btn_last_place.clicked.connect(self.go_to_last_place)
-        self.btn_settings.clicked.connect(self.open_settings)
+        self.btn_settings.clicked.connect(lambda: self.open_settings("general"))
+        self.btn_style.clicked.connect(lambda: self.open_settings("visuel"))
         # Chemin ouvert a la derniere fermeture (voir closeEvent) : l'appli
         # s'ouvre toujours a la racine, ce bouton permet d'y revenir a la
         # demande plutot que d'y naviguer automatiquement (voir
@@ -491,6 +515,7 @@ class PipelineBrowser(QMainWindow):
         top_layout.addWidget(self.btn_reload)
         top_layout.addWidget(self.btn_last_place)
         top_layout.addWidget(self.synced_label)
+        top_layout.addWidget(self.btn_style)
         top_layout.addWidget(self.btn_settings)
 
         # --- zone des colonnes ---
@@ -733,21 +758,27 @@ class PipelineBrowser(QMainWindow):
             self.columns_layout.removeWidget(self._group_stack_wrapper)
 
     def _clear_group_stack(self):
-        if self._group_stack_wrapper is not None:
-            self.columns_layout.removeWidget(self._group_stack_wrapper)
-            self._group_stack_wrapper.setParent(None)
-            self._group_stack_wrapper.deleteLater()
+        wrapper = self._group_stack_wrapper
+        if wrapper is not None:
+            # Remis a None AVANT setParent(None) : le focus qui quitte le conteneur
+            # peut relancer une navigation (reentrante) qui repasse par ici.
             self._group_stack_wrapper = None
+            self.columns_layout.removeWidget(wrapper)
+            wrapper.setParent(None)
+            wrapper.deleteLater()
         self.group_columns = []
         self._group_context_key = None
         self._last_active_group_column = None
 
     def _clear_image_preview_columns(self):
-        if self._preview_stack_wrapper is not None:
-            self.columns_layout.removeWidget(self._preview_stack_wrapper)
-            self._preview_stack_wrapper.setParent(None)
-            self._preview_stack_wrapper.deleteLater()
+        wrapper = self._preview_stack_wrapper
+        if wrapper is not None:
+            # Remis a None AVANT setParent(None) : le focus qui quitte le conteneur
+            # peut relancer une navigation (reentrante) qui repasse par ici.
             self._preview_stack_wrapper = None
+            self.columns_layout.removeWidget(wrapper)
+            wrapper.setParent(None)
+            wrapper.deleteLater()
         self.image_preview_columns = []
 
     def add_column(self, directory: Path, depth: int, title: str | None = None,
@@ -1369,6 +1400,7 @@ class PipelineBrowser(QMainWindow):
                 stable_directory, style_title,
                 source_dirs=source_dirs, source_labels=source_labels, display_title=display,
                 user_width=self._group_column_user_width, on_resize=self._on_group_column_resized,
+                on_resize_end=self._on_group_column_resize_end,
                 group_kind=kind, on_reorder=self._on_group_reorder,
                 user_height=self._group_column_user_heights.get(kind), on_height_resize=self._on_group_height_resized,
                 on_height_resize_begin=self._on_group_height_resize_begin,
@@ -1405,6 +1437,7 @@ class PipelineBrowser(QMainWindow):
         for kind in active_group_order:
             display, source_dirs, style_title, source_labels = groups[kind]
             add_group_column(kind, display, source_dirs, style_title, source_labels)
+        self._sync_group_widths()
 
         self._group_stack_wrapper = group_wrapper
         self.columns_layout.insertWidget(anchor + group_anchor_offset, group_wrapper)
@@ -1479,7 +1512,7 @@ class PipelineBrowser(QMainWindow):
         insert_index = self._chain_expected_total() - 1
         # Contenu deja ouvert apres le groupe : il s'estompe (voir on_selected).
         pending = self._select_fade
-        if pending is not None and pending.running:
+        if _anim_running(pending):
             pending.finish_now()
         fade = self._fade_before_select(self._group_stack_wrapper)
         self.prune_after(insert_index)
@@ -1511,9 +1544,37 @@ class PipelineBrowser(QMainWindow):
         colonnes doivent avoir la meme largeur constamment"."""
         self._group_column_user_width = new_width
         for column in self.group_columns:
+            # Une colonne pinnee suit aussi : la largeur du groupe est commune,
+            # punaise ou non (sinon les autres reprenaient leur largeur a la
+            # reconstruction suivante). Enregistree au relachement, voir
+            # _on_group_column_resize_end.
+            if column._pin_active:
+                column._pin_column_width = new_width
             if column.width() != new_width:
                 column._user_width = new_width
                 column.setFixedWidth(new_width)
+
+    def _on_group_column_resize_end(self) -> None:
+        """Fin d'un glisser de largeur dans le groupe : enregistre la largeur
+        commune dans le dossier de CHAQUE colonne pinnee du groupe."""
+        for column in self.group_columns:
+            if column._pin_active and column._pin_column_width:
+                _update_layout_setting(column.directory, "pinned_column_width", column._pin_column_width)
+
+    def _sync_group_widths(self) -> None:
+        """Largeur COMMUNE aux colonnes du groupe IN/OVER/OUT/LOGICIELS apres
+        leur (re)construction : la largeur figee de la premiere colonne pinnee
+        (ordre courant) l'emporte, sinon la derniere largeur choisie a la main."""
+        pinned = [c._pin_column_width for c in self.group_columns if c._pin_active and c._pin_column_width]
+        width = pinned[0] if pinned else self._group_column_user_width
+        if not width:
+            return
+        self._group_column_user_width = width
+        for column in self.group_columns:
+            column._user_width = width
+            if column._pin_active:
+                column._pin_column_width = width
+            column.setFixedWidth(width)
 
     def _on_group_height_resize_begin(self, kind: str) -> None:
         """Debut d'un glisser du bord bas d'une colonne du groupe (voir
@@ -1761,8 +1822,12 @@ class PipelineBrowser(QMainWindow):
         """Si des colonnes sont deja deployees apres `column`, elles s'estompent
         toutes ensemble pendant que la navigation s'applique
         et que la nouvelle colonne sort de dessous."""
+        if column not in self.columns:
+            # Colonne deja retiree (signal emis pendant sa destruction, ou focus
+            # passe a une liste pendant une reconstruction) : rien a naviguer.
+            return
         pending = self._select_fade
-        if pending is not None and pending.running:
+        if _anim_running(pending):
             pending.finish_now()
         overlay = self._fade_before_select(column)
         self._on_selected_now(column, path)
@@ -1771,9 +1836,69 @@ class PipelineBrowser(QMainWindow):
             # contenu s'estompe PENDANT que la nouvelle colonne sort de dessous.
             QTimer.singleShot(0, lambda: self._raise_select_fade(overlay))
 
+    def on_reclicked(self, column: Column):
+        """Clic sur la ligne DEJA selectionnee de `column` (voir
+        FileListWidget.mouseReleaseEvent). Une seule colonne (ou rien) ouverte
+        apres elle : rien ne se passe. Au moins deux : on ne garde que la
+        colonne qui suit directement, tout ce qui est au-dela disparait (en
+        fondu). Le bloc IN/OVER/OUT/LOGICIELS compte pour UNE colonne."""
+        path = column.current_path()
+        if path is None:
+            return
+        expected_total = self._chain_expected_total()
+        group_shown = bool(self.group_columns) and self._group_stack_wrapper is not None
+        if column in self.group_columns:
+            # Colonne suivante = contenu ouvert depuis le groupe.
+            keep_index = expected_total
+            if len(self.columns) - keep_index < 2:
+                return
+            keep_widget = self.columns[keep_index]
+        elif column in self.columns:
+            index = self.columns.index(column)
+            after = len(self.columns) - index - 1
+            if group_shown and index < expected_total:
+                after += 1
+            if after < 2:
+                return
+            if group_shown and index == expected_total - 1:
+                # Colonne suivante = le bloc du groupe : le contenu ouvert
+                # depuis lui disparait, sa selection aussi.
+                keep_index = index
+                keep_widget = self._group_stack_wrapper
+            else:
+                keep_index = index + 1
+                keep_widget = self.columns[keep_index]
+            self._last_active_group_column = None
+            if index < expected_total:
+                for group_column in self.group_columns:
+                    group_column.list.clearSelection()
+                    group_column.list.setCurrentItem(None)
+        else:
+            return
+        pending = self._select_fade
+        if _anim_running(pending):
+            pending.finish_now()
+        overlay = self._fade_before_select(keep_widget)
+        self.prune_after(keep_index)
+        if isinstance(keep_widget, Column):
+            # La colonne gardee revient a son etat d'ouverture : plus de
+            # selection, puisque ce qu'elle ouvrait vient d'etre ferme.
+            keep_widget.list.blockSignals(True)
+            keep_widget.list.clearSelection()
+            keep_widget.list.setCurrentItem(None)
+            keep_widget.list.blockSignals(False)
+        self.path_label.setText(str(path))
+        self.detail.show_path(path)
+        self.update_active_column()
+        self._sync_collapse_state()
+        self.update_preview_stack()
+        self._slide_snapshot = None
+        if overlay is not None:
+            QTimer.singleShot(0, lambda: self._raise_select_fade(overlay))
+
     def _raise_select_fade(self, overlay):
         try:
-            if overlay.running:
+            if _anim_running(overlay):
                 overlay.raise_()
         except RuntimeError:
             pass
@@ -1783,9 +1908,13 @@ class PipelineBrowser(QMainWindow):
         ou le bloc IN/OVER/OUT/LOGICIELS)."""
         try:
             if (column is None or not self.isVisible() or self._project_columns_hidden
-                    or (self._columns_slide is not None and self._columns_slide.running)
-                    or (self._columns_fade is not None and self._columns_fade.running)):
+                    or _anim_running(self._columns_fade)):
                 return None
+            if _anim_running(self._columns_slide):
+                # Clic pendant un glissement (apparition de la colonne precedente,
+                # repli auto...) : on le termine (etat final pose) puis on capture.
+                # L'abandonner faisait disparaitre l'ancien contenu sans fondu.
+                self._columns_slide.finish_now()
             self.columns_layout.activate()
             rect = self._columns_visible_rect()
             viewport = self.scroll.viewport()
@@ -1965,6 +2094,24 @@ class PipelineBrowser(QMainWindow):
         self._slide_snapshot = None   # les colonnes de droite ont change : capture perimee
         if len(self.columns) > index + 1:
             QTimer.singleShot(0, lambda c=self.columns[index + 1]: self._animate_column_in(c))
+        else:
+            # Pas de nouvelle vraie colonne (dernier niveau atteint) : c'est le groupe
+            # IN/OVER/OUT/LOGICIELS ou les colonnes Focus qui apparaissent ; ils sortent
+            # de dessous de la meme facon (sinon ils surgissaient sous le fondu).
+            QTimer.singleShot(0, lambda c=column: self._animate_column_in(self._widget_after(c)))
+
+    def _widget_after(self, widget):
+        """Premier widget visible place apres `widget` dans columns_layout, ou None."""
+        found = False
+        for i in range(self.columns_layout.count()):
+            item = self.columns_layout.itemAt(i).widget()
+            if item is None:
+                continue
+            if found and item.isVisible() and item.width() > 0:
+                return item
+            if item is widget:
+                found = True
+        return None
 
     def _animate_column_in(self, column):
         """Apparition d'une colonne nouvellement ajoutee : meme mouvement que le
@@ -1972,9 +2119,13 @@ class PipelineBrowser(QMainWindow):
         suit sortent de SOUS la colonne precedente (fixe), avec une ombre portee. Joue sur des
         captures de l'etat final ; les colonnes de gauche ne bougent pas."""
         try:
-            if (column not in self.columns or not self.isVisible() or self._project_columns_hidden
-                    or column.width() <= 0 or column.collapsed
-                    or (self._columns_slide is not None and self._columns_slide.running)):
+            # `column` : une colonne, ou le bloc IN/OVER/OUT/LOGICIELS ou Focus (voir _widget_after).
+            if column is None or not shiboken6.isValid(column):
+                return
+            if (not (column in self.columns or column in (self._group_stack_wrapper, self._preview_stack_wrapper))
+                    or not self.isVisible() or self._project_columns_hidden
+                    or column.width() <= 0 or getattr(column, "collapsed", False)
+                    or _anim_running(self._columns_slide)):
                 return
             self.columns_layout.activate()
             bar = self.scroll.horizontalScrollBar()
@@ -1984,7 +2135,7 @@ class PipelineBrowser(QMainWindow):
             # Le fondu de l'ancien contenu (voir on_selected) est un enfant du viewport :
             # il serait recopie dans la capture. On le retire le temps de la prise.
             fade = self._select_fade
-            fade_up = fade is not None and fade.running and fade.isVisible()
+            fade_up = _anim_running(fade) and fade.isVisible()
             if fade_up:
                 fade.hide()
             try:
@@ -2006,7 +2157,10 @@ class PipelineBrowser(QMainWindow):
                 # La colonne qui sort reste 100 % opaque : le fondu ne la recouvre pas
                 # (son dernier emplacement est conserve une fois l'animation finie).
                 last = {}
-                content_w = max(1, self._columns_visible_rect().right() + 1 - x)
+                # Largeur du contenu REEL qui sort (colonne + ce qui la suit), SANS
+                # l'inspecteur : l'inclure etendait la zone exclue a toute la droite et
+                # l'ancien contenu disparaissait d'un coup au lieu de s'estomper.
+                content_w = max(1, self._columns_content_right() - x)
 
                 def covered(slide=overlay):
                     try:
@@ -2082,7 +2236,7 @@ class PipelineBrowser(QMainWindow):
         return widgets
 
     def _toggled_widgets(self) -> list:
-        return self._hideable_widgets() + list(self.image_preview_columns[1:])
+        return self._hideable_widgets() + list(self.image_preview_columns[1:]) + [self.detail]
 
     def _apply_columns_hidden(self, hidden: bool):
         """Masque/restaure INSTANTANEMENT ; ne restaure que ce que le bouton a
@@ -2105,7 +2259,7 @@ class PipelineBrowser(QMainWindow):
     def _columns_visible_rect(self) -> QRect:
         viewport = self.scroll.viewport()
         rect = QRect()
-        candidates = [*self._hideable_widgets(), *self.image_preview_columns]
+        candidates = [*self._hideable_widgets(), *self.image_preview_columns, self.detail]
         if self._preview_stack_wrapper is not None:
             candidates.append(self._preview_stack_wrapper)
         for widget in candidates:
@@ -2113,11 +2267,23 @@ class PipelineBrowser(QMainWindow):
                 rect = rect.united(QRect(widget.mapTo(viewport, QPoint(0, 0)), widget.size()))
         return rect.intersected(viewport.rect())
 
+    def _columns_content_right(self) -> int:
+        """Bord droit (repere du viewport) de la derniere colonne visible, inspecteur exclu."""
+        viewport = self.scroll.viewport()
+        right = 0
+        candidates = [*self._hideable_widgets(), *self.image_preview_columns]
+        if self._preview_stack_wrapper is not None:
+            candidates.append(self._preview_stack_wrapper)
+        for widget in candidates:
+            if widget.isVisible() and widget.width() > 0:
+                right = max(right, widget.mapTo(viewport, QPoint(0, 0)).x() + widget.width())
+        return right
+
     def _column_spans(self, rect: QRect) -> list:
         """Bandes (x0, x1), dans le repere de `rect`, une par colonne visible, de gauche a
         droite ; elles se touchent (l'espace entre deux colonnes va a la precedente)."""
         viewport = self.scroll.viewport()
-        candidates = [*self._hideable_widgets(), *self.image_preview_columns]
+        candidates = [*self._hideable_widgets(), *self.image_preview_columns, self.detail]
         if self._preview_stack_wrapper is not None:
             candidates.append(self._preview_stack_wrapper)
         starts = sorted({max(0, widget.mapTo(viewport, QPoint(0, 0)).x() - rect.x())
@@ -2151,7 +2317,7 @@ class PipelineBrowser(QMainWindow):
         effaces (transparents) : ils restent reels et ne s'estompent pas. Les
         boutons ne sont PAS masques pour la capture : masquer celui qui a le
         focus le transmettrait a une liste, qui changerait de selection."""
-        if self._columns_slide is not None and self._columns_slide.running:
+        if _anim_running(self._columns_slide):
             self._columns_slide.finish_now()   # jamais de capture avec un overlay par-dessus
         rect = self._columns_visible_rect()
         viewport = self.scroll.viewport()
@@ -2171,9 +2337,11 @@ class PipelineBrowser(QMainWindow):
         for preview_column in self.image_preview_columns:
             preview_column.set_hide_state(hidden)
         overlay = self._columns_fade
-        if overlay is not None and overlay.running:
+        if _anim_running(overlay):
             # Clic pendant un fondu : on repart de l'opacite courante, a l'envers.
             overlay.retarget(0.0 if hidden else 1.0, None if hidden else self._show_columns_now)
+            if self._focus_overlay is not None:
+                self._focus_overlay.retarget(1.0 if hidden else 0.0)
             return
         if not animate:
             self._apply_columns_hidden(hidden)
@@ -2181,11 +2349,14 @@ class PipelineBrowser(QMainWindow):
         if hidden:
             if self._columns_slide is not None:
                 self._columns_slide.finish_now()   # on ne capture jamais un mouvement en cours
+            self.columns_layout.activate()
+            self._clear_focus_overlay()
+            self._focus_src = self._focus_source()
             if not self._fade_snapshot_fresh():
-                self.columns_layout.activate()
                 self._columns_snapshot = (*self._grab_columns(), time.monotonic(), self._project_columns_collapsed)
             self._apply_columns_hidden(True)
             self._start_columns_fade(1.0, 0.0, None)
+            self._start_focus_overlay(1.0)
             return
         if not self._fade_snapshot_fresh() and self._columns_snapshot is not None and \
                 (self._columns_snapshot[2] != self.scroll.viewport().size()
@@ -2203,14 +2374,32 @@ class PipelineBrowser(QMainWindow):
                 self._apply_columns_hidden(False)
                 self.columns_layout.activate()
                 self._columns_snapshot = (*self._grab_columns(), time.monotonic(), self._project_columns_collapsed)
+                self._retarget_focus_source()
             finally:
                 self._apply_columns_hidden(True)
                 self.columns_host.setUpdatesEnabled(True)
                 viewport.setUpdatesEnabled(True)
         self._start_columns_fade(0.0, 1.0, self._show_columns_now)
+        self._start_focus_overlay(0.0)
+
+    def _retarget_focus_source(self):
+        """Capture perimee : l'inspecteur vient d'etre re-affiche pour la refaire,
+        on en profite pour relever la vraie place de l'objet en focus (et son
+        contenu actuel) comme point d'arrivee du retour."""
+        source = self._focus_source()
+        self._focus_src = source
+        overlay = self._focus_overlay
+        if source is None:
+            self._clear_focus_overlay()
+        elif overlay is not None:
+            overlay._base = source[0]
+            overlay._cache_key = None
+            overlay.set_geometry_target(self._focus_area(), QRectF(source[1]))
 
     def _show_columns_now(self):
         self._apply_columns_hidden(False)
+        self._clear_focus_overlay()
+        self._focus_src = None
 
     def _start_columns_fade(self, start: float, end: float, on_finished):
         pixmap, rect = self._columns_snapshot[0], self._columns_snapshot[1]
@@ -2219,10 +2408,65 @@ class PipelineBrowser(QMainWindow):
         overlay = _FadeOverlay(self.scroll.viewport(), pixmap, rect, start, end, 420 if len(spans) > 1 else 260,
                                on_finished, on_done=lambda: setattr(self, "_columns_fade", None))
         overlay.set_spans(spans)
-        overlay.set_holes(self._button_rects())
+        holes = self._button_rects()
+        if self._focus_src is not None:
+            holes.append(self._focus_src[1])   # l'objet en focus voyage a part : pas de double dans le fondu
+        overlay.set_holes(holes)
         overlay.show()
         overlay.raise_()
         self._columns_fade = overlay
+        if self._focus_overlay is not None:
+            self._focus_overlay.raise_()
+
+    def _focus_source(self):
+        """(pixmap, QRect en coordonnees du viewport) de l'objet en focus tel que
+        l'inspecteur l'affiche, ou None. Exige l'inspecteur visible et mis en page."""
+        if not self.detail.isVisible():
+            return None
+        source = self.detail.focus_source()
+        if source is None:
+            return None
+        pixmap, rect = source
+        viewport = self.scroll.viewport()
+        return pixmap, QRect(self.detail.mapTo(viewport, rect.topLeft()), rect.size())
+
+    def _focus_area(self) -> QRect:
+        return self.scroll.viewport().rect()
+
+    def _start_focus_overlay(self, end: float):
+        """Fait voyager l'objet en focus : end=1.0 de l'inspecteur vers le centre
+        (masquage), end=0.0 du centre vers l'inspecteur (retour). Meme duree que
+        le fondu des colonnes."""
+        source = self._focus_src
+        if source is None:
+            return
+        pixmap, rect = source
+        spans = getattr(self, "_columns_spans", [])
+        duration = 420 if len(spans) > 1 else 260
+        overlay = self._focus_overlay
+        if overlay is not None:
+            overlay._duration = duration
+            overlay.retarget(end)
+            overlay.raise_()
+            return
+        area = self._focus_area()
+        overlay = FocusOverlay(self.scroll.viewport(), pixmap, QRectF(rect), FocusOverlay.target_rect(pixmap, area),
+                                1.0 - end, end, duration)
+        overlay.show()
+        overlay.raise_()
+        self._focus_overlay = overlay
+
+    def _clear_focus_overlay(self):
+        overlay = self._focus_overlay
+        self._focus_overlay = None
+        if overlay is not None:
+            overlay.dispose()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        overlay = self._focus_overlay
+        if overlay is not None:
+            overlay.set_geometry_target(self._focus_area())
 
     def _enforce_hidden_columns(self, final: bool = False):
         """Garde tout masque pendant que le bouton « masquer » est actif, y
@@ -2236,13 +2480,15 @@ class PipelineBrowser(QMainWindow):
             if final:
                 self._project_columns_hidden = False
                 self._apply_columns_hidden(False)
+                self._clear_focus_overlay()
+                self._focus_src = None
             else:
                 for widget in self._toggled_widgets():
                     if widget.isVisible():
                         widget._hidden_by_toggle = True
                         widget.setVisible(False)
             return
-        if self._columns_fade is not None and self._columns_fade.running:
+        if _anim_running(self._columns_fade):
             return
         self._apply_columns_hidden(True)
         for preview_column in self.image_preview_columns:
@@ -2309,10 +2555,10 @@ class PipelineBrowser(QMainWindow):
             self.image_preview_columns[0].set_toggle_state(collapsed)
         targets = [c for c in self.columns[:self._chain_expected_total()] if c.collapsible]
         slide = self._columns_slide
-        if slide is not None and slide.running and slide.emerge:
+        if _anim_running(slide) and slide.emerge:
             slide.finish_now()   # apparition d'une colonne : on la termine, elle ne se « retourne » pas
             slide = None
-        if slide is not None and slide.running:
+        if _anim_running(slide):
             # Clic pendant le mouvement : repart de la position courante.
             slide.retarget(0.0 if collapsed else 1.0, None if collapsed else self._expand_columns_now)
             return
@@ -2378,7 +2624,7 @@ class PipelineBrowser(QMainWindow):
 
     def _prime_slide_snapshot(self):
         """Au survol du bouton de repli : prepare la capture de l'etat deplie."""
-        if (self._project_columns_hidden or (self._columns_slide is not None and self._columns_slide.running)
+        if (self._project_columns_hidden or _anim_running(self._columns_slide)
                 or not self.isVisible()):
             return
         targets = [c for c in self.columns[:self._chain_expected_total()] if c.collapsible]
@@ -2402,7 +2648,7 @@ class PipelineBrowser(QMainWindow):
         column = self.image_preview_columns[0] if self.image_preview_columns else None
         if (column is None or column.toggle_btn is None or not (force or column.toggle_btn.underMouse())
                 or not self._project_columns_collapsed or self._project_columns_hidden
-                or (self._columns_slide is not None and self._columns_slide.running)):
+                or _anim_running(self._columns_slide)):
             return
         targets = [c for c in self.columns[:self._chain_expected_total()] if c.collapsible]
         size = self.scroll.viewport().size()
@@ -2420,8 +2666,8 @@ class PipelineBrowser(QMainWindow):
         d'agir (bouton de souris, menu, animation en cours)."""
         if (not self.isVisible() or self._project_columns_hidden or not self.image_preview_columns
                 or QApplication.mouseButtons() != Qt.NoButton or QApplication.activePopupWidget() is not None
-                or (self._columns_slide is not None and self._columns_slide.running)
-                or (self._columns_fade is not None and self._columns_fade.running)):
+                or _anim_running(self._columns_slide)
+                or _anim_running(self._columns_fade)):
             return
         self._prime_fade_snapshot()
         QTimer.singleShot(40, self._prewarm_slide)
@@ -2438,8 +2684,8 @@ class PipelineBrowser(QMainWindow):
     def _prime_fade_snapshot(self):
         """Au survol du bouton « masquer » : prepare la capture des colonnes."""
         if (self._project_columns_hidden or not self.image_preview_columns or not self.isVisible()
-                or (self._columns_fade is not None and self._columns_fade.running)
-                or (self._columns_slide is not None and self._columns_slide.running)):
+                or _anim_running(self._columns_fade)
+                or _anim_running(self._columns_slide)):
             return
         if self._fade_snapshot_fresh():
             return
@@ -2553,7 +2799,12 @@ class PipelineBrowser(QMainWindow):
         return left, right, x, QColor(C["window"]), limit
 
     def on_activated(self, path: Path):
-        open_path(path)
+        # Double-clic (ou "Ouvrir") : un dossier s'ouvre dans l'explorateur
+        # Windows, un fichier dans son application par defaut.
+        if path.is_dir():
+            open_in_file_manager(path)
+        else:
+            open_path(path)
 
     def browse_root(self):
         chosen = QFileDialog.getExistingDirectory(
@@ -2563,20 +2814,19 @@ class PipelineBrowser(QMainWindow):
             self.root_field.setText(chosen)
             self.reload()
 
-    def open_settings(self):
-        # Deja ouverte : la ramener au premier plan plutot que d'en ouvrir
-        # une seconde (qui ecraserait sa propre previsualisation). La
-        # fenetre precedente est detruite cote C++ des sa fermeture (voir
-        # WA_DeleteOnClose ci-dessous) : la reference Python devient alors
-        # invalide et tout appel dessus (meme isVisible()) leve un
-        # RuntimeError qu'il faut absorber pour pouvoir en rouvrir une neuve.
-        # La construction de SettingsWindow est longue et traite des evenements
-        # (voir _report_loading_step) : un 2e clic PENDANT ce temps rappelait
-        # open_settings alors que `_settings_dialog` n'existait pas encore, et ouvrait
-        # une 2e fenetre. Ce drapeau ignore tout appel pendant la construction.
+    def open_settings(self, mode: str = "visuel"):
+        """Ouvre l'une des deux fenetres de reglages : "visuel" (aspect de
+        l'application, attribut `_settings_dialog` lu par browser_core pour
+        les valeurs en direct) ou "general" (tout le reste). Deja ouverte :
+        on la ramene au premier plan. Fermee, elle est seulement cachee et
+        reutilisee a l'ouverture suivante (voir SettingsWindow.reopen) ; un
+        RuntimeError (objet Qt detruit) est absorbe ici. La premiere
+        construction est longue et traite des evenements : le drapeau
+        `_settings_opening` ignore tout appel pendant ce temps."""
         if getattr(self, "_settings_opening", False):
             return
-        existing = getattr(self, "_settings_dialog", None)
+        attr = "_settings_dialog_general" if mode == "general" else "_settings_dialog"
+        existing = getattr(self, attr, None)
         if existing is not None:
             try:
                 still_visible = existing.isVisible()
@@ -2588,18 +2838,44 @@ class PipelineBrowser(QMainWindow):
                 return
         self._settings_opening = True
         self.btn_settings.setEnabled(False)
+        self.btn_style.setEnabled(False)
         try:
-            dialog = SettingsWindow(self)
-            dialog.setAttribute(Qt.WA_DeleteOnClose, True)
+            if existing is not None:
+                try:
+                    stale = existing.is_stale()
+                except RuntimeError:
+                    stale = True
+                if stale:
+                    # L'habillage a change sur le disque depuis sa construction
+                    # (reopen() ne le rejouerait pas) : on la reconstruit.
+                    try:
+                        existing.deleteLater()
+                    except RuntimeError:
+                        pass
+                    existing = None
+            if existing is not None:
+                # Fenetre deja construite, simplement cachee a sa fermeture
+                # (pas de WA_DeleteOnClose) : la reconstruire coute plusieurs
+                # secondes, la remettre a zero quelques dizaines de ms.
+                try:
+                    existing.reopen()
+                    existing.show()
+                    existing.raise_()
+                    existing.activateWindow()
+                    return
+                except RuntimeError:   # objet Qt detruit entre-temps
+                    pass
+            dialog = SettingsWindow(self, mode=mode)
             # Non modale : la fenetre principale reste interactive et se
             # met a jour en direct pendant qu'on ajuste les parametres.
             dialog.settingsChanged.connect(self._apply_settings)
             dialog.settingsSaved.connect(self._apply_settings)
-            self._settings_dialog = dialog
+            setattr(self, attr, dialog)
             dialog.show()
         finally:
             self._settings_opening = False
             self.btn_settings.setEnabled(True)
+            self.btn_style.setEnabled(True)
 
     def _apply_settings(self, settings: dict):
         """Applique des reglages (live, pendant qu'on les ajuste dans la
@@ -2621,6 +2897,11 @@ class PipelineBrowser(QMainWindow):
         # d'AUCUNE ligne, quelle que soit la colonne — voir la remarque de
         # l'utilisateur, "il y a des ralentissements dans les animations,
         # optimise un maximum".
+        if self._last_style_key is None:
+            # Premier changement : la reference est l'etat DEJA applique (sans
+            # elle, le tout premier cran de n'importe quel slider declenchait
+            # une reconstruction globale de plus d'une seconde).
+            self._last_style_key = self._style_key(load_settings())
         prev_geometry = {title: (conf["height"], conf["spacing"]) for title, conf in COLUMN_SETTINGS.items()}
         prev_omissions = (GLOBAL_OMIT_DIR_NAMES.copy(), GLOBAL_OMIT_FILE_NAMES.copy(),
                           GLOBAL_OMIT_FILE_EXTENSIONS.copy())
@@ -2675,15 +2956,7 @@ class PipelineBrowser(QMainWindow):
         # "il y a toujours un tres gros problemes de performance") : la
         # reconstruction elle-meme est donc REGROUPEE (voir
         # _flush_stylesheet_rebuild), jamais appelee directement ici.
-        colors = settings.get("colors") or {}
-        style_key = (
-            tuple(colors.get(k, C[k]) for k in STYLESHEET_COLOR_KEYS),
-            settings.get("button_radius"),
-            settings.get("button_frame"),
-            settings.get("input_radius"),
-            settings.get("input_frame"),
-            settings.get("table_radius"),
-        )
+        style_key = self._style_key(settings)
         if style_key != self._last_style_key:
             self._last_style_key = style_key
             self._pending_stylesheet_rebuild = True
@@ -2692,6 +2965,20 @@ class PipelineBrowser(QMainWindow):
         self.refresh_colors(rebuild_stylesheet=False)
         self.refresh_chrome_sizes()
         self._apply_native_frame()
+
+    @staticmethod
+    def _style_key(settings: dict) -> tuple:
+        """Ce que build_stylesheet lit reellement : si elle ne bouge pas, la
+        feuille de style globale n'a pas a etre reconstruite."""
+        colors = settings.get("colors") or {}
+        return (
+            tuple(colors.get(k, C[k]) for k in STYLESHEET_COLOR_KEYS),
+            settings.get("button_radius"),
+            settings.get("button_frame"),
+            settings.get("input_radius"),
+            settings.get("input_frame"),
+            settings.get("table_radius"),
+        )
 
     def _flush_stylesheet_rebuild(self):
         """Reconstruction DIFFEREE et REGROUPEE de la feuille de style
@@ -2723,9 +3010,10 @@ class PipelineBrowser(QMainWindow):
         sans ce rafraichissement explicite."""
         self.titlebar.refresh_sizes()
         self.root_field.setFixedHeight(scaled(24))
-        for btn in (self.btn_browse, self.btn_reload, self.btn_last_place, self.btn_settings):
+        for btn in (self.btn_browse, self.btn_reload, self.btn_last_place, self.btn_style, self.btn_settings):
             btn.setFixedHeight(scaled(24))
         self.btn_settings.setFixedWidth(scaled(28))
+        self.btn_style.setFixedWidth(scaled(28))
 
     def refresh_chrome_fonts(self):
         """Reapplique les polices de role aux widgets permanents de la
@@ -2736,11 +3024,12 @@ class PipelineBrowser(QMainWindow):
         self.root_label.setFont(role_font("app", 10, 600, tracking=0.8, caps=True))
         self.root_label.setStyleSheet(f"color: {role_color('app', C['label'])}; background: transparent;")
         self.root_field.setFont(role_font("info", 12, 400))
-        for btn in (self.btn_browse, self.btn_reload, self.btn_last_place, self.btn_settings):
+        for btn in (self.btn_browse, self.btn_reload, self.btn_last_place, self.btn_style, self.btn_settings):
             btn.setFont(role_font("buttons", 11, 500))
         for btn in (self.btn_browse, self.btn_reload, self.btn_last_place):
             btn.setStyleSheet(f"color: {role_color('buttons', '#c4cacf')};")
         self.btn_settings.set_colors(role_color("buttons", "#c4cacf"), C["text"])
+        self.btn_style.set_colors(role_color("buttons", "#c4cacf"), C["text"])
         self.synced_label.setFont(role_font("info2", 10, 400))
         self.synced_label.setStyleSheet(f"color: {role_color('info2', C['dim'])}; background: transparent;")
         self.path_label.setFont(role_font("info", 11, 400))
@@ -2779,16 +3068,16 @@ class PipelineBrowser(QMainWindow):
             app = QApplication.instance()
             if app is not None:
                 refresh_style(app)
-        self.central.setStyleSheet(
+        _set_qss(self.central,
             f"#CentralFrame {{ background: {C['window']}; border: 1px solid {C['border']}; "
             f"border-radius: {ui_state.WINDOW_RADIUS}px; }}"
         )
-        self.columns_host.setStyleSheet(f"#ColumnsHost {{ background: {C['window']}; }}")
-        self.titlebar.setStyleSheet(f"#TitleBar {{ background: {C['app_bg']}; border-bottom: 1px solid {C['border']}; }}")
+        _set_qss(self.columns_host, f"#ColumnsHost {{ background: {C['window']}; }}")
+        _set_qss(self.titlebar, f"#TitleBar {{ background: {C['app_bg']}; border-bottom: 1px solid {C['border']}; }}")
         for btn in (self.titlebar.btn_min, self.titlebar.btn_max, self.titlebar.btn_close):
             btn.set_colors(C["label"], C["text"])
-        self.topbar.setStyleSheet(f"#TopBar {{ background: {C['topbar']}; border-bottom: 1px solid {C['border']}; }}")
-        self.statusbar.setStyleSheet(f"#StatusBar {{ background: {C['chrome']}; border-top: 1px solid {C['border']}; }}")
+        _set_qss(self.topbar, f"#TopBar {{ background: {C['topbar']}; border-bottom: 1px solid {C['border']}; }}")
+        _set_qss(self.statusbar, f"#StatusBar {{ background: {C['chrome']}; border-top: 1px solid {C['border']}; }}")
         for column in self.columns:
             column.refresh_colors()
         for column in self.group_columns:

@@ -1062,6 +1062,14 @@ class IconButton(QPushButton):
                 x2 = cx + math.cos(ang) * r
                 y2 = cy + math.sin(ang) * r
                 painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+        elif self._kind == "sliders":
+            # Trois curseurs (reglages visuels).
+            for i, knob in enumerate((-0.5, 0.5, -0.1)):
+                y = cy + (i - 1) * s * 1.1
+                painter.drawLine(QPointF(cx - s * 1.6, y), QPointF(cx + s * 1.6, y))
+                painter.setBrush(QColor(color))
+                painter.drawEllipse(QPointF(cx + knob * s * 2, y), s * 0.4, s * 0.4)
+                painter.setBrush(Qt.NoBrush)
         elif self._kind in ("fade_columns", "show_columns"):
             # Trois colonnes verticales : opacite decroissante ("fade_columns",
             # action = faire disparaitre) ou pleines ("show_columns", action =

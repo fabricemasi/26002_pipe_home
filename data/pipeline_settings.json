@@ -1,11 +1,13 @@
 {
   "root_path": "F:\\PIPELINE",
   "ui_scale": 100,
-  "auto_collapse_set_columns": true,
-  "application_omit_file_names": [],
-  "application_omit_extensions": [
-    ".blend1 .bak"
+  "auto_collapse_set_columns": false,
+  "application_omit_file_names": [
+    "*.blend1",
+    "*.bak",
+    "*.mtl"
   ],
+  "application_omit_extensions": [],
   "application_omit_dir_names": [],
   "window_radius": 12,
   "header_visible": true,
@@ -156,7 +158,7 @@
   "preview_toggle_x": 5,
   "preview_toggle_y": 1,
   "collapse_toggle_mode": "chevrons",
-  "detail_panel_width": 525,
+  "detail_panel_width": 918,
   "shortcut_font_family": "Police fichiers",
   "shortcut_font_bold": false,
   "shortcut_font_italic": false,
@@ -2591,11 +2593,14 @@
     {
       "key": "AUTOCAD",
       "label": "AUTOCAD"
+    },
+    {
+      "key": "PFTRACK",
+      "label": "PFTRACK"
     }
   ],
   "removed_softwares": [
     "3DSMAX",
-    "AFTEREFFECTS",
     "C4D",
     "CINEMA4D",
     "CLARISSE",
@@ -2669,7 +2674,7 @@
   "title_level2_font_smoothing_enabled": true,
   "title_level2_font_smoothing": "current",
   "title_level2_font_color": "#59abfc",
-  "title_level2_indent": 0,
+  "title_level2_indent": 16,
   "title_level3_font_family": "Police principale",
   "title_level3_font_bold": true,
   "title_level3_font_italic": false,

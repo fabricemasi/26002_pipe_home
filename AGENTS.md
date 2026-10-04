@@ -26,9 +26,10 @@ Application (ordre de dépendance) :
 - `previews.py` : décodeurs d'aperçus, caches mémoire/disque, rendus Blender/Maya, ordonnanceur de fond, journal de rendu.
 - `browser_core.py` : scan disque, config projet/layout/raccourcis, helpers de peinture/redimensionnement.
 - `row_delegates.py` (`RowDelegate`, `ProjectTileDelegate`), `column_config.py` (dialogue de configuration des colonnes), `capture_widgets.py` (capture, `_PreviewBlock`, `_ColumnCard`…), `column.py` (`Column`), `preview_column.py` (`PreviewColumn`, export PureRef), `detail_panel.py` (`DetailPanel`, inspecteur).
+- `focus.py` : état « focus » (se concentrer sur un objet : aperçu image/turntable pour l'instant, d'autres types à venir) ; `FocusOverlay` anime l'objet de l'inspecteur au centre quand on masque les colonnes. Tout le nouveau code de cet état va ici.
 - `pipeline_browser.py` : `IconButton`, `TitleBar`, `PipelineBrowser(QMainWindow)`, `apply_all_settings`, `main()` (`load_settings()` → `apply_all_settings()` → `QApplication` → `apply_style()` → fenêtre). Point d'entrée.
 
-Fenêtre de réglages (ordre de dépendance) : `settings_store.py` (palette `M`, `DEFAULT_SETTINGS`, `load/save_settings`, presets), `settings_widgets.py` (champs de base : `_Toggle`, `_MiniSlider`, `_FontSelectField`…), `settings_colorpicker.py`, `settings_layout.py` (sections/tableaux), `settings_sections.py` (registre des champs, polices/couleurs/entêtes/géométrie), `settings_window.py` (`SettingsWindow`).
+Fenêtre de réglages (ordre de dépendance) : `settings_store.py` (palette `M`, `DEFAULT_SETTINGS`, `load/save_settings`, presets), `settings_theme.py` (rôles de texte, arrondis communs), `settings_widgets.py` (champs de base : `_Toggle`, `_MiniSlider`, `_FontSelectField`…), `settings_colorpicker.py`, `settings_layout.py` (sections/tableaux), `settings_sections.py` (registre des champs, polices/couleurs/entêtes/géométrie), `settings_window.py` (`SettingsWindow`).
 
 `app_style.py` : tokens de style (couleurs, polices par rôle) et `build_stylesheet()`/`apply_style()`.
 
@@ -48,12 +49,34 @@ Outils externes détectés dynamiquement : `BLENDER_EXECUTABLE`, `MAYA_PYTHON_EX
 
 `tools/` : scripts autonomes de conversion/validation Alembic (`convert_legacy_alembic.py`, `validate_alembic_blender.py`).
 
+### Animations des colonnes
+- Overlays dans `browser_core.py` : `_FadeOverlay` (fondu d'un instantané, avec `retarget`/`finish_now`) et `_SlideOverlay` (repli/dépli glissant des colonnes du projet) ; `_fine_timer` (timer Windows haute résolution) et `_HoverPrime` (pré-chauffe au survol).
+- Orchestration dans `PipelineBrowser` (`pipeline_browser.py`) : `_set_columns_hidden` / `_apply_project_columns_collapsed` (masquage et repli, animés ou non), `_animate_column_in` (apparition par dessous, fondu échelonné), `_fade_before_select` (fondu de l'ancien contenu à la sélection).
+- Principe : on anime un **instantané** (`grab`) plutôt que les vrais widgets ; les instantanés sont pré-calculés (`_prewarm_snapshots`, `_prime_*`) et validés (`_snapshot_blank`, `_fade_snapshot_fresh`). L'état final réel est toujours posé par `*_now` / `finish_now` : toute nouvelle animation doit finir par là pour ne pas laisser l'UI dans un état intermédiaire.
+- Tester « une animation est en cours » avec `_anim_running(overlay)` (pipeline_browser.py), jamais `overlay.running` seul (un overlay détruit sans finir garderait `running` vrai et bloquerait tout). Les fins d'overlay (`_finish`/`_complete`) sont en try/finally : l'overlay disparaît même si un rappel lève une erreur. Un clic pendant un glissement le termine (`finish_now`) au lieu d'abandonner le fondu. Stress : `tests/_probe_anim_stress.py` (clics rapides, repli, masquage ; vérifie qu'aucun overlay ne reste et compte les fondus sautés).
+- À surveiller : un `retarget` ou un clic pendant une animation doit terminer/rediriger l'overlay en cours (sinon colonnes fantômes) ; instantané obsolète ou vide après changement de réglages/taille (re-prime) ; `_install_qt_message_filter` masque certains avertissements Qt, à vérifier si un vrai message disparaît.
+- `files/parametres rendus.txt` : le chemin HDRI pointe maintenant vers `F:\SYNC\Sync\IMAGES\hdri\` (chemin propre à la machine, à adapter ailleurs).
+
+## Réutilisation de la fenêtre de réglages (intention)
+
+La fenêtre de réglages (surtout la fenêtre « Paramètres généraux », mode `general`, et ses briques : `settings_widgets.py`, `settings_layout.py`, `settings_theme.py`, `settings_colorpicker.py`, gabarits de `over/Notes.txt`) servira de **point de départ aux fenêtres de réglages des futures applications** de l'utilisateur : on copiera ces modules dans la nouvelle appli puis on les fera évoluer là-bas (pas de paquet partagé pour l'instant). Conséquences, à respecter dès maintenant :
+- Garder le moteur (widgets, sections, tableaux, rôles de texte, arrondis, construction de haut en bas, réutilisation de la fenêtre) **séparé des réglages propres à Pipeline Browser** (colonnes, étapes, logiciels, aperçus, racine de projets).
+- Ne pas ajouter de nouvelle dépendance de `settings_*` vers du code propre à l'appli (`browser_core`, `column`, `previews`…) ; passer par des paramètres, des signaux ou un module de réglages dédié.
+- Pour un nouveau réglage, déclarer clé, type, défaut et libellé de façon générique plutôt que de coder la clé en dur dans la logique commune.
+- Quand l'utilisateur démarre une nouvelle appli à partir de cette fenêtre : demander le chemin de ce projet, copier ce qui est utile, retirer les sections propres à Pipeline Browser, et noter l'origine de la fenêtre dans l'`AGENTS.md` de la nouvelle appli. Réfléchir à la structure de la nouvelle appli (couches, modules) avant de coder.
+
 ## Conventions du projet
 
 `over/Notes.txt` définit des **gabarits** pour les lignes de la fenêtre de réglages, à appliquer à toute ligne existante ou future du même type sans que l'utilisateur le répète :
 - Lignes *police* : une seule ligne ; toggles app/système sans texte, collés au menu déroulant ; toggle « gras » avec le texte « gras » avant (les deux états) ; texte « Hauteur » avant le slider.
 - Lignes *arrondi des angles* : une ligne, pas de bouton copier, toggle « lier les 4 » (texte avant, les deux états), 4 sliders avec champ de saisie, valeur mise à jour en temps réel.
 - Lignes *bordures* : pas de bouton copier, toggle « lier les 4 », 4 toggles chacun au-dessus du choix de couleur de son côté.
+Styles de la fenêtre de réglages — une seule source par type d'élément, jamais de style posé à la main :
+- Textes : un **rôle** (`TEXT_ROLES` dans `settings_theme.py`, appliqué par `_set_text_role` / `_text_label`). Changer l'apparence d'un type de texte = modifier son rôle, pas les sites d'appel.
+- Arrondis des zones de saisie et des boutons : chaque widget s'inscrit à sa création (`_register_input` / `_register_radius`) et suit le réglage tout seul. Un nouveau widget habillé en zone de saisie doit s'inscrire ; ne jamais tenir de liste de champs à mettre à jour.
+- Tableaux sans entête : `_build_flat_table` / `_build_override_flat_table` les inscrivent (`_register_flat_table`) ; arrondi, bordure et padding passent par `_set_flat_tables_style`.
+- Vérification : `tests/test_settings_window.py` (aller-retour des valeurs, suivi des styles) et `tests/_probe_compare.sh` (captures de toutes les pages avant/après, comparées au pixel ; `tests/_probe_diff.py` localise les différences).
+
 Lire `over/Notes.txt` en entier avant de modifier la fenêtre de réglages (`over/Prompts.txt` contient l'historique des demandes).
 
 ## Commit et push

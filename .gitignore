@@ -26,3 +26,7 @@ data/pipeline_settings_window_state.json
 /pipeline_settings_window_state.json
 /.pipeline_protected_previews.json
 files/alembic_conversion_*/
+
+# Captures de comparaison de la fenetre de reglages (tests/_probe_compare.sh)
+tests/_shots_before/
+tests/_shots_after/
