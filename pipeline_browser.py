@@ -537,6 +537,7 @@ class PipelineBrowser(QMainWindow):
         self.columns_layout.setSpacing(scaled(max(0, column_gap()), 0))
 
         self.detail = DetailPanel()
+        self.detail.preview_double_clicked.connect(self._toggle_project_columns_hidden)
         self._detail_state_width = {}   # {replie: largeur de l'inspecteur} (voir _set_columns_collapsed_now)
 
         # objectName + selecteur ID : le fond au-dela de la derniere colonne
@@ -2245,6 +2246,10 @@ class PipelineBrowser(QMainWindow):
             # Le focus reste sur le bouton : masquer une liste qui l'a le donnerait a
             # une autre liste, qui changerait de selection (et rebatirait les colonnes).
             self.image_preview_columns[0].hide_btn.setFocus()
+        elif hidden:
+            # Pas de bouton (masquage par double-clic sans colonnes Focus) : le
+            # focus est gare sur la zone des colonnes, pour la meme raison.
+            self.scroll.viewport().setFocus()
         for widget in self._toggled_widgets():
             if hidden:
                 if widget.isVisible():
@@ -2331,7 +2336,10 @@ class PipelineBrowser(QMainWindow):
         return QPixmap.fromImage(image), rect, viewport.size(), self._columns_epoch
 
     def _set_columns_hidden(self, hidden: bool, animate: bool = True):
-        if hidden == self._project_columns_hidden or (hidden and not self.image_preview_columns):
+        # Sans colonnes Focus (donc sans bouton), on ne masque que si un objet
+        # peut partir au centre : le double-clic sur lui est alors le seul retour.
+        if hidden == self._project_columns_hidden or (
+                hidden and not self.image_preview_columns and self._focus_source() is None):
             return
         self._project_columns_hidden = hidden
         for preview_column in self.image_preview_columns:
@@ -2451,7 +2459,8 @@ class PipelineBrowser(QMainWindow):
             return
         area = self._focus_area()
         overlay = FocusOverlay(self.scroll.viewport(), pixmap, QRectF(rect), FocusOverlay.target_rect(pixmap, area),
-                                1.0 - end, end, duration)
+                                1.0 - end, end, duration,
+                                on_double_click=self._toggle_project_columns_hidden)
         overlay.show()
         overlay.raise_()
         self._focus_overlay = overlay
@@ -2471,10 +2480,17 @@ class PipelineBrowser(QMainWindow):
     def _enforce_hidden_columns(self, final: bool = False):
         """Garde tout masque pendant que le bouton « masquer » est actif, y
         compris ce que la navigation vient de (re)construire. Sans colonne
-        Focus (donc sans bouton pour revenir), tout est reaffiche — decision
-        prise uniquement apres une reconstruction COMPLETE des vignettes
-        (`final`), pas pendant l'etat transitoire d'une navigation."""
+        Focus (donc sans bouton pour revenir) ni objet au centre (double-clic
+        pour revenir), tout est reaffiche — decision prise uniquement apres une
+        reconstruction COMPLETE des vignettes (`final`), pas pendant l'etat
+        transitoire d'une navigation."""
         if not self._project_columns_hidden:
+            return
+        if not self.image_preview_columns and self._focus_overlay is not None:
+            # Masque par double-clic sur un apercu, sans colonnes Focus : rien a
+            # reconstruire, on garde juste tout masque.
+            if not _anim_running(self._columns_fade):
+                self._apply_columns_hidden(True)
             return
         if not self.image_preview_columns:
             if final:
@@ -3115,6 +3131,12 @@ def main():
     # Menage du cache en arriere-plan : ni images inutiles ni apercus de fichiers supprimes.
     threading.Thread(target=sweep_preview_cache, name="preview-cache-sweep", daemon=True).start()
 
+    # Le winId() d'une fenetre enfant (reglages, config des colonnes : voir
+    # apply_dwm_frame) rendait natifs ses « freres », dont #CentralFrame : un
+    # cadre natif dans la fenetre translucide n'est plus recompose image par
+    # image et les animations des colonnes sautaient des l'ouverture des
+    # reglages (tests/_probe_screen_anim.py).
+    QApplication.setAttribute(Qt.AA_DontCreateNativeWidgetSiblings, True)
     app = QApplication(sys.argv)
     apply_style(app)
     window = PipelineBrowser(root)

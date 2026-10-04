@@ -3,7 +3,7 @@ turntable de l'inspecteur ; plus tard texte, informations...). Ce module recevra
 tout ce qui releve de cet etat ; il vient apres browser_core dans l'ordre de
 dependance."""
 from PySide6.QtCore import QElapsedTimer, QRect, QRectF, Qt, QTimer
-from PySide6.QtGui import QPainter, QPixmap
+from PySide6.QtGui import QPainter, QPixmap, QRegion
 from PySide6.QtWidgets import QWidget
 
 from browser_core import _fine_timer
@@ -20,7 +20,7 @@ class FocusOverlay(QWidget):
     contenu est un pixmap pour l'instant, d'autres types (texte...) viendront."""
 
     def __init__(self, parent, pixmap: QPixmap, source: QRectF, target: QRectF, start: float, end: float,
-                 duration_ms: int = 420, on_finished=None, on_done=None):
+                 duration_ms: int = 420, on_finished=None, on_done=None, on_double_click=None):
         super().__init__(parent)
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.setGeometry(parent.rect())
@@ -35,6 +35,9 @@ class FocusOverlay(QWidget):
         self._duration = max(1, duration_ms)
         self._on_finished = on_finished
         self._on_done = on_done
+        # Double-clic sur l'objet AU CENTRE (au repos) : `on_double_click`
+        # (meme effet que le bouton « masquer », voir _update_hit_area).
+        self._on_double_click = on_double_click
         self.running = True
         self.hold = True    # le proprietaire le retire (voir PipelineBrowser._show_columns_now)
         self._clock = QElapsedTimer()
@@ -63,13 +66,32 @@ class FocusOverlay(QWidget):
         self._target = self.target_rect(self._base, area)
         if source is not None:
             self._source = source
+        self._update_hit_area()
         self.update()
+
+    def _update_hit_area(self):
+        """Au repos au centre, seuls les pixels de l'objet captent la souris
+        (double-clic) ; partout ailleurs, et pendant l'animation, l'overlay
+        reste transparent a la souris."""
+        at_center = not self.running and self._value >= 1.0 and self._on_double_click is not None
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, not at_center)
+        if at_center:
+            self.setMask(QRegion(self.current_rect().toAlignedRect()))
+        else:
+            self.clearMask()
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton and self._on_double_click is not None:
+            self._on_double_click()
+            return
+        super().mouseDoubleClickEvent(event)
 
     def retarget(self, end: float, on_finished=None):
         self._from = self._value
         self._end = end
         self._on_finished = on_finished
         self.running = True
+        self._update_hit_area()
         self._clock.restart()
         if not self._timer.isActive():
             _fine_timer(True)
@@ -117,6 +139,7 @@ class FocusOverlay(QWidget):
         _fine_timer(False)
         self.running = False
         self._value = self._end
+        self._update_hit_area()
         self.update()
         if self._on_finished is not None:
             self._on_finished()

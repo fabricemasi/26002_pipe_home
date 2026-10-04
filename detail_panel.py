@@ -6,7 +6,7 @@ from PySide6.QtCore import QMimeData
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QMenu
 from PySide6.QtCore import (
-    QEvent, QPoint, QRect, QSize, Qt, QTimer, QUrl,
+    QEvent, QPoint, QRect, QSize, Qt, QTimer, QUrl, Signal,
 )
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
@@ -162,6 +162,9 @@ class _TurntableSlider(_MiniSlider):
 class DetailPanel(QWidget):
 
     FIELDS = ["kind", "size", "modified"]
+    # Double-clic sur l'apercu (image, turntable ou video) : meme effet que le
+    # bouton « masquer les colonnes » (voir PipelineBrowser).
+    preview_double_clicked = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -311,6 +314,7 @@ class DetailPanel(QWidget):
         # Clic droit sur l'apercu (image, turntable ou video) : voir
         # _show_preview_context_menu.
         for preview_widget in (self.well, self.well_label):
+            preview_widget.installEventFilter(self)
             preview_widget.setContextMenuPolicy(Qt.CustomContextMenu)
             preview_widget.customContextMenuRequested.connect(
                 lambda pos, w=preview_widget: self._show_preview_context_menu(w.mapToGlobal(pos)))
@@ -400,6 +404,8 @@ class DetailPanel(QWidget):
         # text_preview (voir show_path/_stop_video).
         self.video_widget = QVideoWidget()
         self.video_widget.setStyleSheet("background: black; border: 1px solid #282c30;")
+        self.video_widget.installEventFilter(self)
+        self._preview_widgets = (self.well, self.well_label, self.video_widget)
         self.video_widget.setContextMenuPolicy(Qt.CustomContextMenu)
         self.video_widget.customContextMenuRequested.connect(
             lambda pos: self._show_preview_context_menu(self.video_widget.mapToGlobal(pos)))
@@ -826,6 +832,13 @@ class DetailPanel(QWidget):
         colonne inspecteur est toujours aussi peinible a selectionner pour
         la redimension"."""
         etype = event.type()
+        if obj in getattr(self, "_preview_widgets", ()):
+            # Apercu : seul le double-clic est intercepte (voir
+            # preview_double_clicked), le reste suit son cours normal.
+            if etype == QEvent.MouseButtonDblClick and event.button() == Qt.LeftButton:
+                self.preview_double_clicked.emit()
+                return True
+            return False
         if etype == QEvent.MouseMove:
             if self._resizing:
                 self._resize_update(event.globalPosition().toPoint().x())
