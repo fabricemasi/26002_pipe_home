@@ -8,3 +8,6 @@ numpy
 # externe) pour convertir le format DWG proprietaire vers DXF.
 ezdxf
 matplotlib
+# Optionnel : developpement des RAW (.arw Sony, .raf Fuji...) ; sans lui, le
+# JPEG integre au fichier sert d'apercu.
+rawpy

@@ -484,6 +484,10 @@ class PipelineBrowser(QMainWindow):
         self.btn_last_place.clicked.connect(self.go_to_last_place)
         self.btn_settings.clicked.connect(lambda: self.open_settings("general"))
         self.btn_style.clicked.connect(lambda: self.open_settings("visuel"))
+        # Clic droit : fenetre de reglages v2 (maquette comparative, voir
+        # settings_window_v2.py) — n'affecte pas la fenetre reelle.
+        self.btn_style.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.btn_style.customContextMenuRequested.connect(self._open_settings_v2_menu)
         # Chemin ouvert a la derniere fermeture (voir closeEvent) : l'appli
         # s'ouvre toujours a la racine, ce bouton permet d'y revenir a la
         # demande plutot que d'y naviguer automatiquement (voir
@@ -1450,11 +1454,10 @@ class PipelineBrowser(QMainWindow):
         """Reagit a un clic sur une ligne du groupe IN/OVER/OUT/LOGICIELS
         (voir update_preview_stack) : un dossier ouvre son contenu dans une
         VRAIE colonne suivante (voir _open_group_folder) — navigation
-        normale, pas l'explorateur Windows. Un fichier ne fait rien de plus
-        ici (deja previsualise dans l'inspecteur par la selection normale
-        de Column/on_selected — non branche pour ce groupe, voir sa
-        remarque) ; double-clic l'ouvre malgre tout via l'application par
-        defaut (voir Column.activated/on_activated, cable separement).
+        normale, pas l'explorateur Windows. Un fichier n'ouvre rien mais
+        s'affiche dans l'inspecteur (Column.selected n'est pas branche sur
+        on_selected pour ce groupe : c'est fait ici) ; double-clic l'ouvre
+        via l'application par defaut (voir Column.activated/on_activated).
         `column` (colonne SOURCE, IN/OVER/OUT/LOGICIELS) : recupere
         l'etiquette d'origine (ROLE_SOURCE_LABEL) de la ligne cliquee sur
         SON item courant, pour l'ajouter entre parentheses a l'en-tete de
@@ -1482,7 +1485,27 @@ class PipelineBrowser(QMainWindow):
         if path is not None:
             self._last_active_group_column = column
         self.update_active_column()
-        if path is None or not path.is_dir():
+        if path is None:
+            return
+        # Inspecteur (apercu image/turntable, rendu manuel du menu contextuel) :
+        # comme une colonne normale (voir _on_selected_now), la ligne cliquee,
+        # dossier ou fichier, y est affichee.
+        self.path_label.setText(str(path))
+        self.detail.show_path(path)
+        if not path.is_dir():
+            # Un fichier n'ouvre rien : le contenu deja ouvert depuis ce groupe
+            # (dossier clique avant) se ferme, comme apres un fichier d'une colonne normale.
+            keep_index = self._chain_expected_total() - 1
+            if len(self.columns) > keep_index + 1:
+                pending = self._select_fade
+                if _anim_running(pending):
+                    pending.finish_now()
+                fade = self._fade_before_select(self._group_stack_wrapper)
+                self.prune_after(keep_index)
+                self.update_active_column()
+                self._slide_snapshot = None
+                if fade is not None:
+                    QTimer.singleShot(0, lambda: self._raise_select_fade(fade))
             return
         current_item = column.list.currentItem()
         source_label = current_item.data(ROLE_SOURCE_LABEL) if current_item is not None else None
@@ -2829,6 +2852,33 @@ class PipelineBrowser(QMainWindow):
         if chosen:
             self.root_field.setText(chosen)
             self.reload()
+
+    def _open_settings_v2_menu(self, pos):
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        action = menu.addAction("Reglages v2 (comparaison de conception)")
+        if menu.exec(self.btn_style.mapToGlobal(pos)) is action:
+            self.open_settings_v2()
+
+    def open_settings_v2(self):
+        """Ouvre la maquette comparative (settings_window_v2.py) : le temps de
+        construction et le nombre de widgets s'affichent en bas de fenetre."""
+        import settings_window_v2
+        existing = getattr(self, "_settings_dialog_v2", None)
+        try:
+            if existing is not None and existing.isVisible():
+                existing.raise_()
+                return
+        except RuntimeError:
+            pass
+        dialog = settings_window_v2.SettingsWindowV2(self)
+        # Sections branchees (settings_window_v2.WIRED_SECTIONS) : apercu en
+        # direct et enregistrement passent par les memes rappels que la
+        # fenetre reelle.
+        dialog.settingsChanged.connect(self._apply_settings)
+        dialog.settingsSaved.connect(self._apply_settings)
+        self._settings_dialog_v2 = dialog
+        dialog.show()
 
     def open_settings(self, mode: str = "visuel"):
         """Ouvre l'une des deux fenetres de reglages : "visuel" (aspect de

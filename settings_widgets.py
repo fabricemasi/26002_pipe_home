@@ -103,6 +103,7 @@ class _MiniSlider(QWidget):
         self._min, self._max = minimum, maximum
         self._value = max(minimum, min(maximum, value))
         self._width = width
+        self._grab_offset = 0
         self.setCursor(Qt.ArrowCursor)
         self._apply_size()
 
@@ -141,11 +142,17 @@ class _MiniSlider(QWidget):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self._set_from_x(event.position().toPoint().x())
+            x = event.position().toPoint().x()
+            # Clic SUR le curseur : on le saisit la ou il est (pas de saut
+            # vers le pointeur) ; ailleurs, il vient sous le pointeur.
+            thumb_w = _SLIDER_STYLE["thumb_w"]
+            knob_center = round(self._pct() * self.width())
+            self._grab_offset = x - knob_center if abs(x - knob_center) <= thumb_w // 2 + 2 else 0
+            self._set_from_x(x - self._grab_offset)
 
     def mouseMoveEvent(self, event):
         if event.buttons() & Qt.LeftButton:
-            self._set_from_x(event.position().toPoint().x())
+            self._set_from_x(event.position().toPoint().x() - self._grab_offset)
 
     def _paint_bordered(self, p: QPainter, rect: QRect, radius, border_on,
                          border_colors: dict, fill_layers):
@@ -527,15 +534,16 @@ class _OverrideSmoothingField(QWidget):
 
     changed = Signal()
 
-    def __init__(self, enabled: bool, smoothing: str, parent=None):
+    def __init__(self, enabled: bool, smoothing: str, parent=None, show_title: bool = True):
         super().__init__(parent)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(2)
-        title = QLabel("niveau de lissage")
-        _set_text_role(title, "mini_label")
-        title.setAlignment(Qt.AlignHCenter)
-        outer.addWidget(title)
+        if show_title:   # sans titre quand une entete de colonne le porte deja
+            title = QLabel("niveau de lissage")
+            _set_text_role(title, "mini_label")
+            title.setAlignment(Qt.AlignHCenter)
+            outer.addWidget(title)
         step = _ITEM_FONT_SMOOTHING_STEPS.index(smoothing) if smoothing in _ITEM_FONT_SMOOTHING_STEPS else 2
         self.slider = _SteppedSliderField(["0", "1", "2"], step, slider_width=20, box_width=24)
         outer.addWidget(self.slider, 0, Qt.AlignHCenter)
@@ -793,36 +801,38 @@ class _DualFontSelectField(QWidget):
         self._system_options = ["Systeme"] + installed_font_families()
         is_soft = value in self._soft_options
 
-        app_stack = QWidget()
-        app_stack.setStyleSheet("background: transparent;")
-        app_stack_l = QVBoxLayout(app_stack)
-        app_stack_l.setContentsMargins(0, 0, 0, 0)
-        app_stack_l.setSpacing(2)
+        # "app" a GAUCHE de son toggle, tres rapproches.
+        app_box = QWidget()
+        app_box.setStyleSheet("background: transparent;")
+        app_box_l = QHBoxLayout(app_box)
+        app_box_l.setContentsMargins(0, 0, 0, 0)
+        app_box_l.setSpacing(3)
         app_label = QLabel("app")
         _set_text_role(app_label, "mini_label")
-        app_label.setAlignment(Qt.AlignHCenter)
-        app_stack_l.addWidget(app_label)
+        app_label.setContentsMargins(0, 0, 0, 3)   # remonte le texte : aligne avec le centre du toggle
+        app_box_l.addWidget(app_label)
         self.soft_toggle = _Toggle(is_soft, show_label=False)
-        app_stack_l.addWidget(self.soft_toggle, 0, Qt.AlignHCenter)
-        layout.addWidget(app_stack)
+        app_box_l.addWidget(self.soft_toggle)
+        layout.addWidget(app_box)
 
         self.field = _FontSelectField(
             self._soft_options if is_soft else self._system_options,
             value if is_soft else (value or "Systeme"), width=width, auto_label="Systeme")
         layout.addWidget(self.field)
 
-        sys_stack = QWidget()
-        sys_stack.setStyleSheet("background: transparent;")
-        sys_stack_l = QVBoxLayout(sys_stack)
-        sys_stack_l.setContentsMargins(0, 0, 0, 0)
-        sys_stack_l.setSpacing(2)
+        # "sys" a DROITE de son toggle, tres rapproches.
+        sys_box = QWidget()
+        sys_box.setStyleSheet("background: transparent;")
+        sys_box_l = QHBoxLayout(sys_box)
+        sys_box_l.setContentsMargins(0, 0, 0, 0)
+        sys_box_l.setSpacing(3)
+        self.system_toggle = _Toggle(not is_soft, show_label=False)
+        sys_box_l.addWidget(self.system_toggle)
         sys_label = QLabel("sys")
         _set_text_role(sys_label, "mini_label")
-        sys_label.setAlignment(Qt.AlignHCenter)
-        sys_stack_l.addWidget(sys_label)
-        self.system_toggle = _Toggle(not is_soft, show_label=False)
-        sys_stack_l.addWidget(self.system_toggle, 0, Qt.AlignHCenter)
-        layout.addWidget(sys_stack)
+        sys_label.setContentsMargins(0, 0, 0, 3)   # remonte le texte : aligne avec le centre du toggle
+        sys_box_l.addWidget(sys_label)
+        layout.addWidget(sys_box)
 
         # Derniere valeur connue de CHAQUE cote (voir _refresh_options) :
         # rebasculer vers "app" doit retrouver le dernier role choisi, pas
@@ -938,6 +948,11 @@ _TOGGLE_SHAPE_DEFAULTS = {
     "coche_border_top": "#2e343a", "coche_border_right": "#2e343a",
     "coche_border_bottom": "#2e343a", "coche_border_left": "#2e343a",
     "coche_color": "#3f6f9f",
+    # Habillage de la coche : rien, un texte ou une icone dessines DANS la coche.
+    "skin": "none", "text": "",
+    "text_font": {"family": "", "bold": True, "italic": False, "size": 10, "smoothing": "current",
+                  "color": "#ffffff"},
+    "icon": "", "icon_color": "#ffffff",
 }
 
 _TOGGLE1_STYLE = dict(_TOGGLE_SHAPE_DEFAULTS)
@@ -946,8 +961,20 @@ _TOGGLE2_STYLE = dict(_TOGGLE_SHAPE_DEFAULTS)
 
 _TOGGLE2_STYLE.update({"outer_w": 22, "outer_h": 22})
 
+# Registre des styles : toggle1, toggle2 et ceux que l'utilisateur ajoute (toggle3...).
+_TOGGLE_STYLES: dict[str, dict] = {"toggle1": _TOGGLE1_STYLE, "toggle2": _TOGGLE2_STYLE}
+_TOGGLE_STYLE_NAMES: dict[str, str] = {"toggle1": "Toggle 1", "toggle2": "Toggle 2"}
+
+def _toggle_style_dict(key: str) -> dict:
+    """Reglages d'un style (cree a la demande, a partir des valeurs par defaut)."""
+    style = _TOGGLE_STYLES.get(key)
+    if style is None:
+        import copy
+        style = _TOGGLE_STYLES[key] = copy.deepcopy(_TOGGLE_SHAPE_DEFAULTS)
+    return style
+
 def _active_toggle_style() -> dict:
-    return _TOGGLE1_STYLE if _TOGGLE_STYLE == "toggle1" else _TOGGLE2_STYLE
+    return _toggle_style_dict(_TOGGLE_STYLE)
 
 def _sync_toggle_shape_style(target: dict, settings: dict, prefix: str) -> None:
     """Recopie les reglages `{prefix}_*` de `settings` dans `target`
@@ -985,13 +1012,29 @@ def _sync_toggle_shape_style(target: dict, settings: dict, prefix: str) -> None:
         target[f"coche_border_{side}"] = _resolve_color_value(
             coche_border.get(side, target[f"coche_border_{side}"]), colors)
     target["coche_color"] = settings.get(f"{prefix}_coche_color", target["coche_color"])
+    target["skin"] = settings.get(f"{prefix}_coche_skin", "none")
+    target["text"] = str(settings.get(f"{prefix}_coche_text", ""))
+    smoothing_on = bool(settings.get(f"{prefix}_coche_text_font_smoothing_enabled", False))
+    target["text_font"] = {
+        "family": settings.get(f"{prefix}_coche_text_font_family", "") or "",
+        "bold": bool(settings.get(f"{prefix}_coche_text_font_bold", True)),
+        "italic": bool(settings.get(f"{prefix}_coche_text_font_italic", False)),
+        "size": max(4, int(settings.get(f"{prefix}_coche_text_font_size", 10))),
+        "smoothing": settings.get(f"{prefix}_coche_text_font_smoothing", "current") if smoothing_on else "current",
+        "color": _resolve_color_value(settings.get(f"{prefix}_coche_text_font_color", "#ffffff"), colors),
+    }
+    target["icon"] = str(settings.get(f"{prefix}_coche_icon", "") or "")
+    target["icon_color"] = _resolve_color_value(settings.get(f"{prefix}_coche_icon_color", "#ffffff"), colors)
 
 def _sync_toggle_style(settings: dict) -> None:
     global _TOGGLE_STYLE
+    for custom in settings.get("toggle_custom_styles") or []:
+        _toggle_style_dict(custom["key"])
+        _TOGGLE_STYLE_NAMES[custom["key"]] = custom.get("name") or custom["key"]
     style = settings.get("toggle_style", "toggle1")
-    _TOGGLE_STYLE = style if style in ("toggle1", "toggle2") else "toggle1"
-    _sync_toggle_shape_style(_TOGGLE1_STYLE, settings, "toggle1")
-    _sync_toggle_shape_style(_TOGGLE2_STYLE, settings, "toggle2")
+    _TOGGLE_STYLE = style if style in _TOGGLE_STYLES else "toggle1"
+    for key, target in list(_TOGGLE_STYLES.items()):
+        _sync_toggle_shape_style(target, settings, key)
 
 def _radius_dict(radius) -> dict:
     """Normalise `radius` (int uniforme OU dict {"top_left": int, ...}) en
@@ -1365,10 +1408,68 @@ def _paint_toggle_shape(p: QPainter, x: int, y: int, style_key: str, style: dict
         p.setOpacity(p.opacity() * progress)
         _paint_bordered_rect(p, coche_rect, style["coche_border_radius"], style["coche_border_enabled"],
                               style["coche_border_thickness"], coche_colors, style["coche_color"])
+        _paint_coche_skin(p, coche_rect, style)
         p.restore()
     else:
         _paint_bordered_rect(p, coche_rect, style["coche_border_radius"], style["coche_border_enabled"],
                               style["coche_border_thickness"], coche_colors, style["coche_color"])
+        _paint_coche_skin(p, coche_rect, style)
+
+_TOGGLE_ICON_CACHE: dict = {}
+
+def _toggle_icon_pixmap(name: str, size: int, color: str) -> QPixmap | None:
+    """Icone de icons/ pour l'habillage d'une coche : un SVG est recolore (trace uni, rendu comme
+    un masque), un PNG garde ses couleurs. Cache par (nom, taille, couleur)."""
+    key = (name, size, color)
+    if key in _TOGGLE_ICON_CACHE:
+        return _TOGGLE_ICON_CACHE[key]
+    from settings_store import _ICONS_DIR
+    path = _ICONS_DIR / name
+    pix = None
+    if path.is_file() and size > 0:
+        scale = 4
+        if path.suffix.lower() == ".svg":
+            from PySide6.QtSvg import QSvgRenderer
+            pix = QPixmap(size * scale, size * scale)
+            pix.fill(Qt.transparent)
+            painter = QPainter(pix)
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            QSvgRenderer(str(path)).render(painter)
+            painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+            painter.fillRect(pix.rect(), QColor(color))
+            painter.end()
+        else:
+            source = QPixmap(str(path))
+            if not source.isNull():
+                pix = source.scaled(size * scale, size * scale, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        if pix is not None:
+            pix.setDevicePixelRatio(scale)
+    _TOGGLE_ICON_CACHE[key] = pix
+    return pix
+
+def _paint_coche_skin(p: QPainter, rect: QRect, style: dict) -> None:
+    """Texte ou icone dessine au centre de la coche (voir Toggles > Coche > Habillage)."""
+    skin = style.get("skin", "none")
+    if skin == "text" and style.get("text"):
+        spec = style["text_font"]
+        font = QFont(spec["family"] or "Segoe UI")
+        font.setPixelSize(spec["size"])
+        font.setBold(spec["bold"])
+        font.setItalic(spec["italic"])
+        if spec["smoothing"] == "none":
+            font.setStyleStrategy(QFont.NoAntialias)
+        p.save()
+        p.setFont(font)
+        p.setPen(QColor(spec["color"]))
+        p.drawText(rect, Qt.AlignCenter, style["text"])
+        p.restore()
+    elif skin == "icon" and style.get("icon"):
+        size = max(1, min(rect.width(), rect.height()) - 2)
+        pix = _toggle_icon_pixmap(style["icon"], size, style["icon_color"])
+        if pix is not None:
+            logical = pix.deviceIndependentSize()
+            p.drawPixmap(round(rect.center().x() - logical.width() / 2 + 0.5),
+                         round(rect.center().y() - logical.height() / 2 + 0.5), pix)
 
 class _Toggle(QWidget):
     """Interrupteur peint a la main selon le style COURANT (voir
@@ -1425,10 +1526,8 @@ class _Toggle(QWidget):
         return self._style_override or _TOGGLE_STYLE
 
     def _style(self) -> dict:
-        if self._style_override == "toggle2":
-            return _TOGGLE2_STYLE
-        if self._style_override == "toggle1":
-            return _TOGGLE1_STYLE
+        if self._style_override:
+            return _toggle_style_dict(self._style_override)
         return _active_toggle_style()
 
     def apply_style(self):
@@ -1523,7 +1622,7 @@ class _ToggleShapePreview(QWidget):
         self.refresh()
 
     def _style(self) -> dict:
-        return _TOGGLE1_STYLE if self._style_key == "toggle1" else _TOGGLE2_STYLE
+        return _toggle_style_dict(self._style_key)
 
     def sizeHint(self):
         # setFixedSize() pose deja minimumSize()/maximumSize(), mais PAS
@@ -1606,22 +1705,26 @@ class _ToggleStylePicker(QWidget):
 
     changed = Signal(str)
 
-    _OPTIONS = [("toggle1", "Toggle 1"), ("toggle2", "Toggle 2")]
-
     def __init__(self, value: str, parent=None):
         super().__init__(parent)
-        valid = dict(self._OPTIONS)
-        self._value = value if value in valid else "toggle1"
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(14)
+        # Les cartes viennent du registre : toggle1, toggle2 et les styles ajoutes par l'utilisateur.
+        self._value = value if value in _TOGGLE_STYLES else "toggle1"
+        self._layout = QHBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(14)
         self._cards: dict[str, _ToggleStyleCard] = {}
-        for key, label in self._OPTIONS:
-            card = _ToggleStyleCard(key, label)
-            card.setSelected(key == self._value)
-            card.clicked.connect(lambda _checked=False, k=key: self._select(k))
-            self._cards[key] = card
-            layout.addWidget(card)
+        for key in list(_TOGGLE_STYLES):
+            self.addOption(key, _TOGGLE_STYLE_NAMES.get(key, key))
+
+    def addOption(self, key: str, label: str):
+        """Ajoute une carte (nouveau style de toggle)."""
+        if key in self._cards:
+            return
+        card = _ToggleStyleCard(key, label)
+        card.setSelected(key == self._value)
+        card.clicked.connect(lambda _checked=False, k=key: self._select(k))
+        self._cards[key] = card
+        self._layout.addWidget(card)
 
     def _select(self, key: str):
         if key != self._value:
@@ -2943,6 +3046,50 @@ def _set_dimmed(widget: QWidget, dimmed: bool) -> None:
         widget.setGraphicsEffect(effect)
     effect.setOpacity(_DIMMED_OPACITY if dimmed else 1.0)
 
+# Dimensions enregistrees des tableaux : {cle (voir _TableFrame.dimsKey): {"width": int, "cols": [..]}}.
+_TABLE_DIMS: dict = {}
+
+def _set_table_dims(dims: dict) -> None:
+    _TABLE_DIMS.clear()
+    _TABLE_DIMS.update(dims or {})
+
+class _TableEdgeGrip(QWidget):
+    """Poignee invisible sur la bordure droite d'un tableau : glisser change
+    la largeur du tableau (curseur de redimensionnement au survol)."""
+
+    WIDTH = 6
+
+    def __init__(self, frame: "_TableFrame"):
+        super().__init__(frame)
+        self._frame = frame
+        self._start_x = 0
+        self._start_w = 0
+        self._dragging = False
+        self.setCursor(Qt.SizeHorCursor)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = True
+            self._start_x = event.globalPosition().toPoint().x()
+            self._start_w = self._frame.width()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if not self._dragging:
+            return
+        frame = self._frame
+        parent = frame.parentWidget()
+        avail = (parent.contentsRect().right() + 1 - frame.x()) if parent is not None else 4000
+        width = self._start_w + event.globalPosition().toPoint().x() - self._start_x
+        width = max(frame.minimumSizeHint().width(), min(width, avail))
+        frame.setTableWidth(0 if width >= avail - 2 else width)
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._dragging = False
+        event.accept()
+
 class _TableFrame(QWidget):
     """Cadre exterieur complet (perimetre 1px) d'un tableau — entete et
     lignes empilees a l'interieur, separees seulement par un filet
@@ -2969,6 +3116,10 @@ class _TableFrame(QWidget):
     SettingsWindow._apply_table_radius et ses homologues par tableau), qui
     reste un rendu QSS natif, donc aussi lisse que le filet du cadre."""
 
+    # Une dimension du tableau a change (largeur du tableau, d'une colonne, d'une
+    # cellule...) : la fenetre qui le souhaite enregistre alors tout de suite.
+    dimsChanged = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("TableFrame")
@@ -2982,7 +3133,124 @@ class _TableFrame(QWidget):
         self._border_enabled = {k: True for k in ("top", "right", "bottom", "left")}
         self._border_colors = {k: M["panel_border"] for k in ("top", "right", "bottom", "left")}
         self._border_thickness = 1
+        self._dims_applied = False
+        self._grip = _TableEdgeGrip(self)
         self._refresh_style()
+
+    # -- Largeur du tableau (bordure droite agrippable) + dimensions enregistrees --
+
+    def setWidthResizable(self, enabled: bool):
+        self._grip.setVisible(bool(enabled))
+
+    def tableWidth(self) -> int:
+        """Largeur imposee (0 = pleine largeur disponible)."""
+        w = self.maximumWidth()
+        return 0 if w >= 16777215 else w
+
+    def setTableWidth(self, width: int):
+        width = int(width) if width and int(width) > 0 else 0
+        self.setMaximumWidth(width or 16777215)
+        self._align_left(bool(width))
+        self.updateGeometry()
+        self.dimsChanged.emit()
+
+    def sizeHint(self):
+        hint = super().sizeHint()
+        width = self.tableWidth()
+        if width:
+            hint.setWidth(width)
+        return hint
+
+    def _align_left(self, on: bool):
+        """Un tableau plus etroit que sa zone se colle a GAUCHE (au niveau du
+        titre de sa section) au lieu d'etre centre par le layout."""
+        flags = Qt.AlignLeft if on else Qt.Alignment()
+
+        def apply(layout) -> bool:
+            if layout is None:
+                return False
+            for i in range(layout.count()):
+                item = layout.itemAt(i)
+                if item.widget() is self:
+                    item.setAlignment(flags)
+                    return True
+                if apply(item.layout()):
+                    return True
+            return False
+
+        parent = self.parentWidget()
+        if parent is not None:
+            apply(parent.layout())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._grip.setGeometry(self.width() - _TableEdgeGrip.WIDTH, 0, _TableEdgeGrip.WIDTH, self.height())
+        self._grip.raise_()
+
+    def dimsKey(self) -> str:
+        """Cle stable : titres des sections ancetres + rang parmi les tableaux de la section."""
+        titles = []
+        node = self.parentWidget()
+        owner = None
+        while node is not None:
+            title = getattr(node, "_title_text", None)
+            if title:
+                titles.append(title)
+                owner = owner or node
+            node = node.parentWidget()
+        rank = 0
+        if owner is not None:
+            frames = [f for f in owner.findChildren(_TableFrame)]
+            rank = frames.index(self) if self in frames else 0
+        return "/".join(reversed(titles)) + f"#{rank}"
+
+    def _dims_children(self):
+        head, resizer = None, None
+        for child in self.findChildren(QWidget):
+            if head is None and hasattr(child, "setColumnWidths"):
+                head = child
+            if resizer is None and getattr(child, "_flat_resizer", None) is not None:
+                resizer = child._flat_resizer
+        return head, resizer
+
+    def collectDims(self) -> dict:
+        head, resizer = self._dims_children()
+        dims: dict = {"width": self.tableWidth()}
+        if head is not None:
+            dims["cols"] = head.columnWidths()
+        elif resizer is not None:
+            dims["cols"] = [resizer.width()]
+        extra = getattr(self, "_extra_dims", None)     # tableaux a cellules : justifications, cellules divisees
+        if extra is not None:
+            dims.update(extra.collect())
+        return dims
+
+    def applyDims(self, dims: dict):
+        head, resizer = self._dims_children()
+        cols = dims.get("cols") or []
+        if head is not None and cols:
+            head.setColumnWidths(cols)
+        elif resizer is not None and cols:
+            resizer.setWidth(int(cols[0]))
+        extra = getattr(self, "_extra_dims", None)
+        if extra is not None:
+            extra.apply(dims)
+        self.setTableWidth(int(dims.get("width", 0) or 0))
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._dims_applied:
+            self._dims_applied = True
+            dims = _TABLE_DIMS.get(self.dimsKey())
+            if dims:
+                self.applyDims(dims)
+            # Branche APRES la restauration (elle ne doit pas se reenregistrer) : une
+            # colonne tiree a la main previent la fenetre.
+            head, resizer = self._dims_children()
+            if head is not None:
+                head.resized.connect(lambda *_a: self.dimsChanged.emit())
+            elif resizer is not None:
+                resizer.resized.connect(lambda *_a: self.dimsChanged.emit())
 
     def _refresh_style(self):
         t = self._border_thickness
@@ -3031,6 +3299,74 @@ def _table_frame() -> tuple[QWidget, QVBoxLayout]:
     layout.setSpacing(0)
     return frame, layout
 
+# Bordures interieures des tableaux (voir SettingsWindow, Tableaux > Bordure
+# interieure H/V) : lues par _restyle_table_row/_restyle_table_head (H) et par
+# _TableRow/_ResizableTableHeader.paintEvent (V).
+_TABLE_INNER_BORDER: dict = {
+    "h": {"enabled": True, "color": "", "thickness": 1},
+    "v": {"enabled": False, "color": "", "thickness": 1},
+}
+
+def _set_table_inner_border(h: tuple, v: tuple) -> None:
+    """h, v : (actif, couleur hex, epaisseur)."""
+    for key, (enabled, color, thickness) in (("h", h), ("v", v)):
+        _TABLE_INNER_BORDER[key] = {"enabled": bool(enabled), "color": color, "thickness": max(0, int(thickness))}
+
+def _inner_h_edge() -> str:
+    """Filet horizontal interieur en QSS ("0px solid transparent" plutot que
+    "none", meme raison que _TableFrame._refresh_style)."""
+    h = _TABLE_INNER_BORDER["h"]
+    if h["thickness"] <= 0 or not h["enabled"]:
+        return "0px solid transparent"
+    return f"{h['thickness']}px solid {h['color'] or M['panel_border']}"
+
+def _paint_inner_vlines(widget: QWidget, xs: list[int]) -> None:
+    """Filets verticaux interieurs de `widget` aux abscisses `xs` (bords
+    gauches des cellules, hors premiere colonne : jamais ceux des extremites)."""
+    v = _TABLE_INNER_BORDER["v"]
+    if not v["enabled"] or v["thickness"] <= 0 or not xs:
+        return
+    p = QPainter(widget)
+    color = QColor(v["color"] or M["panel_border"])
+    for x in xs:
+        p.fillRect(x - v["thickness"] // 2, 0, v["thickness"], widget.height(), color)
+    p.end()
+
+class _TableRow(QWidget):
+    """Ligne de tableau : fond/filets H en QSS (voir _restyle_table_row), filets
+    V peints ici entre ses cellules (widgets nommes "TableCell", voir
+    _table_cell) ou a `_v_boundary()` (tableaux libelle/controle)."""
+
+    def event(self, event):
+        handled = super().event(event)
+        # Les filets V sont peints a la position des cellules : apres un
+        # redimensionnement de colonne, le layout deplace les cellules APRES
+        # coup, et Qt ne repeint que leurs propres rectangles (jamais le filet,
+        # dans l'espacement entre deux). On repeint donc toute la ligne une fois
+        # le layout passe (le layout a deja traite LayoutRequest ici).
+        if event.type() in (QEvent.LayoutRequest, QEvent.Resize):
+            self.update()
+        return handled
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        head = getattr(self, "_sel_head", None)
+        if head is not None and head._selected:
+            p = QPainter(self)
+            for i, (left, edge) in enumerate(head._column_spans()):
+                if i in head._selected:
+                    p.fillRect(left, 0, edge - left, self.height(), QColor(95, 155, 208, 40))
+            p.end()
+        boundary = getattr(self, "_v_boundary", None)
+        if boundary is not None:
+            xs = [boundary()]
+        else:
+            cells = sorted((c for c in self.children()
+                            if isinstance(c, QWidget) and c.objectName() == "TableCell"),
+                           key=lambda c: c.x())
+            xs = [c.x() for c in cells[1:]]
+        _paint_inner_vlines(self, xs)
+
 def _restyle_table_row(row: QWidget, bg: str, first: bool, top_radius: int = 0, bottom_radius: int = 0):
     """(Re)applique le fond/filet/coins d'une ligne de donnees. `top_radius`
     n'est utile que pour la toute premiere ligne d'un tableau SANS entete
@@ -3039,7 +3375,7 @@ def _restyle_table_row(row: QWidget, bg: str, first: bool, top_radius: int = 0, 
     touche toujours le coin bas du cadre, entete ou pas) — voir
     SettingsWindow._apply_table_radius et homologues, qui recalculent ces
     deux valeurs a chaque cran du slider Geometrie > Tableaux."""
-    border = "" if first else f"border-top: 1px solid {M['panel_border']};"
+    border = "" if first else f"border-top: {_inner_h_edge()};"
     _apply_stylesheet_cached(
         row,
         f"#TableRow {{ background: {bg}; {border} "

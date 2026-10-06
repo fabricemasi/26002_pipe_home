@@ -1,6 +1,16 @@
 {
   "fab": {
     "root_path": "F:\\PIPELINE",
+    "lut_test_images": [
+      "F:\\PIPELINE\\BIB\\lut\\images pour test\\Image ChatGPT 4 oct. 2026, 21_33_38.png",
+      "F:\\PIPELINE\\BIB\\lut\\images pour test\\Image ChatGPT 4 oct. 2026, 21_34_05.png",
+      "F:\\PIPELINE\\BIB\\lut\\images pour test\\Image ChatGPT 4 oct. 2026, 21_34_18.png",
+      "F:\\PIPELINE\\BIB\\lut\\images pour test\\Image ChatGPT 4 oct. 2026, 21_34_37.png",
+      "F:\\PIPELINE\\BIB\\lut\\images pour test\\Image ChatGPT 4 oct. 2026, 21_34_47.png",
+      "F:\\PIPELINE\\BIB\\lut\\images pour test\\Image ChatGPT 4 oct. 2026, 21_35_05.png"
+    ],
+    "lut_default_image": "F:\\PIPELINE\\BIB\\lut\\images pour test\\Image ChatGPT 4 oct. 2026, 21_33_38.png",
+    "lut_image_curves": {},
     "ui_scale": 100,
     "auto_collapse_set_columns": false,
     "application_omit_file_names": [
@@ -50,12 +60,12 @@
       "left": false
     },
     "column_border": {
-      "top": "#2e3135",
-      "right": "#2e3135",
-      "bottom": "#2e3135",
-      "left": "#2e3135"
+      "top": "@navbar",
+      "right": "@navbar",
+      "bottom": "@navbar",
+      "left": "@navbar"
     },
-    "column_border_thickness": 3,
+    "column_border_thickness": 1,
     "column_border_radius": {
       "top_left": 5,
       "top_right": 5,
@@ -159,7 +169,7 @@
     "preview_toggle_x": 5,
     "preview_toggle_y": 1,
     "collapse_toggle_mode": "chevrons",
-    "detail_panel_width": 411,
+    "detail_panel_width": 879,
     "shortcut_font_family": "Police fichiers",
     "shortcut_font_bold": false,
     "shortcut_font_italic": false,
@@ -179,7 +189,7 @@
     "item_icon_size": 22,
     "item_icon_padding_left": 7,
     "item_row_spacing": 3,
-    "item_column_width": 220,
+    "item_column_width": 300,
     "item_row_border_enabled": false,
     "item_row_border_color": "@ligne",
     "item_row_border_thickness": 1,
@@ -2277,6 +2287,12 @@
       "left": "#2a2e32"
     },
     "table_border_thickness": 1,
+    "table_inner_h_enabled": true,
+    "table_inner_h_color": "#2a2e32",
+    "table_inner_h_thickness": 1,
+    "table_inner_v_enabled": true,
+    "table_inner_v_color": "#2a2e32",
+    "table_inner_v_thickness": 1,
     "columns_resizable": true,
     "geo_table_columns": [
       0,
@@ -2285,10 +2301,719 @@
     ],
     "font_table_columns": [
       214,
-      185,
-      170,
+      212,
+      176,
       0
     ],
+    "table_dims": {
+      "Colonnes/Colonnes#0": {
+        "width": 1217,
+        "cols": [
+          190,
+          0
+        ],
+        "head_align": {
+          "1": "center"
+        },
+        "split_head_align": {
+          "r2c1": [
+            "right",
+            "center",
+            "center",
+            "center",
+            "center"
+          ],
+          "r4c1": [
+            "right",
+            "center",
+            "center",
+            "center",
+            "center",
+            "center"
+          ],
+          "r5c1": [
+            "right",
+            "center",
+            "center",
+            "center",
+            "center"
+          ]
+        },
+        "align": {
+          "r0c1": "center,center",
+          "r1c1": "center,center",
+          "r2c1": "right,bottom",
+          "r4c1": "left,center"
+        },
+        "split": {
+          "r2c1": [
+            332,
+            173,
+            173,
+            173,
+            0
+          ],
+          "r4c1": [
+            100,
+            173,
+            173,
+            173,
+            173,
+            183
+          ],
+          "r5c1": [
+            332,
+            173,
+            173,
+            173,
+            0
+          ]
+        },
+        "split_order": {
+          "r4c1": [
+            5,
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "split_align": {
+          "r2c1": [
+            "right,center",
+            "center,center",
+            "center,center",
+            "center,center",
+            "center,center"
+          ],
+          "r4c1": [
+            "right,center",
+            "center,center",
+            "center,center",
+            "center,center",
+            "center,center",
+            "center,center"
+          ],
+          "r5c1": [
+            "right,center",
+            "center,center",
+            "center,center",
+            "center,center",
+            "center,center"
+          ]
+        }
+      },
+      "TITRE/Polices#0": {
+        "width": 1241,
+        "cols": [
+          200,
+          317,
+          69,
+          98,
+          230,
+          150,
+          0
+        ],
+        "col_order": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          6,
+          5
+        ]
+      },
+      "TITRE/Retraits#0": {
+        "width": 594,
+        "cols": [
+          243,
+          0
+        ]
+      },
+      "TITRE/Espacements#0": {
+        "width": 895,
+        "cols": [
+          161,
+          244,
+          244,
+          0
+        ]
+      },
+      "Polices principales#0": {
+        "width": 894,
+        "cols": [
+          214,
+          212,
+          176,
+          0
+        ]
+      },
+      "Geometrie#0": {
+        "width": 550,
+        "cols": [
+          0,
+          150,
+          246
+        ]
+      },
+      "Tableaux#0": {
+        "width": 1234,
+        "cols": [
+          183,
+          0
+        ],
+        "align": {
+          "r0c1": "left,center"
+        },
+        "split": {
+          "r1c1": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r5c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "Toggles#0": {
+        "width": 661,
+        "cols": [
+          81,
+          0
+        ]
+      },
+      "ICONES/General#0": {
+        "width": 1082,
+        "cols": [
+          80,
+          0,
+          720
+        ]
+      },
+      "ICONES/Logiciels#0": {
+        "width": 659,
+        "cols": [
+          80,
+          0,
+          422
+        ]
+      },
+      "RACCOURCI#0": {
+        "width": 1038,
+        "cols": [
+          81,
+          0
+        ]
+      },
+      "Colonnes/Encart#0": {
+        "width": 1165,
+        "cols": [
+          128,
+          0
+        ],
+        "split": {
+          "r1c1": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r3c1": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r4c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "row_heights": [
+          0,
+          78,
+          0,
+          96,
+          82
+        ]
+      },
+      "Colonnes/Entetes#0": {
+        "width": 1028,
+        "cols": [
+          249,
+          0
+        ],
+        "split": {
+          "r4c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r5c1": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r7c1": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "Colonnes/Lignes/Lignes#0": {
+        "width": 938,
+        "cols": [
+          181,
+          0
+        ]
+      },
+      "Colonnes/Lignes/Texte#0": {
+        "width": 1099,
+        "cols": [
+          121,
+          0
+        ],
+        "split": {
+          "r0c1": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "Colonnes/Lignes/Icone#0": {
+        "width": 625,
+        "cols": [
+          309,
+          0
+        ]
+      },
+      "Colonnes/Lignes/Apercu#0": {
+        "width": 1181,
+        "cols": [
+          142,
+          0
+        ],
+        "split": {
+          "r0c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r1c1": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r2c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "Colonnes/Selection/Focus#0": {
+        "width": 951,
+        "cols": [
+          191,
+          0
+        ],
+        "split": {
+          "r1c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r2c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r3c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "Colonnes/Selection/Non focus#0": {
+        "width": 1011,
+        "cols": [
+          251,
+          0
+        ]
+      },
+      "Colonnes/Selection/Non focus#1": {
+        "width": 1062,
+        "cols": [
+          276,
+          0
+        ],
+        "split": {
+          "r0c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r1c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r2c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "Colonnes/Selection/Survol#0": {
+        "width": 311,
+        "cols": [
+          129,
+          0
+        ],
+        "head_align": {
+          "0": "center",
+          "1": "center"
+        },
+        "align": {
+          "r0c1": "center,center"
+        }
+      },
+      "Colonnes/Selection/Survol#1": {
+        "width": 1031,
+        "cols": [
+          261,
+          0
+        ],
+        "split": {
+          "r0c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r1c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r2c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "Colonnes/Selection/Non selectionne#0": {
+        "width": 1020,
+        "cols": [
+          253,
+          0
+        ]
+      },
+      "Colonnes/Selection/Non selectionne#1": {
+        "width": 1046,
+        "cols": [
+          276,
+          0
+        ],
+        "split": {
+          "r0c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r1c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r2c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "Sliders/Rail#0": {
+        "width": 874,
+        "cols": [
+          112,
+          0
+        ],
+        "split": {
+          "r3c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r4c1": [
+            0,
+            168,
+            168,
+            168,
+            0
+          ]
+        }
+      },
+      "Sliders/Selecteur#0": {
+        "width": 852,
+        "cols": [
+          112,
+          0
+        ],
+        "head_align": {
+          "0": "center",
+          "1": "center"
+        },
+        "align": {
+          "r0c1": "left,center",
+          "r1c1": "left,center",
+          "r2c1": "left,center"
+        },
+        "split": {
+          "r3c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r4c1": [
+            0,
+            168,
+            168,
+            168,
+            0
+          ]
+        },
+        "row_heights": [
+          0,
+          0,
+          0,
+          0,
+          71
+        ]
+      },
+      "Colonnes/Texte#0": {
+        "width": 1112,
+        "cols": [
+          331,
+          0
+        ]
+      },
+      "Colonnes/Image#0": {
+        "width": 959,
+        "cols": [
+          200,
+          0
+        ]
+      },
+      "Colonnes/Icone de niveaux#0": {
+        "width": 1250,
+        "cols": [
+          215,
+          0
+        ]
+      },
+      "Toggles/Toggle 2/Cadre#0": {
+        "width": 0,
+        "cols": [
+          112,
+          0
+        ]
+      },
+      "Toggles/Toggle 2/Cadre#1": {
+        "width": 58
+      },
+      "Toggles/Toggle 2/Cadre#2": {
+        "width": 58
+      },
+      "Toggles/Toggle 2/Coche#0": {
+        "width": 0,
+        "cols": [
+          126,
+          0
+        ],
+        "split": {
+          "r2c1": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r3c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r7c1": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "Toggles/Toggle 1/Cadre#0": {
+        "width": 0,
+        "cols": [
+          190,
+          0
+        ],
+        "split": {
+          "r2c1": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r3c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "Toggles/Toggle 1/Coche#0": {
+        "width": 0,
+        "cols": [
+          226,
+          0
+        ],
+        "split": {
+          "r2c1": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r3c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r7c1": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "Toggles/Toggle 3/Cadre#0": {
+        "width": 0,
+        "cols": [
+          104,
+          0
+        ],
+        "split": {
+          "r2c1": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "r3c1": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "Sliders/Selecteur#1": {
+        "width": 58
+      }
+    },
+    "slider_ranges": {
+      "item_column_width": [
+        300,
+        640
+      ]
+    },
     "toggle_style": "toggle2",
     "toggle1_outer_width": 23,
     "toggle1_outer_height": 14,
@@ -2337,6 +3062,17 @@
       "left": "#2e343a"
     },
     "toggle1_coche_color": "#3f6f9f",
+    "toggle1_coche_skin": "none",
+    "toggle1_coche_text": "",
+    "toggle1_coche_text_font_family": "",
+    "toggle1_coche_text_font_bold": true,
+    "toggle1_coche_text_font_italic": false,
+    "toggle1_coche_text_font_size": 10,
+    "toggle1_coche_text_font_smoothing_enabled": false,
+    "toggle1_coche_text_font_smoothing": "current",
+    "toggle1_coche_text_font_color": "#ffffff",
+    "toggle1_coche_icon": "",
+    "toggle1_coche_icon_color": "#ffffff",
     "toggle2_outer_width": 14,
     "toggle2_outer_height": 14,
     "toggle2_outer_border_enabled": {
@@ -2360,7 +3096,7 @@
       "left": "#292929"
     },
     "toggle2_outer_bg": "#141618",
-    "toggle2_outer_bg_on": "#3f6f9f",
+    "toggle2_outer_bg_on": "#141618",
     "toggle2_coche_width": 8,
     "toggle2_coche_margin": 3,
     "toggle2_coche_border_enabled": {
@@ -2384,6 +3120,18 @@
       "left": "@navbar"
     },
     "toggle2_coche_color": "#3f6f9f",
+    "toggle2_coche_skin": "none",
+    "toggle2_coche_text": "",
+    "toggle2_coche_text_font_family": "",
+    "toggle2_coche_text_font_bold": true,
+    "toggle2_coche_text_font_italic": false,
+    "toggle2_coche_text_font_size": 10,
+    "toggle2_coche_text_font_smoothing_enabled": false,
+    "toggle2_coche_text_font_smoothing": "current",
+    "toggle2_coche_text_font_color": "#ffffff",
+    "toggle2_coche_icon": "",
+    "toggle2_coche_icon_color": "#ffffff",
+    "toggle_custom_styles": [],
     "slider_thumb_width": 5,
     "slider_thumb_height": 10,
     "slider_thumb_color": "#3f6f9f",
@@ -2407,13 +3155,13 @@
     },
     "slider_thumb_radius_linked": true,
     "slider_track_height": 5,
-    "slider_track_fill_color": "#141516",
-    "slider_track_empty_color": "#141516",
+    "slider_track_fill_color": "#4a413a",
+    "slider_track_empty_color": "#000000",
     "slider_track_border": {
-      "top": "#2d3234",
-      "right": "#2d3234",
-      "bottom": "#2d3234",
-      "left": "#2d3234"
+      "top": "#2d373b",
+      "right": "#2d373b",
+      "bottom": "#2d373b",
+      "left": "#2d373b"
     },
     "slider_track_border_enabled": {
       "left": true,
@@ -2668,6 +3416,9 @@
     "title_level1_font_smoothing": "current",
     "title_level1_font_color": "#59abfc",
     "title_level1_indent": 0,
+    "title_level1_gap_collapsed": 1,
+    "title_level1_gap_expanded": 35,
+    "title_level1_gap_next": 15,
     "title_level2_font_family": "Police principale",
     "title_level2_font_bold": true,
     "title_level2_font_italic": false,
@@ -2675,15 +3426,21 @@
     "title_level2_font_smoothing_enabled": true,
     "title_level2_font_smoothing": "current",
     "title_level2_font_color": "#59abfc",
-    "title_level2_indent": 16,
+    "title_level2_indent": 15,
+    "title_level2_gap_collapsed": 0,
+    "title_level2_gap_expanded": 32,
+    "title_level2_gap_next": 15,
     "title_level3_font_family": "Police principale",
-    "title_level3_font_bold": true,
+    "title_level3_font_bold": false,
     "title_level3_font_italic": false,
     "title_level3_font_size": 11,
     "title_level3_font_smoothing_enabled": true,
     "title_level3_font_smoothing": "current",
     "title_level3_font_color": "#9259abfc",
-    "title_level3_indent": 40,
+    "title_level3_indent": 30,
+    "title_level3_gap_collapsed": 0,
+    "title_level3_gap_expanded": 32,
+    "title_level3_gap_next": 15,
     "title_level4_font_family": "Police principale",
     "title_level4_font_bold": true,
     "title_level4_font_italic": false,
@@ -2691,7 +3448,10 @@
     "title_level4_font_smoothing_enabled": true,
     "title_level4_font_smoothing": "current",
     "title_level4_font_color": "#5d656b",
-    "title_level4_indent": 60,
+    "title_level4_indent": 45,
+    "title_level4_gap_collapsed": 0,
+    "title_level4_gap_expanded": 32,
+    "title_level4_gap_next": 10,
     "title_level5_font_family": "Police principale",
     "title_level5_font_bold": true,
     "title_level5_font_italic": false,
@@ -2699,6 +3459,67 @@
     "title_level5_font_smoothing_enabled": true,
     "title_level5_font_smoothing": "current",
     "title_level5_font_color": "#5d656b",
-    "title_level5_indent": 80
+    "title_level5_indent": 60,
+    "title_level5_gap_collapsed": 0,
+    "title_level5_gap_expanded": 32,
+    "title_level5_gap_next": 10,
+    "toggle3_outer_width": 23,
+    "toggle3_outer_height": 14,
+    "toggle3_outer_border_enabled": {
+      "left": true,
+      "top": true,
+      "bottom": true,
+      "right": true
+    },
+    "toggle3_outer_border_thickness": 3,
+    "toggle3_outer_border_radius": {
+      "top_left": 7,
+      "top_right": 7,
+      "bottom_right": 7,
+      "bottom_left": 7
+    },
+    "toggle3_outer_border_radius_linked": true,
+    "toggle3_outer_border": {
+      "top": "#233e59",
+      "right": "#233e59",
+      "bottom": "#233e59",
+      "left": "#233e59"
+    },
+    "toggle3_outer_bg": "#141618",
+    "toggle3_outer_bg_on": "#3f6f9f",
+    "toggle3_coche_width": 10,
+    "toggle3_coche_margin": 2,
+    "toggle3_coche_border_enabled": {
+      "left": true,
+      "top": true,
+      "bottom": true,
+      "right": true
+    },
+    "toggle3_coche_border_thickness": 1,
+    "toggle3_coche_border_radius": {
+      "top_left": 5,
+      "top_right": 5,
+      "bottom_right": 5,
+      "bottom_left": 5
+    },
+    "toggle3_coche_border_radius_linked": true,
+    "toggle3_coche_border": {
+      "top": "#2e343a",
+      "right": "#2e343a",
+      "bottom": "#2e343a",
+      "left": "#2e343a"
+    },
+    "toggle3_coche_color": "#3f6f9f",
+    "toggle3_coche_skin": "none",
+    "toggle3_coche_text": "",
+    "toggle3_coche_text_font_family": "",
+    "toggle3_coche_text_font_bold": true,
+    "toggle3_coche_text_font_italic": false,
+    "toggle3_coche_text_font_size": 10,
+    "toggle3_coche_text_font_smoothing_enabled": false,
+    "toggle3_coche_text_font_smoothing": "current",
+    "toggle3_coche_text_font_color": "#ffffff",
+    "toggle3_coche_icon": "",
+    "toggle3_coche_icon_color": "#ffffff"
   }
 }

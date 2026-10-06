@@ -1023,36 +1023,45 @@ class _CompactAppOrCustomColorField(QWidget):
         # correspondant bien centre au dessus du toggle") — remplace
         # l'ancien libelle "avant" le toggle sur la meme ligne.
         is_slot = value.startswith("@")
-        app_stack = QWidget()
-        app_stack.setStyleSheet("background: transparent;")
-        app_stack_l = QVBoxLayout(app_stack)
-        app_stack_l.setContentsMargins(0, 0, 0, 0)
-        app_stack_l.setSpacing(2)
+        # "app" a GAUCHE de son toggle, tres rapproches.
+        app_box = QWidget()
+        app_box.setStyleSheet("background: transparent;")
+        app_box_l = QHBoxLayout(app_box)
+        app_box_l.setContentsMargins(0, 0, 0, 0)
+        app_box_l.setSpacing(3)
+        app_box_l.addStretch(1)               # « app » + toggle collés à la pastille (côté droit de leur boîte)
         app_label = QLabel("app")
         _set_text_role(app_label, "mini_label")
-        app_label.setAlignment(Qt.AlignHCenter)
-        app_stack_l.addWidget(app_label)
+        app_label.setContentsMargins(0, 0, 0, 3)   # remonte le texte : aligne avec le centre du toggle
+        app_box_l.addWidget(app_label)
         self.app_toggle = _Toggle(is_slot, show_label=False)
-        app_stack_l.addWidget(self.app_toggle, 0, Qt.AlignHCenter)
-        layout.addWidget(app_stack)
+        app_box_l.addWidget(self.app_toggle)
+        layout.addWidget(app_box)
 
         self.swatch = _ColorSwatchButton()
         self.swatch.setFixedSize(swatch_size, swatch_size)
         self.swatch.clicked.connect(self._on_swatch_clicked)
         layout.addWidget(self.swatch)
 
-        sys_stack = QWidget()
-        sys_stack.setStyleSheet("background: transparent;")
-        sys_stack_l = QVBoxLayout(sys_stack)
-        sys_stack_l.setContentsMargins(0, 0, 0, 0)
-        sys_stack_l.setSpacing(2)
+        # "sys" a DROITE de son toggle, tres rapproches.
+        sys_box = QWidget()
+        sys_box.setStyleSheet("background: transparent;")
+        sys_box_l = QHBoxLayout(sys_box)
+        sys_box_l.setContentsMargins(0, 0, 0, 0)
+        sys_box_l.setSpacing(3)
+        self.system_toggle = _Toggle(not is_slot, show_label=False)
+        sys_box_l.addWidget(self.system_toggle)
         sys_label = QLabel("sys")
         _set_text_role(sys_label, "mini_label")
-        sys_label.setAlignment(Qt.AlignHCenter)
-        sys_stack_l.addWidget(sys_label)
-        self.system_toggle = _Toggle(not is_slot, show_label=False)
-        sys_stack_l.addWidget(self.system_toggle, 0, Qt.AlignHCenter)
-        layout.addWidget(sys_stack)
+        sys_label.setContentsMargins(0, 0, 0, 3)   # remonte le texte : aligne avec le centre du toggle
+        sys_box_l.addWidget(sys_label)
+        sys_box_l.addStretch(1)
+        layout.addWidget(sys_box)
+        # Boîtes de même largeur : la pastille est au CENTRE du champ (donc alignée sur l'axe du
+        # toggle de bordure placé au-dessus, voir _side_parts de settings_window_v2).
+        side_width = max(app_box.sizeHint().width(), sys_box.sizeHint().width())
+        app_box.setFixedWidth(side_width)
+        sys_box.setFixedWidth(side_width)
 
         self.app_toggle.toggled.connect(self._on_app_toggled)
         self.system_toggle.toggled.connect(self._on_system_toggled)
@@ -1706,6 +1715,86 @@ class _GeoTable(QWidget):
             row.setMinimumHeight(0)
             _lock_min_height(row)
         self.head.setCellPadding(left, right)
+
+class _InnerLineField(QWidget):
+    """Reglage d'un filet de tableau : toggle (actif), couleur (app/sys),
+    epaisseur. Valeur : (actif, couleur "#rrggbb" ou "@<slot>", epaisseur)."""
+
+    changed = Signal()
+
+    def __init__(self, enabled: bool, color: str, thickness: int, colors: dict, title: str, parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+        self.toggle = _Toggle(enabled, show_label=False)
+        self.color = _CompactAppOrCustomColorField(color, colors, swatch_size=20, title=title)
+        self.thickness = _SliderField(0, 8, thickness, slider_width=140, box_width=58)
+        label = QLabel("Epaisseur")
+        _set_text_role(label, "inline_label")
+        layout.addWidget(self.toggle)
+        layout.addWidget(self.color)
+        layout.addWidget(label)
+        layout.addWidget(self.thickness)
+        self.toggle.toggled.connect(lambda _c: self.changed.emit())
+        self.color.changed.connect(lambda _v: self.changed.emit())
+        self.thickness.valueChanged.connect(lambda _v: self.changed.emit())
+
+    def value(self) -> tuple[bool, str, int]:
+        return self.toggle.isChecked(), self.color.value(), self.thickness.value()
+
+    def setValue(self, enabled: bool, color: str, thickness: int):
+        self.toggle.setChecked(bool(enabled))
+        self.color.setValue(color)
+        self.thickness.setValue(int(thickness))
+
+    def refresh_colors(self, colors: dict):
+        self.color.refresh_colors(colors)
+
+class _ControlsTable(QWidget):
+    """Tableau a entete, une cellule independante par colonne : une ligne
+    par (libelle, [controles]) — meme mecanique que _GeoTable (entete
+    redimensionnable, rayon/bordure/padding suivis par la fenetre). Les
+    colonnes sont donnees par `columns` : [(titre, largeur)] (0 = extensible),
+    la premiere pour le libelle."""
+
+    def __init__(self, columns: list[tuple[str, int]], rows: list[tuple[str, list[QWidget]]], parent=None):
+        super().__init__(parent)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.frame_wrap, layout = _table_frame()
+        self.head = _table_header(columns)
+        layout.addWidget(self.head)
+        self._row_meta: list[tuple[QWidget, str, bool]] = []
+        self._cells: list[QWidget] = []
+        column_cells: dict[int, list[QWidget]] = {}
+        for i, (label, controls) in enumerate(rows):
+            bg = M["table_row_a"] if i % 2 else M["table_row_b"]
+            row, row_l = _table_row(bg, first=(i == 0))
+            self._row_meta.append((row, bg, i == 0))
+            name = QLabel(label)
+            _set_text_role(name, "row_label")
+            cell = _table_cell(name, columns[0][1], row_l, center=True)
+            column_cells.setdefault(0, []).append(cell)
+            self._cells.append(cell)
+            for col, control in enumerate(controls, start=1):
+                cell = _table_cell(control, columns[col][1], row_l, center=True)
+                # Controle a sa taille naturelle, centre dans la cellule : ses
+                # elements (slider, champ) restent groupes, sans espace elastique.
+                cell.layout().setAlignment(control, Qt.AlignCenter)
+                column_cells.setdefault(col, []).append(cell)
+                self._cells.append(cell)
+            _lock_min_height(row)
+            layout.addWidget(row)
+        _wire_resizable_columns(self.head, column_cells)
+        # Titres des colonnes de controles centres comme leurs cellules.
+        for head_cell in self.head._cells[1:]:
+            head_cell.setAlignment(Qt.AlignCenter)
+        outer.addWidget(self.frame_wrap)
+
+    apply_radius = _GeoTable.apply_radius
+    apply_border = _GeoTable.apply_border
+    setCellPadding = _GeoTable.setCellPadding
 
 class _TablePreview(QWidget):
     """Apercu de tableau (2 colonnes x 3 lignes, AVEC entete) pour Tableaux

@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 
 from PySide6.QtCore import (
-    QEvent, QObject, Qt, Signal,
+    QEvent, QObject, QPoint, QRect, Qt, QTimer, Signal,
 )
 from PySide6.QtGui import (
     QColor,
@@ -25,6 +25,8 @@ from settings_store import (
     _subsection_left_margin,
     _title_color,
     _title_font,
+    _title_gap,
+    _title_gap_next,
     _title_indent,
 )
 from settings_widgets import (
@@ -33,6 +35,9 @@ from settings_widgets import (
     _Toggle,
     _apply_stylesheet_cached,
     _qfont,
+    _inner_h_edge,
+    _paint_inner_vlines,
+    _TableRow,
     _restyle_table_row,
     _set_dimmed,
     _table_frame,
@@ -327,6 +332,7 @@ class _BodyMixin:
             row.setContentsMargins(offset, 0, 0, 0)
 
 
+
 class _Section(_BodyMixin, QWidget):
     """Section de la page : titre bleu petites capitales + note optionnelle,
     PAS de filet horizontal (la maquette n'en a pas ici, contrairement a
@@ -345,6 +351,7 @@ class _Section(_BodyMixin, QWidget):
     def __init__(self, title: str, note: str = "", parent=None):
         super().__init__(parent if parent is not None else _SECTION_HOST)
         _report_construction_step(title)
+        self._title_text = title
         self._collapsed = False
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
@@ -363,7 +370,7 @@ class _Section(_BodyMixin, QWidget):
         # trainer sous le titre en plus du spaceur inter-sections, voir
         # SettingsWindow._build_content).
         self._title_indent = _title_indent(1)
-        head_l.setContentsMargins(self._title_indent, 0, 0, 10)
+        head_l.setContentsMargins(self._title_indent, 0, 0, _title_gap_next(1))
         head_l.setSpacing(10)
         # Chevron peint (voir _Chevron) — taille FIXE (pas de reglage
         # dedie) ; le TEXTE (police/couleur) suit General > TITRE > "Police
@@ -407,7 +414,7 @@ class _Section(_BodyMixin, QWidget):
             return
         self._collapsed = collapsed
         self._body.setVisible(not collapsed)
-        self._head_layout.setContentsMargins(self._title_indent, 0, 0, 0 if collapsed else 10)
+        self._head_layout.setContentsMargins(self._title_indent, 0, 0, 0 if collapsed else _title_gap_next(1))
         # activate() (pas juste invalidate(), ni compter sur le prochain
         # passage de l'event loop) : FORCE ce layout precis, dont on vient
         # de changer les marges, a se recalculer TOUT DE SUITE. Sans ca, le
@@ -444,9 +451,17 @@ class _Section(_BodyMixin, QWidget):
         self.setMinimumHeight(self.sizeHint().height() if not collapsed else 0)
         self.updateGeometry()
         self.collapsedChanged.emit(collapsed)
+        QTimer.singleShot(0, self._remeasure)
 
     def is_collapsed(self) -> bool:
         return self._collapsed
+
+    def _remeasure(self):
+        try:
+            self.refresh_min_height()
+            _reflow_ancestors(self)
+        except RuntimeError:   # widget deja detruit
+            pass
 
     def refresh_min_height(self):
         """Meme recalcul que la fin de set_collapsed (memes 2 lignes,
@@ -497,6 +512,7 @@ class _SubSection(_BodyMixin, QWidget):
         # "tab = 2 carac" par niveau, remarque de l'utilisateur, "incremente
         # les differents niveaux de settings").
         _report_construction_step(title, depth=max(1, level - 1))
+        self._title_text = title
         self._collapsed = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -524,7 +540,7 @@ class _SubSection(_BodyMixin, QWidget):
         # l'utilisateur, "base toi sur ce que tu avais fait sur les
         # sections" (une marge haute fixe de 14px restait telle quelle meme
         # repliee, contrairement a _Section).
-        head_l.setContentsMargins(self._left_margin, 0, 0, 6)
+        head_l.setContentsMargins(self._left_margin, 0, 0, _title_gap_next(level))
         head_l.setSpacing(6)
         self._chevron = _Chevron(size=11, color=_title_color(level))
         head_l.addWidget(self._chevron)
@@ -566,10 +582,26 @@ class _SubSection(_BodyMixin, QWidget):
             return
         self._collapsed = collapsed
         self._body.setVisible(not collapsed)
-        self._head_layout.setContentsMargins(self._left_margin, 0, 0, 0 if collapsed else 6)
+        self._head_layout.setContentsMargins(self._left_margin, 0, 0, 0 if collapsed else _title_gap_next(self._level))
         self._refresh_chevron()
-        self.refresh_layout()
+        # Signal AVANT le recalcul : ses abonnes (spaceurs entre titres, voir
+        # _make_gap_spacer) changent la hauteur du contenu, que les planchers
+        # calcules ensuite doivent deja inclure.
         self.collapsedChanged.emit(collapsed)
+        self.refresh_layout()
+        _reflow_ancestors(self)
+        # Une 2e mesure apres le passage de la boucle d'evenements : la toute
+        # premiere fois, un corps jamais affiche donne un sizeHint() trop
+        # petit (plancher fige trop bas, titre ecrase).
+        QTimer.singleShot(0, self._remeasure)
+
+    def _remeasure(self):
+        try:
+            if not self._collapsed:
+                self.refresh_layout()
+                _reflow_ancestors(self)
+        except RuntimeError:   # widget deja detruit
+            pass
 
     def refresh_layout(self):
         """Force CE sous-groupe (et tout ce qu'il contient, meme imbrique
@@ -600,6 +632,47 @@ class _SubSection(_BodyMixin, QWidget):
     def _refresh_chevron(self):
         self._chevron.setCollapsed(self._collapsed)
 
+def _reflow_ancestors(widget: QWidget):
+    """Recalcule les planchers de hauteur de TOUS les _Section/_SubSection
+    qui contiennent `widget` : chacun garde le sizeHint() de son dernier
+    depli (voir _Section.set_collapsed/_SubSection.refresh_layout), perime
+    des qu'un descendant se plie/deplie ou change d'espacement — l'espace en
+    trop (ou manquant) se repartissait alors entre titre et contenu, d'ou
+    des ecarts incoherents. Planchers d'abord leves, layouts recalcules une
+    fois depuis le plus externe, puis replaces du plus interne au plus
+    externe."""
+    chain = []
+    parent = widget.parentWidget()
+    while parent is not None:
+        if isinstance(parent, (_Section, _SubSection)):
+            chain.append(parent)
+        parent = parent.parentWidget()
+    _reflow_chain(chain)
+
+def _reflow_all(root: QWidget):
+    """Meme recalcul que _reflow_ancestors pour tous les titres sous `root`
+    (apres un changement d'espacements/de marges applique en direct)."""
+    _reflow_chain(list(reversed(root.findChildren(_Section) + root.findChildren(_SubSection))))
+
+def _reflow_chain(chain: list):
+    """`chain` : du plus interne au plus externe."""
+    open_items = [item for item in chain if not item.is_collapsed()]
+    for item in open_items:
+        item.setMinimumHeight(0)
+    for item in chain:
+        if item.parentWidget() is not None and not any(
+                isinstance(p, (_Section, _SubSection)) for p in _ancestors(item)):
+            _activate_layout_tree(item)
+    for item in open_items:
+        item.setMinimumHeight(item.sizeHint().height())
+        item.updateGeometry()
+
+def _ancestors(widget: QWidget):
+    parent = widget.parentWidget()
+    while parent is not None:
+        yield parent
+        parent = parent.parentWidget()
+
 # Espacement entre 2 _SubSection empilees — MEME principe que _SECTION_GAP_*/
 # SettingsWindow._build_content (un spaceur dedie, plein entre 2 sous-groupes
 # DEPLIES, quasi nul des que celui du dessus est REPLIE) mais des valeurs
@@ -607,9 +680,29 @@ class _SubSection(_BodyMixin, QWidget):
 # section a part entiere — voir _stack_subsections/la remarque de
 # l'utilisateur, "je veux que tu normalises l'espacement entre les sections
 # ... comme tu l'avais fait pour les sections".
-_SUBSECTION_GAP_EXPANDED = 8
+_SUBSECTION_GAP_EXPANDED = 32
 
 _SUBSECTION_GAP_COLLAPSED = 0
+
+def _make_gap_spacer(item, level: int, multiplier: int = 1) -> QWidget:
+    """Spaceur sous `item` (titre de `level`) : hauteur lue dans les reglages
+    TITRE (_title_gap), replie ou deplie, mise a jour au repli/depli et par
+    _refresh_gap_spacers (apercu en direct)."""
+    spacer = QWidget()
+    spacer.setStyleSheet("background: transparent;")
+    item._gap_spacer = (spacer, level, multiplier)
+    _refresh_gap_spacer(item)
+    item.collapsedChanged.connect(lambda _c, i=item: _refresh_gap_spacer(i))
+    return spacer
+
+def _refresh_gap_spacer(item):
+    spacer, level, multiplier = item._gap_spacer
+    spacer.setFixedHeight(_title_gap(level, item.is_collapsed()) * multiplier)
+
+def _refresh_gap_spacers(root: QWidget):
+    for item in root.findChildren(QWidget):
+        if hasattr(item, "_gap_spacer"):
+            _refresh_gap_spacer(item)
 
 def _stack_subsections(layout: QVBoxLayout, subsections: list[_SubSection]):
     """Empile plusieurs _SubSection dans `layout` (deja cree, vide) avec un
@@ -635,14 +728,7 @@ def _stack_subsections(layout: QVBoxLayout, subsections: list[_SubSection]):
         layout.addWidget(sub)
         if i == len(subsections) - 1:
             continue
-        spacer = QWidget()
-        spacer.setStyleSheet("background: transparent;")
-        spacer.setFixedHeight(_SUBSECTION_GAP_COLLAPSED if sub.is_collapsed() else _SUBSECTION_GAP_EXPANDED)
-        sub.collapsedChanged.connect(
-            lambda collapsed, s=spacer: s.setFixedHeight(
-                _SUBSECTION_GAP_COLLAPSED if collapsed else _SUBSECTION_GAP_EXPANDED
-            )
-        )
+        spacer = _make_gap_spacer(sub, sub._level)
         layout.addWidget(spacer)
     _make_accordion(subsections)
 
@@ -731,6 +817,10 @@ class _TabStrip(QWidget):
     def currentIndex(self) -> int:
         return self._index
 
+# Couleur d'entete commune (Tableaux > Couleur d'en-tete) pour les entetes
+# construits apres coup (tableaux "un reglage par ligne", voir _attach_flat_head).
+_TABLE_HEAD: dict = {"bg": None}
+
 def _restyle_table_head(head: QWidget, radius: int = 0):
     """(Re)applique le fond/filet/coins de l'entete d'un tableau — coins HAUTS
     seulement (voir _TableFrame : c'est elle qui touche le coin haut du
@@ -744,12 +834,56 @@ def _restyle_table_head(head: QWidget, radius: int = 0):
     Colonnes > Couleur des entetes mais pour les tableaux "fermes" de
     CETTE fenetre (Polices/Geometrie, les seuls a avoir un entete) plutot
     que les colonnes du navigateur principal."""
-    bg = getattr(head, "_custom_bg", None) or M["table_head_bg"]
+    bg = getattr(head, "_custom_bg", None) or _TABLE_HEAD["bg"] or M["table_head_bg"]
     _apply_stylesheet_cached(
         head,
-        f"#TableHead {{ background: {bg}; border-bottom: 1px solid {M['panel_border']}; "
+        f"#TableHead {{ background: {bg}; border-bottom: {_inner_h_edge()}; "
         f"border-top-left-radius: {radius}px; border-top-right-radius: {radius}px; }}",
     )
+
+class _ReorderOverlay(QWidget):
+    """Couche posee sur le tableau pendant le deplacement d'une colonne : la colonne (entete + lignes)
+    suit le curseur en transparence, son emplacement d'origine est assombri et tous les emplacements
+    possibles (entre deux colonnes) sont marques, le plus proche en surbrillance."""
+
+    def __init__(self, frame: QWidget, head: "_ResizableTableHeader", source: int, ghost, offset: int, grab_dx: int):
+        super().__init__(frame)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setGeometry(frame.rect())
+        self.head, self.source, self.ghost, self.offset, self.grab_dx = head, source, ghost, offset, grab_dx
+        spans = head._column_spans()
+        order = head._order
+        self.gaps = [spans[i][0] for i in order] + [spans[order[-1]][1]]
+        self.origin = spans[source]
+        self.cursor_x = spans[source][0] + grab_dx
+        self.target: int | None = None
+        self.show()
+        self.raise_()
+
+    def follow(self, x: int):
+        self.cursor_x = x
+        position = self.head._order.index(self.source)
+        nearest = min(range(len(self.gaps)), key=lambda k: abs(self.gaps[k] - (x - self.grab_dx + (self.origin[1] - self.origin[0]) // 2)))
+        self.target = None if nearest in (position, position + 1) else nearest
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        accent = QColor(M["accent"])
+        p.fillRect(self.offset + self.origin[0], 0, self.origin[1] - self.origin[0], self.height(), QColor(0, 0, 0, 90))
+        for k, gap in enumerate(self.gaps):
+            on = k == self.target
+            color = QColor(accent)
+            color.setAlpha(255 if on else 70)
+            width = 3 if on else 1
+            p.fillRect(self.offset + gap - width // 2, 0, width, self.height(), color)
+        p.setOpacity(0.75)
+        p.drawPixmap(self.offset + self.cursor_x - self.grab_dx, 0, self.ghost)
+        p.setOpacity(1.0)
+        p.setPen(accent)
+        p.drawRect(self.offset + self.cursor_x - self.grab_dx, 0, self.ghost.width() - 1, self.ghost.height() - 1)
+        p.end()
+
 
 class _ResizableTableHeader(QWidget):
     """En-tete de tableau ferme (voir l'ancienne _table_header, dont c'est
@@ -772,10 +906,24 @@ class _ResizableTableHeader(QWidget):
     n'est de toute facon connue qu'une fois le layout resolu."""
 
     resized = Signal(int, int)  # (index de colonne, nouvelle largeur)
+    selectionChanged = Signal()
+    columnMoved = Signal()      # l'ordre des colonnes a change (voir setOrder)
 
     _MARGIN = 5
     _MIN_WIDTH = 60
     _MAX_WIDTH = 640
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        spans = self._column_spans()
+        _paint_inner_vlines(self, [spans[i][0] for i in self._order[1:]])
+
+    def event(self, event):
+        handled = super().event(event)
+        # Voir _TableRow.event : les filets V suivent les cellules apres le layout.
+        if event.type() == QEvent.LayoutRequest:
+            self.update()
+        return handled
 
     def __init__(self, cells: list[tuple[str, int]], parent=None):
         super().__init__(parent)
@@ -790,13 +938,20 @@ class _ResizableTableHeader(QWidget):
         self._widths = [w for _text, w in cells]
         self._cells: list[QLabel] = []
         self._padding_lr = (10, 10)
+        self._selected: set[int] = set()          # colonnes selectionnees (multi)
+        self._order: list[int] = list(range(len(cells)))   # ordre d'affichage (indices LOGIQUES des colonnes)
+        self._titles: list[str] = [text.upper() for text, _w in cells]
+        self._reorderable = False
+        self._reorder = None                      # deplacement de colonne en cours (_ReorderOverlay)
+        self._badged = False                      # largeurs affichees dans les titres pendant un redimensionnement
+        self._equal_toggles: list = []            # True = colonne egalisable quand plusieurs colonnes sont selectionnees
+        self._press_pos = None
+        self._stretch_fixed: dict[int, int] = {}   # colonne extensible figee a une largeur (groupe egal)
+        self._stretch_manual: set[int] = set()   # colonne extensible figee a la main (bord droit glisse)
+        self._edge_pinned = False   # groupe egal colle au bord droit : il y reste (les autres colonnes s'y adossent)
         for text, width in cells:
             cell = QLabel(text.upper())
             cell.setFont(_qfont(9, 600))
-            cell.setStyleSheet(
-                f"color: {M['table_head_fg']}; background: transparent; "
-                f"padding: 0 {self._padding_lr[1]}px 0 {self._padding_lr[0]}px;"
-            )
             # Sans ca, chaque libelle occupe TOUTE sa colonne bord a bord
             # (aucun espace vide entre les cellules, voir le layout
             # ci-dessus) : un vrai clic a la souris sur une bordure de
@@ -808,16 +963,25 @@ class _ResizableTableHeader(QWidget):
             # widget laisse passer le clic/survol jusqu'a son parent.
             cell.setAttribute(Qt.WA_TransparentForMouseEvents, True)
             self._cells.append(cell)
+            self._equal_toggles.append(True)     # colonne pouvant etre egalisee (pas l'extensible d'un tableau libelle/valeur)
             if width:
                 cell.setFixedWidth(width)
                 layout.addWidget(cell, 0)
             else:
                 layout.addWidget(cell, 1)
+        layout.addStretch(0)  # recueille le vide quand une colonne extensible est figee
+        for i in range(len(self._cells)):
+            self._refresh_cell_style(i)
         self._resizing_index: int | None = None
         self._resizing_sign = 1
         self._resize_start_x = 0
         self._resize_start_width = 0
         self._resizable = True
+
+    def disableEqualToggle(self, index: int):
+        """Cette colonne ne s'egalise pas avec les autres colonnes selectionnees (ex. colonne
+        extensible d'un tableau libelle/valeur)."""
+        self._equal_toggles[index] = False
 
     def setResizable(self, enabled: bool):
         """Tableaux > Colonnes dimensionnables (voir SettingsWindow._section_
@@ -838,52 +1002,141 @@ class _ResizableTableHeader(QWidget):
         libelle de chaque colonne reste aligne avec le contenu de la
         colonne en dessous."""
         self._padding_lr = (max(0, int(left)), max(0, int(right)))
-        for cell in self._cells:
-            cell.setStyleSheet(
-                f"color: {M['table_head_fg']}; background: transparent; "
-                f"padding: 0 {self._padding_lr[1]}px 0 {self._padding_lr[0]}px;"
-            )
+        for i in range(len(self._cells)):
+            self._refresh_cell_style(i)
+
+    def _refresh_cell_style(self, index: int):
+        bg = "rgba(95, 155, 208, 0.22)" if index in self._selected else "transparent"
+        self._cells[index].setStyleSheet(
+            f"color: {M['table_head_fg']}; background: {bg}; "
+            f"padding: 0 {self._padding_lr[1]}px 0 {self._padding_lr[0]}px;"
+        )
+
+    def _column_at(self, x: int) -> int | None:
+        for i, (left, right) in enumerate(self._column_spans()):
+            if left <= x < right:
+                return i
+        return None
+
+    def _place_toggles(self):
+        """Ancien emplacement des cases « largeurs egales » (supprimees : selectionner plusieurs
+        colonnes suffit). Conserve pour les appelants."""
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._stretch_fixed:
+            self._apply_equal()
+        self._place_toggles()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._place_toggles()
+
+    def _select_click(self, index: int, shift: bool):
+        """Clic sur un titre : seul = cette colonne uniquement (re-clic sur la
+        seule colonne selectionnee = deselection) ; Maj = ajoute/retire."""
+        if shift:
+            self._selected ^= {index}
+        elif self._selected == {index}:
+            self._selected = set()
+        else:
+            self._selected = {index}
+        for i in range(len(self._cells)):
+            self._refresh_cell_style(i)
+        self._release_stretch(self._equal_group())
+        self.selectionChanged.emit()
+
+    def _equal_group(self) -> list[int]:
+        """Colonnes selectionnees (au moins 2) : elles gardent TOUTES exactement la meme largeur."""
+        group = sorted(i for i in self._selected if self._equal_toggles[i])
+        return group if len(group) > 1 else []
+
+    def _equal_limits(self, group: list[int]) -> tuple[int, int]:
+        """(nb de colonnes du groupe, largeur maxi commune) : avec une colonne
+        extensible dans le groupe, tout doit tenir dans la largeur de l'entete."""
+        n = len(group)
+        other = sum(w for i, w in enumerate(self._widths) if w and i not in group)
+        other += sum(w for i, w in self._stretch_fixed.items() if i not in group)
+        room = (self.width() - other) // n if n else self._MAX_WIDTH
+        return n, max(self._MIN_WIDTH, min(self._MAX_WIDTH, room))
+
+    def _set_group_width(self, group: list[int], width: int):
+        """Applique `width` a TOUT le groupe d'un coup (colonnes extensibles
+        incluses : figees a cette largeur, le reste de l'entete reste vide)."""
+        for i in group:
+            if self._widths[i]:
+                if self._widths[i] != width:
+                    self._set_width(i, width, place=False)
+            elif self._stretch_fixed.get(i) != width:
+                self._stretch_fixed[i] = width
+                self._cells[i].setFixedWidth(width)
+                self.resized.emit(i, width)
+        self._place_toggles()
+
+    def _release_stretch(self, keep: list[int]):
+        """Rend leur elasticite aux colonnes extensibles sorties du groupe."""
+        keep = list(keep) + list(self._stretch_manual)
+        for i in [i for i in self._stretch_fixed if i not in keep]:
+            del self._stretch_fixed[i]
+            self._cells[i].setMinimumWidth(0)
+            self._cells[i].setMaximumWidth(16777215)
+            self.resized.emit(i, 0)
+
+    def _apply_equal(self):
+        """Egalise les colonnes a toggle actif a la plus large (ou, avec une
+        colonne extensible dans le groupe, a ce qui tient dans l'entete)."""
+        group = self._equal_group()
+        self._release_stretch(group)
+        if not group:
+            self._edge_pinned = False
+            return
+        n, room = self._equal_limits(group)
+        has_stretch = any(not self._widths[i] for i in group)
+        widest = max([self._widths[i] for i in group if self._widths[i]] + [self._stretch_fixed.get(i, 0) for i in group])
+        width = min(room, widest) if has_stretch else widest
+        if has_stretch and (not widest or self._edge_pinned):
+            width = room
+        self._edge_pinned = has_stretch and width >= room
+        self._set_group_width(group, max(self._MIN_WIDTH, width))
+
+    def _column_spans(self) -> list[tuple[int, int]]:
+        """(bord gauche, bord droit) de chaque colonne, indexee par colonne LOGIQUE, calcule a partir
+        des largeurs fixes ET de la largeur REELLE de ce widget (self.width(), toujours fiable —
+        contrairement a cell.geometry(), qui peut ne pas encore refleter le dernier layout) : une
+        colonne extensible recoit le meme partage de l'espace restant qu'un stretch=1 de QHBoxLayout,
+        ou qu'elle soit dans l'ordre d'affichage."""
+        free = [i for i, w in enumerate(self._widths) if not w and i not in self._stretch_fixed]
+        used = sum(w for w in self._widths if w) + sum(self._stretch_fixed.values())
+        stretch_width = max(0, self.width() - used) // len(free) if free else 0
+        spans: list = [None] * len(self._widths)
+        pos = 0
+        for i in self._order:
+            width = self._widths[i] or self._stretch_fixed.get(i, stretch_width)
+            spans[i] = (pos, pos + width)
+            pos += width
+        return spans
 
     def _column_edges(self) -> list[int]:
-        """Position (x) du bord droit de chaque colonne, calculee a partir
-        des largeurs fixes ET de la largeur REELLE actuelle de ce widget
-        (self.width(), toujours fiable — contrairement a cell.geometry(),
-        qui peut ne pas encore refleter le dernier passage de layout) : la
-        ou toute colonne extensible se trouve dans `cells` se voit
-        attribuer le meme partage de l'espace restant qu'un vrai stretch=1
-        de QHBoxLayout."""
-        stretch_count = self._widths.count(0)
-        used = sum(w for w in self._widths if w)
-        stretch_width = max(0, self.width() - used) // stretch_count if stretch_count else 0
-        edges = []
-        pos = 0
-        for w in self._widths:
-            pos += w if w else stretch_width
-            edges.append(pos)
-        return edges
+        """Position (x) du bord droit de chaque colonne (indexee par colonne logique)."""
+        return [right for _left, right in self._column_spans()]
 
     def _draggable_boundaries(self) -> list[tuple[int, int, int]]:
-        """Bordures REELLEMENT glissables : (position x, index de colonne
-        controlee, signe) — signe +1 si glisser vers la DROITE agrandit
-        cette colonne (sa propre bordure DROITE, le cas normal), -1 si
-        glisser vers la DROITE la retrecit (sa bordure GAUCHE — n'existe
-        que quand la colonne PRECEDENTE est extensible, voir _GeoTable ou
-        "Element" precede "Cadre" : sans ce cas, la bordure entre les deux
-        ne controlait RIEN, obligeant l'utilisateur a aller chercher celle,
-        bien plus loin, apres TOUTE la colonne Cadre — voir sa remarque,
-        capture a l'appui, "il faut que j'aille chercher le slider apres le
-        texte cadre")."""
-        edges = self._column_edges()
+        """Bordures REELLEMENT glissables : (position x, index de colonne controlee, signe) — signe +1
+        si glisser vers la DROITE agrandit cette colonne (sa bordure DROITE, le cas normal), -1 si
+        glisser vers la DROITE la retrecit (sa bordure GAUCHE — n'existe que quand la colonne qui
+        la PRECEDE a l'ecran est extensible : sans ce cas la bordure ne controlait RIEN)."""
+        spans = self._column_spans()
         boundaries: list[tuple[int, int, int]] = []
-        left = 0
-        for i, width in enumerate(self._widths):
-            if width == 0:
-                left = edges[i]
+        previous = None
+        for i in self._order:
+            left, right = spans[i]
+            if self._widths[i] == 0:
+                previous = i
                 continue
-            if i > 0 and self._widths[i - 1] == 0:
+            if previous is not None and self._widths[previous] == 0:
                 boundaries.append((left, i, -1))
-            boundaries.append((edges[i], i, 1))
-            left = edges[i]
+            boundaries.append((right, i, 1))
+            previous = i
         return boundaries
 
     def _boundary_at(self, x: int) -> tuple[int, int] | None:
@@ -898,20 +1151,123 @@ class _ResizableTableHeader(QWidget):
         if event.button() == Qt.LeftButton:
             hit = self._boundary_at(event.position().toPoint().x())
             if hit is not None:
-                self._resizing_index, self._resizing_sign = hit
-                self._resize_start_x = event.globalPosition().toPoint().x()
-                self._resize_start_width = self._widths[self._resizing_index]
+                self.beginDrag(hit, event.globalPosition().toPoint().x())
                 event.accept()
                 return
+            self._press_pos = event.position().toPoint()
+            self._press_shift = bool(event.modifiers() & Qt.ShiftModifier)
         super().mousePressEvent(event)
+
+    def beginDrag(self, hit: tuple, global_x: int):
+        """Debut d'un glisser de bordure (`hit` = (colonne, signe), voir _boundary_at). Public :
+        les cellules des lignes (settings_cells) saisissent la MEME bordure que l'entete."""
+        self._resizing_index, self._resizing_sign = hit
+        self._resize_start_x = global_x
+        idx = self._resizing_index
+        left, right = self._column_spans()[idx]
+        self._resize_start_width = self._widths[idx] or (right - left)
+
+    def dragTo(self, global_x: int):
+        delta = global_x - self._resize_start_x
+        idx = self._resizing_index
+        stretch = not self._widths[idx]
+        new_width = max(self._MIN_WIDTH, self._resize_start_width + self._resizing_sign * delta)
+        if not stretch:
+            new_width = min(self._MAX_WIDTH, new_width)
+        group = self._equal_group()
+        if idx in group:
+            limit = self._equal_limits(group)[1]
+            new_width = min(new_width, limit)
+            self._edge_pinned = any(not self._widths[i] for i in group) and new_width >= limit
+            self._set_group_width(group, new_width)
+            self._show_width_badges(group)
+        else:
+            self._set_width(self._resizing_index, new_width)
+            if any(not self._widths[i] for i in group):
+                self._apply_equal()   # le groupe colle au bord se serre contre la colonne qui grandit
+            self._show_width_badges([idx])
+
+    def endDrag(self):
+        self._resizing_index = None
+        self._restore_titles()
+
+    def _show_width_badges(self, columns: list[int]):
+        """Pendant un redimensionnement, le titre de chaque colonne concernee affiche sa largeur."""
+        spans = self._column_spans()
+        for i in columns:
+            self._cells[i].setText(f"{spans[i][1] - spans[i][0]} px")
+        self._badged = True
+
+    def _restore_titles(self):
+        if self._badged:
+            self._badged = False
+            for cell, title in zip(self._cells, self._titles):
+                cell.setText(title)
+
+    def isDragging(self) -> bool:
+        return self._resizing_index is not None
+
+    def setReorderable(self, enabled: bool):
+        self._reorderable = bool(enabled)
+
+    def order(self) -> list[int]:
+        return list(self._order)
+
+    def setOrder(self, order: list[int], notify: bool = True):
+        """Ordre d'affichage des colonnes (indices logiques). Replace les titres ; les lignes du
+        tableau suivent par `columnMoved`."""
+        order = [int(i) for i in order]
+        if sorted(order) != list(range(len(self._widths))) or order == self._order:
+            return
+        self._order = order
+        layout = self.layout()
+        for cell in self._cells:
+            layout.removeWidget(cell)
+        for pos, i in enumerate(order):
+            layout.insertWidget(pos, self._cells[i], 0 if self._widths[i] else 1)
+        self.update()
+        if notify:
+            self.columnMoved.emit()
+
+    def _begin_reorder(self, x: int):
+        index = self._column_at(x)
+        if index is None:
+            return
+        frame = self.parentWidget()
+        offset = self.mapTo(frame, QPoint(0, 0)).x()
+        left, right = self._column_spans()[index]
+        ghost = frame.grab(QRect(offset + left, 0, right - left, frame.height()))
+        self._reorder = _ReorderOverlay(frame, self, index, ghost, offset, x - left)
+        self.setCursor(Qt.ClosedHandCursor)
+
+    def _update_reorder(self, x: int):
+        self._reorder.follow(x)
+
+    def _end_reorder(self):
+        overlay, self._reorder = self._reorder, None
+        self.unsetCursor()
+        gap = overlay.target
+        overlay.hide()
+        overlay.deleteLater()
+        if gap is None:
+            return
+        order = [i for i in self._order if i != overlay.source]
+        order.insert(gap - (1 if gap > self._order.index(overlay.source) else 0), overlay.source)
+        self.setOrder(order)
 
     def mouseMoveEvent(self, event):
         if self._resizing_index is not None:
-            delta = event.globalPosition().toPoint().x() - self._resize_start_x
-            new_width = max(self._MIN_WIDTH, min(self._MAX_WIDTH, self._resize_start_width + self._resizing_sign * delta))
-            self._set_width(self._resizing_index, new_width)
+            self.dragTo(event.globalPosition().toPoint().x())
             event.accept()
             return
+        if self._reorderable and self._press_pos is not None and event.buttons() & Qt.LeftButton:
+            x = event.position().toPoint().x()
+            if self._reorder is None and (event.position().toPoint() - self._press_pos).manhattanLength() > 6:
+                self._begin_reorder(self._press_pos.x())
+            if self._reorder is not None:
+                self._update_reorder(x)
+                event.accept()
+                return
         hit = self._boundary_at(event.position().toPoint().x())
         self.setCursor(Qt.SizeHorCursor if hit is not None else Qt.ArrowCursor)
         super().mouseMoveEvent(event)
@@ -919,8 +1275,20 @@ class _ResizableTableHeader(QWidget):
     def mouseReleaseEvent(self, event):
         if self._resizing_index is not None:
             self._resizing_index = None
+            self._restore_titles()
             event.accept()
             return
+        if self._reorder is not None:
+            self._end_reorder()
+            self._press_pos = None
+            event.accept()
+            return
+        pos, self._press_pos = self._press_pos, None
+        if event.button() == Qt.LeftButton and pos is not None and (
+                event.position().toPoint() - pos).manhattanLength() <= 4:
+            index = self._column_at(pos.x())
+            if index is not None:
+                self._select_click(index, getattr(self, '_press_shift', False))
         super().mouseReleaseEvent(event)
 
     def leaveEvent(self, event):
@@ -928,10 +1296,12 @@ class _ResizableTableHeader(QWidget):
             self.unsetCursor()
         super().leaveEvent(event)
 
-    def _set_width(self, index: int, width: int):
+    def _set_width(self, index: int, width: int, place: bool = True):
         self._widths[index] = width
         self._cells[index].setFixedWidth(width)
         self.resized.emit(index, width)
+        if place:
+            self._place_toggles()
 
     def columnWidths(self) -> list[int]:
         """Voir setColumnWidths — a sauvegarder tel quel dans les reglages
@@ -996,8 +1366,13 @@ class _FlatColumnResizer(QObject):
         bordure doit rester saisissable sur toute sa hauteur) recoit ce
         controleur comme filtre d'evenements."""
         label_cell.setFixedWidth(self._width)
+        # Filet vertical libelle/controle (voir _TableRow) : au milieu de
+        # l'espacement qui suit le libelle, comme la poignee de redimensionnement.
+        row._v_boundary = lambda r=row, c=label_cell: (
+            c.mapTo(r, QPoint(c.width(), 0)).x() + r.layout().spacing() // 2)
         self._cells.append(label_cell)
         self._rows.append(row)
+        row._flat_resizer = self   # retrouve par _TableFrame (dimensions enregistrees)
         row.setMouseTracking(True)
         row.installEventFilter(self)
 
@@ -1068,18 +1443,35 @@ def _wire_resizable_columns(head: _ResizableTableHeader, column_cells: dict[int,
     ligne de donnees — `column_cells` : {index de colonne: [cellules de
     cette colonne, une par ligne]}, construit par l'appelant a partir des
     QWidget renvoyes par _table_cell (voir _GeoTable/_SimpleFontTable)."""
+    rows = {c.parentWidget() for cells in column_cells.values() for c in cells if c.parentWidget()}
+
     def _on_resize(index: int, width: int):
         for cell in column_cells.get(index, []):
-            cell.setFixedWidth(width)
+            if width:
+                cell.setFixedWidth(width)
+            else:  # colonne extensible relachee
+                cell.setMinimumWidth(0)
+                cell.setMaximumWidth(16777215)
+        # Une cellule qui retrecit laissait sa trainee (ancien rectangle) a
+        # l'ecran : on invalide la ligne entiere, repeinte apres le layout.
+        for row in rows:
+            row.update()
 
     head.resized.connect(_on_resize)
+
+    # Colonne selectionnee : toute la colonne se teinte (les lignes peignent la
+    # zone de la cellule d'entete correspondante, voir _TableRow.paintEvent).
+    for row in rows:
+        row._sel_head = head
+        row.layout().addStretch(0)
+    head.selectionChanged.connect(lambda: [r.update() for r in rows])
 
 def _table_row(bg: str, first: bool) -> tuple[QWidget, QHBoxLayout]:
     """`first` : la toute premiere ligne de donnees colle directement sous
     l'entete (qui a deja son propre filet du bas) — seules les lignes
     SUIVANTES ont besoin de leur propre filet du haut ; aucune ligne ne
     dessine plus ses propres cotes gauche/droite (voir _table_frame)."""
-    row = QWidget()
+    row = _TableRow()
     row.setObjectName("TableRow")
     row.setAttribute(Qt.WA_StyledBackground, True)
     # 36 : plancher de secours pour un contenu tres court (une seule ligne
@@ -1125,6 +1517,7 @@ def _lock_min_height(row: QWidget):
 
 def _table_cell(widget: QWidget, width: int, layout: QHBoxLayout, center: bool = False) -> QWidget:
     cell = QWidget()
+    cell.setObjectName("TableCell")
     # Fond transparent EXPLICITE : sans lui, ce QWidget nu se voit quand
     # meme peint (le style sheet global de l'appli active WA_StyledBackground
     # implicitement sur tout QWidget), avec la couleur heritee du fond de
@@ -1246,17 +1639,31 @@ def _style_flat_table(frame: QWidget) -> None:
         last = len(rows) - 1
         for i, (row, _bg, first) in enumerate(rows):
             bg = M["table_row_a"] if i % 2 == 0 else M["table_row_b"]
-            _restyle_table_row(row, bg, first,
-                               top_radius=(radius if i == 0 else 0),
-                               bottom_radius=(radius if i == last else 0))
+            _restyle_table_row(row, bg, first, bottom_radius=(radius if i == last else 0))
+        head = getattr(frame, "_flat_head", None)
+        if head is not None:
+            _restyle_table_head(head, radius)
     if _FLAT_TABLE_STYLE["border"] is not None:
         frame.setBorder(*_FLAT_TABLE_STYLE["border"])
     padding = _FLAT_TABLE_STYLE["padding"]
-    if padding is not None:
+    if padding is not None and getattr(frame, "_cells_mode", False):
+        head = getattr(frame, "_flat_head", None)
+        if head is not None:
+            head.setCellPadding(padding[0], padding[2])
+        hook = getattr(frame, "_flat_cell_padding", None)    # tableaux a cellules de settings_cells
+        if hook is not None:
+            hook(padding)
+    elif padding is not None:
         for row, _bg, _first in rows:
             row.layout().setContentsMargins(*padding)
             row.setMinimumHeight(0)
             _lock_min_height(row)
+        head = getattr(frame, "_flat_head", None)
+        if head is not None:
+            head.setCellPadding(padding[0], padding[2])
+    sync = getattr(frame, "_flat_sync", None)
+    if sync is not None:
+        sync()
 
 
 def _prestyle_flat_frame(frame: QWidget) -> None:
@@ -1276,8 +1683,18 @@ def _prestyle_flat_row(row: QWidget, index: int, count: int) -> None:
     radius = _FLAT_TABLE_STYLE["radius"]
     if radius is not None:
         _restyle_table_row(row, M["table_row_a"] if index % 2 == 0 else M["table_row_b"], index == 0,
-                           top_radius=(radius if index == 0 else 0),
                            bottom_radius=(radius if index == count - 1 else 0))
+
+
+def _register_cells_table(frame: QWidget, head: QWidget, row_meta: list) -> None:
+    """Tableau a entete dont les lignes sont faites de cellules (Icone/Nom/Actions...) :
+    suit le style commun (arrondi, bordure, couleur d'entete) ; le padding passe
+    par les cellules, pas par les marges des lignes."""
+    frame._flat_rows = row_meta
+    frame._flat_head = head
+    frame._cells_mode = True
+    _FLAT_TABLES.add(frame)
+    _style_flat_table(frame)
 
 
 def _register_flat_table(frame: QWidget, row_meta: list) -> None:
@@ -1332,6 +1749,57 @@ def _set_flat_tables_style(radius: int | None = None, border: tuple | None = Non
         except RuntimeError:   # fenetre fermee dont les lignes sont deja detruites
             _FLAT_TABLES.discard(frame)
 
+
+def _attach_flat_head(frame: QWidget, layout: QVBoxLayout, resizer: "_FlatColumnResizer",
+                      rows_widgets: list[QWidget], label_blocks: list[QWidget]) -> None:
+    """Entete (Parametre | Valeur) en tete d'un tableau "un reglage par ligne",
+    comme tous les autres tableaux : selection de colonne, largeur redimensionnable
+    liee a la bordure libelle/controle des lignes, teinte de la colonne selectionnee."""
+    head = _ResizableTableHeader([("Paramètre", resizer.width()), ("Valeur", 0)])
+    head.setCellPadding(14, 14)
+    head._cells[1].setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    head.disableEqualToggle(1)
+    layout.insertWidget(0, head)
+    frame._flat_head = head
+    first_row, first_label = rows_widgets[0], label_blocks[0]
+    state = {"busy": False}
+
+    def offset() -> int:
+        lay = first_row.layout()
+        lead = lay.itemAt(0).widget()
+        extra = max(0, lead.sizeHint().width() - first_label.width()) if lead is not first_label else 0
+        return lay.contentsMargins().left() + extra + lay.spacing() // 2
+
+    def sync():
+        if state["busy"]:
+            return
+        state["busy"] = True
+        try:
+            width = resizer.width() + offset()
+            if head._widths[0] != width:
+                head._set_width(0, width)
+        finally:
+            state["busy"] = False
+
+    def on_head(index: int, width: int):
+        if index != 0 or state["busy"]:
+            return
+        state["busy"] = True
+        try:
+            resizer.setWidth(width - offset())
+            head._widths[0] = resizer.width() + offset()
+            head._cells[0].setFixedWidth(head._widths[0])
+            head._place_toggles()
+            resizer.resized.emit(resizer.width())
+        finally:
+            state["busy"] = False
+
+    head.resized.connect(on_head)
+    resizer.resized.connect(lambda _w: sync())
+    frame._flat_sync = sync
+    for row in rows_widgets:
+        row._sel_head = head
+    head.selectionChanged.connect(lambda: [r.update() for r in rows_widgets])
 
 def _build_flat_table(
     rows: list[tuple[str, QWidget]],
@@ -1393,6 +1861,7 @@ def _build_flat_table(
     # voir la remarque de l'utilisateur, capture a l'appui, "corrige
     # l'ecrasement du tableau ... que tu le prennes systematiquement en
     # compte pour tous les tableaux".
+    _attach_flat_head(frame, layout, resizer, rows_widgets, label_blocks)
     _register_flat_table(frame, row_meta)   # avant le verrou : le padding courant change la hauteur
     _lock_min_height(frame)
     return frame, row_meta, resizer
@@ -1470,6 +1939,7 @@ def _build_override_flat_table(
     # la remarque de l'utilisateur, "corrige l'ecrasement du tableau ...
     # que tu le prennes systematiquement en compte pour tous les
     # tableaux").
+    _attach_flat_head(frame, layout, resizer, rows_widgets, label_blocks)
     _register_flat_table(frame, row_meta)   # avant le verrou : le padding courant change la hauteur
     _lock_min_height(frame)
     return frame, row_meta, resizer

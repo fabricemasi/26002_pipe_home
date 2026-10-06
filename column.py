@@ -1275,6 +1275,7 @@ class Column(QWidget):
         current = self.current_path()
         self.list.blockSignals(True)
         self.list.clear()
+        aliases: dict[str, str] = {}      # nom d'affichage des raccourcis (cle = chemin cible)
         if self._source_dirs is not None:
             # IN/OVER/OUT (voir __init__/PipelineBrowser.update_preview_
             # stack) : simple concatenation, dans l'ordre des sources
@@ -1297,6 +1298,8 @@ class Column(QWidget):
                     target = Path(shortcut.get("target", ""))
                     if target.is_dir():
                         entries.append((target, label, step, True))
+                        if shortcut.get("name"):
+                            aliases[str(target)] = str(shortcut["name"])
             if self._only_recognized_software:
                 # Uniquement des REPERTOIRES DE LOGICIEL reconnus (voir
                 # software_icon_key/app_style.custom_softwares) — pas de
@@ -1331,6 +1334,8 @@ class Column(QWidget):
                 target = Path(shortcut.get("target", ""))
                 if target.is_dir():
                     entries.append((target, None, None, True))
+                    if shortcut.get("name"):
+                        aliases[str(target)] = str(shortcut["name"])
         # Filtres de contenu (voir __init__ show_dirs/show_files/omit_dirs/
         # omit_files, ColumnConfigDialog) : SEULEMENT pour un niveau de la
         # chaine CONFIGUREE — toute colonne NORMALE garde ses valeurs par
@@ -1357,7 +1362,9 @@ class Column(QWidget):
                 filtered.append((path, label, step, is_shortcut))
             entries = filtered
         for path, label, step, is_shortcut in entries:
-            item = QListWidgetItem(path.name)
+            # Un raccourci peut porter un NOM D'AFFICHAGE (clic droit > Renommer le raccourci) : le
+            # dossier cible garde le sien.
+            item = QListWidgetItem(aliases.get(str(path)) if is_shortcut and str(path) in aliases else path.name)
             item.setData(ROLE_PATH, str(path))
             is_dir = path.is_dir()
             item.setData(ROLE_ISDIR, is_dir)
@@ -1747,7 +1754,7 @@ class Column(QWidget):
         menu = QMenu(self)
         menu.setFont(font(11, 400))
         act_open = menu.addAction("Ouvrir")
-        act_rename = menu.addAction("Renommer")
+        act_rename = menu.addAction("Renommer le raccourci…" if is_shortcut else "Renommer")
         act_reveal = menu.addAction("Afficher dans l'explorateur")
         act_render_preview_low = None
         act_render_preview_high = None
@@ -1829,7 +1836,10 @@ class Column(QWidget):
         if chosen is act_open:
             self.activated.emit(path)
         elif chosen is act_rename:
-            self._rename_item(path)
+            if is_shortcut:
+                self._rename_shortcut(path, item.text())
+            else:
+                self._rename_item(path)
         elif chosen is act_reveal:
             reveal_in_file_manager(path)
         elif act_render_preview_low is not None and chosen is act_render_preview_low:
@@ -2122,6 +2132,29 @@ class Column(QWidget):
                 if it.data(ROLE_PATH) == str(last_dest):
                     self.list.setCurrentItem(it)
                     break
+
+    def _rename_shortcut(self, path: Path, shown: str):
+        """Change le nom AFFICHE d'un raccourci (cle `name` de .pipeline_shortcuts.json) ; le dossier
+        cible n'est jamais renomme. Nom vide = retour au nom du dossier."""
+        new_name, ok = QInputDialog.getText(
+            self, "Renommer le raccourci", "Nom affiché :", QLineEdit.Normal, shown
+        )
+        if not ok:
+            return
+        new_name = new_name.strip()
+        for source in (self._source_dirs if self._source_dirs is not None else [self.directory]):
+            shortcuts = load_shortcuts(source)
+            changed = False
+            for sc in shortcuts:
+                if sc.get("target") == str(path):
+                    if new_name and new_name != path.name:
+                        sc["name"] = new_name
+                    else:
+                        sc.pop("name", None)
+                    changed = True
+            if changed:
+                save_shortcuts(source, shortcuts)
+        self.refresh()
 
     def _rename_item(self, path: Path):
         new_name, ok = QInputDialog.getText(

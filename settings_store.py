@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 from typing import Any
 from PySide6.QtGui import (
@@ -217,15 +218,15 @@ def _sync_slider_style(settings: dict) -> None:
 # ==========================================================================
 _TITLE_LEVEL_DEFAULTS: dict[int, dict] = {
     1: {"font_family": "", "font_bold": True, "font_italic": False, "font_size": 14,
-        "font_smoothing_enabled": False, "font_smoothing": "current", "font_color": "#5f9bd0", "indent": 0},
+        "font_smoothing_enabled": False, "font_smoothing": "current", "font_color": "#5f9bd0", "indent": 0, "gap_collapsed": 2, "gap_expanded": 34, "gap_next": 4},
     2: {"font_family": "", "font_bold": True, "font_italic": False, "font_size": 10,
-        "font_smoothing_enabled": False, "font_smoothing": "current", "font_color": "#5d656b", "indent": 20},
+        "font_smoothing_enabled": False, "font_smoothing": "current", "font_color": "#5d656b", "indent": 20, "gap_collapsed": 0, "gap_expanded": 32, "gap_next": 6},
     3: {"font_family": "", "font_bold": True, "font_italic": False, "font_size": 10,
-        "font_smoothing_enabled": False, "font_smoothing": "current", "font_color": "#5d656b", "indent": 40},
+        "font_smoothing_enabled": False, "font_smoothing": "current", "font_color": "#5d656b", "indent": 40, "gap_collapsed": 0, "gap_expanded": 32, "gap_next": 6},
     4: {"font_family": "", "font_bold": True, "font_italic": False, "font_size": 10,
-        "font_smoothing_enabled": False, "font_smoothing": "current", "font_color": "#5d656b", "indent": 60},
+        "font_smoothing_enabled": False, "font_smoothing": "current", "font_color": "#5d656b", "indent": 60, "gap_collapsed": 0, "gap_expanded": 32, "gap_next": 6},
     5: {"font_family": "", "font_bold": True, "font_italic": False, "font_size": 10,
-        "font_smoothing_enabled": False, "font_smoothing": "current", "font_color": "#5d656b", "indent": 80},
+        "font_smoothing_enabled": False, "font_smoothing": "current", "font_color": "#5d656b", "indent": 80, "gap_collapsed": 0, "gap_expanded": 32, "gap_next": 6},
 }
 
 _TITLE_LEVEL_STYLE: dict[int, dict] = {level: dict(vals) for level, vals in _TITLE_LEVEL_DEFAULTS.items()}
@@ -272,6 +273,18 @@ def _title_color(level: int) -> str:
 def _title_indent(level: int) -> int:
     style = _TITLE_LEVEL_STYLE.get(level) or _TITLE_LEVEL_DEFAULTS[3]
     return max(0, int(style.get("indent", 0)))
+
+def _title_gap(level: int, collapsed: bool) -> int:
+    """Espace sous un titre de `level`, avant le titre suivant : `collapsed`
+    = titre replie, sinon deplie (voir _stack_subsections/_make_gap_spacer)."""
+    style = _TITLE_LEVEL_STYLE.get(level) or _TITLE_LEVEL_DEFAULTS[3]
+    return max(0, int(style.get("gap_collapsed" if collapsed else "gap_expanded", 0)))
+
+def _title_gap_next(level: int) -> int:
+    """Espace entre un titre deplie de `level` et son contenu (le titre du
+    niveau suivant, le cas echeant)."""
+    style = _TITLE_LEVEL_STYLE.get(level) or _TITLE_LEVEL_DEFAULTS[3]
+    return max(0, int(style.get("gap_next", 6)))
 
 def _subsection_left_margin(level: int) -> int:
     """Marge GAUCHE reelle du bandeau d'une _SubSection de `level` — voir la
@@ -350,8 +363,18 @@ DEFAULT_COLUMNS: dict[str, dict[str, Any]] = {
     "Contenu":     {"width": 186, "height": 25, "plain_height": 20, "spacing": 0, "img_pad": 3, "img_radius": 0},
 }
 
+# Fonctions fournies par l'appli aux champs de reglages qui en ont besoin
+# (ex. settings_lut) : evite qu'un settings_* importe du code de l'appli.
+HOOKS: dict[str, Any] = {}
+
 DEFAULT_SETTINGS: dict[str, Any] = {
     "root_path": r"F:\PIPELINE",
+    # Images de test des apercus de LUT (.cube) ; "lut_default_image" est celle
+    # sur laquelle la LUT est appliquee dans l'apercu.
+    "lut_test_images": [],
+    "lut_default_image": "",
+    # Encodage de chaque image de test : {chemin: "srgb"|"slog3"|"flog"|"flog2"} (voir previews.LUT_IMAGE_CURVES).
+    "lut_image_curves": {},
     "ui_scale": 100,
     # Section "Application" (voir SettingsWindow._section_application) :
     # repli automatique des colonnes de set (Type/Projets/niveaux
@@ -710,6 +733,15 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "table_border_enabled": {"top": True, "right": True, "bottom": True, "left": True},
     "table_border": {"top": "#2a2e32", "right": "#2a2e32", "bottom": "#2a2e32", "left": "#2a2e32"},
     "table_border_thickness": 1,
+    # Bordures INTERIEURES des tableaux : H = filets horizontaux entre les
+    # lignes (et sous l'entete), V = filets verticaux entre les colonnes ;
+    # jamais ceux qui touchent le bord du tableau (voir "table_border").
+    "table_inner_h_enabled": True,
+    "table_inner_h_color": "#2a2e32",
+    "table_inner_h_thickness": 1,
+    "table_inner_v_enabled": False,
+    "table_inner_v_color": "#2a2e32",
+    "table_inner_v_thickness": 1,
     # Section "Tableaux" (voir SettingsWindow._section_tables) : colonnes du
     # navigateur principal agrandissables a la main (glisser la bordure
     # droite, voir pipeline_browser._Column._in_resize_zone) — deja le
@@ -726,6 +758,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # est garde pour aligner les INDICES, mais jamais lui-meme restaure.
     "geo_table_columns": [0, 150, 246],
     "font_table_columns": [150, 170, 170, 0],
+    # Dimensions de tous les tableaux des reglages (voir _TableFrame.dimsKey) :
+    # {cle: {"width": largeur du tableau (0 = pleine), "cols": [largeurs de colonnes]}}.
+    "table_dims": {},
+    "slider_ranges": {},       # plages min/max modifiees par clic droit sur un curseur (v2) : {cle: [min, max]}
     # Section "Toggles" (voir SettingsWindow._section_toggles) : style
     # visuel de TOUS les _Toggle de cette fenetre — "toggle1" (cadre
     # RECTANGLE, coche calee en haut a droite a distance egale du bord en
@@ -768,6 +804,17 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "top": "#2e343a", "right": "#2e343a", "bottom": "#2e343a", "left": "#2e343a",
     },
     "toggle1_coche_color": "#3f6f9f",
+    "toggle1_coche_skin": "none",            # habillage de la coche : "none" | "text" | "icon"
+    "toggle1_coche_text": "",
+    "toggle1_coche_text_font_family": "",
+    "toggle1_coche_text_font_bold": True,
+    "toggle1_coche_text_font_italic": False,
+    "toggle1_coche_text_font_size": 10,
+    "toggle1_coche_text_font_smoothing_enabled": False,
+    "toggle1_coche_text_font_smoothing": "current",
+    "toggle1_coche_text_font_color": "#ffffff",
+    "toggle1_coche_icon": "",                # nom d'un fichier de icons/ (voir Toggles > Coche > Icone)
+    "toggle1_coche_icon_color": "#ffffff",
     "toggle2_outer_width": 22,
     "toggle2_outer_height": 22,
     "toggle2_outer_border_enabled": True,
@@ -789,6 +836,21 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "top": "#2e343a", "right": "#2e343a", "bottom": "#2e343a", "left": "#2e343a",
     },
     "toggle2_coche_color": "#3f6f9f",
+    "toggle2_coche_skin": "none",            # habillage de la coche : "none" | "text" | "icon"
+    "toggle2_coche_text": "",
+    "toggle2_coche_text_font_family": "",
+    "toggle2_coche_text_font_bold": True,
+    "toggle2_coche_text_font_italic": False,
+    "toggle2_coche_text_font_size": 10,
+    "toggle2_coche_text_font_smoothing_enabled": False,
+    "toggle2_coche_text_font_smoothing": "current",
+    "toggle2_coche_text_font_color": "#ffffff",
+    "toggle2_coche_icon": "",                # nom d'un fichier de icons/ (voir Toggles > Coche > Icone)
+    "toggle2_coche_icon_color": "#ffffff",
+    # Styles de toggle AJOUTES par l'utilisateur (Toggles > Style > clic droit > Ajouter un nouveau
+    # toggle) : [{"key": "toggle3", "name": "Mon toggle"}]. Leurs reglages `toggle3_*` suivent le
+    # meme schema que toggle1_* (voir _DYNAMIC_KEY).
+    "toggle_custom_styles": [],
     # Habillage des sliders de CETTE fenetre (voir _MiniSlider/_SLIDER_STYLE
     # et Geometrie > Slider, sous-section demandee par l'utilisateur) :
     # "selecteur" = le curseur mobile, "rail" = la piste qu'il parcourt.
@@ -907,12 +969,19 @@ for _title_level, _title_defaults in _TITLE_LEVEL_DEFAULTS.items():
 
 del _title_level, _title_defaults, _title_key, _title_val
 
+# Cles creees a l'execution (reglages des styles de toggle ajoutes : toggle3_*, toggle4_*...) : pas dans
+# DEFAULT_SETTINGS, mais a conserver au chargement.
+_DYNAMIC_KEY = re.compile(r"^toggle(?:[3-9]\d*|[1-9]\d+)_")
+
+
+_LIVE_STATE_KEYS = ("table_dims", "slider_ranges", "toggle_custom_styles")
+
 def load_settings() -> dict[str, Any]:
     settings = json.loads(json.dumps(DEFAULT_SETTINGS))
 
     def _merge(data: dict):
         for key, value in data.items():
-            if key not in DEFAULT_SETTINGS:
+            if key not in DEFAULT_SETTINGS and not _DYNAMIC_KEY.match(key):
                 continue
             if isinstance(value, dict) and isinstance(settings.get(key), dict):
                 for sub_key, sub_val in value.items():
@@ -923,6 +992,7 @@ def load_settings() -> dict[str, Any]:
             else:
                 settings[key] = value
 
+    raw: dict = {}
     try:
         if _PER_USER_PATH.is_file():
             raw = json.loads(_PER_USER_PATH.read_text(encoding="utf-8"))
@@ -934,7 +1004,7 @@ def load_settings() -> dict[str, Any]:
             # config de bordure d'entete au chargement.
             if "header_border_enabled" not in raw and "header_edges" in raw:
                 raw["header_border_enabled"] = raw["header_edges"]
-            _merge(raw)
+            _merge(json.loads(json.dumps(raw)))   # copie : _merge partage les sous-dicts, le preset les modifierait
     except (OSError, ValueError):
         pass
     # Preset par defaut (voir General > Application, DEFAULT_SETTINGS.
@@ -959,6 +1029,14 @@ def load_settings() -> dict[str, Any]:
             # des ce premier chargement, LEQUEL preset par defaut vient
             # justement d'etre applique.
             settings["default_preset"] = default_preset
+            # Etat enregistre en temps reel par la fenetre v2 (dimensions, plages, styles de
+            # toggle crees) : il n'appartient pas au preset, qui l'ecraserait a chaque chargement.
+            for key in _LIVE_STATE_KEYS:
+                if key in raw:
+                    settings[key] = raw[key]
+            for key, value in raw.items():
+                if _DYNAMIC_KEY.match(key):
+                    settings[key] = value
     return settings
 
 def save_settings(settings: dict[str, Any]) -> None:

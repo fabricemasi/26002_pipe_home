@@ -89,15 +89,29 @@ TX_EXTENSIONS = {".tx"}
 # les apercus des hdri ?".
 HDR_EXTENSIONS = {".hdr"}
 
+# LUT 3D/1D au format .cube : l'apercu est une image de test (reglee dans
+# Parametres generaux > LUT) sur laquelle la LUT est appliquee (voir
+# previews._decode_cube_image).
+CUBE_EXTENSIONS = {".cube"}
+
+# Fichiers RAW d'appareils photo (Sony .arw, Fujifilm .raf, + courants) : voir
+# previews._decode_raw_image (rawpy si installe, sinon JPEG integre au fichier).
+RAW_EXTENSIONS = {".arw", ".raf", ".dng", ".cr2", ".cr3", ".nef", ".orf", ".rw2"}
+
 # Videos : une frame extraite via QtMultimedia (voir _decode_video_frame),
 # module fourni avec PySide6 (ffmpeg embarque, aucune dependance externe).
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".wmv", ".m4v"}
 
+# Documents PDF : rendu des pages via QtPdf (fourni avec PySide6, voir
+# previews._render_pdf_page) ; les cartes-vignette montrent la page 1, l'inspecteur
+# permet de feuilleter les pages.
+PDF_EXTENSIONS = {".pdf"}
+
 PREVIEWABLE_EXTENSIONS = (
-    IMAGE_EXTENSIONS | OBJ_EXTENSIONS | ABC_EXTENSIONS | BLEND_EXTENSIONS | MAYA_SCENE_EXTENSIONS | FBX_EXTENSIONS | DWG_EXTENSIONS | PSD_EXTENSIONS | EXR_EXTENSIONS | HDR_EXTENSIONS | TX_EXTENSIONS | VIDEO_EXTENSIONS
+    PDF_EXTENSIONS | IMAGE_EXTENSIONS | OBJ_EXTENSIONS | ABC_EXTENSIONS | BLEND_EXTENSIONS | MAYA_SCENE_EXTENSIONS | FBX_EXTENSIONS | DWG_EXTENSIONS | PSD_EXTENSIONS | EXR_EXTENSIONS | HDR_EXTENSIONS | CUBE_EXTENSIONS | RAW_EXTENSIONS | TX_EXTENSIONS | VIDEO_EXTENSIONS
 )
 TWO_D_IMAGE_EXTENSIONS = (
-    IMAGE_EXTENSIONS | PSD_EXTENSIONS | EXR_EXTENSIONS | HDR_EXTENSIONS | TX_EXTENSIONS | DWG_EXTENSIONS
+    PDF_EXTENSIONS | IMAGE_EXTENSIONS | PSD_EXTENSIONS | EXR_EXTENSIONS | HDR_EXTENSIONS | CUBE_EXTENSIONS | RAW_EXTENSIONS | TX_EXTENSIONS | DWG_EXTENSIONS
 )
 
 _MANUAL_3D_PREVIEW_REQUESTS: set[str] = set()

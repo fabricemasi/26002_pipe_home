@@ -49,6 +49,7 @@ from previews import (
     FILE_IMAGE_DISK_CACHE_DIR,
     UI_ICON_COLLAPSE_TOGGLE,
     UI_ICON_SETTINGS_GEAR,
+    UI_ICON_SETTINGS_STYLE,
     _bounded_cache_set,
     custom_ui_icon_pixmap,
 )
@@ -1109,6 +1110,8 @@ class IconButton(QPushButton):
             return None
         if self._kind == "gear":
             return custom_ui_icon_pixmap(UI_ICON_SETTINGS_GEAR, size)
+        if self._kind == "sliders":
+            return custom_ui_icon_pixmap(UI_ICON_SETTINGS_STYLE, size)
         if self._kind in ("dchevron_left", "dchevron_right") and ui_state.COLLAPSE_TOGGLE_MODE == "icone":
             return custom_ui_icon_pixmap(UI_ICON_COLLAPSE_TOGGLE, size)
         return None

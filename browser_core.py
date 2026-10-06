@@ -2314,6 +2314,15 @@ class MultiScreenCapture(QObject):
         # travail (stat + chargement des vignettes) a chaque rafraichissement.
 
 
+def _register_settings_hooks() -> None:
+    """Fonctions d'apercu des LUT proposees aux reglages (voir settings_lut)."""
+    import previews as _pv
+    from settings_store import HOOKS
+    HOOKS["lut_image_kind"] = _pv.lut_image_kind
+    HOOKS["lut_curve_choices"] = _pv.lut_curve_choices
+    HOOKS["lut_test_image"] = _pv.lut_test_image_for
+
+
 def apply_all_settings(settings: dict) -> None:
     """Point d'entree unique qui recopie un dict de reglages (voir
     settings_window.DEFAULT_SETTINGS) dans les globals/tokens qu'ils
@@ -2322,6 +2331,11 @@ def apply_all_settings(settings: dict) -> None:
     N'a aucun effet visible tant qu'aucun refresh (refresh_all_columns,
     refresh_colors, refresh_chrome_fonts...) n'est rejoue par-dessus —
     voir PipelineBrowser._apply_settings et main() pour ces deux appelants."""
+
+    import previews as _pv
+    _register_settings_hooks()
+    _pv.set_lut_test_images(
+        settings.get("lut_test_images"), settings.get("lut_default_image"), settings.get("lut_image_curves"))
 
     omit_names = settings.get("application_omit_file_names") or []
     omit_dirs = settings.get("application_omit_dir_names") or []

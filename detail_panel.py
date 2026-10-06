@@ -8,9 +8,10 @@ from PySide6.QtWidgets import QMenu
 from PySide6.QtCore import (
     QEvent, QPoint, QRect, QSize, Qt, QTimer, QUrl, Signal,
 )
-from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
-from PySide6.QtMultimediaWidgets import QVideoWidget
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
 from PySide6.QtGui import (
+    QColor,
+    QPainter,
     QPixmap,
 )
 from PySide6.QtWidgets import (
@@ -53,12 +54,15 @@ from config import (
     DWG_EXTENSIONS,
     EXR_EXTENSIONS,
     FBX_EXTENSIONS,
+    CUBE_EXTENSIONS,
+    RAW_EXTENSIONS,
     HDR_EXTENSIONS,
     IMAGE_EXTENSIONS,
     MAYA_SCENE_EXTENSIONS,
     OBJ_EXTENSIONS,
     PREVIEW_MAX_HEIGHT,
     PREVIEW_MIN_HEIGHT,
+    PDF_EXTENSIONS,
     PSD_EXTENSIONS,
     PUR_PREVIEW_EXTENSIONS,
     RENDERABLE_3D_EXTENSIONS,
@@ -133,6 +137,8 @@ from preview_column import (
 )
 from previews import (
     delete_preview_cache,
+    pdf_page_count,
+    _render_pdf_page,
 )
 from previews import (
     _file_image_cache_path,
@@ -158,6 +164,41 @@ class _TurntableSlider(_MiniSlider):
         self.setMinimumHeight(height)
         self.setMaximumHeight(height)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+class _VideoView(QWidget):
+    """Affichage video SANS fenetre native : QVideoWidget (backend ffmpeg) cree une
+    surface de rendu native qui rend natifs ses ancetres (#CentralFrame) des que la
+    lecture demarre — les animations des colonnes ne s'affichaient plus qu'en une image,
+    comme avec le winId() des reglages (voir AGENTS.md). On peint donc les images du
+    QVideoSink nous-memes, dans un widget ordinaire."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._image = QImage()
+        self.sink = QVideoSink(self)
+        self.sink.videoFrameChanged.connect(self._on_frame)
+
+    def _on_frame(self, frame):
+        if self.isVisible() and frame.isValid():
+            self._image = frame.toImage()
+            self.update()
+
+    def hideEvent(self, event):
+        self._image = QImage()
+        super().hideEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), Qt.black)
+        if not self._image.isNull():
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+            scaled = self._image.size().scaled(self.size(), Qt.KeepAspectRatio)
+            target = QRect(QPoint(0, 0), scaled)
+            target.moveCenter(self.rect().center())
+            painter.drawImage(target, self._image)
+        painter.setPen(QColor("#282c30"))
+        painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
+
 
 class DetailPanel(QWidget):
 
@@ -301,6 +342,13 @@ class DetailPanel(QWidget):
         self._preview_request_path: str | None = None
         self._current_path: str | None = None
         self._pur_image_path: str | None = None
+        self._pdf_path: str | None = None
+        self._pdf_page = 0
+        self._pdf_pages = 0
+        self._pdf_zoom = 1.0
+        self._pdf_view = [0.0, 0.0]  # coin haut-gauche de la zone visible (fractions de la page)
+        self._pdf_wheel = 0
+        self._pdf_drag = None
         self._pur_image_ranges: list[tuple[int, int, str]] = []
         self._pur_exported_images: list[str] = []
         self._pur_export_task: _PureRefExportTask | None = None
@@ -402,8 +450,7 @@ class DetailPanel(QWidget):
         # demarre). Widget distinct du "well" : QVideoWidget a besoin de sa
         # propre surface de rendu, jamais affiche en meme temps que well/
         # text_preview (voir show_path/_stop_video).
-        self.video_widget = QVideoWidget()
-        self.video_widget.setStyleSheet("background: black; border: 1px solid #282c30;")
+        self.video_widget = _VideoView()
         self.video_widget.installEventFilter(self)
         self._preview_widgets = (self.well, self.well_label, self.video_widget)
         self.video_widget.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -414,7 +461,7 @@ class DetailPanel(QWidget):
         self._video_audio = QAudioOutput(self)
         self._video_audio.setMuted(True)
         self._video_player.setAudioOutput(self._video_audio)
-        self._video_player.setVideoOutput(self.video_widget)
+        self._video_player.setVideoSink(self.video_widget.sink)
         self._video_player.setLoops(QMediaPlayer.Loops.Infinite)
 
         self.values: dict[str, QLabel] = {}
@@ -838,6 +885,9 @@ class DetailPanel(QWidget):
             if etype == QEvent.MouseButtonDblClick and event.button() == Qt.LeftButton:
                 self.preview_double_clicked.emit()
                 return True
+            if self._pdf_path is not None and self._pdf_path == self._current_path:
+                if self._pdf_event(event):
+                    return True
             return False
         if etype == QEvent.MouseMove:
             if self._resizing:
@@ -1008,6 +1058,7 @@ class DetailPanel(QWidget):
         self._pur_image_ranges = []
         self._pur_exported_images = []
         self._pur_image_index = 0
+        self._pdf_path = None
         self.pur_navigation.hide()
         self.name.setText("")
         self.badge.setText("")
@@ -1162,6 +1213,16 @@ class DetailPanel(QWidget):
             f"{final_w} × {final_h} px · {final_w // ratio_gcd}:{final_h // ratio_gcd} · {scale * 100:.0f}%"
         )
         self.well.setMinimumHeight(max(final_h, PREVIEW_MIN_HEIGHT))
+        if self._pdf_zoom > 1.0 and self._pdf_path is not None and self._pdf_path == self._current_path:
+            # Zoom PDF : on decoupe la zone visible dans la page pleine resolution.
+            span = 1.0 / self._pdf_zoom
+            crop = QRect(round(self._pdf_view[0] * pw), round(self._pdf_view[1] * ph),
+                         max(1, round(span * pw)), max(1, round(span * ph)))
+            self.preview_dimensions_value.setText(
+                f"{final_w} × {final_h} px · zoom {self._pdf_zoom * 100:.0f}%")
+            self.well_label.setPixmap(self._preview_pixmap.copy(crop).scaled(
+                final_w, final_h, Qt.IgnoreAspectRatio, Qt.SmoothTransformation))
+            return
         scaled = self._preview_pixmap.scaled(
             final_w, final_h, Qt.KeepAspectRatio, Qt.SmoothTransformation
         )
@@ -1349,7 +1410,105 @@ class DetailPanel(QWidget):
         else:
             self._update_preview()
 
+    def _pdf_geometry(self):
+        """(largeur, hauteur) de la page telle qu'affichee a zoom 1, et coin haut-gauche
+        de cette zone dans well_label."""
+        pix = self._preview_pixmap
+        if pix is None or pix.isNull():
+            return None
+        scale = min(1.0, max(self.width() - 32, 50) / pix.width(), PREVIEW_MAX_HEIGHT / pix.height())
+        w, h = max(1, round(pix.width() * scale)), max(1, round(pix.height() * scale))
+        label = self.well_label.size()
+        return w, h, (label.width() - w) / 2, (label.height() - h) / 2
+
+    def _pdf_clamp_view(self):
+        span = 1.0 / self._pdf_zoom
+        self._pdf_view[0] = max(0.0, min(1.0 - span, self._pdf_view[0]))
+        self._pdf_view[1] = max(0.0, min(1.0 - span, self._pdf_view[1]))
+
+    def _pdf_set_zoom(self, zoom: float, u: float = 0.5, v: float = 0.5):
+        """Zoom (1 = page entiere) en gardant fixe le point (u, v) de la zone visible."""
+        old = self._pdf_zoom
+        zoom = max(1.0, min(8.0, zoom))
+        if zoom == old:
+            return
+        self._pdf_view[0] += u * (1 / old - 1 / zoom)
+        self._pdf_view[1] += v * (1 / old - 1 / zoom)
+        self._pdf_zoom = zoom
+        self._pdf_clamp_view()
+        self._update_preview()
+
+    def _pdf_event(self, event) -> bool:
+        """Molette = page suivante/precedente (ou defilement si zoome), Ctrl+molette =
+        zoom, glisser = deplacer la page zoomee, clic milieu = zoom 1."""
+        etype = event.type()
+        if etype == QEvent.Wheel:
+            delta = event.angleDelta().y()
+            if not delta:
+                return False
+            if event.modifiers() & Qt.ControlModifier:
+                geo = self._pdf_geometry()
+                u = v = 0.5
+                if geo:
+                    pos = self.well_label.mapFromGlobal(event.globalPosition().toPoint())
+                    u = max(0.0, min(1.0, (pos.x() - geo[2]) / geo[0]))
+                    v = max(0.0, min(1.0, (pos.y() - geo[3]) / geo[1]))
+                self._pdf_set_zoom(self._pdf_zoom * 1.2 ** (delta / 120), u, v)
+            elif self._pdf_zoom > 1.0:
+                self._pdf_view[1] -= delta / 120 * 0.1 / self._pdf_zoom
+                self._pdf_clamp_view()
+                self._update_preview()
+            else:
+                self._pdf_wheel += delta
+                steps = int(self._pdf_wheel / 120)
+                if steps:
+                    self._pdf_wheel -= steps * 120
+                    self._navigate_pdf_page(-steps)
+            return True
+        if etype == QEvent.MouseButtonPress:
+            if event.button() == Qt.MiddleButton:
+                self._pdf_set_zoom(1.0)
+                return True
+            if event.button() == Qt.LeftButton and self._pdf_zoom > 1.0:
+                self._pdf_drag = event.globalPosition().toPoint()
+                return True
+        elif etype == QEvent.MouseMove and self._pdf_drag is not None:
+            geo = self._pdf_geometry()
+            now = event.globalPosition().toPoint()
+            if geo:
+                self._pdf_view[0] -= (now.x() - self._pdf_drag.x()) / geo[0] / self._pdf_zoom
+                self._pdf_view[1] -= (now.y() - self._pdf_drag.y()) / geo[1] / self._pdf_zoom
+                self._pdf_clamp_view()
+                self._update_preview()
+            self._pdf_drag = now
+            return True
+        elif etype == QEvent.MouseButtonRelease and self._pdf_drag is not None:
+            self._pdf_drag = None
+            return True
+        return False
+
+    def _navigate_pdf_page(self, step: int):
+        """Affiche la page courante + `step` du PDF selectionne (0 = recharger)."""
+        if self._pdf_path != self._current_path:
+            return
+        page = max(0, min(self._pdf_pages - 1, self._pdf_page + step))
+        image = _render_pdf_page(Path(self._pdf_path), 1800, page)
+        if image is None:
+            self.pur_image_counter.setText("Page illisible")
+        else:
+            self._pdf_page = page
+            self._preview_pixmap = QPixmap.fromImage(image)
+            self.well.show()
+            self.well_label.show()
+            self._update_preview()
+        self.pur_image_counter.setText(f"Page {self._pdf_page + 1} / {self._pdf_pages}")
+        self.pur_previous_button.setEnabled(self._pdf_page > 0)
+        self.pur_next_button.setEnabled(self._pdf_page + 1 < self._pdf_pages)
+
     def _navigate_pur_image(self, step: int):
+        if self._pdf_path is not None:
+            self._navigate_pdf_page(step)
+            return
         if self._pur_image_path != self._current_path:
             return
         direction = -1 if step < 0 else 1
@@ -1772,6 +1931,7 @@ class DetailPanel(QWidget):
         self._pur_image_ranges = []
         self._pur_exported_images = []
         self._pur_image_index = 0
+        self._pdf_path = None
         self.pur_navigation.hide()
         self.name.setText(path.name)
         is_renderable_3d = not path.is_dir() and path.suffix.lower() in RENDERABLE_3D_EXTENSIONS
@@ -1857,6 +2017,17 @@ class DetailPanel(QWidget):
                     else:
                         self._preview_pixmap = _cached_file_image_pixmap(
                             path, self._preview_render_modes.get((str(path), "image"), "low"))
+                elif suffix in PDF_EXTENSIONS:
+                    self._pdf_pages = pdf_page_count(path)
+                    if self._pdf_pages:
+                        self._pdf_path = str(path)
+                        self._pdf_page = 0
+                        self._pdf_zoom = 1.0
+                        self._pdf_view = [0.0, 0.0]
+                        self.pur_navigation.show()
+                        self._navigate_pdf_page(0)
+                    else:
+                        self.well_label.setText("PDF illisible (protégé ou corrompu).")
                 elif suffix in DWG_EXTENSIONS:
                     pix = file_image_pixmap(path)
                     if pix is not None and not pix.isNull():
@@ -1889,6 +2060,7 @@ class DetailPanel(QWidget):
                         self.well_label.setText("Aucune image intégrée lisible dans ce fichier PureRef.")
                 elif (suffix in PSD_EXTENSIONS
                       or suffix in EXR_EXTENSIONS or suffix in HDR_EXTENSIONS
+                      or suffix in CUBE_EXTENSIONS or suffix in RAW_EXTENSIONS
                       or suffix in TX_EXTENSIONS):
                     # Rendu genere (.obj, voir _decode_obj_image), vignette
                     # embarquee extraite (.psd/.psb, voir

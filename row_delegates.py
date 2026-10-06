@@ -144,7 +144,7 @@ class RowDelegate(QStyledItemDelegate):
         # l'utilisateur, "les apercus a droite et les icones a gauche,
         # comme ca il n'y aura plus d'ambiguite" — voir _paint_unified_row).
         is_shortcut = bool(index.data(ROLE_IS_SHORTCUT))
-        icon_key = software_icon_key(index.data(Qt.DisplayRole) or "") if is_dir else None
+        icon_key = software_icon_key(Path(index.data(ROLE_PATH) or "").name) if is_dir else None
         icon_pixmap = _row_icon_pixmap(is_dir, icon_key, SOFTWARE_ICON_SIZE)
         if is_shortcut:
             # Icone DEDIEE (Settings > ICONES > General > "Raccourcis") si
