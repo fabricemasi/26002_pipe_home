@@ -31,6 +31,7 @@ from app_style import (
     INSPECTOR_TITLE,
     PREVIEW_STACK_TITLE,
     custom_softwares,
+    removed_softwares,
     set_custom_softwares,
     set_removed_softwares,
     font,
@@ -63,6 +64,7 @@ from config import (
     THUMBNAIL_FILENAME,
     THUMBNAIL_MAX_DIM,
 )
+from previews import cached_mtime as _previews_mtime, forget_mtime as _forget_mtime
 from previews import (
     SOFTWARE_ICONS,
     UI_ICON_FILE_DEFAULT,
@@ -93,10 +95,14 @@ from settings_store import (
     save_settings,
 )
 from settings_widgets import (
+    DRAG_GHOST_OPACITY,
     _paint_bordered_rect,
     _radius_any,
     _radius_dict,
     _rounded_rect_path,
+    ShadowUnderlay,
+    paint_shadow,
+    shadow_look,
 )
 
 if TYPE_CHECKING:
@@ -181,14 +187,23 @@ def _generate_software_badge(key: str, size: int) -> QPixmap:
     painter.end()
     return pix
 
+def software_choices() -> list[tuple[str, str, str]]:
+    """Logiciels de la liste des reglages (General > ICONES > Logiciels), dans son ordre : ceux
+    d'origine (SOFTWARE_ICONS) moins ceux retires, puis ceux ajoutes. (cle, libelle, nom de dossier) ;
+    dossier en minuscules comme ceux du pipeline (softs\\houdini), reconnu par software_icon_key."""
+    removed = removed_softwares()
+    choices = [(key, key.capitalize(), key.lower()) for key in sorted(SOFTWARE_ICONS) if key not in removed]
+    for entry in custom_softwares():
+        if entry["key"] not in SOFTWARE_ICONS:
+            label = (entry.get("label") or entry["key"]).strip()
+            choices.append((entry["key"], label, label.lower()))
+    return choices
+
 def software_icon_pixmap(key: str, size: int) -> QPixmap:
     """Icone perso (voir custom_software_icon_path) si elle existe, sinon
     badge genere pour le logiciel `key` (voir SOFTWARE_ICONS)."""
     custom = custom_software_icon_path(key)
-    try:
-        mtime = custom.stat().st_mtime if custom.is_file() else None
-    except OSError:
-        mtime = None
+    mtime = _previews_mtime(custom)
 
     cache_key = (key, size)
     cached = _software_icon_cache.get(cache_key)
@@ -478,7 +493,7 @@ STATUS_FOLDERS = ("in", "over", "out")
 
 _STATUS_FOLDER_SET = frozenset(STATUS_FOLDERS)
 
-def _translucent_grab(widget: QWidget, opacity: float = 0.55) -> QPixmap:
+def _translucent_grab(widget: QWidget, opacity: float = DRAG_GHOST_OPACITY) -> QPixmap:
     """Capture de `widget` (voir Column.eventFilter, group_kind) rendue
     semi-transparente, utilisee comme image suivant le curseur pendant le
     glisser-deposer d'une colonne du groupe IN/OVER/OUT/LOGICIELS — voir la
@@ -635,6 +650,11 @@ def project_thumbnail_path(directory: Path) -> Path:
 
 _project_thumbnail_cache: dict[str, tuple[float | None, QPixmap]] = {}
 
+def has_project_thumbnail(path: Path) -> bool:
+    """Le dossier `path` a une vignette perso (date memorisee un instant, voir cached_mtime)."""
+    return _previews_mtime(project_thumbnail_path(path)) is not None
+
+
 def project_thumbnail_pixmap(path: Path) -> QPixmap:
     """Vignette perso de `path` (voir project_thumbnail_path), ou image par
     defaut generique si aucune n'a ete choisie. Mise en cache par date de
@@ -643,10 +663,7 @@ def project_thumbnail_pixmap(path: Path) -> QPixmap:
     premiere colonne s'y refere tous deux, plutot que de garder chacun leur
     propre copie en memoire du meme fichier."""
     thumb = project_thumbnail_path(path)
-    try:
-        mtime = thumb.stat().st_mtime if thumb.is_file() else None
-    except OSError:
-        mtime = None
+    mtime = _previews_mtime(thumb)
     key = str(path)
     cached = _project_thumbnail_cache.get(key)
     if cached and cached[0] == mtime:
@@ -914,16 +931,48 @@ LAYOUT_SETTINGS_FILENAME = ".pipeline_layout.json"
 def _layout_settings_path(directory: Path) -> Path:
     return directory / LAYOUT_SETTINGS_FILENAME
 
-def load_layout_settings(directory: Path) -> dict:
-    """Reglages de mise en page de `directory` — {} si le fichier est
-    absent/illisible/invalide (repli SILENCIEUX sur les valeurs par
-    defaut, meme esprit que load_project_columns : jamais bloquant)."""
+# Valeurs de la PUNAISE d'une colonne (punaise, largeur, hauteur de ligne, options du menu contextuel
+# retenues avec elle) : propres au PRESET EN COURS (demande de l'utilisateur), rangees dans le fichier sous
+# `by_preset` -> {nom du preset ("" = aucun): {cle: valeur}}. Les autres cles (ordre, espaces, titres...)
+# restent communes. Ces fonctions donnent / prennent la VUE du preset en cours : les appelants n'ont rien
+# a savoir.
+PIN_LAYOUT_KEYS = ("pinned", "pinned_column_width", "pinned_row_height", "row_height", "show_icon",
+                   "show_preview", "icon_size", "icon_padding_left", "text_padding_left")
+_BY_PRESET = "by_preset"
+
+
+def _layout_preset() -> str:
+    from settings_store import preset_in_use
+    return preset_in_use(ui_state.APPLIED_SETTINGS or {})
+
+
+def _read_layout_raw(directory: Path) -> dict:
     path = _layout_settings_path(directory)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     return raw if isinstance(raw, dict) else {}
+
+
+def load_layout_settings(directory: Path) -> dict:
+    """Reglages de mise en page de `directory` — {} si le fichier est
+    absent/illisible/invalide (repli SILENCIEUX sur les valeurs par
+    defaut, meme esprit que load_project_columns : jamais bloquant).
+    Valeurs de punaise : celles du preset en cours (voir PIN_LAYOUT_KEYS) ; les anciennes, communes a
+    tous (d'avant les presets), reviennent au premier preset qui les lit et lui sont attribuees."""
+    raw = _read_layout_raw(directory)
+    view = {k: v for k, v in raw.items() if k not in PIN_LAYOUT_KEYS and k != _BY_PRESET}
+    by_preset = raw.get(_BY_PRESET) if isinstance(raw.get(_BY_PRESET), dict) else {}
+    preset = _layout_preset()
+    own = by_preset.get(preset)
+    legacy = {k: raw[k] for k in PIN_LAYOUT_KEYS if k in raw}
+    if not isinstance(own, dict):
+        own = legacy if legacy and not by_preset else {}
+        if own:
+            save_layout_settings(directory, {**view, **own})     # attribuees au preset en cours
+    view.update(own)
+    return view
 
 def save_layout_settings(directory: Path, data: dict) -> None:
     """Ecrit `data` (dict complet) dans le dossier — voir _update_layout_
@@ -932,9 +981,20 @@ def save_layout_settings(directory: Path, data: dict) -> None:
     save_project_columns) : ce fichier a deja pu etre cache par un
     PRECEDENT appel."""
     path = _layout_settings_path(directory)
+    raw = _read_layout_raw(directory)
+    by_preset = raw.get(_BY_PRESET) if isinstance(raw.get(_BY_PRESET), dict) else {}
+    out = {k: v for k, v in data.items() if k not in PIN_LAYOUT_KEYS and k != _BY_PRESET}
+    pins = {k: data[k] for k in PIN_LAYOUT_KEYS if k in data}
+    by_preset = dict(by_preset)
+    if pins:
+        by_preset[_layout_preset()] = pins
+    else:
+        by_preset.pop(_layout_preset(), None)
+    if by_preset:
+        out[_BY_PRESET] = by_preset
     _clear_hidden(path)
     try:
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        path.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
     except OSError:
         return
     _set_hidden(path)
@@ -1229,6 +1289,20 @@ def _show_row_resize_indicator(column: "Column", row_index: int, height: int) ->
     label.show()
     label.raise_()
 
+def _live_dialog_values(win) -> dict | None:
+    """Valeurs EN COURS (apercu non enregistre) de la fenetre de reglages ouverte — v1 (`_settings_dialog`)
+    ou v2 (`_settings_dialog_v2`) — ou None si aucune n'est visible."""
+    for attr, reader in (("_settings_dialog", "_current_values"), ("_settings_dialog_v2", "current_values")):
+        dialog = getattr(win, attr, None)
+        if dialog is None:
+            continue
+        try:
+            if dialog.isVisible():
+                return getattr(dialog, reader)()
+        except RuntimeError:
+            continue
+    return None
+
 def _persist_row_height(win, title: str, new_height: int) -> None:
     """Enregistre `new_height` comme hauteur de ligne EFFECTIVE de `title`
     sur le disque (voir Column.row_resize_end) — memes cles que la fenetre
@@ -1272,14 +1346,7 @@ def _persist_row_height(win, title: str, new_height: int) -> None:
     # espacements entre les lignes ne sont plus respecte, et ca concerne
     # toutes les colonnes". La hauteur est re-appliquee explicitement sur
     # CETTE vue aussi (_apply_height_override).
-    dialog = getattr(win, "_settings_dialog", None)
-    live_settings = None
-    if dialog is not None:
-        try:
-            if dialog.isVisible():
-                live_settings = dialog._current_values()
-        except RuntimeError:
-            live_settings = None
+    live_settings = _live_dialog_values(win)
     if live_settings is not None:
         _apply_height_override(live_settings)
     apply_all_settings(live_settings if live_settings is not None else settings)
@@ -1297,7 +1364,8 @@ def _sync_default_preset_override(settings: dict, apply_override) -> None:
     toujours pas automatiquement". No-op si aucun preset par defaut n'est
     configure, ou s'il a depuis ete supprime/renomme (repli SILENCIEUX,
     meme convention que load_settings)."""
-    default_preset = settings.get("default_preset")
+    from settings_store import preset_in_use
+    default_preset = preset_in_use(settings)      # le preset ACTIF (a l'ecran), defaut au lancement
     if not default_preset:
         return
     presets = _load_presets()
@@ -1332,14 +1400,7 @@ def _persist_column_width(win, title: str, new_width: int) -> None:
     save_settings(settings)
     _sync_default_preset_override(settings, _apply_width_override)
 
-    dialog = getattr(win, "_settings_dialog", None)
-    live_settings = None
-    if dialog is not None:
-        try:
-            if dialog.isVisible():
-                live_settings = dialog._current_values()
-        except RuntimeError:
-            live_settings = None
+    live_settings = _live_dialog_values(win)
     if live_settings is not None:
         _apply_width_override(live_settings)
     apply_all_settings(live_settings if live_settings is not None else settings)
@@ -1357,14 +1418,7 @@ def _persist_detail_panel_width(win, new_width: int) -> None:
     save_settings(settings)
     _sync_default_preset_override(settings, lambda target: target.__setitem__("detail_panel_width", new_width))
 
-    dialog = getattr(win, "_settings_dialog", None)
-    live_settings = None
-    if dialog is not None:
-        try:
-            if dialog.isVisible():
-                live_settings = dialog._current_values()
-        except RuntimeError:
-            live_settings = None
+    live_settings = _live_dialog_values(win)
     if live_settings is not None:
         live_settings["detail_panel_width"] = new_width
     apply_all_settings(live_settings if live_settings is not None else settings)
@@ -1386,6 +1440,26 @@ class _HoverPrime(QObject):
         if event.type() == QEvent.Enter:
             self._callback()
         return False
+
+
+_GIL_USERS = [0]
+_SWITCH_INTERVAL = [None]
+
+
+def _snappy_gil(enable: bool) -> None:
+    """Appels apparies, pendant une animation LEGERE pour Python (chaque image pose une image toute
+    faite : glissement de la planche) : le verrou de Python (GIL) change de main toutes les 0,5 ms au
+    lieu de 5. Un decodage d'apercu en fond (code Python du pipeline) le gardait jusqu'a 5 ms a chaque
+    retour du fil de l'interface depuis Qt : images de 30 a 60 ms au lieu de 11 (mesure :
+    tests/_probe_gallery_scroll.py). PAS pour une animation qui peint beaucoup en Python (ouverture de la
+    planche : sa peinture, sans cesse interrompue, passait de 5 a 25 ms, tests/_probe_gallery_frames.py)."""
+    _GIL_USERS[0] = max(0, _GIL_USERS[0] + (1 if enable else -1))
+    if enable and _GIL_USERS[0] == 1:
+        _SWITCH_INTERVAL[0] = sys.getswitchinterval()
+        sys.setswitchinterval(0.0005)
+    elif not enable and _GIL_USERS[0] == 0 and _SWITCH_INTERVAL[0] is not None:
+        sys.setswitchinterval(_SWITCH_INTERVAL[0])
+        _SWITCH_INTERVAL[0] = None
 
 
 def _fine_timer(enable: bool) -> None:
@@ -1789,6 +1863,7 @@ def _save_thumbnail_pixmap_for(path: Path, pix: QPixmap, anchor: QWidget, on_don
     if max(pix.width(), pix.height()) > THUMBNAIL_MAX_DIM:
         pix = _smooth_scale_down(pix, QSize(THUMBNAIL_MAX_DIM, THUMBNAIL_MAX_DIM), Qt.KeepAspectRatio)
     dest = project_thumbnail_path(path)
+    _forget_mtime(dest)
     if not pix.save(str(dest), "PNG"):
         QMessageBox.warning(anchor, "Image", "Impossible d'enregistrer la vignette.")
         return
@@ -1797,6 +1872,7 @@ def _save_thumbnail_pixmap_for(path: Path, pix: QPixmap, anchor: QWidget, on_don
 
 def _prompt_reset_thumbnail(anchor: QWidget, path: Path, on_done) -> None:
     thumb = project_thumbnail_path(path)
+    _forget_mtime(thumb)
     if thumb.exists():
         try:
             thumb.unlink()
@@ -1842,6 +1918,80 @@ ROLE_SOURCE_STEP = Qt.UserRole + 4
 # et le menu contextuel reduit ("Retirer le raccourci" au lieu de
 # Renommer/Supprimer, qui agirait par erreur sur la VRAIE cible).
 ROLE_IS_SHORTCUT = Qt.UserRole + 5
+
+# Espace (px) au-dessus d'une ligne, choisi par clic droit > « Ajouter une espace au-dessus » ; retenu
+# dans le .pipeline_layout.json du dossier de la ligne (`item_spaces`, cle = son nom). Les delegues
+# l'ajoutent a la hauteur et dessinent la ligne en dessous.
+ROLE_SPACE_ABOVE = Qt.UserRole + 6
+
+# Titre pose DANS l'espace au-dessus d'une ligne (clic droit > « Ajouter un titre au-dessus ») :
+# {"text": str, "style": {cles title_font_* / title_padding}} ; retenu comme l'espace (`item_titles`).
+ROLE_TITLE_ABOVE = Qt.UserRole + 7
+
+# Espace (px) EN DESSOUS d'une ligne (clic droit > « Ajouter une espace en dessous ») : meme principe
+# que ROLE_SPACE_ABOVE (`item_spaces_below`) ; ajoute a la hauteur, la ligne dessinee au-dessus.
+ROLE_SPACE_BELOW = Qt.UserRole + 8
+
+# Clic droit > « Positionner au bas de la colonne » : les lignes marquees (`item_bottom`, liste de
+# cles) sont rangees apres les autres, empilees contre le bas de la colonne. ROLE_BOTTOM_GAP = vide
+# (px) pose au-dessus de la PREMIERE d'entre elles pour les pousser en bas, recalcule a chaque
+# changement de hauteur (Column.sync_bottom_gap) ; ajoute par les delegues avant l'espace au-dessus.
+ROLE_PIN_BOTTOM = Qt.UserRole + 9
+ROLE_BOTTOM_GAP = Qt.UserRole + 10
+
+# Style d'un titre de ligne (fenetre flottante « Style du titre » : Police | Padding). Memes cles
+# que la ligne police / padding de la fenetre de reglages (prefixe `title`).
+ITEM_TITLE_DEFAULT_STYLE = {
+    "title_font_family": "", "title_font_bold": True, "title_font_italic": False, "title_font_size": 10,
+    "title_font_smoothing_enabled": False, "title_font_smoothing": "current", "title_font_color": "#9aa1a7",
+    "title_padding": {"left": 8, "top": 2, "right": 8, "bottom": 2}, "title_padding_linked": False,
+}
+
+
+def item_title_style(style: dict | None) -> dict:
+    merged = json.loads(json.dumps(ITEM_TITLE_DEFAULT_STYLE))
+    merged.update(style or {})
+    return merged
+
+
+def item_title_font(style: dict):
+    from PySide6.QtGui import QFont
+    style = item_title_style(style)
+    qfont = QFont(style["title_font_family"] or QApplication.font().family())
+    qfont.setPixelSize(max(4, int(style["title_font_size"])))
+    qfont.setBold(bool(style["title_font_bold"]))
+    qfont.setItalic(bool(style["title_font_italic"]))
+    if style["title_font_smoothing_enabled"] and style["title_font_smoothing"] == "none":
+        qfont.setStyleStrategy(QFont.NoAntialias)
+    return qfont
+
+
+def item_title_min_height(style: dict | None = None) -> int:
+    """Hauteur d'espace necessaire pour un titre : une ligne de texte + padding haut et bas."""
+    from PySide6.QtGui import QFontMetrics
+    style = item_title_style(style)
+    pad = style["title_padding"] or {}
+    return QFontMetrics(item_title_font(style)).height() + int(pad.get("top", 0)) + int(pad.get("bottom", 0))
+
+
+def paint_item_title(painter: QPainter, rect: QRect, title: dict | None) -> None:
+    """Titre d'une ligne, dans `rect` (l'espace au-dessus de la ligne) : cale en bas a gauche, dans
+    son padding, coupe par des points de suspension s'il est trop long."""
+    if not title or not title.get("text") or rect.height() <= 0:
+        return
+    style = item_title_style(title.get("style"))
+    pad = style["title_padding"] or {}
+    text_rect = rect.adjusted(int(pad.get("left", 0)), int(pad.get("top", 0)),
+                              -int(pad.get("right", 0)), -int(pad.get("bottom", 0)))
+    qfont = item_title_font(style)
+    painter.save()
+    painter.setClipRect(rect)
+    painter.setFont(qfont)
+    painter.setPen(QColor(resolve_color_ref(style["title_font_color"], "#9aa1a7")))
+    from PySide6.QtGui import QFontMetrics
+    text = QFontMetrics(qfont).elidedText(str(title["text"]), Qt.ElideRight, max(0, text_rect.width()))
+    painter.drawText(text_rect, int(Qt.AlignLeft | Qt.AlignBottom | Qt.TextSingleLine), text)
+    painter.restore()
 
 def _paint_row_border(painter: QPainter, rect, option, style: dict):
     """Filet horizontal ENTRE les lignes (voir DEFAULT_SETTINGS.
@@ -1928,56 +2078,13 @@ def _rounded_mask_pixmap(width: int, height: int, radius: dict) -> QPixmap:
     _IMAGE_MASK_CACHE[key] = mask
     return mask
 
-def _paint_row_image(
-    painter: QPainter, slot_rect: QRect, pixmap: QPixmap, style: dict,
-    base_pad: int = 0,
-):
-    """Recadre/peint `pixmap` en "cover" dans `slot_rect`, avec le padding/
-    bordure/rayon regles dans Colonnes > ... > Image (voir DEFAULT_SETTINGS.
-    item_image_*/settings_window._section_headers) — partage par toutes les
-    colonnes (apercu personnalise sur "Type", vignette Projets/Sous-projet/
-    Logiciels/Contenu, voir _paint_unified_row) —
-    voir la remarque de l'utilisateur, "les parametres images ... sont pour
-    controler les apercus que l'on trouve sur les differentes lignes".
+_ROW_IMAGE_CACHE: dict = {}
+_ROW_IMAGE_CACHE_MAX = 600
 
-    `item_image_radius` est un reglage INDEPENDANT (defaut 0 = carre),
-    JAMAIS remplace par un rayon "herite" d'ailleurs (colonne/selection) —
-    un essai precedent faisait heriter le rayon de la boite de selection
-    tant qu'item_image_radius valait 0, mais rendait alors un 0 EXPLICITE
-    indiscernable d'un rayon "pas encore regle" : le coin restait
-    visiblement arrondi meme regle a 0 — voir la remarque de l'utilisateur,
-    capture a l'appui, "si je met une valeur de 0 a l'arrondi, les coins
-    ne sont pas vraiment carre". `base_pad` (additif, jamais ambigu) reste
-    le seul reglage "herite" — l'ancien padding fixe par colonne
-    (col_img_pad, Projets/Sous-projet/Logiciels/Contenu)."""
-    pad = style.get("item_image_padding") or {}
-    left = base_pad + max(0, int(pad.get("left", 0)))
-    top_p = base_pad + max(0, int(pad.get("top", 0)))
-    right = base_pad + max(0, int(pad.get("right", 0)))
-    bottom = base_pad + max(0, int(pad.get("bottom", 0)))
-    img_rect = QRect(
-        slot_rect.left() + left, slot_rect.top() + top_p,
-        slot_rect.width() - left - right, slot_rect.height() - top_p - bottom,
-    )
-    if img_rect.width() <= 0 or img_rect.height() <= 0:
-        return
 
-    radius = _radius_dict(style.get("item_image_radius") or 0)
-
-    # Taille PHYSIQUE reelle (devicePixelRatio), pas seulement LOGIQUE —
-    # voir la remarque de l'utilisateur, "je trouve les icones encore tres
-    # floues" : sur un ecran mis a l'echelle (>100%, tres courant), un
-    # pixmap cree a EXACTEMENT la taille logique du slot (devicePixelRatio
-    # implicite 1.0) est ensuite lui-meme RE-agrandi par Qt au moment de
-    # le peindre dans ce MEME rect logique sur un peripherique physique
-    # plus dense — un flou invisible cote algorithme de mise a l'echelle
-    # (deja bon, voir _smooth_scale_down), uniquement du a ce DERNIER saut
-    # (le pixmap final n'annonce jamais sa vraie densite a Qt)."""
-    device = painter.device()
-    dpr = (device.devicePixelRatioF() if device is not None else 1.0) or 1.0
-    phys_w = max(1, round(img_rect.width() * dpr))
-    phys_h = max(1, round(img_rect.height() * dpr))
-
+def _row_image_pixmap(pixmap: QPixmap, phys_w: int, phys_h: int, radius: dict, dpr: float) -> QPixmap:
+    """Vignette de ligne prete a peindre (voir _paint_row_image, qui la garde en cache) : recadree
+    en « cover », coins arrondis antialiases, a la taille PHYSIQUE `phys_w` x `phys_h`."""
     if _radius_any(radius):
         # Masque construit a la main (REMPLISSAGE antialiase + composition
         # DestinationIn), PAS un setClipPath direct : le moteur RASTER de
@@ -2033,15 +2140,83 @@ def _paint_row_image(
 
         masked = _smooth_scale_down(masked, QSize(phys_w, phys_h), Qt.IgnoreAspectRatio)
         masked.setDevicePixelRatio(dpr)
-        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        painter.drawPixmap(img_rect, masked)
+        return masked
     else:
         cropped = _smooth_scale_down(pixmap, QSize(phys_w, phys_h), Qt.KeepAspectRatioByExpanding)
         sx = max(0, (cropped.width() - phys_w) // 2)
         sy = max(0, (cropped.height() - phys_h) // 2)
         cropped = cropped.copy(sx, sy, min(phys_w, cropped.width()), min(phys_h, cropped.height()))
         cropped.setDevicePixelRatio(dpr)
-        painter.drawPixmap(img_rect, cropped)
+        return cropped
+
+def _paint_row_image(
+    painter: QPainter, slot_rect: QRect, pixmap: QPixmap, style: dict,
+    base_pad: int = 0,
+):
+    """Recadre/peint `pixmap` en "cover" dans `slot_rect`, avec le padding/
+    bordure/rayon regles dans Colonnes > ... > Image (voir DEFAULT_SETTINGS.
+    item_image_*/settings_window._section_headers) — partage par toutes les
+    colonnes (apercu personnalise sur "Type", vignette Projets/Sous-projet/
+    Logiciels/Contenu, voir _paint_unified_row) —
+    voir la remarque de l'utilisateur, "les parametres images ... sont pour
+    controler les apercus que l'on trouve sur les differentes lignes".
+
+    `item_image_radius` est un reglage INDEPENDANT (defaut 0 = carre),
+    JAMAIS remplace par un rayon "herite" d'ailleurs (colonne/selection) —
+    un essai precedent faisait heriter le rayon de la boite de selection
+    tant qu'item_image_radius valait 0, mais rendait alors un 0 EXPLICITE
+    indiscernable d'un rayon "pas encore regle" : le coin restait
+    visiblement arrondi meme regle a 0 — voir la remarque de l'utilisateur,
+    capture a l'appui, "si je met une valeur de 0 a l'arrondi, les coins
+    ne sont pas vraiment carre". `base_pad` (additif, jamais ambigu) reste
+    le seul reglage "herite" — l'ancien padding fixe par colonne
+    (col_img_pad, Projets/Sous-projet/Logiciels/Contenu)."""
+    pad = style.get("item_image_padding") or {}
+    left = base_pad + max(0, int(pad.get("left", 0)))
+    top_p = base_pad + max(0, int(pad.get("top", 0)))
+    right = base_pad + max(0, int(pad.get("right", 0)))
+    bottom = base_pad + max(0, int(pad.get("bottom", 0)))
+    img_rect = QRect(
+        slot_rect.left() + left, slot_rect.top() + top_p,
+        slot_rect.width() - left - right, slot_rect.height() - top_p - bottom,
+    )
+    if img_rect.width() <= 0 or img_rect.height() <= 0:
+        return
+
+    radius = _radius_dict(style.get("item_image_radius") or 0)
+
+    # Taille PHYSIQUE reelle (devicePixelRatio), pas seulement LOGIQUE —
+    # voir la remarque de l'utilisateur, "je trouve les icones encore tres
+    # floues" : sur un ecran mis a l'echelle (>100%, tres courant), un
+    # pixmap cree a EXACTEMENT la taille logique du slot (devicePixelRatio
+    # implicite 1.0) est ensuite lui-meme RE-agrandi par Qt au moment de
+    # le peindre dans ce MEME rect logique sur un peripherique physique
+    # plus dense — un flou invisible cote algorithme de mise a l'echelle
+    # (deja bon, voir _smooth_scale_down), uniquement du a ce DERNIER saut
+    # (le pixmap final n'annonce jamais sa vraie densite a Qt)."""
+    device = painter.device()
+    dpr = (device.devicePixelRatioF() if device is not None else 1.0) or 1.0
+    phys_w = max(1, round(img_rect.width() * dpr))
+    phys_h = max(1, round(img_rect.height() * dpr))
+
+    # Vignette FINALE (recadree, arrondie, a la taille physique) gardee en cache : la recalculer a
+    # chaque repeinture (reductions successives + masque sur-echantillonne 8x) coutait l'essentiel
+    # d'une repeinture des colonnes (~40 ms sur 100) et faisait ramer toute la navigation, chaque
+    # clic declenchant des captures (fondus). Cle = contenu du pixmap (cacheKey) + taille + rayon.
+    cache_key = (pixmap.cacheKey(), phys_w, phys_h, tuple(sorted(radius.items())), dpr)
+    final = _ROW_IMAGE_CACHE.get(cache_key)
+    if final is None:
+        final = _row_image_pixmap(pixmap, phys_w, phys_h, radius, dpr)
+        if len(_ROW_IMAGE_CACHE) >= _ROW_IMAGE_CACHE_MAX:
+            _ROW_IMAGE_CACHE.clear()
+        _ROW_IMAGE_CACHE[cache_key] = final
+    # Ombres (Colonnes > Lignes > Apercu, ou l'onglet de la colonne) : sous la vignette, dans le padding.
+    shadow = shadow_look(style, "item_image_shadow", resolve_color_ref)
+    if shadow is not None:
+        paint_shadow(painter, img_rect, radius, shadow)
+    if _radius_any(radius):
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+    painter.drawPixmap(img_rect, final)
 
     border_enabled = dict(style.get("item_image_border_enabled") or {})
     if any(border_enabled.values()):
@@ -2333,6 +2508,7 @@ def apply_all_settings(settings: dict) -> None:
     voir PipelineBrowser._apply_settings et main() pour ces deux appelants."""
 
     import previews as _pv
+    ui_state.APPLIED_SETTINGS = settings
     _register_settings_hooks()
     _pv.set_lut_test_images(
         settings.get("lut_test_images"), settings.get("lut_default_image"), settings.get("lut_image_curves"))
@@ -2484,6 +2660,10 @@ def apply_all_settings(settings: dict) -> None:
     # arrondis".
     ui_state.PREVIEW_IMAGE_PAD = settings.get("preview_padding") or {}
     ui_state.PREVIEW_IMAGE_RADIUS = settings.get("preview_radius") or {}
+    ui_state.PREVIEW_IMAGE_SHADOW = shadow_look(settings, "preview_shadow", resolve_color_ref)
+    ui_state.ITEM_EXT_COLOR = (resolve_color_ref(settings.get("item_ext_color") or "#8a9097")
+                               if settings.get("item_ext_color_enabled") else None)
+    ShadowUnderlay.refresh_all()             # ombres posees sous des widgets (image Focus, tableaux)
 
     ui_state.HEADER_HEIGHT = settings.get("header_height", ui_state.HEADER_HEIGHT)
     ui_state.HEADER_PADDING = settings.get("header_padding", ui_state.HEADER_PADDING)

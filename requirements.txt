@@ -11,3 +11,7 @@ matplotlib
 # Optionnel : developpement des RAW (.arw Sony, .raf Fuji...) ; sans lui, le
 # JPEG integre au fichier sert d'apercu.
 rawpy
+# Apercu des notes Markdown avec le CSS d'Obsidian (voir markdown_preview.py) ; sans eux,
+# les .md restent en texte brut.
+markdown-it-py
+mdit-py-plugins

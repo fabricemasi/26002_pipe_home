@@ -7,7 +7,12 @@ __pycache__/
 
 # Caches et fichiers generes a l'execution
 data/.pipeline_preview_cache/
+# CSS et polices d'Obsidian extraits de SON installation (voir markdown_preview.py)
+data/obsidian_cache/
+data/render_profiles_snapshot.json
+data/blender_recent_added.json
 data/.pipeline_protected_previews.json
+data/file_keywords.json
 pipeline_preview_render*.log
 pipeline_preview_render*.html
 *.blend1

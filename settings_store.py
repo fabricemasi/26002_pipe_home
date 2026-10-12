@@ -61,6 +61,7 @@ M = {
     "dirty_fg": "#c2914a",
     "clean_fg": "#5d656b",
     "dirty_border": "#5c4f2a",
+    "dirty_frame": "#c62828",      # bordure de la fenetre de reglages v2 tant qu'un changement n'est pas enregistre
     "dirty_dot": "#c2914a",
     "clean_dot": "#3f8f6b",
     "close_hover_bg": "#232a30",
@@ -180,12 +181,12 @@ _SLIDER_STYLE = {
 def _sync_slider_style(settings: dict) -> None:
     _SLIDER_STYLE["thumb_w"] = max(1, int(settings.get("slider_thumb_width", 3)))
     _SLIDER_STYLE["thumb_h"] = max(1, int(settings.get("slider_thumb_height", 14)))
-    thumb_color = settings.get("slider_thumb_color", "#8fb4d5")
-    _SLIDER_STYLE["thumb_color"] = thumb_color
     # _resolve_color_value : voir _sync_toggle_shape_style, meme raison
-    # (thumb_border/track_border peuvent contenir un hex direct OU une
+    # (toutes les couleurs peuvent contenir un hex direct OU une
     # reference "@<slot>", voir _AppOrCustomColorField).
     colors = settings.get("colors") or {}
+    thumb_color = _resolve_color_value(settings.get("slider_thumb_color", "#8fb4d5"), colors)
+    _SLIDER_STYLE["thumb_color"] = thumb_color
     thumb_border = settings.get("slider_thumb_border") or {}
     for side in ("top", "right", "bottom", "left"):
         _SLIDER_STYLE[f"thumb_border_{side}"] = _resolve_color_value(
@@ -193,8 +194,8 @@ def _sync_slider_style(settings: dict) -> None:
     _SLIDER_STYLE["thumb_border_enabled"] = _coerce_side_enabled(settings.get("slider_thumb_border_enabled", True))
     _SLIDER_STYLE["thumb_radius"] = _coerce_corner_radius(settings.get("slider_thumb_radius", 0))
     _SLIDER_STYLE["track_h"] = max(1, int(settings.get("slider_track_height", 3)))
-    track_empty = settings.get("slider_track_empty_color", "#25292d")
-    _SLIDER_STYLE["track_fill"] = settings.get("slider_track_fill_color", "#3f6f9f")
+    track_empty = _resolve_color_value(settings.get("slider_track_empty_color", "#25292d"), colors)
+    _SLIDER_STYLE["track_fill"] = _resolve_color_value(settings.get("slider_track_fill_color", "#3f6f9f"), colors)
     _SLIDER_STYLE["track_empty"] = track_empty
     track_border = settings.get("slider_track_border") or {}
     for side in ("top", "right", "bottom", "left"):
@@ -229,6 +230,31 @@ _TITLE_LEVEL_DEFAULTS: dict[int, dict] = {
         "font_smoothing_enabled": False, "font_smoothing": "current", "font_color": "#5d656b", "indent": 80, "gap_collapsed": 0, "gap_expanded": 32, "gap_next": 6},
 }
 
+# Fenetre v2 : chaque titre est un PARAGRAPHE (titre + tout son contenu jusqu'au titre suivant).
+# `text_padding` = padding du texte seul (remplace les espacements gap_* en v2) ; `bg_*` = fond du
+# paragraphe (couleur, margin, padding, bordures, border radius). Voir _BodyMixin.apply_box (settings_layout).
+def _title_box_defaults(level: int) -> dict:
+    vertical = 6 if level == 1 else 4
+    return {
+        "text_padding": {"left": 0, "top": vertical, "right": 0, "bottom": vertical},
+        "text_padding_linked": False,
+        "space_before": 0, "space_after": 0,   # padding avant le 1er / apres le dernier titre d'une pile de niveau N
+        "bg_enabled": False, "bg_color": "@skinN2",
+        "bg_margin": {"left": 0, "top": 0, "right": 0, "bottom": 0}, "bg_margin_linked": True,
+        "bg_padding": {"left": 0, "top": 0, "right": 0, "bottom": 0}, "bg_padding_linked": True,
+        # Padding (paragraphe) : autour de TOUT ce que contient le titre (sous la ligne du titre).
+        "body_padding": {"left": 0, "top": 0, "right": 0, "bottom": 0}, "body_padding_linked": True,
+        "bg_border_enabled": {"top": False, "right": False, "bottom": False, "left": False},
+        "bg_border": {"top": "#2e343a", "right": "#2e343a", "bottom": "#2e343a", "left": "#2e343a"},
+        "bg_border_thickness": 1, "bg_border_enabled_linked": True,
+        "bg_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
+        "bg_radius_linked": True,
+    }
+
+for _level, _vals in _TITLE_LEVEL_DEFAULTS.items():
+    _vals.update(_title_box_defaults(_level))
+del _level, _vals
+
 _TITLE_LEVEL_STYLE: dict[int, dict] = {level: dict(vals) for level, vals in _TITLE_LEVEL_DEFAULTS.items()}
 
 def _sync_title_level_style(settings: dict) -> None:
@@ -238,6 +264,10 @@ def _sync_title_level_style(settings: dict) -> None:
         style = _TITLE_LEVEL_STYLE[level]
         for key, default in defaults.items():
             style[key] = settings.get(f"{prefix}_{key}", default)
+        style["bg_color_hex"] = _resolve_color_value(style["bg_color"], colors)
+        border = style["bg_border"] if isinstance(style["bg_border"], dict) else {}
+        style["bg_border_hex"] = {side: _resolve_color_value(border.get(side, "#2e343a"), colors)
+                                  for side in ("top", "right", "bottom", "left")}
         # Resolu tout de suite en hex REEL (voir _resolve_color_value) —
         # PAS conserve tel quel ("@<slot>") : _title_color n'a lui-meme
         # aucun acces a la palette (fonction MODULE, pas methode), le
@@ -285,6 +315,29 @@ def _title_gap_next(level: int) -> int:
     niveau suivant, le cas echeant)."""
     style = _TITLE_LEVEL_STYLE.get(level) or _TITLE_LEVEL_DEFAULTS[3]
     return max(0, int(style.get("gap_next", 6)))
+
+def _title_box(level: int) -> dict:
+    """Habillage « paragraphe » d'un titre de `level` (v2) : margin et paddings en tuples (G, H, D, B), bordure
+    (cotes actifs, couleurs hex, epaisseur), rayons par coin, couleur de fond hex ou None."""
+    style = _TITLE_LEVEL_STYLE.get(level) or _TITLE_LEVEL_STYLE[3]
+
+    def pad(value) -> tuple:
+        value = value if isinstance(value, dict) else {}
+        return tuple(max(0, int(value.get(side, 0))) for side in ("left", "top", "right", "bottom"))
+
+    return {
+        "text_padding": pad(style.get("text_padding")),
+        "margin": pad(style.get("bg_margin")),
+        "space_before": max(0, int(style.get("space_before", 0))),
+        "space_after": max(0, int(style.get("space_after", 0))),
+        "padding": pad(style.get("bg_padding")),
+        "body_padding": pad(style.get("body_padding")),
+        "fill": style.get("bg_color_hex") if style.get("bg_enabled") else None,
+        "border_on": _coerce_side_enabled(style.get("bg_border_enabled", False), False),
+        "border_colors": dict(style.get("bg_border_hex") or {}),
+        "thickness": max(0, int(style.get("bg_border_thickness", 1))),
+        "radius": _coerce_corner_radius(style.get("bg_radius", 0)),
+    }
 
 def _subsection_left_margin(level: int) -> int:
     """Marge GAUCHE reelle du bandeau d'une _SubSection de `level` — voir la
@@ -572,6 +625,187 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Bornes (120-640) : memes que COLUMN_MIN_WIDTH/COLUMN_MAX_WIDTH cote
     # pipeline_browser.py (pas importable ici, sens d'import inverse).
     "item_column_width": 180,
+    "folder_reorder_enabled": True,   # tirer un dossier le replace dans sa colonne (toutes les colonnes)
+    "viewer_filmstrip_enabled": True,  # visionneuse : pellicule (diapositives) sous l'image en focus
+    "viewer_filmstrip_shortcut": "D",  # ... et sa touche (affiche / masque, visionneuse ouverte)
+    "viewer_slide_enabled": True,      # visionneuse : l'image suivante arrive en glissant (ruban)
+    "viewer_info_enabled": False,      # visionneuse : tableau des parametres de l'image, a sa droite
+    "viewer_info_shortcut": "I",       # ... et sa touche
+    "viewer_gallery_ripple_enabled": True,  # visionneuse -> planche : les cases apparaissent en vague
+    "viewer_scroll_animated": True,    # planche : la molette fait GLISSER les lignes (sinon saut sec)
+    # Menus contextuels (settings_menu) : Reglages > Menu contextuel > Menu / Lignes / Libelles / Separateurs.
+    "ctx_menu_editable": True,         # tirer un element = le deplacer ; clic droit = separateurs, libelles, icone
+    "ctx_menu_bg": "#202326",
+    "ctx_menu_border_enabled": {"top": True, "right": True, "bottom": True, "left": True},
+    "ctx_menu_border": {"top": "#2c3034", "right": "#2c3034", "bottom": "#2c3034", "left": "#2c3034"},
+    "ctx_menu_border_thickness": 1,
+    "ctx_menu_border_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
+    "ctx_menu_border_radius_linked": True,
+    "ctx_menu_padding": {"top": 4, "right": 0, "bottom": 4, "left": 0},
+    "ctx_menu_padding_linked": False,
+    "ctx_menu_font_family": "",
+    "ctx_menu_font_bold": False,
+    "ctx_menu_font_italic": False,
+    "ctx_menu_font_size": 11,
+    "ctx_menu_font_smoothing_enabled": False,
+    "ctx_menu_font_smoothing": "current",
+    "ctx_menu_font_color": "#d6d9dc",
+    "ctx_menu_item_padding": {"top": 5, "right": 18, "bottom": 5, "left": 18},
+    "ctx_menu_item_padding_linked": False,
+    # Survol d'une ligne (Menu contextuel > Survol) : fond, texte, bordures, border radius, marge autour du
+    # surlignage (comptes dans l'alignement de toutes les lignes, settings_menu._line_box).
+    "ctx_menu_hover_color": "#3f6f9f",
+    "ctx_menu_hover_text_color": "#eef2f5",
+    "ctx_menu_hover_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
+    "ctx_menu_hover_radius_linked": True,
+    "ctx_menu_hover_border_enabled": {"top": False, "right": False, "bottom": False, "left": False},
+    "ctx_menu_hover_border": {"top": "#5f9bd0", "right": "#5f9bd0", "bottom": "#5f9bd0", "left": "#5f9bd0"},
+    "ctx_menu_hover_border_thickness": 1,
+    "ctx_menu_hover_border_enabled_linked": True,
+    "ctx_menu_hover_margin": {"top": 0, "right": 0, "bottom": 0, "left": 0},
+    "ctx_menu_hover_margin_linked": True,
+    "ctx_menu_disabled_color": "#7d858b",
+    "ctx_menu_icon_size": 16,
+    "ctx_menu_control_gap": 16,        # entre le plus long texte et la colonne des controles
+    "ctx_menu_slider_width": 140,      # rail des curseurs (tous les controles ont la meme largeur)
+    "ctx_menu_label_font_family": "",
+    "ctx_menu_label_font_bold": True,
+    "ctx_menu_label_font_italic": False,
+    "ctx_menu_label_font_size": 10,
+    "ctx_menu_label_font_smoothing_enabled": False,
+    "ctx_menu_label_font_smoothing": "current",
+    "ctx_menu_label_font_color": "#7d858b",
+    "ctx_menu_label_bg": "#00000000",
+    "ctx_menu_label_padding": {"top": 6, "right": 0, "bottom": 2, "left": 0},
+    "ctx_menu_label_padding_linked": False,
+    "ctx_menu_label_uppercase": True,
+    "ctx_menu_sep_color": "#2c3034",
+    "ctx_menu_sep_thickness": 1,
+    "ctx_menu_sep_padding": {"top": 4, "right": 0, "bottom": 4, "left": 0},
+    "ctx_menu_sep_padding_linked": False,
+    # Disposition choisie a la main pour chaque menu (ordre, separateurs, libelles, icones) : etat temps reel.
+    "context_menu_layouts": {},
+    # Diapositives de la visionneuse (focus.FocusFilmstrip) : un TABLEAU, une cellule par vignette, divisee
+    # en sous-cellule image (en haut) et sous-cellule texte (le nom, dessous). Reglages > Visionneuse >
+    # Tableau / Sous cellule image / Sous cellule texte, ou clic droit sur la pellicule (tableau a la volee).
+    # Image en FOCUS (au centre de la visionneuse) : Reglages > Visionneuse > Focus (focus.FocusOverlay).
+    "viewer_focus_image_border_enabled": {"top": False, "right": False, "bottom": False, "left": False},
+    # Filtres (file_attributes) : les 5 couleurs attribuables aux fichiers, nom et teinte (Reglages >
+    # Visionneuse > Filtres).
+    **{f"viewer_filter_color_{n}": color for n, color in
+       enumerate(("#d64545", "#e0c341", "#4caf50", "#3d7fd9", "#9b59b6"), 1)},
+    **{f"viewer_filter_color_{n}_name": name for n, name in
+       enumerate(("Rouge", "Jaune", "Vert", "Bleu", "Violet"), 1)},
+    # Bouton filtre de la planche quand un filtre est applique (demande : « le bouton devient rouge »).
+    "viewer_filter_active_color": "#c62828",
+    # Planche : case d'un fichier qui a une couleur attribuee = calque de cette couleur (meme place que les
+    # marques focus / survol), opacite, bordure (couleur attribuee, opaque) et son epaisseur.
+    "viewer_filter_mark_opacity": 35,
+    "viewer_filter_mark_border": False,
+    "viewer_filter_mark_border_thickness": 2,
+    # Colonnes > Lignes > Texte : extension des fichiers (« .jpg ») dans sa propre couleur.
+    "item_ext_color_enabled": False,
+    "item_ext_color": "#8a9097",
+    # Fenetre des filtres : lignes ou un filtre est applique (clic droit > « Style des filtres actives »).
+    "viewer_filter_row_bg_enabled": True,
+    "viewer_filter_row_bg_color": "#403d7fd9",
+    "viewer_filter_row_border_enabled": {"top": False, "right": False, "bottom": False, "left": True},
+    "viewer_filter_row_border": {"top": "#3d7fd9", "right": "#3d7fd9", "bottom": "#3d7fd9", "left": "#3d7fd9"},
+    "viewer_filter_row_border_thickness": 2,
+    "viewer_filter_row_radius": 0, "viewer_filter_row_radius_linked": True,
+    "viewer_filter_row_margin": {"top": 0, "right": 0, "bottom": 0, "left": 0},
+    "viewer_filter_row_margin_linked": True,
+    # Fenetres additionnelles (reglages, override / a la volee, presets) : Reglages > Fenetres additionnelles.
+    "extra_window_border_enabled": {"top": True, "right": True, "bottom": True, "left": True},
+    "extra_window_border": {"top": "#2a2e32", "right": "#2a2e32", "bottom": "#2a2e32", "left": "#2a2e32"},
+    "extra_window_border_thickness": 1,
+    "extra_window_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
+    "extra_window_radius_linked": True,
+    "extra_window_title_height": 32,
+    "extra_window_title_bg": "#101214",
+    "extra_window_title_line_enabled": True, "extra_window_title_line_color": "#2a2e32",
+    "extra_window_title_line_thickness": 1,
+    "extra_window_buttons_line_enabled": True, "extra_window_buttons_line_color": "#2a2e32",
+    "extra_window_buttons_line_thickness": 1,
+    # Boutons de la barre de navigation (croix) : taille X / Y, border radius ; texte de la barre (gabarit police).
+    "extra_window_title_button_width": 36, "extra_window_title_button_height": 32,
+    "extra_window_title_button_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
+    "extra_window_title_button_radius_linked": True,
+    "extra_window_title_text_font_family": "", "extra_window_title_text_font_bold": False,
+    "extra_window_title_text_font_italic": False, "extra_window_title_text_font_size": 11,
+    "extra_window_title_text_font_smoothing_enabled": False, "extra_window_title_text_font_smoothing": "current",
+    "extra_window_title_text_font_color": "#8d949a",
+    # Fenetres « a la volee » / d'override : place a leur fermeture, {nom: [x, y]} (etat temps reel).
+    "quick_style_positions": {},
+    # Ordre des boutons de la visionneuse / planche (Ctrl + glisser ; etat temps reel) : identifiants
+    # « hide », « gallery », « filter », « pur:<fichier> » (PipelineBrowser._layout_viewer_buttons).
+    "viewer_button_order": [],
+    "viewer_focus_image_border": {"top": "#5f666b", "right": "#5f666b", "bottom": "#5f666b", "left": "#5f666b"},
+    "viewer_focus_image_border_thickness": 1,
+    "viewer_focus_image_border_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
+    "viewer_focus_image_border_radius_linked": True,
+    "viewer_film_text_ratio": 0.32,    # hauteur de la sous-cellule texte / celle de l'image (Ctrl + bordure)
+    "viewer_gallery_text_height": 0,   # planche : hauteur (px) de la sous-cellule texte (0 = deux lignes)
+    "viewer_film_table_border_enabled": {"top": False, "right": False, "bottom": False, "left": False},
+    "viewer_film_table_border": {"top": "#2a2e32", "right": "#2a2e32", "bottom": "#2a2e32", "left": "#2a2e32"},
+    "viewer_film_table_border_thickness": 1,
+    "viewer_film_table_border_radius": {"top_left": 5, "top_right": 5, "bottom_right": 5, "bottom_left": 5},
+    "viewer_film_table_border_radius_linked": True,
+    "viewer_film_table_font_family": "",     # police du rang « n / N » (cellule en cours)
+    "viewer_film_table_font_bold": True,
+    "viewer_film_table_font_italic": False,
+    "viewer_film_table_font_size": 11,
+    "viewer_film_table_font_smoothing_enabled": False,
+    "viewer_film_table_font_smoothing": "current",
+    "viewer_film_table_font_color": "#8fb4d5",
+    "viewer_film_table_bg": "#12ffffff",
+    # Planche : case en cours / survolee, sur ses DEUX sous-cellules (pas la cellule entiere), sans bordure,
+    # coins = haut de la sous-cellule image + bas de la sous-cellule texte (focus._gallery_mark).
+    # Planche : filets entre les cellules (Visionneuse > Tableau > Bordure interieure H / V).
+    "viewer_film_table_inner_h_enabled": False,
+    "viewer_film_table_inner_h_color": "#2a2e32",
+    "viewer_film_table_inner_h_thickness": 1,
+    "viewer_film_table_inner_v_enabled": False,
+    "viewer_film_table_inner_v_color": "#2a2e32",
+    "viewer_film_table_inner_v_thickness": 1,
+    "viewer_film_table_focus_color": "#465f9bd0",
+    "viewer_film_table_hover_color": "#165f9bd0",
+    "viewer_film_image_cell_border_enabled": {"top": False, "right": False, "bottom": False, "left": False},
+    "viewer_film_image_cell_border": {"top": "#2a2e32", "right": "#2a2e32", "bottom": "#2a2e32", "left": "#2a2e32"},
+    "viewer_film_image_cell_border_thickness": 1,
+    "viewer_film_image_cell_border_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
+    "viewer_film_image_cell_border_radius_linked": True,
+    "viewer_film_image_border_enabled": {"top": False, "right": False, "bottom": False, "left": False},
+    "viewer_film_image_border": {"top": "#5f666b", "right": "#5f666b", "bottom": "#5f666b", "left": "#5f666b"},
+    "viewer_film_image_border_thickness": 1,
+    "viewer_film_image_border_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
+    "viewer_film_image_border_radius_linked": True,
+    "viewer_film_image_cell_font_family": "",   # police du type de fichier (vignette pas encore prete)
+    "viewer_film_image_cell_font_bold": True,
+    "viewer_film_image_cell_font_italic": False,
+    "viewer_film_image_cell_font_size": 11,
+    "viewer_film_image_cell_font_smoothing_enabled": False,
+    "viewer_film_image_cell_font_smoothing": "current",
+    "viewer_film_image_cell_font_color": "#5f666b",
+    "viewer_film_image_cell_bg": "#00000000",
+    "viewer_film_text_cell_border_enabled": {"top": False, "right": False, "bottom": False, "left": False},
+    "viewer_film_text_cell_border": {"top": "#2a2e32", "right": "#2a2e32", "bottom": "#2a2e32", "left": "#2a2e32"},
+    "viewer_film_text_cell_border_thickness": 1,
+    "viewer_film_text_cell_border_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
+    "viewer_film_text_cell_border_radius_linked": True,
+    "viewer_film_text_cell_font_family": "",    # police du nom du fichier
+    "viewer_film_text_cell_font_bold": False,
+    "viewer_film_text_cell_font_italic": False,
+    "viewer_film_text_cell_font_size": 11,
+    "viewer_film_text_cell_font_smoothing_enabled": False,
+    "viewer_film_text_cell_font_smoothing": "current",
+    "viewer_film_text_cell_font_color": "#d6d9dc",
+    "viewer_film_text_cell_bg": "#00000000",
+    # Style PROPRE d'un element (clic droit > Override settings, settings_element_style) :
+    # {"table:<cle de dimensions>": {cle de reglage: valeur}} (seulement ce qui differe du general).
+    "element_style_overrides": {},
+    "ui_spaces": {},                  # espace au-dessus d'un element de la fenetre principale (clic droit) : {chemin: px}
+    "ui_spaces_below": {},            # espace en dessous, meme principe
     # Filet horizontal entre les lignes d'une colonne (voir RowDelegate.
     # _paint_unified_row) — voir la remarque de l'utilisateur, "rajoute une
     # option pour ajouter une bordure entre les lignes avec choix de la
@@ -623,6 +857,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # couleur que le fond derriere), rendu inchange tant que l'utilisateur
     # ne personnalise pas cette couleur.
     "item_idle_color": "@itemIdle",
+    # Fond de TOUTE la ligne (sous la boite du selecteur et ses paddings) ; "@skinN2" = C["void"],
+    # le fond d'origine. Colonnes > Lignes > Couleur de fond (et onglets de colonne > Texte).
+    "item_row_bg_color": "@skinN2",
     "item_selection_padding_linked": False,
     "item_selection_padding": {"top": 4, "right": 8, "bottom": 4, "left": 8},
     "item_selection_border_enabled": {"top": False, "right": False, "bottom": False, "left": False},
@@ -723,6 +960,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # pastille "Tableau - entete" deja utilisee jusqu'ici (M['table_head_
     # bg']), aucun changement visuel tant que l'utilisateur n'y touche pas.
     "table_head_color": "tableHead",
+    # Couleur des SELECTIONS dans les tableaux (colonnes, sous-cellules : teinte translucide) et de
+    # la carte du toggle choisi dans Toggles (voir settings_widgets._TABLE_SELECTION).
+    "table_selection_color": "#5f9bd0",
+    # Lignes des tableaux deplacables (Ctrl + glisser la 1re cellule), voir settings_cells._RowMover.
+    "table_rows_movable": True,
+    # Couleur de la bande de legendes des cellules divisees (meme forme que table_head_color).
+    "table_cell_head_color": "tableHead",
     # Bordure des tableaux "fermes" de cette fenetre (voir _TableFrame.
     # setBorder) — MEME widget/MEME mecanique que Toggles > Cadre/Coche >
     # Bordure et Colonnes > Bordure, voir la remarque de l'utilisateur,
@@ -736,6 +980,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Bordures INTERIEURES des tableaux : H = filets horizontaux entre les
     # lignes (et sous l'entete), V = filets verticaux entre les colonnes ;
     # jamais ceux qui touchent le bord du tableau (voir "table_border").
+    # Texte au-dessus d'une ligne de tableau (clic droit > « Ajouter un texte au-dessus… ») : ligne gabarit police.
+    "table_above_text_font_family": "", "table_above_text_font_bold": False, "table_above_text_font_italic": False,
+    "table_above_text_font_size": 11, "table_above_text_font_smoothing_enabled": False,
+    "table_above_text_font_smoothing": "current", "table_above_text_font_color": "#8d949a",
     "table_inner_h_enabled": True,
     "table_inner_h_color": "#2a2e32",
     "table_inner_h_thickness": 1,
@@ -762,6 +1010,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # {cle: {"width": largeur du tableau (0 = pleine), "cols": [largeurs de colonnes]}}.
     "table_dims": {},
     "slider_ranges": {},       # plages min/max modifiees par clic droit sur un curseur (v2) : {cle: [min, max]}
+    "element_spaces": {},      # espace au-dessus d'un element d'une zone titre, par clic droit (v2) : {cle: px}
+    "element_spaces_below": {},  # espace en dessous, meme principe
+    "title_order": {},         # ordre des paragraphes (titres freres) choisi en tirant un titre (v2) : {pile: [titres]}
     # Section "Toggles" (voir SettingsWindow._section_toggles) : style
     # visuel de TOUS les _Toggle de cette fenetre — "toggle1" (cadre
     # RECTANGLE, coche calee en haut a droite a distance egale du bord en
@@ -815,6 +1066,15 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "toggle1_coche_text_font_color": "#ffffff",
     "toggle1_coche_icon": "",                # nom d'un fichier de icons/ (voir Toggles > Coche > Icone)
     "toggle1_coche_icon_color": "#ffffff",
+    # Type de toggle (Toggles > <nom> > Type) : "qt" (cadre + coche peints) ou "icons" (image ON /
+    # image OFF, et une sequence d'images optionnelle jouee entre les deux). Images importees dans
+    # data/toggle_icons/ (noms de fichiers).
+    "toggle1_kind": "qt",
+    "toggle1_motion": "slide",               # coche : "slide" (glissiere) | "fade" (centree, fondu)
+    "toggle1_icon_on": "",
+    "toggle1_icon_off": "",
+    "toggle1_icon_frames": [],
+    "toggle1_anim_ms": 140,
     "toggle2_outer_width": 22,
     "toggle2_outer_height": 22,
     "toggle2_outer_border_enabled": True,
@@ -847,10 +1107,22 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "toggle2_coche_text_font_color": "#ffffff",
     "toggle2_coche_icon": "",                # nom d'un fichier de icons/ (voir Toggles > Coche > Icone)
     "toggle2_coche_icon_color": "#ffffff",
+    "toggle2_kind": "qt",
+    "toggle2_motion": "fade",
+    "toggle2_icon_on": "",
+    "toggle2_icon_off": "",
+    "toggle2_icon_frames": [],
+    "toggle2_anim_ms": 140,
     # Styles de toggle AJOUTES par l'utilisateur (Toggles > Style > clic droit > Ajouter un nouveau
     # toggle) : [{"key": "toggle3", "name": "Mon toggle"}]. Leurs reglages `toggle3_*` suivent le
     # meme schema que toggle1_* (voir _DYNAMIC_KEY).
     "toggle_custom_styles": [],
+    # TOUS les styles de toggle, dans l'ordre (remplace toggle_custom_styles, relu par
+    # toggle_style_list) : chacun peut etre renomme ou supprime (il en reste toujours un).
+    "toggle_styles": [{"key": "toggle1", "name": "Toggle 1"}, {"key": "toggle2", "name": "Toggle 2"}],
+    # Style choisi pour UN toggle (clic droit sur le toggle > Style du toggle) : {identifiant du
+    # toggle: cle de style}. Identifiant pose par la fenetre qui le contient (voir _Toggle.style_id).
+    "toggle_style_overrides": {},
     # Habillage des sliders de CETTE fenetre (voir _MiniSlider/_SLIDER_STYLE
     # et Geometrie > Slider, sous-section demandee par l'utilisateur) :
     # "selecteur" = le curseur mobile, "rail" = la piste qu'il parcourt.
@@ -957,6 +1229,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # chaque chargement (voir load_settings, General > Application) — "" =
     # aucun (comportement INCHANGE, pipeline_settings.json seul fait foi).
     "default_preset": "",
+    # Preset ACTIF (choisi dans le menu deroulant de la fenetre principale) : ses valeurs sont celles a
+    # l'ecran, les modifications l'enregistrent. None = jamais choisi (on suit `default_preset`).
+    "active_preset": None,
 }
 
 # Section "TITRE" (voir SettingsWindow._section_titre/_TITLE_LEVEL_DEFAULTS,
@@ -965,18 +1240,91 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 # MEMES defauts que _TITLE_LEVEL_STYLE (pas de duplication).
 for _title_level, _title_defaults in _TITLE_LEVEL_DEFAULTS.items():
     for _title_key, _title_val in _title_defaults.items():
-        DEFAULT_SETTINGS[f"title_level{_title_level}_{_title_key}"] = _title_val
+        DEFAULT_SETTINGS[f"title_level{_title_level}_{_title_key}"] = json.loads(json.dumps(_title_val))
 
 del _title_level, _title_defaults, _title_key, _title_val
+
+# Lignes « Ombres » (settings_widgets.shadow_look) : cotes, couleur par cote (opacite comprise), taille.
+SHADOW_PREFIXES = ("item_image_shadow", "preview_shadow", "viewer_film_image_shadow", "viewer_focus_image_shadow",
+                   "table_shadow", "viewer_film_table_shadow", "ctx_menu_shadow", "extra_window_shadow")
+for _shadow in SHADOW_PREFIXES:
+    DEFAULT_SETTINGS[f"{_shadow}_enabled"] = {"top": False, "right": False, "bottom": False, "left": False}
+    DEFAULT_SETTINGS[_shadow] = {"top": "#8c000000", "right": "#8c000000", "bottom": "#8c000000",
+                                 "left": "#8c000000"}
+    DEFAULT_SETTINGS[f"{_shadow}_size"] = 10
+    DEFAULT_SETTINGS[f"{_shadow}_enabled_linked"] = True
+del _shadow
+# Menus contextuels : leur ombre remplace celle de Windows (coupee, elle debordait des coins arrondis) ->
+# allumee par defaut, halo doux.
+DEFAULT_SETTINGS["ctx_menu_shadow_enabled"] = {"top": True, "right": True, "bottom": True, "left": True}
+DEFAULT_SETTINGS["ctx_menu_shadow"] = {s: "#73000000" for s in ("top", "right", "bottom", "left")}
+DEFAULT_SETTINGS["ctx_menu_shadow_size"] = 12
+# Ombre des fenetres additionnelles : allumee (elle remplace l'ombre de Windows).
+DEFAULT_SETTINGS["extra_window_shadow_enabled"] = {"top": True, "right": True, "bottom": True, "left": True}
+DEFAULT_SETTINGS["extra_window_shadow"] = {s: "#73000000" for s in ("top", "right", "bottom", "left")}
+DEFAULT_SETTINGS["extra_window_shadow_size"] = 14
+
+# Etat « lier les 4 » des lignes Bordures (comme `<cle>_linked` des coins et du padding).
+for _sides_key in ("column_border_enabled", "header_border_enabled", "item_image_border_enabled",
+                   "resize_badge_border_enabled", "table_border_enabled", "slider_thumb_border_enabled",
+                   "slider_track_border_enabled",
+                   *(f"viewer_film_{_part}_border_enabled" for _part in ("table", "image_cell", "image", "text_cell")),
+                   "viewer_focus_image_border_enabled", "viewer_filter_row_border_enabled",
+                   "extra_window_border_enabled",
+                   *(f"item_selection{_state}_border_enabled" for _state in ("", "_unfocus", "_hover", "_idle")),
+                   *(f"toggle{_n}_{_part}_border_enabled" for _n in (1, 2) for _part in ("outer", "coche"))):
+    DEFAULT_SETTINGS[f"{_sides_key}_linked"] = False
+del _sides_key
 
 # Cles creees a l'execution (reglages des styles de toggle ajoutes : toggle3_*, toggle4_*...) : pas dans
 # DEFAULT_SETTINGS, mais a conserver au chargement.
 _DYNAMIC_KEY = re.compile(r"^toggle(?:[3-9]\d*|[1-9]\d+)_")
 
 
-_LIVE_STATE_KEYS = ("table_dims", "slider_ranges", "toggle_custom_styles")
+_LIVE_STATE_KEYS = ("table_dims", "slider_ranges", "toggle_custom_styles", "toggle_styles",
+                    "toggle_style_overrides", "element_spaces", "ui_spaces",
+                    "element_spaces_below", "ui_spaces_below", "title_order", "element_style_overrides",
+                    "viewer_film_text_ratio", "viewer_gallery_text_height", "context_menu_layouts",
+                    "viewer_button_order", "quick_style_positions")
 
-def load_settings() -> dict[str, Any]:
+
+def toggle_style_list(settings: dict) -> list[dict]:
+    """Styles de toggle, dans l'ordre : `toggle_styles`, plus ceux de l'ancienne liste
+    `toggle_custom_styles` (styles ajoutes avant qu'on puisse renommer/supprimer) absents de la
+    premiere. Jamais vide (repli sur Toggle 1)."""
+    styles, seen = [], set()
+    for entry in list(settings.get("toggle_styles") or []) + list(settings.get("toggle_custom_styles") or []):
+        key = (entry or {}).get("key")
+        if key and key not in seen:
+            seen.add(key)
+            styles.append({"key": key, "name": entry.get("name") or key})
+    return styles or [{"key": "toggle1", "name": "Toggle 1"}]
+
+
+_TOGGLE_ICONS_DIR = _DATA_DIR / "toggle_icons"
+
+
+def import_toggle_image(source: str, style_key: str) -> str:
+    """Copie une image choisie par l'utilisateur dans data/toggle_icons/ (pour ne pas dependre de
+    son emplacement d'origine) ; renvoie le nom du fichier copie."""
+    import shutil
+    src = Path(source)
+    _TOGGLE_ICONS_DIR.mkdir(parents=True, exist_ok=True)
+    name = f"{style_key}_{src.stem}{src.suffix.lower()}"
+    target, n = _TOGGLE_ICONS_DIR / name, 1
+    while target.exists() and target.resolve() != src.resolve():
+        n += 1
+        name = f"{style_key}_{src.stem}_{n}{src.suffix.lower()}"
+        target = _TOGGLE_ICONS_DIR / name
+    if target.resolve() != src.resolve():
+        shutil.copyfile(src, target)
+    return name
+
+def load_settings(startup: bool = False) -> dict[str, Any]:
+    """Reglages : valeurs par defaut, puis `pipeline_settings.json`, puis le preset ACTIF par-dessus
+    (au lancement, `startup` : le preset PAR DEFAUT, qui devient l'actif). L'etat temps reel
+    (`_LIVE_STATE_KEYS`) et les cles propres a la machine (`PRESET_EXCLUDED_KEYS`) ne viennent jamais
+    d'un preset."""
     settings = json.loads(json.dumps(DEFAULT_SETTINGS))
 
     def _merge(data: dict):
@@ -1007,19 +1355,21 @@ def load_settings() -> dict[str, Any]:
             _merge(json.loads(json.dumps(raw)))   # copie : _merge partage les sous-dicts, le preset les modifierait
     except (OSError, ValueError):
         pass
-    # Preset par defaut (voir General > Application, DEFAULT_SETTINGS.
-    # default_preset) : applique PAR-DESSUS pipeline_settings.json a CHAQUE
-    # chargement (demarrage de l'appli ET ouverture de la fenetre de
-    # parametres, tous deux passent par cette fonction) — voir la remarque
-    # de l'utilisateur, "je veux un parametre preset par defaut". Silen-
-    # cieux si le preset nomme a depuis ete supprime/renomme (repli sur
-    # pipeline_settings.json seul, comme si aucun preset par defaut
-    # n'etait configure).
+    # Preset ACTIF (menu deroulant de la fenetre principale) applique PAR-DESSUS pipeline_settings.json
+    # a chaque chargement ; au lancement, le preset PAR DEFAUT (General > Application) devient l'actif,
+    # et le fichier le retient aussitot (sinon une relecture en cours de route reprendrait l'actif de la
+    # session precedente). Silencieux si le preset nomme a ete supprime (fichier seul).
     default_preset = settings.get("default_preset")
-    if default_preset:
+    name = preset_in_use(settings, startup)
+    if startup:
+        settings["active_preset"] = name if name and name in _load_presets() else ""
+        if raw and raw.get("active_preset") != settings["active_preset"]:
+            raw["active_preset"] = settings["active_preset"]
+            save_settings(raw)
+    if name:
         presets = _load_presets()
-        if default_preset in presets:
-            _merge(presets[default_preset])
+        if name in presets:
+            _merge({k: v for k, v in presets[name].items() if k not in PRESET_EXCLUDED_KEYS})
             # "default_preset" fait lui-meme PARTIE des cles capturees par
             # un preset (voir _current_values, "je veux que absolument
             # tous les parametres soient enregistres dans les presets") —
@@ -1039,12 +1389,139 @@ def load_settings() -> dict[str, Any]:
                     settings[key] = value
     return settings
 
+# ---------------------------------------------------------------------------------------------------
+# Presets (data/pipeline_settings.presets.json, {nom: valeurs}) : menu deroulant de la fenetre
+# principale + fenetre « Gerer les presets » (settings_presets.py). Un preset = l'apparence et les
+# reglages de l'appli, jamais ce qui est propre a la machine ou a la mise en forme des fenetres.
+# ---------------------------------------------------------------------------------------------------
+
+PRESET_EXCLUDED_KEYS = frozenset(("root_path", "default_preset", "active_preset", *_LIVE_STATE_KEYS))
+
+
+def preset_in_use(settings: dict, startup: bool = False) -> str:
+    """Nom du preset dont les valeurs sont a l'ecran : l'actif (choisi dans le menu deroulant), ou le
+    preset par defaut au lancement / tant qu'aucun n'a ete choisi. "" = aucun."""
+    if startup or settings.get("active_preset") is None:
+        return settings.get("default_preset") or ""
+    return settings.get("active_preset") or ""
+
+
+def preset_values(settings: dict) -> dict:
+    """Ce qu'un preset retient de `settings` (copie) : tout sauf `PRESET_EXCLUDED_KEYS` et les styles de
+    toggle crees a l'execution (etat temps reel)."""
+    return {k: json.loads(json.dumps(v)) for k, v in settings.items()
+            if k not in PRESET_EXCLUDED_KEYS and not _DYNAMIC_KEY.match(k)}
+
+
+def preset_names() -> list[str]:
+    return list(_load_presets().keys())
+
+
+def unique_preset_name(base: str, taken=None) -> str:
+    taken = set(_load_presets() if taken is None else taken)
+    base = (base or "Preset").strip() or "Preset"
+    if base not in taken:
+        return base
+    n = 2
+    while f"{base} {n}" in taken:
+        n += 1
+    return f"{base} {n}"
+
+
+def apply_preset(name: str) -> dict:
+    """`name` devient le preset ACTIF ("" : aucun) : ses valeurs passent dans pipeline_settings.json
+    (les autres reglages, et ce qui n'appartient pas aux presets, restent). Retourne les reglages."""
+    settings = load_settings()
+    settings["active_preset"] = name if name in _load_presets() else ""
+    save_settings(settings)
+    merged = load_settings()               # fond le preset desormais actif
+    save_settings(merged)
+    return merged
+
+
+def save_preset(name: str, values: dict) -> None:
+    presets = _load_presets()
+    presets[name] = preset_values(values)
+    _save_presets(presets)
+
+
+def update_active_preset(settings: dict) -> None:
+    """Modifications enregistrees (fenetre de reglages, changement de style a la volee...) : le preset a
+    l'ecran les retient aussi, sinon load_settings le rejouerait par-dessus au prochain chargement."""
+    name = preset_in_use(settings)
+    presets = _load_presets()
+    if name and name in presets:
+        presets[name] = preset_values(settings)
+        _save_presets(presets)
+
+
+def duplicate_preset(source: str, name: str | None = None) -> str:
+    presets = _load_presets()
+    if source not in presets:
+        return ""
+    name = unique_preset_name(name or f"{source} copie", presets)
+    presets[name] = json.loads(json.dumps(presets[source]))
+    _save_presets(presets)
+    return name
+
+
+def rename_preset(old: str, new: str) -> str:
+    """Renomme (nom unique) ; le preset par defaut et l'actif suivent. Retourne le nom retenu."""
+    presets = _load_presets()
+    new = (new or "").strip()
+    if old not in presets or not new or new == old:
+        return old
+    new = unique_preset_name(new, set(presets) - {old})
+    presets = {(new if k == old else k): v for k, v in presets.items()}     # meme place dans la liste
+    _save_presets(presets)
+    settings = load_settings()
+    for key in ("default_preset", "active_preset"):
+        if settings.get(key) == old:
+            settings[key] = new
+    save_settings(settings)
+    return new
+
+
+def delete_preset(name: str) -> None:
+    """Supprime ; s'il etait le preset par defaut ou l'actif, plus aucun ne l'est (les valeurs a l'ecran
+    restent celles du fichier)."""
+    presets = _load_presets()
+    if presets.pop(name, None) is None:
+        return
+    settings = load_settings()
+    _save_presets(presets)
+    for key in ("default_preset", "active_preset"):
+        if settings.get(key) == name:
+            settings[key] = ""
+    save_settings(settings)
+
+
+def set_default_preset(name: str) -> None:
+    settings = load_settings()
+    settings["default_preset"] = name if name in _load_presets() else ""
+    save_settings(settings)
+
+
 def save_settings(settings: dict[str, Any]) -> None:
     try:
         _PER_USER_PATH.parent.mkdir(parents=True, exist_ok=True)
         _PER_USER_PATH.write_text(json.dumps(settings, indent=2, ensure_ascii=False), encoding="utf-8")
     except OSError:
         pass
+
+def save_live_state(key: str, value: Any) -> None:
+    """Enregistre UNE cle d'etat temps reel (`_LIVE_STATE_KEYS`) dans le fichier TEL QU'IL EST sur le disque.
+    Pas de load_settings() + save_settings() pour cela : load_settings fond le preset actif par-dessus le
+    fichier, et reecrire le tout figeait les valeurs (eventuellement perimees) du preset dans le fichier —
+    curseurs des reglages revenus a une hauteur que l'utilisateur n'avait pas choisie (signale)."""
+    try:
+        data = json.loads(_PER_USER_PATH.read_text(encoding="utf-8")) if _PER_USER_PATH.is_file() else {}
+    except (OSError, ValueError):
+        return                       # fichier illisible : ne surtout pas l'ecraser
+    if not isinstance(data, dict):
+        return
+    data[key] = value
+    save_settings(data)
 
 def _load_presets() -> dict[str, dict]:
     """Tous les presets enregistres, {nom: reglages} — {} si le fichier est
@@ -1078,7 +1555,9 @@ def _resolve_color_value(value: str, colors: dict) -> str:
     d'un toggle, voir _sync_toggle_shape_style) plutot que le marqueur
     "@..." lui-meme, que QColor() ne saurait pas interpreter."""
     if isinstance(value, str) and value.startswith("@"):
-        return colors.get(_SLOT_REAL.get(value[1:], "chrome"), "#000000")
+        from app_style import split_color_ref, with_alpha     # « @slot/75 » : opacite propre
+        ref, alpha = split_color_ref(value)
+        return with_alpha(colors.get(_SLOT_REAL.get(ref[1:], "chrome"), "#000000"), alpha)
     return value
 
 def _coerce_side_enabled(value, default: bool = True) -> dict[str, bool]:

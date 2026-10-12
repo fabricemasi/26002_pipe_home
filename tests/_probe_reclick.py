@@ -1,5 +1,5 @@
-"""Clic sur la ligne deja selectionnee (PipelineBrowser.on_reclicked) :
-rien si une seule colonne apres, sinon on ne garde que la suivante."""
+"""Clic sur la ligne deja selectionnee (PipelineBrowser.on_reclicked) : elle est deselectionnee
+et toutes les colonnes ouvertes apres elle se referment (groupe IN/OVER/OUT compris)."""
 import os, sys, tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -31,18 +31,17 @@ print("chaine :", names(), "groupe :", [c._group_kind for c in win.group_columns
 inn = next(c for c in win.group_columns if c._group_kind == "in")
 select(inn, "refs"); select(win.columns[-1], "deep")
 print("ouvert :", names())
-before = names()
-win.on_reclicked(win.columns[-2])   # refs : une seule colonne apres -> rien
-assert names() == before, names()
-win.on_reclicked(inn)               # IN : 2 colonnes apres -> garde refs
-print("apres IN :", names())
-assert names()[-1] == "refs", names()
-win.on_reclicked(win.columns[2])    # sp1 : groupe + refs -> garde le groupe
+win.on_reclicked(win.columns[-2])   # refs > deep : deep deselectionnee, sa colonne se ferme
+print("apres deep :", names())
+assert names()[-1] == "refs" and win.columns[-1].current_path() is None, names()
+win.on_reclicked(inn)               # IN > refs : le contenu ouvert depuis le groupe se ferme
+print("apres IN :", names(), "| selection IN :", inn.current_path())
+assert inn.current_path() is None and names()[-1] == "projA" and win.group_columns, names()
+win.on_reclicked(win.columns[2])    # sp1 : deselectionne, groupe ferme
 print("apres sp1 :", names(), "groupe :", len(win.group_columns))
-assert names()[-1] == "projA" and win.group_columns, names()
-win.on_reclicked(win.columns[2])    # plus que le groupe apres -> rien
-win.on_reclicked(win.columns[0])    # 3d : Projets + sp1 + groupe -> garde Projets
-print("apres 3d :", names(), "groupe :", len(win.group_columns))
-assert names()[-1] == "3d" and not win.group_columns, names()
+assert names()[-1] == "projA" and not win.group_columns and win.columns[2].current_path() is None, names()
+win.on_reclicked(win.columns[0])    # 3d : tout se referme
+print("apres 3d :", names(), "| inspecteur vide :", not getattr(win.detail, "_current_path", None))
+assert len(win.columns) == 1 and win.columns[0].current_path() is None, names()
 for _ in range(60): APP.processEvents()
 print("OK")

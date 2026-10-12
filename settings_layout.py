@@ -1,10 +1,12 @@
 from contextlib import contextmanager
 
 from PySide6.QtCore import (
-    QEvent, QObject, QPoint, QRect, Qt, QTimer, Signal,
+    QEvent, QObject, QPoint, QPointF, QRect, Qt, QTimer, Signal,
 )
 from PySide6.QtGui import (
     QColor,
+    QCursor,
+    QFont,
     QPainter,
     QPixmap,
 )
@@ -13,6 +15,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -23,6 +26,7 @@ from settings_store import (
     M,
     _ICONS_DIR,
     _subsection_left_margin,
+    _title_box,
     _title_color,
     _title_font,
     _title_gap,
@@ -30,17 +34,25 @@ from settings_store import (
     _title_indent,
 )
 from settings_widgets import (
+    Menu, menu_row, DRAG_GHOST_OPACITY,
     _DualFontSelectField,
+    _selection_color,
     _SliderField,
     _Toggle,
     _apply_stylesheet_cached,
     _qfont,
     _inner_h_edge,
+    _paint_bordered_rect,
+    _app_dpr,
+    _hidpi_pixmap,
     _paint_inner_vlines,
     _TableRow,
     _restyle_table_row,
     _set_dimmed,
     _table_frame,
+    _hide_width_badges,
+    _width_badges,
+    add_context_extras,
 )
 
 
@@ -122,7 +134,7 @@ class _Row(QWidget):
 
 _SVG_PIXMAP_CACHE: dict[tuple[str, int, str], QPixmap] = {}
 
-def _tinted_svg_pixmap(name: str, size: int, color: str) -> QPixmap:
+def _tinted_svg_pixmap(name: str, size: int, color: str, dpr: float | None = None) -> QPixmap:
     """Charge icons/{name}.svg (trace uni, sans fill) et le recolore en
     `color` — les fichiers sources n'ont pas de couleur propre (destines a
     heriter de currentColor), donc rendus ici comme un simple masque alpha
@@ -130,21 +142,25 @@ def _tinted_svg_pixmap(name: str, size: int, color: str) -> QPixmap:
     la taille cible puis mis a l'echelle (devicePixelRatio) pour rester net
     sur un ecran HiDPI. Mis en cache par (nom, taille, couleur) : la couleur
     ne change qu'au fil d'un theme/preview, pas a chaque repaint."""
-    key = (name, size, color)
+    dpr = dpr or _app_dpr()
+    key = (name, size, color, dpr)
     pix = _SVG_PIXMAP_CACHE.get(key)
     if pix is not None:
         return pix
+    from PySide6.QtGui import QImage
     renderer = QSvgRenderer(str(_ICONS_DIR / f"{name}.svg"))
-    scale = 4
-    pix = QPixmap(size * scale, size * scale)
-    pix.fill(Qt.transparent)
-    p = QPainter(pix)
+    side = round(size * dpr) * 4
+    image = QImage(side, side, QImage.Format_ARGB32_Premultiplied)
+    image.fill(Qt.transparent)
+    p = QPainter(image)
     p.setRenderHint(QPainter.Antialiasing, True)
     renderer.render(p)
     p.setCompositionMode(QPainter.CompositionMode_SourceIn)
-    p.fillRect(pix.rect(), QColor(color))
+    p.fillRect(image.rect(), QColor(color))
     p.end()
-    pix.setDevicePixelRatio(scale)
+    # Reduit ICI par moyenne de zone a la taille physique (affiche 1:1) : laisser drawPixmap
+    # reduire un pixmap 4x (filtrage bilineaire) crenelait le trace.
+    pix = _hidpi_pixmap(image, size, size, dpr)
     _SVG_PIXMAP_CACHE[key] = pix
     return pix
 
@@ -173,6 +189,11 @@ class _Chevron(QWidget):
             self._collapsed = collapsed
             self.update()
 
+    def setSlotWidth(self, width: int):
+        """Elargit l'emplacement sans grossir la fleche (centree) : v2, meme emplacement a tous les niveaux."""
+        self.setFixedSize(max(width, self.height()), self.height())
+        self.update()
+
     def setColor(self, color: str):
         if color != self._color:
             self._color = color
@@ -189,8 +210,9 @@ class _Chevron(QWidget):
         # terrible" (crenele) signale par l'utilisateur.
         p.setRenderHint(QPainter.SmoothPixmapTransform, True)
         name = "chevron-droite" if self._collapsed else "chevron-bas"
-        pix = _tinted_svg_pixmap(name, self.width(), self._color)
-        p.drawPixmap(0, 0, pix)
+        glyph = self.height()                  # fleche carree ; emplacement eventuellement plus large
+        pix = _tinted_svg_pixmap(name, glyph, self._color, self.devicePixelRatioF())
+        p.drawPixmap(QPointF((self.width() - glyph) // 2, 0), pix)     # pixel entier : copie 1:1
         p.end()
 
 # Espacement entre deux sections (voir SettingsWindow._build_content, qui
@@ -212,17 +234,82 @@ _SECTION_GAP_COLLAPSED = 2
 _SECTION_GAP_EXPANDED_LOGICIEL = _SECTION_GAP_EXPANDED * 2
 
 class _SectionHeader(QWidget):
-    """Bandeau titre d'une _Section — toute sa largeur est cliquable pour
-    replier/deplier (voir _Section), pas seulement le chevron (memes raisons
-    que _EdgeCheckItem/_PresetListRow : une cible de clic plus large que le
-    seul glyphe est plus confortable)."""
+    """Bandeau titre d'une _Section/_SubSection. Seule la largeur du titre
+    (chevron + texte) est cliquable pour replier/deplier, pas le reste de la
+    ligne (demande de l'utilisateur) ; le curseur main n'apparait que la."""
 
     clicked = Signal()
 
+    _DRAG_START = 6        # px avant qu'un appui sur le titre devienne un deplacement
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMouseTracking(True)
+        # Deplacement du paragraphe en tirant son titre (v2) : objet fourni par la fenetre, avec
+        # begin(entete, point global) -> bool, move(point global), end(). Sans lui, le clic
+        # replie / deplie des l'appui, comme avant ; avec lui, au relachement s'il n'y a pas eu
+        # de deplacement.
+        self.drag_handler = None
+        self._press = None
+        self._dragging = False
+
+    def _hit(self, x: float) -> bool:
+        parts = [w for w in self.findChildren(QWidget, options=Qt.FindDirectChildrenOnly) if w.isVisibleTo(self)]
+        if not parts:
+            return True
+        return min(w.geometry().left() for w in parts) <= x <= max(w.geometry().right() for w in parts)
+
+    def _sync_cursor(self, x: float):
+        self.setCursor(Qt.PointingHandCursor if self._hit(x) else Qt.ArrowCursor)
+
+    def mouseMoveEvent(self, event):
+        if self._press is not None:
+            gpos = event.globalPosition().toPoint()
+            # Deplacer = Ctrl + glisser (demande de l'utilisateur, pour tout deplacement de l'appli).
+            if (not self._dragging and QApplication.keyboardModifiers() & Qt.ControlModifier
+                    and (gpos - self._press).manhattanLength() > self._DRAG_START):
+                self._dragging = bool(self.drag_handler.begin(self, self._press))
+                if self._dragging:
+                    self.setCursor(Qt.ClosedHandCursor)
+            if self._dragging:
+                self.drag_handler.move(gpos)
+                event.accept()
+                return
+        self._sync_cursor(event.position().x())
+        super().mouseMoveEvent(event)
+
+    def enterEvent(self, event):
+        self._sync_cursor(self.mapFromGlobal(QCursor.pos()).x())
+        super().enterEvent(event)
+
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.LeftButton and self._hit(event.position().x()):
+            if self.drag_handler is not None:
+                self._press, self._dragging = event.globalPosition().toPoint(), False
+                event.accept()
+                return
             self.clicked.emit()
         super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._press is not None and event.button() == Qt.LeftButton:
+            dragging, self._press, self._dragging = self._dragging, None, False
+            if dragging:
+                self.drag_handler.end()
+                self._sync_cursor(event.position().x())
+            else:
+                self.clicked.emit()               # simple clic : replier / deplier
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def contextMenuEvent(self, event):
+        """Clic droit sur un titre : seulement les lignes fournies par la fenetre (add_context_extras)."""
+        menu = Menu(self)
+        add_context_extras(self, menu)
+        if menu.actions():
+            menu.exec(event.globalPos())
+        event.accept()
 
 def _activate_layout_tree(widget: QWidget):
     """Force un recalcul COMPLET et immediat (invalidate + activate) de
@@ -322,14 +409,176 @@ class _BodyMixin:
         row = QHBoxLayout()
         row.setContentsMargins(self._body_offset, 0, 0, 0)
         row.setSpacing(0)
-        row.addWidget(widget)
+        # Justifie a GAUCHE (regle de tous les tableaux) : un tableau a largeur fixe (somme de ses
+        # colonnes, v2) serait sinon centre dans la place restante.
+        row.addWidget(widget, 0, Qt.AlignLeft)
         self._body_rows.append(row)
         self._body_layout.addLayout(row)
 
     def set_body_offset(self, offset: int):
         self._body_offset = offset
         for row in self._body_rows:
-            row.setContentsMargins(offset, 0, 0, 0)
+            m = row.contentsMargins()
+            row.setContentsMargins(offset, m.top(), 0, m.bottom())   # garde les espaces au-dessus / en dessous
+
+    # -- Mode « paragraphe » (fenetre v2) ------------------------------------
+    # Le titre et tout son contenu (jusqu'au titre suivant) forment une boite :
+    # au debut du contenu du paragraphe parent (pas de retrait en v2 : le
+    # padding du fond du parent en tient lieu), decalee de la margin (espace
+    # HORS de la boite, sur les 4 cotes), puis bordure, padding du fond, et le
+    # titre avec son propre padding (Titre > Espacements). Le premier / dernier
+    # titre d'une pile recoit en plus l'espacement avant / apres de son niveau.
+    # Plus d'espaceurs entre titres : ces espaces les remplacent.
+    _boxed = False
+    _box_off = 0
+    _box_abs = 0
+    # Freres empiles juste au-dessus / au-dessous (poses par l'empilement, v2 : _add_stacked). Deux
+    # boites qui se touchent (margins nulles a la jonction) partagent UN seul filet, comme les colonnes
+    # (celui du haut le porte, le bas perd son bord haut), et leurs coins de jonction sont droits.
+    _box_prev = None
+    _box_next = None
+
+    # Emplacement du chevron (chevron + ecart avant le texte) COMMUN a tous les niveaux en v2 : celui du
+    # niveau 1. Les textes s'alignent donc sans le decalage fixe de _subsection_left_margin (v1), et
+    # une boite sans margin est collee au bord interieur du parent (filet partage, voir _joined_box).
+    _BOX_CHEVRON_SLOT, _BOX_CHEVRON_GAP = 16, 10
+
+    def enable_box(self):
+        self._boxed = True
+        self._chevron.setSlotWidth(self._BOX_CHEVRON_SLOT)
+        self._head_layout.setSpacing(self._BOX_CHEVRON_GAP)
+        # Corps transparent : le fond du paragraphe doit se voir sous le contenu.
+        self._body.setStyleSheet("background: transparent;")
+        self.apply_box()
+
+    def _title_level(self) -> int:
+        return getattr(self, "_level", 1)
+
+    def _chevron_room(self) -> int:
+        if self._boxed:
+            return self._BOX_CHEVRON_SLOT + self._BOX_CHEVRON_GAP
+        return 16 + 10 if self._title_level() == 1 else 11 + 6
+
+    def _parent_title(self):
+        for parent in _ancestors(self):
+            if isinstance(parent, (_Section, _SubSection)):
+                return parent
+        return None
+
+    def _box_thickness(self, box: dict) -> dict:
+        return {side: (box["thickness"] if box["border_on"].get(side) else 0)
+                for side in ("left", "top", "right", "bottom")}
+
+    def _shown(self, other) -> bool:
+        """Frere `other` affiche dans la pile : ni lui ni ses conteneurs PROPRES ne sont masques (l'etat
+        replie/deplie des ancetres communs n'entre pas en compte)."""
+        widget = other
+        while widget is not None and not widget.isAncestorOf(self):
+            if widget.isHidden():
+                return False
+            widget = widget.parentWidget()
+        return other is not None
+
+    def _stack_spaces(self, box: dict) -> tuple[int, int]:
+        """Espace avant (1er titre de sa pile) et apres (dernier titre de sa pile) : un PADDING,
+        dans la boite (sous le fond et entre les bordures), en plus du padding du fond."""
+        return (0 if self._shown(self._box_prev) else box["space_before"],
+                0 if self._shown(self._box_next) else box["space_after"])
+
+    def _touches(self, other, side: str) -> bool:
+        """Vrai si la boite `other` est collee a celle-ci par son cote `side` (« top » : `other` est au-dessus)."""
+        if other is None or not other._boxed or not self._shown(other):
+            return False
+        lower = self if side == "top" else other              # un espace au-dessus les separe
+        if getattr(lower.parentWidget(), "_space_above_px", 0) or getattr(lower, "_space_above_px", 0):
+            return False
+        upper = other if side == "top" else self              # ... ou un espace en dessous
+        if getattr(upper.parentWidget(), "_space_below_px", 0) or getattr(upper, "_space_below_px", 0):
+            return False
+        mine, theirs = _title_box(self._title_level())["margin"], _title_box(other._title_level())["margin"]
+        if side == "top":
+            return mine[1] == 0 and theirs[3] == 0
+        return mine[3] == 0 and theirs[1] == 0
+
+    def _joined_box(self, box: dict) -> dict:
+        """`box` corrige aux jonctions avec les freres colles : filet unique, coins de jonction droits."""
+        border_on, radius = dict(box["border_on"]), dict(box["radius"])
+        if self._touches(self._box_prev, "top"):
+            radius["top_left"] = radius["top_right"] = 0
+            above = _title_box(self._box_prev._title_level())
+            if above["border_on"].get("bottom") and above["thickness"]:
+                border_on["top"] = False       # le filet du frere du dessus sert de jonction
+        if self._touches(self._box_next, "bottom"):
+            radius["bottom_left"] = radius["bottom_right"] = 0
+        # Collee au bord INTERIEUR de son paragraphe parent (padding du parent et margin nuls de ce
+        # cote) : le filet du parent sert de jonction ; coin dans un coin du parent = son rayon
+        # interieur, coin le long d'un seul bord = droit.
+        parent = self._parent_title()
+        if parent is not None and parent._boxed:
+            pbox = getattr(parent, "_box_style", None) or _title_box(parent._title_level())
+            # Padding du fond ET padding (paragraphe) du parent : l'un ou l'autre decolle l'enfant du bord.
+            pad = [a + b for a, b in zip(pbox["padding"], pbox.get("body_padding", (0, 0, 0, 0)))]
+            margin = box["margin"]
+            last = not self._shown(self._box_next)
+            inner = {"left": self._box_off == 0 and pad[0] == 0,
+                     "right": pad[2] == 0 and margin[2] == 0,
+                     "bottom": last and pad[3] == 0 and margin[3] == 0}
+            for side, touching in inner.items():
+                if touching and pbox["border_on"].get(side) and pbox["thickness"]:
+                    border_on[side] = False
+            inner["top"] = False               # l'entete du parent est toujours au-dessus
+            for corner in ("top_left", "top_right", "bottom_left", "bottom_right"):
+                v, h = corner.split("_")
+                if inner[v] and inner[h]:
+                    radius[corner] = max(0, pbox["radius"][corner] - pbox["thickness"])
+                elif inner[v] or inner[h]:
+                    radius[corner] = 0
+        return dict(box, border_on=border_on, radius=radius)
+
+    def content_abs_x(self) -> int:
+        """Abscisse (repere de la page) ou commence le contenu de ce paragraphe."""
+        box = getattr(self, "_box_style", None) or _title_box(self._title_level())   # filets partages compris
+        return self._box_abs + self._box_thickness(box)["left"] + box["padding"][0] + box["body_padding"][0]
+
+    def apply_box(self):
+        if not self._boxed:
+            return
+        level = self._title_level()
+        look = getattr(self, "_title_look", None)          # style PROPRE (« Override settings »)
+        raw = look["box"] if look else _title_box(level)
+        parent = self._parent_title()
+        base = parent.content_abs_x() if parent is not None and parent._boxed else 0
+        # _box_off / _box_abs = bord GAUCHE de la boite (bordure) : debut du contenu du parent + margin.
+        self._box_off = raw["margin"][0]
+        self._box_abs = base + self._box_off
+        box = self._box_style = self._joined_box(raw)   # depend de _box_off (collee a gauche ?)
+        ml, mt, mr, mb = box["margin"]
+        before, after = self._box_spaces = self._stack_spaces(box)
+        t = self._box_thickness(box)
+        pl, pt, pr, pb = box["padding"]
+        pt, pb = pt + before, pb + after       # espacements avant / apres = padding (dans la boite)
+        self.layout().setContentsMargins(self._box_off + t["left"] + pl, mt + t["top"] + pt,
+                                         mr + t["right"] + pr, mb + t["bottom"] + pb)
+        tl, tt, tr, tb = box["text_padding"]
+        self._head_layout.setContentsMargins(tl, tt, tr, tb)
+        self._body_layout.setContentsMargins(*box["body_padding"])   # Padding (paragraphe) : tout le contenu
+        self.set_body_offset(tl + self._chevron_room())
+        self.update()
+
+    def _box_rect(self) -> QRect:
+        """Rectangle peint de la boite (bordure comprise) : tout sauf la margin."""
+        _ml, mt, mr, mb = self._box_style["margin"]
+        return QRect(self._box_off, mt, self.width() - self._box_off - mr, self.height() - mt - mb)
+
+    def paintEvent(self, event):
+        box = getattr(self, "_box_style", None) if self._boxed else None
+        if box is not None and (box["fill"] or (box["thickness"] and any(box["border_on"].values()))):
+            p = QPainter(self)
+            _paint_bordered_rect(p, self._box_rect(),
+                                 box["radius"], box["border_on"], box["thickness"], box["border_colors"],
+                                 box["fill"])
+            p.end()
+        super().paintEvent(event)
 
 
 
@@ -414,7 +663,8 @@ class _Section(_BodyMixin, QWidget):
             return
         self._collapsed = collapsed
         self._body.setVisible(not collapsed)
-        self._head_layout.setContentsMargins(self._title_indent, 0, 0, 0 if collapsed else _title_gap_next(1))
+        if not self._boxed:     # en mode paragraphe, le padding du titre ne depend pas du repli
+            self._head_layout.setContentsMargins(self._title_indent, 0, 0, 0 if collapsed else _title_gap_next(1))
         # activate() (pas juste invalidate(), ni compter sur le prochain
         # passage de l'event loop) : FORCE ce layout precis, dont on vient
         # de changer les marges, a se recalculer TOUT DE SUITE. Sans ca, le
@@ -582,7 +832,8 @@ class _SubSection(_BodyMixin, QWidget):
             return
         self._collapsed = collapsed
         self._body.setVisible(not collapsed)
-        self._head_layout.setContentsMargins(self._left_margin, 0, 0, 0 if collapsed else _title_gap_next(self._level))
+        if not self._boxed:
+            self._head_layout.setContentsMargins(self._left_margin, 0, 0, 0 if collapsed else _title_gap_next(self._level))
         self._refresh_chevron()
         # Signal AVANT le recalcul : ses abonnes (spaceurs entre titres, voir
         # _make_gap_spacer) changent la hauteur du contenu, que les planchers
@@ -819,7 +1070,7 @@ class _TabStrip(QWidget):
 
 # Couleur d'entete commune (Tableaux > Couleur d'en-tete) pour les entetes
 # construits apres coup (tableaux "un reglage par ligne", voir _attach_flat_head).
-_TABLE_HEAD: dict = {"bg": None}
+_TABLE_HEAD: dict = {"bg": None, "cell_bg": None}   # entetes de tableau / legendes des cellules divisees
 
 def _restyle_table_head(head: QWidget, radius: int = 0):
     """(Re)applique le fond/filet/coins de l'entete d'un tableau — coins HAUTS
@@ -842,15 +1093,23 @@ def _restyle_table_head(head: QWidget, radius: int = 0):
     )
 
 class _ReorderOverlay(QWidget):
-    """Couche posee sur le tableau pendant le deplacement d'une colonne : la colonne (entete + lignes)
-    suit le curseur en transparence, son emplacement d'origine est assombri et tous les emplacements
-    possibles (entre deux colonnes) sont marques, le plus proche en surbrillance."""
+    """Couche posee sur le tableau pendant un deplacement (colonne, sous-cellule, ligne) — MEMES regles
+    pour les trois : l'element suit le curseur a opacite 75 % (GHOST_OPACITY = DRAG_GHOST_OPACITY), son emplacement
+    d'origine reste visible a 25 % (ORIGIN_OPACITY), et UN SEUL emplacement est montre : le plus proche
+    (demande de l'utilisateur, pour tout deplacement de l'appli, actuel et futur — plus de marques sur
+    les autres emplacements). `axis` : "x" (colonnes, sous-cellules : `head._column_spans()` = abscisses)
+    ou "y" (lignes : ordonnees). `head` fournit `_column_spans()` et `_order` (indices logiques dans
+    l'ordre affiche)."""
 
-    def __init__(self, frame: QWidget, head: "_ResizableTableHeader", source: int, ghost, offset: int, grab_dx: int):
+    GHOST_OPACITY = DRAG_GHOST_OPACITY
+    ORIGIN_OPACITY = 0.25
+
+    def __init__(self, frame: QWidget, head, source: int, ghost, offset: int, grab_dx: int, axis: str = "x"):
         super().__init__(frame)
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.setGeometry(frame.rect())
         self.head, self.source, self.ghost, self.offset, self.grab_dx = head, source, ghost, offset, grab_dx
+        self.axis = axis
         spans = head._column_spans()
         order = head._order
         self.gaps = [spans[i][0] for i in order] + [spans[order[-1]][1]]
@@ -860,28 +1119,48 @@ class _ReorderOverlay(QWidget):
         self.show()
         self.raise_()
 
+    def _center(self) -> int:
+        """Centre de l'element tire, le long de l'axe."""
+        return self.cursor_x - self.grab_dx + (self.origin[1] - self.origin[0]) // 2
+
     def follow(self, x: int):
         self.cursor_x = x
         position = self.head._order.index(self.source)
-        nearest = min(range(len(self.gaps)), key=lambda k: abs(self.gaps[k] - (x - self.grab_dx + (self.origin[1] - self.origin[0]) // 2)))
+        nearest = min(range(len(self.gaps)), key=lambda k: abs(self.gaps[k] - self._center()))
         self.target = None if nearest in (position, position + 1) else nearest
         self.update()
+
+    def _band(self, start: int, size: int) -> QRect:
+        """Bande perpendiculaire a l'axe, de `start` (repere de l'axe) sur `size` px."""
+        if self.axis == "y":
+            return QRect(0, self.offset + start, self.width(), size)
+        return QRect(self.offset + start, 0, size, self.height())
 
     def paintEvent(self, event):
         p = QPainter(self)
         accent = QColor(M["accent"])
-        p.fillRect(self.offset + self.origin[0], 0, self.origin[1] - self.origin[0], self.height(), QColor(0, 0, 0, 90))
-        for k, gap in enumerate(self.gaps):
-            on = k == self.target
-            color = QColor(accent)
-            color.setAlpha(255 if on else 70)
-            width = 3 if on else 1
-            p.fillRect(self.offset + gap - width // 2, 0, width, self.height(), color)
-        p.setOpacity(0.75)
-        p.drawPixmap(self.offset + self.cursor_x - self.grab_dx, 0, self.ghost)
+        # Emplacement d'origine a 25 % : voile du fond de la fenetre a 75 % par-dessus.
+        veil = QColor(getattr(self, "veil_color", None) or M["panel_bg"])     # menus : leur fond
+        veil.setAlpha(round(255 * (1.0 - self.ORIGIN_OPACITY)))
+        p.fillRect(self._band(self.origin[0], self.origin[1] - self.origin[0]), veil)
+        # Un seul emplacement : celui vise (aucun quand l'element resterait a sa place).
+        if self.target is not None:
+            gap = self.gaps[self.target]
+            glow = QColor(accent)
+            glow.setAlpha(60)
+            p.fillRect(self._band(gap - 6, 12), glow)
+            p.fillRect(self._band(gap - 1, 3), accent)
+        p.setOpacity(self.GHOST_OPACITY)
+        start = self.cursor_x - self.grab_dx
+        if self.axis == "y":
+            p.drawPixmap(0, self.offset + start, self.ghost)
+            rect = QRect(0, self.offset + start, self.ghost.width() - 1, self.ghost.height() - 1)
+        else:
+            p.drawPixmap(self.offset + start, 0, self.ghost)
+            rect = QRect(self.offset + start, 0, self.ghost.width() - 1, self.ghost.height() - 1)
         p.setOpacity(1.0)
         p.setPen(accent)
-        p.drawRect(self.offset + self.cursor_x - self.grab_dx, 0, self.ghost.width() - 1, self.ghost.height() - 1)
+        p.drawRect(rect)
         p.end()
 
 
@@ -912,6 +1191,10 @@ class _ResizableTableHeader(QWidget):
     _MARGIN = 5
     _MIN_WIDTH = 60
     _MAX_WIDTH = 640
+    # Colonnes LIBRES (tableaux de la v2, voir setFreeColumns) : toutes a largeur fixe, aucune
+    # colonne extensible ni plafond ; c'est le tableau qui change de largeur (somme des colonnes).
+    _free = False
+    _FREE_MIN, _FREE_MAX = 24, 100000
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -923,7 +1206,11 @@ class _ResizableTableHeader(QWidget):
         # Voir _TableRow.event : les filets V suivent les cellules apres le layout.
         if event.type() == QEvent.LayoutRequest:
             self.update()
+        if self._badge_cols and event.type() in (QEvent.LayoutRequest, QEvent.Resize):
+            self._place_width_badges()           # la largeur REELLE n'est connue qu'apres le layout
         return handled
+
+    _badge_cols: list = []   # (classe : event() est appele avant la fin de __init__)
 
     def __init__(self, cells: list[tuple[str, int]], parent=None):
         super().__init__(parent)
@@ -943,7 +1230,7 @@ class _ResizableTableHeader(QWidget):
         self._titles: list[str] = [text.upper() for text, _w in cells]
         self._reorderable = False
         self._reorder = None                      # deplacement de colonne en cours (_ReorderOverlay)
-        self._badged = False                      # largeurs affichees dans les titres pendant un redimensionnement
+        self._badge_cols: list[int] = []          # colonnes dont l'encart de largeur est affiche (glisser en cours)
         self._equal_toggles: list = []            # True = colonne egalisable quand plusieurs colonnes sont selectionnees
         self._press_pos = None
         self._stretch_fixed: dict[int, int] = {}   # colonne extensible figee a une largeur (groupe egal)
@@ -978,6 +1265,27 @@ class _ResizableTableHeader(QWidget):
         self._resize_start_width = 0
         self._resizable = True
 
+    def setFreeColumns(self, defaults: dict[int, int]):
+        """Passe en colonnes libres : chaque colonne extensible (largeur 0) est figee a `defaults[i]`.
+        Plus aucune colonne n'absorbe les changements des autres, plus de largeur maxi ni de limite
+        de groupe : le tableau s'elargit ou se retrecit avec ses colonnes."""
+        self._free = True
+        self._stretch_origin = [i for i, w in enumerate(self._widths) if not w]
+        self._equal_toggles = [True] * len(self._cells)
+        layout = self.layout()
+        for i in self._stretch_origin:
+            width = max(self._FREE_MIN, int(defaults.get(i, 160)))
+            layout.setStretchFactor(self._cells[i], 0)
+            self._set_width(i, width)
+
+    def _min_for(self, index: int) -> int:
+        """Largeur mini d'une colonne. En colonnes libres, le contenu des cellules n'est JAMAIS une
+        contrainte : seul un plancher technique (les cellules s'adaptent, voir build_cells_table)."""
+        return self._FREE_MIN if self._free else self._MIN_WIDTH
+
+    def _max_width(self) -> int:
+        return self._FREE_MAX if self._free else self._MAX_WIDTH
+
     def disableEqualToggle(self, index: int):
         """Cette colonne ne s'egalise pas avec les autres colonnes selectionnees (ex. colonne
         extensible d'un tableau libelle/valeur)."""
@@ -1006,9 +1314,23 @@ class _ResizableTableHeader(QWidget):
             self._refresh_cell_style(i)
 
     def _refresh_cell_style(self, index: int):
-        bg = "rgba(95, 155, 208, 0.22)" if index in self._selected else "transparent"
-        self._cells[index].setStyleSheet(
-            f"color: {M['table_head_fg']}; background: {bg}; "
+        cell = self._cells[index]
+        # Style propre du titre (« Override settings » > Entete entier / Cellule en cours, voir
+        # apply_part_looks) : fond, police, couleur du texte.
+        look = getattr(cell, "_head_look", None) or {}
+        if not hasattr(cell, "_head_font_orig"):
+            cell._head_font_orig = QFont(cell.font())
+        font = look.get("font") or {}
+        if font:
+            from settings_theme import text_look_font
+            cell.setFont(text_look_font(cell._head_font_orig, font))
+        else:
+            cell.setFont(cell._head_font_orig)
+        sel = _selection_color(56)
+        bg = (f"rgba({sel.red()}, {sel.green()}, {sel.blue()}, {sel.alpha()})" if index in self._selected
+              else look.get("bg") or "transparent")
+        cell.setStyleSheet(
+            f"color: {font.get('color') or M['table_head_fg']}; background: {bg}; "
             f"padding: 0 {self._padding_lr[1]}px 0 {self._padding_lr[0]}px;"
         )
 
@@ -1171,14 +1493,16 @@ class _ResizableTableHeader(QWidget):
         delta = global_x - self._resize_start_x
         idx = self._resizing_index
         stretch = not self._widths[idx]
-        new_width = max(self._MIN_WIDTH, self._resize_start_width + self._resizing_sign * delta)
-        if not stretch:
-            new_width = min(self._MAX_WIDTH, new_width)
         group = self._equal_group()
+        floor = max(self._min_for(i) for i in (group if idx in group else [idx]))
+        new_width = max(floor, self._resize_start_width + self._resizing_sign * delta)
+        if not stretch:
+            new_width = min(self._max_width(), new_width)
         if idx in group:
-            limit = self._equal_limits(group)[1]
-            new_width = min(new_width, limit)
-            self._edge_pinned = any(not self._widths[i] for i in group) and new_width >= limit
+            if not self._free:              # colonnes libres : aucune limite, le tableau s'elargit
+                limit = self._equal_limits(group)[1]
+                new_width = min(new_width, limit)
+                self._edge_pinned = any(not self._widths[i] for i in group) and new_width >= limit
             self._set_group_width(group, new_width)
             self._show_width_badges(group)
         else:
@@ -1192,17 +1516,25 @@ class _ResizableTableHeader(QWidget):
         self._restore_titles()
 
     def _show_width_badges(self, columns: list[int]):
-        """Pendant un redimensionnement, le titre de chaque colonne concernee affiche sa largeur."""
-        spans = self._column_spans()
-        for i in columns:
-            self._cells[i].setText(f"{spans[i][1] - spans[i][0]} px")
-        self._badged = True
+        """Pendant un redimensionnement, un encart dans l'entete de chaque colonne concernee affiche
+        sa largeur (le titre reste)."""
+        self._badge_cols = list(columns)
+        self.layout().activate()
+        self._place_width_badges()
+
+    def _place_width_badges(self):
+        badges = _width_badges(self, len(self._cells))
+        for i, badge in enumerate(badges):
+            if i not in self._badge_cols:
+                badge.hide()
+                continue
+            rect = self._cells[i].geometry()     # colonne telle qu'affichee (largeur reelle)
+            badge.show_on(rect, rect.width())
 
     def _restore_titles(self):
-        if self._badged:
-            self._badged = False
-            for cell, title in zip(self._cells, self._titles):
-                cell.setText(title)
+        """Fin du glisser : les encarts disparaissent (les titres n'ont jamais change)."""
+        self._badge_cols = []
+        _hide_width_badges(self)
 
     def isDragging(self) -> bool:
         return self._resizing_index is not None
@@ -1262,7 +1594,9 @@ class _ResizableTableHeader(QWidget):
             return
         if self._reorderable and self._press_pos is not None and event.buttons() & Qt.LeftButton:
             x = event.position().toPoint().x()
-            if self._reorder is None and (event.position().toPoint() - self._press_pos).manhattanLength() > 6:
+            # Deplacer = Ctrl + glisser (demande de l'utilisateur, pour tout deplacement de l'appli).
+            if (self._reorder is None and QApplication.keyboardModifiers() & Qt.ControlModifier
+                    and (event.position().toPoint() - self._press_pos).manhattanLength() > 6):
                 self._begin_reorder(self._press_pos.x())
             if self._reorder is not None:
                 self._update_reorder(x)
@@ -1320,7 +1654,8 @@ class _ResizableTableHeader(QWidget):
         preset sans ce reglage — voir DEFAULT_SETTINGS)."""
         for i, width in enumerate(widths):
             if i < len(self._widths) and self._widths[i] and width:
-                self._set_width(i, max(self._MIN_WIDTH, min(self._MAX_WIDTH, int(width))))
+                floor = self._FREE_MIN if self._free else self._MIN_WIDTH
+                self._set_width(i, max(floor, min(self._max_width(), int(width))))
 
 class _FlatColumnResizer(QObject):
     """Bordure libelle/controle glissable a la main, sur un tableau "ferme"
@@ -1632,14 +1967,29 @@ _FLAT_TABLES: "weakref.WeakSet[QWidget]" = weakref.WeakSet()
 
 
 def _style_flat_table(frame: QWidget) -> None:
+    """Style commun ; un tableau qui a son PROPRE style (« Override settings », `frame._look_state`)
+    est restyle avec celui-ci, quel que soit l'appel (restylage global compris)."""
+    state = getattr(frame, "_look_state", None)
+    with table_look_scope(state):
+        _style_flat_table_now(frame)
+        head = getattr(frame, "_flat_head", None)
+        if state is not None and head is not None and hasattr(head, "_refresh_cell_style"):
+            for i in range(len(head._cells)):
+                head._refresh_cell_style(i)
+
+
+def _style_flat_table_now(frame: QWidget) -> None:
     rows = frame._flat_rows
     radius = _FLAT_TABLE_STYLE["radius"]
     if radius is not None:
         frame.setRadius(radius)
         last = len(rows) - 1
+        head = getattr(frame, "_flat_head", None)
+        no_head = head is not None and head.isHidden()      # entete supprime : la 1re ligne touche le coin haut
         for i, (row, _bg, first) in enumerate(rows):
             bg = M["table_row_a"] if i % 2 == 0 else M["table_row_b"]
-            _restyle_table_row(row, bg, first, bottom_radius=(radius if i == last else 0))
+            _restyle_table_row(row, bg, first, top_radius=(radius if first and no_head else 0),
+                               bottom_radius=(radius if i == last else 0))
         head = getattr(frame, "_flat_head", None)
         if head is not None:
             _restyle_table_head(head, radius)
@@ -1721,6 +2071,131 @@ def _seed_flat_tables_style(radius: int, border: tuple) -> None:
     directement avec (voir _prestyle_flat_frame)."""
     _FLAT_TABLE_STYLE["radius"] = radius
     _FLAT_TABLE_STYLE["border"] = border
+
+
+# -- Style PROPRE a un tableau (« Override settings », clic droit) --------------------------------
+# `state` = memes conteneurs que le style commun, avec les valeurs de CE tableau :
+# {"flat": _FLAT_TABLE_STYLE, "head": _TABLE_HEAD, "selection": _TABLE_SELECTION,
+#  "inner": _TABLE_INNER_BORDER, "M": M} (seules les cles presentes). Pose le temps d'un restylage
+# ou d'un dessin (table_look_scope), le style commun revient aussitot apres.
+
+def _look_targets() -> dict:
+    from settings_store import M
+    from settings_widgets import _TABLE_INNER_BORDER, _TABLE_SELECTION
+    return {"flat": _FLAT_TABLE_STYLE, "head": _TABLE_HEAD, "selection": _TABLE_SELECTION,
+            "inner": _TABLE_INNER_BORDER, "M": M}
+
+
+@contextmanager
+def table_look_scope(state: dict | None):
+    if not state:
+        yield
+        return
+    targets = _look_targets()
+    saved = {}
+    for name, values in state.items():
+        target = targets[name]
+        saved[name] = {key: target.get(key) for key in values}
+        target.update(values)
+    try:
+        yield
+    finally:
+        for name, values in saved.items():
+            targets[name].update(values)
+
+
+class _LookPaintFilter(QObject):
+    """Dessin d'un tableau a style propre : chaque widget du tableau se peint avec SON style (filets
+    verticaux, legendes, selection sont lus au moment du dessin)."""
+
+    def __init__(self, frame: QWidget):
+        super().__init__(frame)
+        self._frame = frame
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Paint:
+            state = getattr(self._frame, "_look_state", None)
+            if state:
+                with table_look_scope(state):
+                    obj.event(event)
+                return True
+        return False
+
+
+def set_table_look(frame: QWidget, state: dict | None) -> None:
+    """Donne a `frame` son propre style (`state`, voir table_look_scope) ou, avec None, lui rend le
+    style commun ; applique aussitot (cadre, lignes, entete, filets, couleurs)."""
+    frame._look_state = state or None
+    widgets = [frame, *frame.findChildren(QWidget)]
+    filt = getattr(frame, "_look_filter", None)
+    if state and filt is None:
+        filt = frame._look_filter = _LookPaintFilter(frame)
+        for widget in widgets:
+            widget.installEventFilter(filt)
+    elif not state and filt is not None:
+        for widget in widgets:
+            widget.removeEventFilter(filt)
+        filt.deleteLater()
+        frame._look_filter = None
+    if getattr(frame, "_flat_rows", None) is not None:
+        _style_flat_table(frame)
+        head = getattr(frame, "_flat_head", None)
+        if not state and head is not None and hasattr(head, "_refresh_cell_style"):
+            for i in range(len(head._cells)):
+                head._refresh_cell_style(i)
+    for widget in widgets:
+        widget.update()
+
+
+def apply_part_looks(frame: QWidget) -> None:
+    """Styles PROPRES des parties de `frame` (settings_widgets.PART_LOOKS : cellule > ligne > colonne
+    > tableau, champ par champ) poses sur ses cellules (`_part_look` : fond peint par la ligne,
+    padding lu par le tableau ; `_text_look` : police lue par les roles de texte) puis appliques."""
+    from settings_theme import _refresh_text_roles
+    from settings_widgets import PART_LOOKS
+    parts = PART_LOOKS.get(frame.dimsKey()) or {}
+    frame._text_look = (parts.get(("table",)) or {}).get("font") or None
+    head = getattr(frame, "_flat_head", None)
+    head_cells = set()
+    if head is not None:                 # l'entete n'a que SES styles (entete entier < cellule), jamais ceux du tableau
+        head._text_look_barrier = True
+        whole = parts.get(("head",)) or {}
+        for i, label in enumerate(getattr(head, "_cells", [])):
+            own = parts.get(("headcell", i)) or {}
+            look = {"font": {**(whole.get("font") or {}), **(own.get("font") or {})}}
+            if own.get("bg"):
+                look["bg"] = own["bg"]
+            label._head_look = look if look["font"] or "bg" in look else None
+            head._refresh_cell_style(i)
+            head_cells.add(label)
+    cells = getattr(getattr(frame, "_extra_dims", None), "cells", None) or {}
+    for key, cell in cells.items():
+        r, c = (int(n) for n in key[1:].split("c"))
+        look: dict = {}
+        for part in (("table",), ("col", c), ("row", r), ("cell", r, c)):
+            for field, value in (parts.get(part) or {}).items():
+                look[field] = {**look.get(field, {}), **value} if field == "font" else value
+        cell._part_look = look or None
+        cell._text_look = look.get("font") or None
+    _refresh_text_roles(frame)
+    # Textes sans role (QLabel simples) : police propre posee sur leur apparence d'origine.
+    from settings_theme import TEXT_ROLES, text_look_font, text_look_of
+    for label in frame.findChildren(QLabel):
+        if label.property("textRole") in TEXT_ROLES or label in head_cells:
+            continue
+        look = text_look_of(label)
+        orig = getattr(label, "_part_orig", None)
+        if orig is None:
+            if not look:
+                continue
+            orig = label._part_orig = (QFont(label.font()), label.styleSheet())
+        label.setFont(text_look_font(orig[0], look) if look else orig[0])
+        color = (look or {}).get("color")
+        label.setStyleSheet(f"color: {color}; background: transparent;" if color else orig[1])
+    if getattr(frame, "_flat_rows", None) is not None:
+        _style_flat_table(frame)
+    for widget in [frame, *frame.findChildren(QWidget)]:
+        widget.update()
 
 
 @contextmanager

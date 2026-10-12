@@ -17,35 +17,43 @@ tableaux...) pour avoir le meme aspect, mais change la CONSTRUCTION :
 Couverture : sections Colonnes (Colonnes, Entetes, Texte, Image, Selection),
 TITRE, Tableaux, Toggles et Sliders dans l'onglet General, plus les 8 onglets
 de surcharge (Colonnes/Entetes/Texte/Image/Selection). Voir ROADMAP en bas
-de la liste des noeuds pour ce qui reste a porter. Mode LECTURE : les valeurs
-sont celles des reglages courants, les modifier n'enregistre rien. Les
-apercus de demonstration (toggle/curseur d'exemple) ne sont pas reproduits.
+de la liste des noeuds pour ce qui reste a porter. Tout est branche : apercu
+en direct, enregistrement (les onglets de surcharge ecrivent dans les
+dictionnaires de surcharge, comme la v1). Audit controle par controle :
+`python tests/_probe_v2_params.py`.
 
 Mesure : `python tests/_probe_settings_compare.py`.
 """
 from __future__ import annotations
 
 import json
+import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
-from PySide6.QtCore import QByteArray, Qt, QTimer, Signal
+from PySide6.QtCore import QByteArray, QEvent, QPoint, QRect, Qt, QTimer, Signal
+from PySide6.QtGui import QFontMetrics
 import copy
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QStackedWidget, QVBoxLayout,
+    QApplication, QDialog, QGraphicsOpacityEffect, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox,
+    QScrollArea, QStackedWidget,
+    QVBoxLayout, QWidgetAction,
     QWidget,
 )
 
 from settings_cells import (
-    SplitCell, apply_saved_range, attach_range_menu, build_cells_table, natural_label_width,
+    seed_above_text_look,
+    _Cell, _ROWS_MOVABLE, SplitCell, _TextField, apply_saved_range, attach_range_menu, build_cells_table, natural_label_width,
     normalize_toggles, slider_fields, wrap_split,
 )
 
 from app_style import INSPECTOR_TITLE, PREVIEW_STACK_TITLE, apply_dwm_frame, resize_hit_test
 from settings_layout import (
-    _Section, _SubSection, _TabStrip, _TABLE_HEAD, _ResizableTableHeader, _TableRow, _make_accordion,
-    _flat_tables, _refresh_gap_spacers, _reflow_all,
+    _ReorderOverlay, _reflow_ancestors,
+    _Section, _SectionHeader, _SubSection, _TabStrip, _TABLE_HEAD, _ResizableTableHeader, _TableRow,
+    _make_accordion,
+    _ancestors, _flat_tables, _reflow_all,
     _section_host, _seed_flat_tables_style, _set_flat_tables_style,
 )
 from settings_colorpicker import _ColorField
@@ -56,17 +64,28 @@ from settings_sections import (
 )
 from settings_store import (
     M, _coerce_corner_radius, _coerce_side_enabled, _load_presets, _load_window_geometry, _resolve_color_value,
-    _ICONS_DIR, _save_presets, _save_window_geometry,
-    _subsection_left_margin, _title_color, _title_font, _title_gap_next, _title_indent, _sync_dynamic_M, _sync_slider_style, _sync_title_level_style, load_settings, save_settings,
+    _ICONS_DIR, _save_presets, _save_window_geometry, import_toggle_image, toggle_style_list, update_active_preset,
+    _subsection_left_margin, _title_color, _title_font, _title_indent, _sync_dynamic_M, _sync_slider_style, _sync_title_level_style, load_settings, save_settings,
 )
-from settings_theme import _input_radius, _register_input, _set_button_radius, _set_input_radius, _set_text_role
+from settings_theme import (
+    _input_radius, _qfont, _register_input, _set_button_radius, _set_input_radius, _set_text_role, _text_label,
+)
 from settings_widgets import (
+    Menu, menu_row,
     _AppOrCustomColorField, _Btn, _DualFontSelectField, _FontSelectField, _MiniSlider,
-    _OverrideSmoothingField, _RatioSliderField, _ResizeBadgePositionField, _RowBorderField, _SliderField, _TableFrame, _Toggle, _ToggleStylePicker,
-    _SelectField, _set_dimmed, _toggle_icon_pixmap,
-    _set_table_dims, _set_table_inner_border, _sync_toggle_style,
+    _OverrideSmoothingField, _RatioSliderField, _ResizeBadgePositionField, _RowBorderField, _ShortcutField, _SliderField, _TableFrame, _Toggle, _ToggleStylePicker,
+    _DIMMED_OPACITY, _SelectField, _set_dimmed, _toggle_icon_pixmap, _toggle_image_pixmap,
+    _TABLE_DIMS, _TABLE_SELECTION, _TOGGLE_STYLE_NAMES, _set_table_dims, _set_table_inner_border, _set_table_shadow, shadow_look,
+    _sync_toggle_style, TOGGLE_STYLE_LISTENERS,
+    CONTEXT_MENU_EXTRAS, make_space_actions, set_space_above, set_space_below, space_target, widget_at_path,
+    widget_path, toggle_animation_left_ms,
 )
-from settings_window import _NoSqueezeScrollArea, _PanelFrame, _SettingsTitleBar
+from settings_window import (_NoSqueezeScrollArea, _OmitListField, _PanelFrame, _SettingsTitleBar, _omit_file_values,
+                             install_extra_window, seed_extra_window_look, shadow_margins)
+from settings_lut import LUT_HELP_TEXT, LutTestImagesField
+from settings_sections import _FONT_ROLES
+from settings_v2_app import FontRoleField, LogicielsField, RootPathField, SemanticColorField, UiIconField
+from app_style import SEMANTIC_COLOR_SLOTS
 
 
 # ==========================================================================
@@ -87,9 +106,22 @@ class Spec:
     general_toggle: str | None = None   # General : cle booleenne d'un interrupteur d'override devant la ligne
     only: tuple | None = None       # titres de portee ou la ligne existe (None = General) ; None = partout
     exclude: tuple = ()             # titres de portee ou elle n'existe PAS
+    # Onglet de surcharge : reglage PROPRE a cette colonne (Focus > Zone titre, Projets > Icone de
+    # niveaux...) : pas de toggle de surcharge, la valeur va dans la cle generale.
+    flat: bool = False
 
     def applies(self, title: str | None) -> bool:
         return (self.only is None or title in self.only) and title not in self.exclude
+
+
+def _shadow_spec(prefix: str, label: str = "Ombres", **kw) -> "Spec":
+    """Ligne « Ombres » : lier les 4 | G | H | B | D (un toggle par cote) | Couleur (UNE pour les 4, opacite
+    comprise) | Taille. Cles `<prefix>_enabled`, `<prefix>` (la couleur, gardee pour les 4 cotes),
+    `<prefix>_size` (settings_widgets.shadow_look)."""
+    return Spec(f"{prefix}_enabled", label, "shadow", False,
+                {"colors_key": prefix, "thickness_key": f"{prefix}_size", "thickness_label": "Taille",
+                 "range": (0, 40), "width": 90, "box": 54},
+                extra_keys=(prefix, f"{prefix}_size"), **kw)
 
 
 CATALOG: dict[str, list[Spec]] = {
@@ -139,6 +171,7 @@ def _text_specs() -> list[Spec]:
              exclude=_TYPE_OR_GENERAL),
         Spec("item_row_spacing", "Espacement entre les lignes", "slider", 1, {"min": 0, "max": 20, "width": 170},
              exclude=_TYPE_OR_GENERAL),
+        Spec("item_row_bg_color", "Couleur de fond", "color_app", "@skinN2", {"title": "Fond des lignes"}),
         Spec("item_row_border_enabled", "Bordure entre les lignes", "row_border", False,
              extra_keys=("item_row_border_color", "item_row_border_thickness")),
     ]
@@ -174,6 +207,7 @@ CATALOG["Image"] = [
     Spec("item_image_border_enabled", "Bordure", "sides", False, {"colors_key": "item_image_border"},
          extra_keys=("item_image_border",)),
     Spec("item_image_border_thickness", "Epaisseur de bordure", "slider", 1, {"min": 0, "max": 8, "width": 170}),
+    _shadow_spec("item_image_shadow"),
     Spec("item_image_radius", "Border radius", "corners", 0, {"max": 20}),
     Spec("item_image_ratio", "Ratio (largeur/hauteur)", "ratio", 1.0),
 ]
@@ -194,6 +228,7 @@ CATALOG["Selection : Non selectionne"] = _selection_specs(
 # -- General > Colonnes : la section telle que l'ancienne fenetre la construit --
 _BORD = lambda prefix, w=140, b=54: {"colors_key": prefix, "thickness_key": f"{prefix}_thickness", "width": w, "box": b}
 
+
 CATALOG["G Colonnes"] = [
     Spec("item_column_width", "Largeur par defaut", "slider", 180, {"min": 120, "max": 640, "width": 280}),
     Spec("column_gap", "Distance entre colonnes", "slider", 0, {"min": 0, "max": 40, "width": 280}),
@@ -202,6 +237,7 @@ CATALOG["G Colonnes"] = [
     Spec("column_border_enabled", "Bordure", "sides_thick", True, _BORD("column_border"),
          extra_keys=("column_border", "column_border_thickness")),
     Spec("column_border_radius", "Border radius", "corners", 0, {"max": 20}),
+    Spec("folder_reorder_enabled", "Permettre le replacement des dossiers", "bool", True),
 ]
 CATALOG["G Encart"] = [
     Spec("resize_badge_position", "Position", "badge_position", "bottom_right",
@@ -241,6 +277,7 @@ CATALOG["G Lignes"] = [
     Spec("item_row_height", "Hauteur de ligne", "slider", 25, {"min": 14, "max": 80}),
     Spec("item_row_spacing", "Espacement entre les lignes", "slider", 1, {"min": 0, "max": 20}),
     Spec("item_header_gap", "Espace avant le premier item", "slider", 0, {"min": 0, "max": 40}),
+    Spec("item_row_bg_color", "Couleur de fond", "color_app", "@skinN2", {"title": "Fond des lignes"}),
     Spec("item_row_border_enabled", "Bordure entre les lignes", "row_border", False,
          extra_keys=("item_row_border_color", "item_row_border_thickness")),
 ]
@@ -253,6 +290,10 @@ CATALOG["G Texte"] = [
          extra_keys=("item_font_bold", "item_font_italic", "item_font_size", "item_color",
                      "item_antialias_override_enabled", "item_antialias_override")),
     Spec("item_text_padding", "Padding gauche", "slider", 8, {"min": 0, "max": 32}),
+    # Extension des fichiers dans sa propre couleur (demande de l'utilisateur).
+    Spec("item_ext_color_enabled", "Couleur des extensions", "bg_fill", False,
+         {"color_key": "item_ext_color", "color_default": "#8a9097", "title": "Couleur des extensions"},
+         extra_keys=("item_ext_color",)),
 ]
 CATALOG["G Icone"] = [
     Spec("item_icon_size", "Taille de l'icone par defaut (0 = hauteur de la ligne)", "slider", 0,
@@ -263,6 +304,7 @@ CATALOG["G Apercu"] = [
     Spec("item_image_padding", "Padding", "padding", {}),
     Spec("item_image_border_enabled", "Bordure", "sides_thick", False, _BORD("item_image_border"),
          extra_keys=("item_image_border", "item_image_border_thickness")),
+    _shadow_spec("item_image_shadow"),
     Spec("item_image_radius", "Border radius", "corners", 0, {"max": 20}),
     Spec("item_image_ratio", "Ratio (largeur/hauteur)", "ratio_slider", 1.0),
 ]
@@ -273,9 +315,11 @@ CATALOG["G Apercu"] = [
 ROWLESS_SCOPES = (PREVIEW_STACK_TITLE, INSPECTOR_TITLE)
 
 
-# -- TITRE : 5 niveaux de titre (police composite, retrait, espacements) --
-def _title_specs() -> tuple[list[Spec], list[Spec], list[Spec]]:
-    fonts, indents, gaps = [], [], []
+# -- TITRE : 5 niveaux de titre (police composite, espacements, fond du paragraphe) --
+# Plus de Titre > Retraits en v2 : le padding/margin du fond du parent place les titres (les cles
+# title_level<N>_indent restent pour la v1).
+def _title_specs() -> list[Spec]:
+    fonts = []
     for n in range(1, 6):
         pre = f"title_level{n}"
         fonts.append(Spec(
@@ -284,16 +328,38 @@ def _title_specs() -> tuple[list[Spec], list[Spec], list[Spec]]:
              "color_title": f"Couleur titre niveau {n}", "smoothing_title": False},
             extra_keys=tuple(f"{pre}_font_{k}" for k in
                              ("bold", "italic", "size", "smoothing_enabled", "smoothing", "color"))))
-        indents.append(Spec(f"{pre}_indent", f"Retrait titre niveau {n} (indentation)", "slider", 0,
-                            {"min": 0, "max": 120}))
-        for gap, label, default in (("gap_collapsed", "titre replie", 0), ("gap_expanded", "titre deplie", 0),
-                                    ("gap_next", "avec le niveau suivant", 6)):
-            gaps.append(Spec(f"{pre}_{gap}", f"Niveau {n} : {label}", "slider", default,
-                             {"min": 0, "max": 120, "width": 90, "box": 56}))
-    return fonts, indents, gaps
+    return fonts
 
 
-CATALOG["Titre : Polices"], CATALOG["Titre : Retraits"], CATALOG["Titre : Espacements"] = _title_specs()
+CATALOG["Titre : Polices"] = _title_specs()
+
+
+def _title_bg_specs(n: int) -> list[Spec]:
+    """Titre > Fond > Niveau n : fond du paragraphe (le titre et tout son contenu jusqu'au titre suivant)."""
+    pre = f"title_level{n}_bg"
+    return [
+        Spec(f"{pre}_enabled", "Couleur de fond", "bg_fill", False,
+             {"color_key": f"{pre}_color", "color_default": "@skinN2", "title": f"Fond titre niveau {n}"},
+             extra_keys=(f"{pre}_color",)),
+        Spec(f"{pre}_margin", "Margin", "padding", {}),
+        Spec(f"{pre}_padding", "Padding", "padding", {}),
+        # Padding (titre) : ligne du titre seule (lier les 4 | G | H | B | D) + espacement avant le 1er /
+        # apres le dernier titre d'une pile de ce niveau (ex-sous-section « Padding (titre seulement) »).
+        Spec(f"title_level{n}_text_padding", "Padding (titre)", "title_padding", {},
+             {"linked_default": False, "before_key": f"title_level{n}_space_before",
+              "after_key": f"title_level{n}_space_after", "max": 60},
+             extra_keys=(f"title_level{n}_space_before", f"title_level{n}_space_after")),
+        # Padding (paragraphe) : autour de tout ce que contient le titre (tableaux, sous-titres).
+        Spec(f"title_level{n}_body_padding", "Padding (paragraphe)", "padding", {}),
+        Spec(f"{pre}_border_enabled", "Bordures", "sides_thick", False,
+             {"colors_key": f"{pre}_border", "thickness_key": f"{pre}_border_thickness", "width": 90, "box": 54},
+             extra_keys=(f"{pre}_border", f"{pre}_border_thickness")),
+        Spec(f"{pre}_radius", "Border radius", "corners", 0, {"max": 30}),
+    ]
+
+
+for _n in range(1, 6):
+    CATALOG[f"Titre : Fond {_n}"] = _title_bg_specs(_n)
 
 # -- Tableaux --
 CATALOG["Tableaux"] = [
@@ -301,6 +367,7 @@ CATALOG["Tableaux"] = [
     Spec("table_border_enabled", "Bordure", "sides_thick", True,
          {"colors_key": "table_border", "thickness_key": "table_border_thickness", "width": 140, "box": 58},
          extra_keys=("table_border", "table_border_thickness")),
+    _shadow_spec("table_shadow"),
     Spec("table_inner_h_enabled", "Bordure intérieure H", "inner_line", True, {"axis": "h"},
          extra_keys=("table_inner_h_color", "table_inner_h_thickness")),
     Spec("table_inner_v_enabled", "Bordure intérieure V", "inner_line", True, {"axis": "v"},
@@ -308,14 +375,29 @@ CATALOG["Tableaux"] = [
     Spec("table_radius", "Rayon des angles", "slider", 0, {"min": 0, "max": 16, "width": 140, "box": 58}),
     Spec("table_cell_padding", "Padding des cellules", "padding", {}),
     Spec("table_head_color", "Couleur d'en-tete", "header_color", "tableHead"),
+    Spec("table_selection_color", "Couleur de sélection", "color", "#5f9bd0", {"title": "Couleur de sélection"}),
+    Spec("table_rows_movable", "Permettre le déplacement des lignes", "bool", True),
+    Spec("table_cell_head_color", "Couleur d'entête (cellules)", "header_color", "tableHead"),
 ]
 
-# -- Toggles : un choix de style, puis Cadre/Coche pour chacun des 2 styles --
+# -- Toggles : un choix de style, puis Type/Cadre/Coche pour chaque style --
 CATALOG["Toggles : Style"] = [Spec("toggle_style", "Style", "toggle_style", "toggle1")]
 
 
-def _toggle_specs(prefix: str) -> tuple[list[Spec], list[Spec]]:
+def _toggle_specs(prefix: str) -> tuple[list[Spec], list[Spec], list[Spec]]:
     small = {"width": 90, "box": 54}
+    # Type : peint par Qt (cadre + coche) ou images importees (ON / OFF + sequence entre les deux).
+    kind = [
+        Spec(f"{prefix}_kind", "Type", "toggle_kind", "qt"),
+        Spec(f"{prefix}_motion", "Mouvement de la coche", "toggle_motion",
+             "fade" if prefix == "toggle2" else "slide"),
+        Spec(f"{prefix}_icon_on", "Icônes", "toggle_icons", "", {"style": prefix, "off_key": f"{prefix}_icon_off",
+                                                                  "active_when": (f"{prefix}_kind", "icons")},
+             extra_keys=(f"{prefix}_icon_off",)),
+        Spec(f"{prefix}_icon_frames", "Animation (images entre off et on)", "image_sequence", [],
+             {"style": prefix, "active_when": (f"{prefix}_kind", "icons")}),
+        Spec(f"{prefix}_anim_ms", "Durée de l'animation (ms)", "slider", 140, {"min": 0, "max": 2000, **small}),
+    ]
     def border(part):
         return Spec(f"{prefix}_{part}_border_enabled", "Bordure", "sides_thick", True,
                     {"colors_key": f"{prefix}_{part}_border", "thickness_key": f"{prefix}_{part}_border_thickness",
@@ -348,12 +430,12 @@ def _toggle_specs(prefix: str) -> tuple[list[Spec], list[Spec]]:
         Spec(f"{prefix}_coche_icon_color", "Couleur de l'icône", "color_app", "#ffffff",
              {"title": "Couleur de l'icône"}),
     ]
-    return outer, coche
+    return kind, outer, coche
 
 
 def register_toggle_catalog(prefix: str):
-    """Declare les tableaux Cadre/Coche d'un style de toggle (ceux de base, puis ceux ajoutes)."""
-    CATALOG[f"{prefix} : Cadre"], CATALOG[f"{prefix} : Coche"] = _toggle_specs(prefix)
+    """Declare les tableaux Type/Cadre/Coche d'un style de toggle (tous les styles ont les memes)."""
+    CATALOG[f"{prefix} : Type"], CATALOG[f"{prefix} : Cadre"], CATALOG[f"{prefix} : Coche"] = _toggle_specs(prefix)
 
 
 for _p in ("toggle1", "toggle2"):
@@ -379,6 +461,298 @@ CATALOG["Slider : Rail"] = [
 
 
 # ==========================================================================
+# Sections reprises de la v1 (Application, Dossiers et fichiers a omettre, LUT, Polices principales,
+# Couleurs, Geometrie, ICONES, RACCOURCI ; onglets Focus et Projets : Image, Zone titre, Bouton
+# repliement, Icone de niveaux). Memes cles et memes bornes que la v1.
+# ==========================================================================
+
+def _gabarit_extra(prefix: str, color_key: str | None = None, only: tuple | None = None) -> tuple:
+    names = only or ("bold", "italic", "size", "smoothing_enabled", "smoothing", "color")
+    keys = []
+    for name in names:
+        if name == "family":
+            continue
+        if name == "smoothing":
+            keys += [f"{prefix}_font_smoothing_enabled", f"{prefix}_font_smoothing"]
+        elif name == "color":
+            keys.append(color_key or f"{prefix}_font_color")
+        elif name != "smoothing_enabled":
+            keys.append(f"{prefix}_font_{name}")
+    return tuple(dict.fromkeys(keys))
+
+
+CATALOG["Application"] = [
+    Spec("root_path", "Racine par defaut", "root_path", r"F:\PIPELINE"),
+    Spec("default_preset", "Preset par defaut", "preset", ""),
+    Spec("ui_scale", "Scale interface", "slider", 100, {"min": 50, "max": 200, "unit": "%", "width": 280}),
+    Spec("auto_collapse_set_columns", "Replier les colonnes de set une fois l'espace de travail atteint", "bool",
+         True),
+    Spec("window_radius", "Coins arrondis de la fenetre principale", "window_radius", 0),
+]
+CATALOG["Visionneuse"] = [
+    # params["shortcut"] : raccourci clavier de la ligne, dans une colonne « Raccourci » du tableau.
+    Spec("viewer_filmstrip_enabled", "Diapositives sous l'image en focus", "bool", True,
+         {"shortcut": Spec("viewer_filmstrip_shortcut", "Raccourci", "shortcut", "D")}),
+    Spec("viewer_slide_enabled", "Effet slide entre les images", "bool", True),
+    Spec("viewer_gallery_ripple_enabled", "Animation des diapositives (image en focus -> planche)", "bool", True),
+    Spec("viewer_scroll_animated", "Scrolling animé", "bool", True, {"toggle_style": "toggle1"}),
+    Spec("viewer_info_enabled", "Paramètres de l'image", "bool", False,
+         {"shortcut": Spec("viewer_info_shortcut", "Raccourci", "shortcut", "I")}),
+]
+
+
+def _viewer_film_specs(part: str, font_label: str, image: bool = False) -> list:
+    """Diapositives (focus.FocusFilmstrip) : tableau (une cellule par vignette) et ses deux sous-cellules
+    (image, texte dessous). Memes lignes et gabarits que le reste de la v2 ; cles `viewer_film_<part>_*`."""
+    pre = f"viewer_film_{part}"
+
+    def border(key, label):
+        return Spec(f"{key}_border_enabled", label, "sides_thick", False,
+                    {"colors_key": f"{key}_border", "thickness_key": f"{key}_border_thickness",
+                     "width": 90, "box": 54},
+                    extra_keys=(f"{key}_border", f"{key}_border_thickness"))
+
+    rows = [border(pre, "Bordures"), Spec(f"{pre}_border_radius", "Border radius", "corners", 0, {"max": 30})]
+    if part == "table":
+        rows.append(_shadow_spec(f"{pre}_shadow"))
+    if image:
+        rows += [border("viewer_film_image", "Bordures de l'image"),
+                 Spec("viewer_film_image_border_radius", "Border radius de l'image", "corners", 0, {"max": 30}),
+                 _shadow_spec("viewer_film_image_shadow", "Ombres de l'image")]
+    rows += [
+        Spec(f"{pre}_font_family", font_label, "font_gabarit", "",
+             {"prefix": pre, "size": (6, 40), "size_default": 11, "color_default": "#d6d9dc",
+              "color_title": "Couleur du texte"}, extra_keys=_gabarit_extra(pre)),
+        Spec(f"{pre}_bg", "Couleur de fond", "color", "#00000000", {"title": "Couleur de fond"}),
+    ]
+    if part == "table":
+        # Planche : filets entre ses cellules (meme gabarit que Reglages > Tableaux), puis case en cours /
+        # survolee (sur ses deux sous-cellules, sans bordure).
+        rows += [Spec(f"{pre}_inner_{axis}_enabled", f"Bordure intérieure {axis.upper()}", "inner_line", False,
+                      {"axis": axis, "prefix": f"{pre}_inner"},
+                      extra_keys=(f"{pre}_inner_{axis}_color", f"{pre}_inner_{axis}_thickness"))
+                 for axis in ("h", "v")]
+        rows += [Spec(f"{pre}_focus_color", "Couleur focus", "color", "#465f9bd0", {"title": "Couleur focus"}),
+                 Spec(f"{pre}_hover_color", "Couleur survol", "color", "#165f9bd0", {"title": "Couleur survol"})]
+    return rows
+
+
+# Sous-sections de Visionneuse (et choix du clic droit sur la pellicule) : (titre, groupe du CATALOG).
+VIEWER_FILM_GROUPS = (("Tableau", "Visionneuse : Tableau"), ("Sous cellule image", "Visionneuse : Cellule image"),
+                      ("Sous cellule texte", "Visionneuse : Cellule texte"))
+CATALOG["Visionneuse : Tableau"] = _viewer_film_specs("table", "Police (rang n / N)")
+CATALOG["Visionneuse : Cellule image"] = _viewer_film_specs("image_cell", "Police (type de fichier)", image=True)
+CATALOG["Visionneuse : Cellule texte"] = _viewer_film_specs("text_cell", "Police (nom du fichier)")
+# Image en FOCUS (au centre de la visionneuse, focus.FocusOverlay) : son cadre.
+CATALOG["Visionneuse : Focus"] = [
+    Spec("viewer_focus_image_border_enabled", "Bordures de l'image", "sides_thick", False,
+         {"colors_key": "viewer_focus_image_border", "thickness_key": "viewer_focus_image_border_thickness",
+          "width": 90, "box": 54},
+         extra_keys=("viewer_focus_image_border", "viewer_focus_image_border_thickness")),
+    Spec("viewer_focus_image_border_radius", "Border radius de l'image", "corners", 0, {"max": 100}),
+    _shadow_spec("viewer_focus_image_shadow", "Ombres de l'image"),
+]
+
+# Filtres (file_attributes) : les 5 couleurs attribuables aux fichiers dans la visionneuse.
+CATALOG["Visionneuse : Filtres"] = [
+    spec for n in range(1, 6) for spec in (
+        Spec(f"viewer_filter_color_{n}_name", f"Nom de la couleur {n}", "text", ""),
+        Spec(f"viewer_filter_color_{n}", f"Couleur {n}", "color", "#808080", {"title": f"Couleur {n}"}))
+] + [Spec("viewer_filter_active_color", "Bouton filtre actif", "color", "#c62828", {"title": "Bouton filtre actif"}),
+       # Planche : calque de la couleur attribuee a un fichier (une ligne : opacite | bordure | epaisseur).
+       Spec("viewer_filter_mark_opacity", "Opacité des couleurs attribuées", "color_mark", 35,
+            {"border_key": "viewer_filter_mark_border", "thickness_key": "viewer_filter_mark_border_thickness"},
+            extra_keys=("viewer_filter_mark_border", "viewer_filter_mark_border_thickness"))]
+
+# Fenetre des filtres : style des lignes ou un filtre est applique (aussi au clic droit dans la fenetre).
+FILTER_ROW_SPECS = [
+    Spec("viewer_filter_row_bg_enabled", "Couleur de fond", "bg_fill", True,
+         {"color_key": "viewer_filter_row_bg_color", "color_default": "#403d7fd9", "title": "Fond des filtres actifs"},
+         extra_keys=("viewer_filter_row_bg_color",)),
+    Spec("viewer_filter_row_border_enabled", "Bordures", "sides_thick", False,
+         {"colors_key": "viewer_filter_row_border", "thickness_key": "viewer_filter_row_border_thickness",
+          "width": 90, "box": 54},
+         extra_keys=("viewer_filter_row_border", "viewer_filter_row_border_thickness")),
+    Spec("viewer_filter_row_radius", "Border radius", "corners", 0, {"max": 20}),
+    Spec("viewer_filter_row_margin", "Margin", "padding", {}),
+]
+CATALOG["Visionneuse : Filtres"] = CATALOG["Visionneuse : Filtres"] + FILTER_ROW_SPECS
+
+# -- Menu contextuel (settings_menu : tous les menus contextuels, lus a chaque ouverture) --
+def _ctx_font(prefix: str, label: str, size: int, color: str, bold: bool = False) -> Spec:
+    return Spec(f"{prefix}_font_family", label, "font_gabarit", "",
+                {"prefix": prefix, "size": (6, 32), "size_default": size, "color_default": color,
+                 "color_title": "Couleur du texte", "bold_default": bold}, extra_keys=_gabarit_extra(prefix))
+
+
+# Fenetres additionnelles (demande de l'utilisateur) : toutes les fenetres en plus de la principale.
+CATALOG["Fenêtres additionnelles"] = [
+    Spec("extra_window_border_enabled", "Bordures", "sides_thick", True,
+         {"colors_key": "extra_window_border", "thickness_key": "extra_window_border_thickness", "width": 90,
+          "box": 54}, extra_keys=("extra_window_border", "extra_window_border_thickness")),
+    Spec("extra_window_radius", "Border radius", "corners", 0, {"max": 24}),
+    _shadow_spec("extra_window_shadow"),
+    Spec("extra_window_title_height", "Hauteur de la barre de navigation", "slider", 32, {"min": 16, "max": 80}),
+    Spec("extra_window_title_bg", "Couleur de la barre de navigation", "color", "#101214",
+         {"title": "Barre de navigation"}),
+    Spec("extra_window_title_button_width", "Taille des boutons de la barre de navigation", "xy", 36,
+         {"range": (12, 120), "defaults": (36, 32), "second_key": "extra_window_title_button_height",
+          "captions": ("X", "Y")}, extra_keys=("extra_window_title_button_height",)),
+    Spec("extra_window_title_button_radius", "Border radius des boutons", "corners", 0, {"max": 20}),
+    Spec("extra_window_title_line_enabled", "Bordure barre de navigation / interface", "inner_line", True,
+         {"prefix": "extra_window", "axis": "title_line"},
+         extra_keys=("extra_window_title_line_color", "extra_window_title_line_thickness")),
+    Spec("extra_window_buttons_line_enabled", "Bordure interface / barre des boutons", "inner_line", True,
+         {"prefix": "extra_window", "axis": "buttons_line"},
+         extra_keys=("extra_window_buttons_line_color", "extra_window_buttons_line_thickness")),
+]
+
+# Tableaux > « Texte au dessus » : police des textes poses au-dessus d'une ligne (settings_cells).
+CATALOG["Tableaux"].append(_ctx_font("table_above_text", "Texte au dessus", 11, "#8d949a"))
+
+CATALOG["Fenêtres additionnelles"].insert(
+    5, _ctx_font("extra_window_title_text", "Texte de la barre de navigation", 11, "#8d949a"))
+
+CATALOG["Menu contextuel : Menu"] = [
+    Spec("ctx_menu_editable", "Personnalisation (glisser, clic droit)", "bool", True),
+    Spec("ctx_menu_bg", "Couleur de fond", "color", "#202326", {"title": "Fond des menus"}),
+    Spec("ctx_menu_border_enabled", "Bordures", "sides_thick", True,
+         {"colors_key": "ctx_menu_border", "thickness_key": "ctx_menu_border_thickness", "width": 90, "box": 54},
+         extra_keys=("ctx_menu_border", "ctx_menu_border_thickness")),
+    Spec("ctx_menu_border_radius", "Border radius", "corners", 0, {"max": 20}),
+    _shadow_spec("ctx_menu_shadow"),
+    Spec("ctx_menu_padding", "Padding", "padding", {}),
+]
+CATALOG["Menu contextuel : Lignes"] = [
+    _ctx_font("ctx_menu", "Police", 11, "#d6d9dc"),
+    Spec("ctx_menu_item_padding", "Padding des lignes", "padding", {}),
+    Spec("ctx_menu_disabled_color", "Couleur du texte grisé", "color", "#7d858b", {"title": "Couleur du texte grisé"}),
+    Spec("ctx_menu_icon_size", "Taille des icônes", "slider", 16, {"min": 8, "max": 40}),
+    Spec("ctx_menu_control_gap", "Écart texte / contrôle", "slider", 16, {"min": 0, "max": 80}),
+    Spec("ctx_menu_slider_width", "Largeur des curseurs", "slider", 140, {"min": 60, "max": 320}),
+]
+CATALOG["Menu contextuel : Survol"] = [
+    Spec("ctx_menu_hover_color", "Couleur de fond", "color", "#3f6f9f", {"title": "Fond du survol"}),
+    Spec("ctx_menu_hover_text_color", "Couleur du texte", "color", "#eef2f5", {"title": "Texte survolé"}),
+    Spec("ctx_menu_hover_border_enabled", "Bordures", "sides_thick", False,
+         {"colors_key": "ctx_menu_hover_border", "thickness_key": "ctx_menu_hover_border_thickness",
+          "width": 90, "box": 54},
+         extra_keys=("ctx_menu_hover_border", "ctx_menu_hover_border_thickness")),
+    Spec("ctx_menu_hover_radius", "Border radius", "corners", 0, {"max": 16}),
+    Spec("ctx_menu_hover_margin", "Marge", "padding", {}),
+]
+CATALOG["Menu contextuel : Libelles"] = [
+    _ctx_font("ctx_menu_label", "Police libellé", 10, "#7d858b", bold=True),
+    Spec("ctx_menu_label_bg", "Couleur de fond", "color", "#00000000", {"title": "Fond des libellés"}),
+    Spec("ctx_menu_label_padding", "Padding", "padding", {}),
+    Spec("ctx_menu_label_uppercase", "Capitales", "bool", True),
+]
+CATALOG["Menu contextuel : Separateurs"] = [
+    Spec("ctx_menu_sep_color", "Couleur", "color", "#2c3034", {"title": "Couleur des séparateurs"}),
+    Spec("ctx_menu_sep_thickness", "Épaisseur", "slider", 1, {"min": 0, "max": 8}),
+    Spec("ctx_menu_sep_padding", "Marges", "padding", {}),
+]
+CATALOG["Omettre"] = [
+    Spec("application_omit_dir_names", "Dossiers a omettre", "omit_list", []),
+    Spec("application_omit_file_names", "Fichiers a omettre", "omit_list", [], {"files": True},
+         extra_keys=("application_omit_extensions",)),
+]
+CATALOG["LUT"] = [
+    Spec("lut_test_images", "Images de test", "lut_images", [], extra_keys=("lut_default_image", "lut_image_curves")),
+]
+CATALOG["Polices principales"] = [
+    Spec(key, label, "font_role", {}, {"role": role, "sample": sample}) for key, role, label, sample in _FONT_ROLES
+]
+CATALOG["Couleurs"] = [
+    Spec(f"colors:{slot}", label, "semantic_color", None, {"real_key": real_key})
+    for slot, real_key, label in SEMANTIC_COLOR_SLOTS
+]
+CATALOG["Geometrie"] = [
+    Spec("input_frame", "Zones de saisie", "frame_radius", True, {"radius_key": "input_radius"},
+         extra_keys=("input_radius",)),
+    Spec("button_frame", "Boutons", "frame_radius", True, {"radius_key": "button_radius"},
+         extra_keys=("button_radius",)),
+]
+CATALOG["Raccourci"] = [
+    Spec("shortcut_font_family", "Police", "font_gabarit", "",
+         {"prefix": "shortcut", "size": (8, 24), "size_default": 11, "bold_default": False,
+          "color_default": "#8fb4d5", "color_title": "Couleur du raccourci", "keys": {"color": "shortcut_color"}},
+         extra_keys=_gabarit_extra("shortcut", "shortcut_color")),
+]
+UI_ICON_ROWS = (("pin", "Punaise"), ("folder_default", "Dossiers"), ("file_default", "Fichiers"),
+                ("settings_gear", "Engrenage (bouton Parametres)"),
+                ("settings_style", "Reglages visuels (second bouton Parametres)"),
+                ("app_logo", "Icone de la barre de navigation"),
+                ("collapse_toggle", "Icone de repliement de colonne"), ("shortcut", "Raccourcis"))
+CATALOG["Icones : General"] = [
+    Spec(f"ui_icon:{suffix}", label, "ui_icon", None, {"ui_key": suffix}) for suffix, label in UI_ICON_ROWS
+]
+CATALOG["Icones : Logiciels"] = [
+    Spec("custom_softwares", "Logiciels", "logiciels", [], extra_keys=("removed_softwares",)),
+]
+
+# Onglet Focus (colonne des vignettes) : reglages propres a cette colonne, a plat (sans toggle de
+# surcharge), sauf le Ratio qui surcharge item_image_ratio comme dans les autres colonnes.
+CATALOG["Focus : Image"] = [
+    Spec("preview_padding", "Padding", "padding", {}, flat=True),
+    Spec("preview_radius", "Border radius", "corners", 0, {"max": 40}, flat=True),
+    _shadow_spec("preview_shadow", flat=True),
+    Spec("item_image_ratio", "Ratio (largeur/hauteur)", "ratio", 1.0),
+]
+CATALOG["Focus : Zone titre"] = [
+    Spec("preview_title_zone_height", "Hauteur", "slider", 52, {"min": 20, "max": 120}, flat=True),
+    Spec("preview_title_font_family", "Titre - police", "font_gabarit", "",
+         {"prefix": "preview_title", "size": (8, 48), "size_default": 26, "color_default": "#d6d9dc",
+          "color_title": "Couleur du titre"}, extra_keys=_gabarit_extra("preview_title"), flat=True),
+    Spec("preview_title_padding", "Titre - padding", "padding", {},
+         {"order": [("left", "G"), ("top", "H"), ("bottom", "B")]}, flat=True),
+    Spec("preview_status_font_family", "Apercu des dossiers - police", "font_gabarit", "",
+         {"prefix": "preview_status", "size": (6, 24), "size_default": 10, "color_default": "#d6d9dc",
+          "color_title": "Couleur (apercu dossiers)"}, extra_keys=_gabarit_extra("preview_status"), flat=True),
+    Spec("preview_status_font_color_idle", "Apercu des dossiers - non selectionne", "color_app", "#5f666b",
+         {"title": "Non selectionne"}, flat=True),
+    Spec("preview_status_padding", "Apercu des dossiers - padding", "padding", {},
+         {"order": [("top", "H"), ("right", "D")]}, flat=True),
+]
+CATALOG["Focus : Bouton repliement"] = [
+    Spec("preview_toggle_width", "Taille du bouton", "xy", 22,
+         {"range": (12, 60), "defaults": (22, 22), "second_key": "preview_toggle_height",
+          "captions": ("Largeur", "Hauteur")}, extra_keys=("preview_toggle_height",), flat=True),
+    Spec("preview_toggle_bg_color", "Couleur de fond", "color_app", "#960f1114", {"title": "Fond du bouton"},
+         flat=True),
+    Spec("preview_toggle_border_enabled", "Bordures", "sides_thick", False,
+         {"colors_key": "preview_toggle_border", "thickness_key": "preview_toggle_border_thickness"},
+         extra_keys=("preview_toggle_border", "preview_toggle_border_thickness"), flat=True),
+    Spec("preview_toggle_radius", "Border radius", "slider", 4, {"min": 0, "max": 30}, flat=True),
+    Spec("preview_toggle_x", "Position", "xy", 8,
+         {"range": (0, 200), "defaults": (8, 34), "second_key": "preview_toggle_y", "captions": ("X", "Y")},
+         extra_keys=("preview_toggle_y",), flat=True),
+    Spec("collapse_toggle_mode", "Icone", "collapse_mode", "chevrons", flat=True),
+]
+_STEP_BADGE_BG = {"2": "#5c6368", "3": "#5c6368", "4": "#3f6f9f", "5": "#3f6f9f", "6": "#d9822b", "n": "#5c6368"}
+CATALOG["Projets : Icone de niveaux"] = [
+    Spec("step_badge_width", "Taille", "xy", 18,
+         {"range": (8, 60), "defaults": (18, 18), "second_key": "step_badge_height",
+          "captions": ("Largeur", "Hauteur")}, extra_keys=("step_badge_height",), flat=True),
+    Spec("step_badge_border_enabled", "Bordures", "sides_thick", False,
+         {"colors_key": "step_badge_border", "thickness_key": "step_badge_border_thickness"},
+         extra_keys=("step_badge_border", "step_badge_border_thickness"), flat=True),
+    Spec("step_badge_border_smoothing", "Lissage de la bordure", "bool", True, flat=True),
+    Spec("step_badge_radius", "Border radius", "corners", 9, {"max": 30}, flat=True),
+    *[Spec(f"step_badge_text_color_base{n}", f"Couleurs base {n.upper()}", "color_pair", "#eef2f5",
+           {"bg_key": f"step_badge_color_base{n}", "text_default": "#eef2f5", "bg_default": bg},
+           extra_keys=(f"step_badge_color_base{n}",), flat=True)
+      for n, bg in _STEP_BADGE_BG.items()],
+    Spec("step_badge_font_family", "Police du numero", "font_gabarit", "",
+         {"prefix": "step_badge", "only": ("family", "bold", "smoothing"), "bold_default": True},
+         extra_keys=_gabarit_extra("step_badge", only=("family", "bold", "smoothing")), flat=True),
+    Spec("step_badge_offset_x", "Position", "xy", 4,
+         {"range": (-100, 200), "defaults": (4, 0), "second_key": "step_badge_offset_y", "captions": ("H", "V")},
+         extra_keys=("step_badge_offset_y",), flat=True),
+]
+
+
+# ==========================================================================
 # L'arbre des sections : quoi est imbrique dans quoi (donnees, pas code)
 # ==========================================================================
 
@@ -389,6 +763,7 @@ class Node:
     title: str
     group: str | None = None
     children: tuple = ()
+    toggle_key: str | None = None    # sous-section d'un style de toggle (clic droit : renommer / supprimer)
 
 
 COLUMN_NODES = (
@@ -404,33 +779,61 @@ GENERAL_COLUMNS = Node("Colonnes", children=(
 ))
 
 def _toggle_style_node(prefix: str, label: str) -> Node:
-    return Node(label, children=(Node("Cadre", f"{prefix} : Cadre"), Node("Coche", f"{prefix} : Coche")))
+    return Node(label, children=(Node("Type", f"{prefix} : Type"), Node("Cadre", f"{prefix} : Cadre"),
+                                 Node("Coche", f"{prefix} : Coche")), toggle_key=prefix)
 
 
 def general_tree(settings: dict | None = None) -> tuple:
-    """Arbre de l'onglet General ; la section Toggles porte une sous-section par style ajoute."""
-    customs = (settings or {}).get("toggle_custom_styles") or []
-    for custom in customs:
-        register_toggle_catalog(custom["key"])
-    toggle_nodes = tuple(_toggle_style_node(p, label) for p, label in (("toggle1", "Toggle 1"), ("toggle2", "Toggle 2")))
-    toggle_nodes += tuple(_toggle_style_node(c["key"], c.get("name") or c["key"]) for c in customs)
+    """Arbre de l'onglet General ; la section Toggles porte une sous-section par style (renommable,
+    supprimable), dans l'ordre de la liste des styles."""
+    styles = toggle_style_list(settings or {"toggle_styles": [{"key": "toggle1", "name": "Toggle 1"},
+                                                              {"key": "toggle2", "name": "Toggle 2"}]})
+    for style in styles:
+        register_toggle_catalog(style["key"])
+    toggle_nodes = tuple(_toggle_style_node(s["key"], s["name"]) for s in styles)
     return tuple(Node("Toggles", "Toggles : Style", children=toggle_nodes) if n.title == "Toggles" else n
                  for n in GENERAL_TREE)
 
 
 GENERAL_TREE = (
     GENERAL_COLUMNS,
-    Node("TITRE", children=(Node("Polices", "Titre : Polices"), Node("Retraits", "Titre : Retraits"),
-                            Node("Espacements", "Titre : Espacements"))),
+    Node("TITRES", children=(Node("Polices", "Titre : Polices"),
+                             Node("Paragraphes", children=tuple(Node(f"Niveau {n}", f"Titre : Fond {n}")
+                                                               for n in range(1, 6))))),
+    Node("Application", "Application"),
+    Node("Visionneuse", "Visionneuse", children=(*(Node(t, g) for t, g in VIEWER_FILM_GROUPS),
+                                                 Node("Focus", "Visionneuse : Focus"),
+                                                 Node("Filtres", "Visionneuse : Filtres"))),
+    Node("Menu contextuel", children=(Node("Menu", "Menu contextuel : Menu"), Node("Lignes", "Menu contextuel : Lignes"),
+                                      Node("Survol", "Menu contextuel : Survol"),
+                                      Node("Libellés", "Menu contextuel : Libelles"),
+                                      Node("Séparateurs", "Menu contextuel : Separateurs"))),
+    Node("Fenêtres additionnelles", "Fenêtres additionnelles"),
+    Node("Dossiers et fichiers à omettre", "Omettre"),
+    Node("LUT", "LUT"),
+    Node("Polices principales", "Polices principales"),
+    Node("Couleurs", "Couleurs"),
+    Node("Geometrie", "Geometrie"),
     Node("Tableaux", "Tableaux"),
     Node("Toggles", "Toggles : Style", children=tuple(
-        Node(label, children=(Node("Cadre", f"{p} : Cadre"), Node("Coche", f"{p} : Coche")))
-        for p, label in (("toggle1", "Toggle 1"), ("toggle2", "Toggle 2")))),
+        _toggle_style_node(p, label) for p, label in (("toggle1", "Toggle 1"), ("toggle2", "Toggle 2")))),
     Node("Sliders", children=(Node("Rail", "Slider : Rail"), Node("Selecteur", "Slider : Selecteur"))),
+    Node("ICONES", children=(Node("General", "Icones : General"), Node("Logiciels", "Icones : Logiciels"))),
+    Node("RACCOURCI", "Raccourci"),
 )
-# ROADMAP (reste a porter, voir la liste de l'ancienne fenetre) : Polices
-# principales, Couleurs, Geometrie (+ Etapes, Redimensionnement), Focus
-# (preview_*), Raccourci, Application, LUT, Icones, Omit.
+
+# Groupes repris de la v1 : leurs tableaux ont une cle de dimensions a eux (voir build_group).
+PORTED_GROUPS = frozenset(("Application", "Omettre", "LUT", "Polices principales", "Couleurs", "Geometrie",
+                           "Raccourci", "Icones : General", "Icones : Logiciels", "Focus : Image",
+                           "Focus : Zone titre", "Focus : Bouton repliement", "Projets : Icone de niveaux"))
+
+# Onglets de surcharge : sous-sections propres a une colonne (comme dans la v1).
+FOCUS_NODES = (Node("Image", "Focus : Image"), Node("Zone titre", "Focus : Zone titre"),
+               Node("Bouton repliement", "Focus : Bouton repliement"))
+PROJETS_NODES = (Node("Icone de niveaux", "Projets : Icone de niveaux"),)
+# Toutes les sections de la v1 sont portees (Application, omissions, LUT, Polices principales,
+# Couleurs, Geometrie, ICONES, RACCOURCI, et dans les onglets Focus / Projets : Image, Zone titre,
+# Bouton repliement, Icone de niveaux).
 # A FAIRE ENSEMBLE PLUS TARD : le systeme de PRESETS (celui de la v1 ne plait pas : on le
 # repense avec l'utilisateur avant de le recreer ici ; _on_save garde pour l'instant la mise a
 # jour du preset actif).
@@ -441,7 +844,13 @@ def nodes_for(title: str | None, settings: dict | None = None) -> tuple:
     groupes de colonnes (Focus/Inspecteur : Colonnes et Entetes seulement)."""
     if title is None:
         return general_tree(settings)
-    return COLUMN_NODES[:2] if title in ROWLESS_SCOPES else COLUMN_NODES
+    if title == PREVIEW_STACK_TITLE:
+        return COLUMN_NODES[:2] + FOCUS_NODES
+    if title in ROWLESS_SCOPES:
+        return COLUMN_NODES[:2]
+    if title == "Projets":
+        return COLUMN_NODES + PROJETS_NODES
+    return COLUMN_NODES
 
 
 # Portees : (libelle d'onglet, titre reel de colonne ou None pour General).
@@ -505,18 +914,41 @@ class ScopeValues:
 
 def _f_slider(spec: Spec, v: ScopeValues, colors: dict):
     return _SliderField(spec.params["min"], spec.params["max"], int(v.seed(spec.key, spec.default)),
+                        spec.params.get("unit", "px"),
                         slider_width=spec.params.get("width", 200), box_width=spec.params.get("box", 68))
 
 def _f_bool(spec, v, colors):
-    # Dans un tableau : toujours le type 2, sans texte (voir AGENTS.md).
-    return _Toggle(bool(v.seed(spec.key, spec.default)), style_override="toggle2", show_label=False)
+    # Dans un tableau : le type 2, sans texte (voir AGENTS.md) ; params["toggle_style"] = autre style
+    # demande expressement pour cette ligne (garde par normalize_toggles).
+    style = spec.params.get("toggle_style") or "toggle2"
+    toggle = _Toggle(bool(v.seed(spec.key, spec.default)), style_override=style, show_label=False)
+    if style != "toggle2":
+        toggle._table_style = style
+    return toggle
 
 def _f_color_app(spec, v, colors):
-    return _AppOrCustomColorField(v.seed(spec.key, spec.default), colors, swatch_size=24,
-                                  title=spec.params.get("title", spec.label))
+    # Meme champ compact que les couleurs des invites police/bordures : app | pastille | sys.
+    return _CompactAppOrCustomColorField(v.seed(spec.key, spec.default), colors, swatch_size=20,
+                                         title=spec.params.get("title", spec.label))
+
+class _CompactHeaderColor(_CompactAppOrCustomColorField):
+    """Champ compact (app | pastille | sys) pour les couleurs d'entete : stocke un nom de pastille NU
+    (« skinN1 »), pas « @skinN1 » comme le champ compact."""
+
+    def __init__(self, value: str, colors: dict, title: str, parent=None):
+        value = value if value.startswith("#") else "@" + value.lstrip("@")
+        super().__init__(value, colors, swatch_size=20, title=title, parent=parent)
+
+    def value(self) -> str:
+        v = super().value()
+        return v[1:] if v.startswith("@") else v
+
+    def setValue(self, value: str):
+        super().setValue(value if value.startswith("#") else "@" + value.lstrip("@"))
+
 
 def _f_header_color(spec, v, colors):
-    return _HeaderColorField(colors, v.seed(spec.key, spec.default))
+    return _CompactHeaderColor(v.seed(spec.key, spec.default), colors, spec.params.get("title", spec.label))
 
 LINK_CAPTION = "Lier les 4"
 
@@ -546,10 +978,28 @@ def _f_corners(spec, v, colors):
 
 
 def _f_padding(spec, v, colors):
+    # params["order"] : seulement certains cotes (ex. Focus > Zone titre, « Titre - padding » sans D).
+    order = spec.params.get("order") or _SidePaddingField._ORDER
+    field = _CellPaddingField(v.linked(spec.key, spec.params.get("linked_default", True)),
+                              v.seed(spec.key, spec.default) or {}, order=spec.params.get("order"))
+    return _split_field(field, [(LINK_CAPTION, [field.toggle])] + [
+        (letter, [field.sides.fields[key]]) for key, letter in order])
+
+
+def _f_title_padding(spec, v, colors):
+    """Padding (titre) : `lier les 4 | G | H | B | D | avant | apres` — le padding de la ligne du titre
+    et l'espacement avant le 1er / apres le dernier titre de sa pile (deux curseurs, meme champ que
+    les autres curseurs)."""
     field = _CellPaddingField(v.linked(spec.key, spec.params.get("linked_default", True)),
                               v.seed(spec.key, spec.default) or {})
-    return _split_field(field, [(LINK_CAPTION, [field.toggle])] + [
-        (letter, [field.sides.fields[key]]) for key, letter in _SidePaddingField._ORDER])
+    top = spec.params.get("max", 60)
+    before = _SliderField(0, top, int(v.seed(spec.params["before_key"], 0)), slider_width=60, box_width=54)
+    after = _SliderField(0, top, int(v.seed(spec.params["after_key"], 0)), slider_width=60, box_width=54)
+    holder = _split_field(field, [(LINK_CAPTION, [field.toggle])] + [
+        (letter, [field.sides.fields[key]]) for key, letter in _SidePaddingField._ORDER]
+        + [("Avant", [before]), ("Après", [after])])
+    holder._v2_parts = {"before": before, "after": after}   # branches par _connect_changed, lus par le lecteur
+    return holder
 
 
 def _side_parts(field: _ToggleSideColorsField) -> list:
@@ -561,7 +1011,7 @@ def _side_parts(field: _ToggleSideColorsField) -> list:
 def _f_sides(spec, v, colors):
     field = _ToggleSideColorsField(
         _coerce_side_enabled(v.seed(spec.key, spec.default)),
-        v.seed(spec.params["colors_key"], {}) or {}, colors)
+        v.seed(spec.params["colors_key"], {}) or {}, colors, linked=v.linked(spec.key, False))
     return _split_field(field, [(LINK_CAPTION, [field.link_toggle])] + _side_parts(field))
 
 def _f_font(spec, v, colors):
@@ -569,7 +1019,8 @@ def _f_font(spec, v, colors):
 
 
 def _f_color(spec, v, colors):
-    return _ColorField(v.seed(spec.key, spec.default), swatch_size=24, title=spec.params.get("title", spec.label))
+    return _CompactAppOrCustomColorField(v.seed(spec.key, spec.default), colors, swatch_size=20,
+                                         title=spec.params.get("title", spec.label))
 
 def _f_ratio(spec, v, colors):
     return _SliderField(20, 500, int(round(float(v.seed(spec.key, spec.default)) * 100)), unit="%",
@@ -582,9 +1033,13 @@ def _f_item_text(spec, v, colors):
     return spec.params["item"].make_field(v.seed(spec.key, spec.default), colors, slider_width=170)
 
 def _f_row_border(spec, v, colors):
-    return _RowBorderField(
+    field = _RowBorderField(
         bool(v.seed("item_row_border_enabled", False)), v.seed("item_row_border_color", "@ligne"),
-        int(v.seed("item_row_border_thickness", 1)), colors, thickness_range=(0, 8))
+        int(v.seed("item_row_border_thickness", 1)), colors, thickness_range=(0, 8),
+        color_factory=lambda value, cols, title: _CompactAppOrCustomColorField(value, cols, swatch_size=20,
+                                                                                 title=title))
+    return _split_field(field, [("Actif", [field.toggle]), ("Couleur", [field.color_field]),
+                                ("Épaisseur", [field.thickness_field])])
 
 
 def _gabarit_keys(spec: Spec) -> dict:
@@ -627,55 +1082,88 @@ def _f_font_gabarit(spec, v, colors):
     """Ligne « police » dans un tableau Parametre/Valeur : une cellule divisee, une sous-cellule par
     champ de la reference (POLICE, GRAS, ITALIQUE, HAUTEUR, NIVEAU DE LISSAGE, COULEUR)."""
     parts = _font_parts(spec, v, colors)
-    holder = wrap_split(SplitCell([(caption, [parts[name]]) for name, caption in FONT_CAPTIONS]))
+    only = spec.params.get("only")      # ex. Icone de niveaux : police | gras | lissage seulement
+    if only:
+        parts = {name: part for name, part in parts.items() if name in only}
+    holder = wrap_split(SplitCell([(caption, [parts[name]]) for name, caption in FONT_CAPTIONS if name in parts]))
     holder._v2_parts = parts            # lus par FIELD_READERS["font_gabarit"]
     return holder
 
 def _f_sides_thick(spec, v, colors):
     p = spec.params
-    thickness = _SliderField(0, 8, int(v.seed(p["thickness_key"], 1)), slider_width=p.get("width", 90),
+    low, high = p.get("range", (0, 8))
+    thickness = _SliderField(low, high, int(v.seed(p["thickness_key"], 1)), slider_width=p.get("width", 90),
                              box_width=p.get("box", 54))
     field_w = _ToggleSideColorsField(
         _coerce_side_enabled(v.seed(spec.key, spec.default)), v.seed(p["colors_key"], {}) or {}, colors,
-        thickness_field=thickness)
+        thickness_field=thickness, linked=v.linked(spec.key, False))
     field_w._v2_thickness = thickness      # lu par FIELD_READERS["sides_thick"]
+    field_w._v2_parts = {"thickness": thickness}   # branche par _connect_changed (le champ ne relaie pas)
     return _split_field(field_w, [(LINK_CAPTION, [field_w.link_toggle])] + _side_parts(field_w)
-                        + [("Épaisseur", [thickness])])
+                        + [(p.get("thickness_label", "Épaisseur"), [thickness])])
+
+def _f_shadow(spec, v, colors):
+    """Ligne « Ombres » (demande de l'utilisateur) : `lier les 4 | G | H | B | D | Couleur | Taille` — les
+    toggles des cotes et « lier les 4 » de la ligne Bordures (_ToggleSideColorsField), ses couleurs par
+    cote gardees cachees et pilotees par UNE couleur en fin de ligne, avant la taille."""
+    p = spec.params
+    low, high = p.get("range", (0, 40))
+    size = _SliderField(low, high, int(v.seed(p["thickness_key"], 10)), slider_width=p.get("width", 90),
+                        box_width=p.get("box", 54))
+    stored = v.seed(p["colors_key"], {}) or {}
+    if isinstance(stored, dict):
+        first = next((stored[k] for k in ("left", "top", "bottom", "right") if stored.get(k)), None)
+    else:
+        first = stored
+    first = first or "#8c000000"
+    sides = ("left", "top", "bottom", "right")
+    field_w = _ToggleSideColorsField(_coerce_side_enabled(v.seed(spec.key, spec.default)),
+                                     {k: first for k in sides}, colors, thickness_field=size,
+                                     linked=v.linked(spec.key, True))
+    color = _CompactAppOrCustomColorField(first, colors, swatch_size=20, title=spec.label)
+
+    def push(*_args):
+        field_w.sides.setValue({k: color.value() for k in sides})      # la couleur vaut pour les 4 cotes
+        field_w.changed.emit()
+
+    def dim(*_args):
+        _set_dimmed(color, not any(field_w.sidesEnabledValue().values()))
+
+    color.changed.connect(push)
+    field_w.changed.connect(dim)
+    dim()
+    field_w._v2_thickness = size           # lu par FIELD_READERS["shadow"]
+    field_w._v2_parts = {"thickness": size, "color": color}
+    toggles = [(letter, [field_w.sides.side_checks[key]]) for key, letter in field_w.sides._ORDER]
+    return _split_field(field_w, [(LINK_CAPTION, [field_w.link_toggle])] + toggles
+                        + [("Couleur", [color]), (p.get("thickness_label", "Taille"), [size])])
+
+
+def _f_bg_fill(spec, v, colors):
+    """Couleur de fond activable : cellule divisee « Actif | Couleur »."""
+    p = spec.params
+    toggle = _Toggle(bool(v.seed(spec.key, spec.default)), style_override="toggle2", show_label=False)
+    color = _CompactAppOrCustomColorField(v.seed(p["color_key"], p["color_default"]), colors, swatch_size=20,
+                                          title=p.get("title", spec.label))
+    holder = wrap_split(SplitCell([("Actif", [toggle]), ("Couleur", [color])]))
+    holder._v2_parts = {"enabled": toggle, "color": color}     # lus par FIELD_READERS["bg_fill"]
+    return holder
 
 def _f_inner_line(spec, v, colors):
-    axis = spec.params["axis"]
+    pre = f"{spec.params.get('prefix', 'table_inner')}_{spec.params['axis']}"   # cles <pre>_enabled / _color / _thickness
     return _InnerLineField(
-        v.seed(f"table_inner_{axis}_enabled", True), v.seed(f"table_inner_{axis}_color", "@skinN2"),
-        v.seed(f"table_inner_{axis}_thickness", 1), colors, spec.label)
+        v.seed(f"{pre}_enabled", spec.default), v.seed(f"{pre}_color", "@skinN2"),
+        v.seed(f"{pre}_thickness", 1), colors, spec.label)
 
 def _f_toggle_style(spec, v, colors):
     picker = _ToggleStylePicker(v.seed(spec.key, spec.default))
+    picker.style_actions = dict(v.hooks.get("toggle_actions") or {})   # clic droit sur une carte
     add = v.hooks.get("add_toggle")
     if add is not None:
         def extra(menu):
             menu.addAction("Ajouter un nouveau toggle…").triggered.connect(lambda _c=False: add())
         picker.populate_extra_menu = extra        # clic droit sur la cellule
     return picker
-
-
-class _TextField(QLineEdit):
-    """Zone de saisie d'un texte (habillage de coche...), habillee comme les autres champs."""
-
-    def __init__(self, text: str, width: int = 170):
-        super().__init__(text)
-        self.setFixedSize(width, 25)
-        self._radius = _input_radius()
-        _register_input(self)
-        self._restyle()
-
-    def _restyle(self):
-        self.setStyleSheet(
-            f"QLineEdit {{ background: {M['field_bg']}; border: 1px solid {M['field_border']}; "
-            f"border-radius: {self._radius}px; color: {M['value_fg']}; padding: 0 8px; }}")
-
-    def setRadius(self, radius: int):
-        self._radius = max(0, int(radius))
-        self._restyle()
 
 
 class _IconChoiceField(QWidget):
@@ -710,6 +1198,122 @@ class _IconChoiceField(QWidget):
         self.select.setRadius(radius)
 
 
+_IMAGE_FILTER = "Images (*.png *.svg *.jpg *.jpeg *.gif *.webp *.bmp)"
+
+
+def _natural_key(path: str):
+    """Tri « naturel » des fichiers d'une sequence (img2 avant img10)."""
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", path)]
+
+
+class _ImageImportField(QWidget):
+    """Image(s) importee(s) pour un toggle « icones » : apercu + « Importer… » + « × » (retirer).
+    `multiple` : une SEQUENCE (plusieurs fichiers, tries dans l'ordre naturel de leurs noms). Les
+    fichiers choisis sont copies dans data/toggle_icons/ (settings_store.import_toggle_image)."""
+
+    changed = Signal()
+    _THUMB = 24
+    _MAX_THUMBS = 6
+
+    def __init__(self, value, style_key: str, multiple: bool = False):
+        super().__init__()
+        self._style_key, self._multiple = style_key, multiple
+        values = list(value or []) if multiple else ([value] if value else [])
+        self._names: list[str] = [str(v) for v in values if v]
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        self._thumbs = QHBoxLayout()
+        self._thumbs.setSpacing(3)
+        layout.addLayout(self._thumbs)
+        self._count = _text_label("", "row_label")
+        layout.addWidget(self._count)
+        pick = _Btn("Importer…", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=25)
+        pick.clicked.connect(self._pick)
+        layout.addWidget(pick)
+        clear = self._clear_btn = _Btn("×", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"], height=25,
+                                       padding="0 8px")
+        clear.setToolTip("Retirer")
+        clear.clicked.connect(lambda _c=False: self.setNames([]))
+        layout.addWidget(clear)
+        self._refresh()
+
+    def _pick(self):
+        if self._multiple:
+            paths, _f = QFileDialog.getOpenFileNames(self, "Importer une séquence d'images", "", _IMAGE_FILTER)
+        else:
+            path, _f = QFileDialog.getOpenFileName(self, "Importer une image", "", _IMAGE_FILTER)
+            paths = [path] if path else []
+        if paths:
+            self.setFiles(paths)
+
+    def setFiles(self, paths: list[str]):
+        """Importe ces fichiers (copies dans data/toggle_icons/) et les prend comme valeur."""
+        ordered = sorted(paths, key=_natural_key) if self._multiple else paths[:1]
+        self.setNames([import_toggle_image(p, self._style_key) for p in ordered])
+
+    def setNames(self, names: list[str]):
+        names = [n for n in names if n]
+        if names != self._names:
+            self._names = names
+            self._refresh()
+            self.changed.emit()
+
+    def _refresh(self):
+        while self._thumbs.count():
+            item = self._thumbs.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        for name in self._names[:self._MAX_THUMBS]:
+            thumb = QLabel()
+            thumb.setFixedSize(self._THUMB, self._THUMB)
+            thumb.setAlignment(Qt.AlignCenter)
+            pix = _toggle_image_pixmap(name, self._THUMB, self._THUMB)
+            if pix is not None:
+                thumb.setPixmap(pix)
+            thumb.setToolTip(name)
+            self._thumbs.addWidget(thumb)
+        if self._multiple:
+            n = len(self._names)
+            self._count.setText("aucune" if not n else f"{n} image{'s' if n > 1 else ''}")
+        else:
+            self._count.setText("" if self._names else "aucune")
+        self._count.setVisible(bool(self._count.text()))
+        self._clear_btn.setEnabled(bool(self._names))
+
+    def value(self):
+        return list(self._names) if self._multiple else (self._names[0] if self._names else "")
+
+
+def _f_toggle_icons(spec, v, colors):
+    """Icones d'un toggle : cellule divisee « On | Off », une image chacune."""
+    style = spec.params["style"]
+    on = _ImageImportField(v.seed(spec.key, ""), style)
+    off = _ImageImportField(v.seed(spec.params["off_key"], ""), style)
+    holder = wrap_split(SplitCell([("On", [on]), ("Off", [off])]))
+    holder._v2_parts = {"on": on, "off": off}       # branches par _connect_changed, lus par le lecteur
+    return holder
+
+
+def _f_image_sequence(spec, v, colors):
+    return _ImageImportField(v.seed(spec.key, []) or [], spec.params["style"], multiple=True)
+
+
+TOGGLE_KINDS = (("qt", "Qt"), ("icons", "Icônes"))
+TOGGLE_MOTIONS = (("slide", "Glissière"), ("fade", "Fondu (centrée)"))
+
+
+def _choice_factory(choices):
+    def factory(spec, v, colors):
+        current = dict(choices).get(v.seed(spec.key, spec.default), choices[0][1])
+        return _SelectField([label for _k, label in choices], current, width=160)
+    return factory
+
+
+def _choice_reader(choices):
+    return lambda sp, w: {sp.key: {label: key for key, label in choices}[w.value()]}
+
+
 SKINS = (("none", "Aucun"), ("text", "Texte"), ("icon", "Icône"))
 
 
@@ -736,15 +1340,150 @@ def _f_ratio_slider(spec, v, colors):
                              slider_width=200, box_width=68)
 
 
+# -- Sections reprises de la v1 (Application, Polices principales, Couleurs, Geometrie, ICONES,
+# Focus > Zone titre / Bouton repliement, Projets > Icone de niveaux) --
+
+WINDOW_RADIUS_ON = 12          # Application > Coins arrondis : rayon de la fenetre principale quand actif
+NO_PRESET = "(Aucun)"
+COLLAPSE_MODES = (("chevrons", "Chevrons"), ("icone", "Icone"))
+
+
+def _f_shortcut(spec, v, colors):
+    return _ShortcutField(str(v.seed(spec.key, spec.default) or ""))
+
+
+def _f_root_path(spec, v, colors):
+    return RootPathField(str(v.seed(spec.key, spec.default) or ""))
+
+
+def _f_preset(spec, v, colors):
+    names = [NO_PRESET] + sorted(_load_presets().keys())
+    current = v.seed(spec.key, "") or NO_PRESET
+    return _SelectField(names, current if current in names else NO_PRESET, width=268)
+
+
+def _f_window_radius(spec, v, colors):
+    return _Toggle(int(v.seed(spec.key, 0) or 0) > 0, style_override="toggle2", show_label=False)
+
+
+def _f_omit_list(spec, v, colors):
+    field = _OmitListField()
+    field.set_values(_omit_file_values(v.settings) if spec.params.get("files") else v.seed(spec.key, []))
+    if spec.params.get("files"):
+        field.setToolTip("Nom exact de fichier, ou *.extension pour masquer toute une extension.")
+    return field
+
+
+def _f_lut_images(spec, v, colors):
+    """Images de test des LUT : explications puis la liste (+ / - / Par defaut, apercu converti)."""
+    field = LutTestImagesField()
+    field.set_values(v.seed(spec.key, []), v.seed("lut_default_image", "") or "", v.seed("lut_image_curves", {}))
+    holder = QWidget()
+    holder.setStyleSheet("background: transparent;")
+    lay = QVBoxLayout(holder)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(10)
+    help_label = _text_label(LUT_HELP_TEXT, "note")
+    help_label.setWordWrap(True)
+    help_label.setFixedWidth(LutTestImagesField._WIDTH)
+    lay.addWidget(help_label, 0, Qt.AlignLeft)
+    lay.addWidget(field, 0, Qt.AlignLeft)
+    holder._v2_parts = {"images": field}       # lu par FIELD_READERS["lut_images"], branche par _connect_changed
+    return holder
+
+
+def _f_font_role(spec, v, colors):
+    """Polices principales : une cellule divisee « Police | Lissage | Apercu » par role."""
+    field = FontRoleField(v.seed(spec.key, {}) or {}, spec.params["role"], spec.params["sample"])
+    holder = wrap_split(SplitCell([("Police", [field.family]), ("Lissage", [field.smoothing]),
+                                   ("Aperçu", [field.preview])]))
+    holder._v2_parts = {"role": field}
+    return holder
+
+
+def _f_semantic_color(spec, v, colors):
+    """Couleurs : une pastille de la palette. Deux pastilles peuvent piloter la meme cle (« Selection
+    en cours » et « Bouton » = accent) : elles restent synchronisees."""
+    real_key = spec.params["real_key"]
+    field = SemanticColorField(colors.get(real_key, "#000000"), spec.label)
+    siblings = v.hooks.setdefault("color_slots", {}).setdefault(real_key, [])
+    for other in siblings:
+        try:
+            field.changed.connect(lambda o=other, f=field: o.setValue(f.value()))
+            other.changed.connect(lambda o=other, f=field: f.setValue(o.value()))
+        except RuntimeError:
+            pass
+    siblings.append(field)
+    return field
+
+
+def _f_frame_radius(spec, v, colors):
+    """Geometrie : « Cadre | Coins arrondis » d'un type d'element (zones de saisie, boutons)."""
+    frame = _Toggle(bool(v.seed(spec.key, True)), style_override="toggle2", show_label=False)
+    radius = _SliderField(0, 16, int(v.seed(spec.params["radius_key"], 0)), slider_width=140, box_width=58)
+    holder = wrap_split(SplitCell([("Cadre", [frame]), ("Coins arrondis", [radius])]))
+    holder._v2_parts = {"frame": frame, "radius": radius}
+    return holder
+
+
+def _f_color_pair(spec, v, colors):
+    """Icone de niveaux : couleurs d'une base, « Texte | Fond »."""
+    p = spec.params
+    text = _CompactAppOrCustomColorField(v.seed(spec.key, p["text_default"]), colors, swatch_size=20,
+                                         title=f"Texte - {spec.label}")
+    back = _CompactAppOrCustomColorField(v.seed(p["bg_key"], p["bg_default"]), colors, swatch_size=20,
+                                         title=f"Fond - {spec.label}")
+    holder = wrap_split(SplitCell([("Texte", [text]), ("Fond", [back])]))
+    holder._v2_parts = {"text": text, "bg": back}
+    return holder
+
+
+def _f_xy(spec, v, colors):
+    """Deux curseurs sur une ligne (position X / Y, largeur / hauteur) : cellule divisee."""
+    p = spec.params
+    low, high = p["range"]
+    first = _SliderField(low, high, int(v.seed(spec.key, p["defaults"][0])), slider_width=140, box_width=58)
+    second = _SliderField(low, high, int(v.seed(p["second_key"], p["defaults"][1])), slider_width=140, box_width=58)
+    holder = wrap_split(SplitCell([(p["captions"][0], [first]), (p["captions"][1], [second])]))
+    holder._v2_parts = {"first": first, "second": second}
+    return holder
+
+
+def _f_ui_icon(spec, v, colors):
+    return UiIconField(spec.params["ui_key"])
+
+
+def _f_color_mark(spec, v, colors):
+    """Une ligne : opacite (%) | bordure (toggle seul dans sa sous-cellule : type 1) | epaisseur."""
+    p = spec.params
+    opacity = _SliderField(0, 100, int(v.seed(spec.key, spec.default)), unit="%", slider_width=110, box_width=58)
+    border = _Toggle(bool(v.seed(p["border_key"], False)), show_label=False)
+    thickness = _SliderField(1, 12, int(v.seed(p["thickness_key"], 2)), slider_width=90, box_width=54)
+    holder = wrap_split(SplitCell([("Opacité", [opacity]), ("Bordure", [border]), ("Épaisseur", [thickness])]))
+    holder._v2_parts = {"opacity": opacity, "border": border, "thickness": thickness}
+    return holder
+
+
+def _f_logiciels(spec, v, colors):
+    return LogicielsField(v.seed("custom_softwares", []), v.seed("removed_softwares", []))
+
+
 FIELD_FACTORIES: dict[str, Callable] = {
+    "root_path": _f_root_path, "shortcut": _f_shortcut, "preset": _f_preset, "window_radius": _f_window_radius, "omit_list": _f_omit_list,
+    "lut_images": _f_lut_images, "font_role": _f_font_role, "semantic_color": _f_semantic_color,
+    "frame_radius": _f_frame_radius, "color_pair": _f_color_pair, "xy": _f_xy, "ui_icon": _f_ui_icon,
+    "logiciels": _f_logiciels, "collapse_mode": _choice_factory(COLLAPSE_MODES),
     "coche_skin": _f_coche_skin, "text": _f_text, "icon_choice": _f_icon_choice,
+    "toggle_kind": _choice_factory(TOGGLE_KINDS), "toggle_motion": _choice_factory(TOGGLE_MOTIONS),
+    "toggle_icons": _f_toggle_icons, "image_sequence": _f_image_sequence,
     "badge_position": _f_badge_position, "ratio_slider": _f_ratio_slider,
-    "font_gabarit": _f_font_gabarit, "sides_thick": _f_sides_thick, "inner_line": _f_inner_line,
-    "toggle_style": _f_toggle_style,
+    "font_gabarit": _f_font_gabarit, "sides_thick": _f_sides_thick, "shadow": _f_shadow, "inner_line": _f_inner_line,
+    "toggle_style": _f_toggle_style, "bg_fill": _f_bg_fill,
     "color": _f_color, "ratio": _f_ratio, "font_select": _f_font_select, "item_text": _f_item_text,
     "row_border": _f_row_border,
     "slider": _f_slider, "bool": _f_bool, "color_app": _f_color_app, "header_color": _f_header_color,
-    "corners": _f_corners, "padding": _f_padding, "sides": _f_sides, "font": _f_font,
+    "color_mark": _f_color_mark,
+    "corners": _f_corners, "padding": _f_padding, "title_padding": _f_title_padding, "sides": _f_sides, "font": _f_font,
 }
 
 
@@ -760,19 +1499,50 @@ def _font_value(w) -> str:
 
 def _r_font_gabarit(spec, w) -> dict:
     k, parts = _gabarit_keys(spec), w._v2_parts
-    return {
-        k["family"]: _font_value(parts["family"]),
-        k["bold"]: parts["bold"].isChecked(),
-        k["italic"]: parts["italic"].isChecked(),
-        k["size"]: parts["size"].value(),
-        k["smoothing_enabled"]: parts["smoothing"].isChecked(),
-        k["smoothing"]: parts["smoothing"].smoothingValue(),
-        k["color"]: parts["color"].value(),
-    }
+    out = {}
+    if "family" in parts:
+        out[k["family"]] = _font_value(parts["family"])
+    for name in ("bold", "italic"):
+        if name in parts:
+            out[k[name]] = parts[name].isChecked()
+    if "size" in parts:
+        out[k["size"]] = parts["size"].value()
+    if "smoothing" in parts:
+        out[k["smoothing_enabled"]] = parts["smoothing"].isChecked()
+        out[k["smoothing"]] = parts["smoothing"].smoothingValue()
+    if "color" in parts:
+        out[k["color"]] = parts["color"].value()
+    return out
+
+
+def _r_lut_images(spec, w) -> dict:
+    field = w._v2_parts["images"]
+    return {spec.key: field.values(), "lut_default_image": field.default(), "lut_image_curves": field.curves()}
 
 
 FIELD_READERS: dict[str, Callable] = {
+    "root_path": lambda sp, w: {sp.key: w.text().strip() or sp.default},
+    "shortcut": lambda sp, w: {sp.key: w.value()},
+    "preset": lambda sp, w: {sp.key: "" if w.value() == NO_PRESET else w.value()},
+    "window_radius": lambda sp, w: {sp.key: WINDOW_RADIUS_ON if w.isChecked() else 0},
+    "omit_list": lambda sp, w: {sp.key: w.values(), **({"application_omit_extensions": []}
+                                                         if sp.params.get("files") else {})},
+    "lut_images": _r_lut_images,
+    "font_role": lambda sp, w: {sp.key: w._v2_parts["role"].value()},
+    # Couleurs : cle « colors:<cle reelle> », fondue dans le dictionnaire `colors` (wired_values).
+    "semantic_color": lambda sp, w: {f"colors:{sp.params['real_key']}": w.value()},
+    "frame_radius": lambda sp, w: {sp.key: w._v2_parts["frame"].isChecked(),
+                                   sp.params["radius_key"]: w._v2_parts["radius"].value()},
+    "color_pair": lambda sp, w: {sp.key: w._v2_parts["text"].value(), sp.params["bg_key"]: w._v2_parts["bg"].value()},
+    "xy": lambda sp, w: {sp.key: w._v2_parts["first"].value(), sp.params["second_key"]: w._v2_parts["second"].value()},
+    "ui_icon": lambda sp, w: {},                 # agit tout de suite sur les fichiers d'icone
+    "logiciels": lambda sp, w: w.values(),
+    "collapse_mode": _choice_reader(COLLAPSE_MODES),
     "coche_skin": lambda sp, w: {sp.key: {label: key for key, label in SKINS}[w.value()]},
+    "toggle_kind": _choice_reader(TOGGLE_KINDS), "toggle_motion": _choice_reader(TOGGLE_MOTIONS),
+    "toggle_icons": lambda sp, w: {sp.key: w._v2_parts["on"].value(),
+                                   sp.params["off_key"]: w._v2_parts["off"].value()},
+    "image_sequence": lambda sp, w: {sp.key: w.value()},
     "text": lambda sp, w: {sp.key: w.text()},
     "icon_choice": lambda sp, w: {sp.key: w.value()},
     "badge_position": lambda sp, w: {
@@ -786,21 +1556,34 @@ FIELD_READERS: dict[str, Callable] = {
     "color_app": lambda sp, w: {sp.key: w.value()},
     "header_color": lambda sp, w: {sp.key: w.value()},
     "toggle_style": lambda sp, w: {sp.key: w.value()},
-    "font": lambda sp, w: {sp.key: _font_value(w)},
+    "bg_fill": lambda sp, w: {sp.key: w._v2_parts["enabled"].isChecked(),
+                              sp.params["color_key"]: w._v2_parts["color"].value()},
+    "font":lambda sp, w: {sp.key: _font_value(w)},
     "font_select": lambda sp, w: {sp.key: _font_value(w)},
     "corners": lambda sp, w: {sp.key: w.cornersValue(), f"{sp.key}_linked": w.isLinked()},
     "padding": lambda sp, w: {sp.key: w.sidesValue(), f"{sp.key}_linked": w.isLinked()},
-    "sides": lambda sp, w: {sp.key: w.sidesEnabledValue(), sp.params["colors_key"]: w.sidesValue()},
+    "title_padding": lambda sp, w: {sp.key: w.sidesValue(), f"{sp.key}_linked": w.isLinked(),
+                                    sp.params["before_key"]: w._v2_parts["before"].value(),
+                                    sp.params["after_key"]: w._v2_parts["after"].value()},
+    "sides": lambda sp, w: {sp.key: w.sidesEnabledValue(), sp.params["colors_key"]: w.sidesValue(),
+                            f"{sp.key}_linked": w.isLinked()},
     "sides_thick": lambda sp, w: {
-        sp.key: w.sidesEnabledValue(), sp.params["colors_key"]: w.sidesValue(),
+        sp.key: w.sidesEnabledValue(), sp.params["colors_key"]: w.sidesValue(), f"{sp.key}_linked": w.isLinked(),
+        sp.params["thickness_key"]: w._v2_thickness.value()},
+    "shadow": lambda sp, w: {
+        sp.key: w.sidesEnabledValue(), sp.params["colors_key"]: w.sidesValue(), f"{sp.key}_linked": w.isLinked(),
         sp.params["thickness_key"]: w._v2_thickness.value()},
     "inner_line": lambda sp, w: dict(zip(
-        (f"table_inner_{sp.params['axis']}_{k}" for k in ("enabled", "color", "thickness")), w.value())),
+        (f"{sp.params.get('prefix', 'table_inner')}_{sp.params['axis']}_{k}" for k in ("enabled", "color", "thickness")),
+        w.value())),
     "row_border": lambda sp, w: {
         "item_row_border_enabled": w.enabledValue(), "item_row_border_color": w.colorValue(),
         "item_row_border_thickness": w.thicknessValue()},
     "item_text": lambda sp, w: {sp.key: sp.params["item"].raw_value(w)},
     "font_gabarit": _r_font_gabarit,
+    "color_mark": lambda sp, w: {sp.key: w._v2_parts["opacity"].value(),
+                                 sp.params["border_key"]: w._v2_parts["border"].isChecked(),
+                                 sp.params["thickness_key"]: w._v2_parts["thickness"].value()},
 }
 
 
@@ -821,9 +1604,22 @@ def hook_ranges(widget: QWidget, key: str, settings: dict, on_range: Callable | 
         attach_range_menu(field, range_key, on_range, scale)
 
 
+def tag_toggles(roots, scope: str, key: str):
+    """Identifiant stable de chaque toggle d'une ligne (`portee|cle#rang`) : le style choisi pour lui
+    au clic droit est enregistre sous cet identifiant (toggle_style_overrides)."""
+    seen = []
+    for root in roots:
+        for toggle in ([root] if isinstance(root, _Toggle) else []) + root.findChildren(_Toggle):
+            if toggle not in seen:
+                seen.append(toggle)
+    for rank, toggle in enumerate(seen):
+        toggle.style_id = f"{scope}|{key}#{rank}"
+
+
 def make_field(spec: Spec, values: ScopeValues, colors: dict, on_range: Callable | None = None) -> QWidget:
     widget = FIELD_FACTORIES[spec.kind](spec, values, colors)
     hook_ranges(widget, spec.key, values.settings, on_range)
+    tag_toggles([widget, *getattr(widget, "_v2_parts", {}).values()], values.title or "General", spec.key)
     return widget
 
 
@@ -854,9 +1650,6 @@ def _connect_changed(widget: QWidget, callback: Callable | None):
 COLUMN_TABLES: dict[str, list[tuple[str, int]]] = {
     "Titre : Polices": [("Niveau", 150), ("Police", 330), ("Gras", 90), ("Italique", 90), ("Hauteur", 230),
                         ("Niveau de lissage", 150), ("Couleur", 0)],
-    # Identique a la v1 (Titre > Espacements) : une ligne par niveau, 3 curseurs.
-    "Titre : Espacements": [("Niveau", 150), ("Titre replié", 250), ("Titre déplié", 250),
-                            ("Avec le niveau suivant", 0)],
 }
 
 
@@ -866,36 +1659,9 @@ def _label(text: str) -> QLabel:
     return label
 
 
-def _build_gaps_table(group: str, values: ScopeValues, colors: dict, fields: dict, resizers: list,
-                      record: list | None, on_change: Callable | None, on_range: Callable | None) -> QWidget:
-    """Titre > Espacements : une ligne par niveau, un curseur par colonne (3 specs par ligne)."""
-    columns = COLUMN_TABLES[group]
-    specs = CATALOG[group]
-    per_row = len(columns) - 1
-    table_rows = []
-    for start in range(0, len(specs), per_row):
-        cells_row = [(_label(f"Niveau {start // per_row + 1}"), "left", "center")]
-        for spec in specs[start:start + per_row]:
-            field_w = make_field(spec, values, colors, on_range)
-            for key in (spec.key, *spec.extra_keys):
-                fields[key] = field_w
-            if record is not None:
-                record.append((spec, field_w))
-                _connect_changed(field_w, on_change)
-            cells_row.append((field_w, "center", "center"))
-        table_rows.append(cells_row)
-    frame, head, _cells = build_cells_table(
-        columns, table_rows, head_align={i: Qt.AlignCenter for i in range(1, len(columns))})
-    resizers.append(head)
-    normalize_toggles(frame)
-    return frame
-
-
 def _build_font_table(group: str, values: ScopeValues, colors: dict, fields: dict, resizers: list,
                       record: list | None, on_change: Callable | None, on_range: Callable | None) -> QWidget:
     """Tableau « une ligne par niveau, un champ par colonne » (reproduction de la v1 : Titre > Polices)."""
-    if group == "Titre : Espacements":
-        return _build_gaps_table(group, values, colors, fields, resizers, record, on_change, on_range)
     columns = COLUMN_TABLES[group]
     table_rows = []
     for spec in CATALOG[group]:
@@ -908,6 +1674,7 @@ def _build_font_table(group: str, values: ScopeValues, colors: dict, fields: dic
             record.append((spec, holder))
             _connect_changed(holder, on_change)
         hook_ranges(parts["size"], f"{spec.key}", values.settings, on_range)
+        tag_toggles(list(parts.values()), values.title or "General", spec.key)
         table_rows.append([(holder, "left", "center")] + [(parts[name], "center", "center")
                                                           for name, _caption in FONT_CAPTIONS])
     frame, head, _cells = build_cells_table(
@@ -920,10 +1687,18 @@ def _build_font_table(group: str, values: ScopeValues, colors: dict, fields: dic
 def _flat_cells_table(rows: list) -> QWidget:
     """Tableau Parametre | Valeur. `rows` : (libelle, champ, toggle d'override ou None). Un toggle
     (portee de surcharge) precede le libelle ; OFF grise la ligne, qui suit alors le General."""
-    toggle_extra = 40 if any(t is not None for _l, _f, t in rows) else 0
-    columns = [("Paramètre", natural_label_width([label for label, _f, _t in rows], toggle_extra)), ("Valeur", 0)]
+    rows = [tuple(row) + (None,) * (4 - len(row)) for row in rows]
+    toggle_extra = 40 if any(t is not None for _l, _f, t, _s in rows) else 0
+    # Jamais plus etroite que le titre de son entete (« PARAMÈTRE », police des entetes) : des libelles
+    # courts le tronquaient.
+    head_width = QFontMetrics(_qfont(9, 600)).horizontalAdvance("PARAMÈTRE") + 28 + 6
+    columns = [("Paramètre", max(head_width, natural_label_width([label for label, _f, _t, _s in rows],
+                                                                   toggle_extra))), ("Valeur", 0)]
+    shortcuts = any(s is not None for _l, _f, _t, s in rows)
+    if shortcuts:                       # colonne « Raccourci » (lignes a raccourci clavier)
+        columns.append(("Raccourci", 150))
     table_rows = []
-    for label, field, toggle in rows:
+    for label, field, toggle, shortcut in rows:
         text = _label(label)
         if toggle is None:
             first = text
@@ -942,11 +1717,71 @@ def _flat_cells_table(rows: list) -> QWidget:
 
             toggle.toggled.connect(sync)
             sync(toggle.isChecked())
-        table_rows.append([(first, "left", "center"), (field, "right", "center")])
-    frame, head, _cells = build_cells_table(
-        columns, table_rows, head_align={1: Qt.AlignRight | Qt.AlignVCenter})
+        cells = [(first, "left", "center"), (field, "right", "center")]
+        if shortcuts:
+            if shortcut is None:
+                shortcut = QWidget()
+                shortcut.setStyleSheet("background: transparent;")
+            cells.append((shortcut, "center", "center"))
+        table_rows.append(cells)
+    head_align = {1: Qt.AlignRight | Qt.AlignVCenter}
+    if shortcuts:
+        head_align[2] = Qt.AlignCenter
+    frame, head, _cells = build_cells_table(columns, table_rows, head_align=head_align)
     frame._v2_head = head
     return frame
+
+
+def _dim_row(field: QWidget, dimmed: bool):
+    """Grise une ligne de tableau : son champ (inactif, 20 %) et son libelle (20 %, reste cliquable :
+    Ctrl + glisser deplace toujours la ligne)."""
+    _set_dimmed(field, dimmed)
+    cell = field.parentWidget()
+    while cell is not None and not isinstance(cell, _Cell):
+        cell = cell.parentWidget()
+    row = cell.parentWidget() if cell is not None else None
+    if row is None:
+        return
+    for other in row.findChildren(_Cell, options=Qt.FindDirectChildrenOnly):
+        if other is not cell:
+            effect = other.content().graphicsEffect()
+            if not isinstance(effect, QGraphicsOpacityEffect):
+                effect = QGraphicsOpacityEffect(other.content())
+                other.content().setGraphicsEffect(effect)
+            effect.setOpacity(_DIMMED_OPACITY if dimmed else 1.0)
+
+
+def _link_active_rows(group: str, title: str | None, fields: dict):
+    """Lignes actives SEULEMENT quand une autre ligne du groupe a une valeur donnee
+    (`params["active_when"] = (cle, valeur)`, ex. Icones / Animation quand Type = Icones) : grisees
+    sinon, en direct."""
+    specs = [sp for sp in CATALOG[group] if sp.applies(title)]
+    by_key = {sp.key: sp for sp in specs}
+    for spec in specs:
+        rule = spec.params.get("active_when")
+        if not rule or rule[0] not in by_key or spec.key not in fields or rule[0] not in fields:
+            continue
+        driver_spec, driver, target = by_key[rule[0]], fields[rule[0]], fields[spec.key]
+
+        def sync(driver_spec=driver_spec, driver=driver, target=target, rule=rule):
+            _dim_row(target, read_spec(driver_spec, driver).get(rule[0]) != rule[1])
+
+        _connect_changed(driver, sync)
+        sync()
+
+
+def _shortcut_field(spec: Spec, values: ScopeValues, colors: dict, fields: dict, record: list | None,
+                    on_change: Callable | None) -> QWidget | None:
+    """Champ de la colonne « Raccourci » d'une ligne qui en a un (`params["shortcut"]`, un Spec)."""
+    sub = spec.params.get("shortcut")
+    if sub is None:
+        return None
+    widget = make_field(sub, values, colors)
+    fields[sub.key] = widget
+    if record is not None:
+        record.append((sub, widget))
+        _connect_changed(widget, on_change)
+    return widget
 
 
 def build_group(group: str, values: ScopeValues, colors: dict,
@@ -969,27 +1804,37 @@ def build_group(group: str, values: ScopeValues, colors: dict,
         if record is not None:
             record.append((spec, field_w))
             _connect_changed(field_w, on_change)
-        if override:
+        if override and not spec.flat:
             toggle = _Toggle(values.enabled(spec.key), style_override="toggle2", show_label=False)
+            toggle.style_id = f"{values.title}|{spec.key}#actif"
             for key in (spec.key, *spec.extra_keys):
                 toggles[key] = toggle
             toggle_rows.append((spec.label, field_w, toggle))
+            if record is not None:
+                _connect_changed(toggle, on_change)      # activer/couper la surcharge = changement
         elif spec.general_toggle:
             toggle = _Toggle(bool(values.seed(spec.general_toggle, False)), style_override="toggle2", show_label=False)
+            toggle.style_id = f"General|{spec.general_toggle}#actif"
             toggles[spec.general_toggle] = toggle
             toggle_rows.append((spec.label, field_w, toggle))
             if record is not None:
                 record.append((spec.general_toggle, toggle))
                 _connect_changed(toggle, on_change)
         else:
-            flat_rows.append((spec.label, field_w, None))
+            flat_rows.append((spec.label, field_w, None, _shortcut_field(spec, values, colors, fields, record,
+                                                                         on_change)))
     frames = []
     for rows in (flat_rows, toggle_rows):
         if rows:
             frame = _flat_cells_table(rows)
+            if group in PORTED_GROUPS:
+                # Cle de dimensions propre a la v2 : la v1 a enregistre sous le meme titre de section
+                # les largeurs de SES tableaux (autres colonnes), qui ecraseraient celles-ci.
+                frame._dims_key = f"v2:{group}#{len(frames)}"
             resizers.append(frame._v2_head)
             normalize_toggles(frame)
             frames.append(frame)
+    _link_active_rows(group, values.title, fields)
     if len(frames) == 1:
         return frames[0]
     wrap = QWidget()
@@ -998,8 +1843,39 @@ def build_group(group: str, values: ScopeValues, colors: dict,
     wl.setContentsMargins(0, 0, 0, 0)
     wl.setSpacing(0)
     for frame in frames:
-        wl.addWidget(frame)
+        wl.addWidget(frame, 0, Qt.AlignLeft)        # tableaux justifies a gauche
     return wrap
+
+
+def _fit_inner(scroller: QScrollArea):
+    """Page a la taille de l'ascenseur, sans jamais descendre sous sa taille mini : ni tassee en
+    hauteur, ni serree en largeur (un tableau plus large que la fenetre fait defiler a l'horizontale)."""
+    inner = scroller.widget()
+    if inner is None:
+        return
+    hint = inner.minimumSizeHint()
+    width = max(scroller.viewport().width(), hint.width())
+    height = max(scroller.viewport().height(), hint.height())
+    if inner.width() != width or inner.height() != height:
+        inner.resize(width, height)
+
+
+class _WideScrollArea(_NoSqueezeScrollArea):
+    """Ascenseur de page de la v2 : comme _NoSqueezeScrollArea, mais un tableau plus large que la
+    fenetre (colonnes libres) elargit la page (ascenseur horizontal) au lieu d'etre rogne."""
+
+    def setWidget(self, widget):
+        super().setWidget(widget)
+        widget.installEventFilter(self)
+
+    def resizeEvent(self, event):
+        QScrollArea.resizeEvent(self, event)
+        _fit_inner(self)
+
+    def eventFilter(self, obj, event):
+        if obj is self.widget() and event.type() == QEvent.LayoutRequest:
+            _fit_inner(self)
+        return super().eventFilter(obj, event)
 
 
 class _LazyNode(QWidget):
@@ -1021,6 +1897,7 @@ class _LazyNode(QWidget):
             self._head = _Section(node.title) if level == 1 else _SubSection(node.title, level=level)
         lay.addWidget(self._head)
         self._head.set_collapsed(True)
+        self._head.enable_box()        # titre + contenu = un paragraphe (Titres > Paragraphes)
         # Section : recalcule tout l'arbre (refresh_min_height) ; sous-section
         # sous une section : on previent la section ; sinon son propre parent.
         own = self._head.refresh_min_height if level == 1 else self._head.refresh_layout
@@ -1035,8 +1912,10 @@ class _LazyNode(QWidget):
         """Ajoute une sous-section a un noeud deja construit (nouveau style de toggle)."""
         child = _LazyNode(node, min(self.level + 1, 5), self._values, self._colors, self._store, self._eager,
                           self._child_refresh, self._child_wrap, self.wired)
-        self._child_nodes.append(child)
-        self._child_wrap.layout().addWidget(child)
+        _add_stacked(self._child_wrap.layout(), self._child_nodes, child)
+        stack = getattr(self._child_wrap, "_title_stack", None)
+        if stack is not None:
+            stack.attach(child)
         _make_accordion(self._child_nodes)
         self._child_refresh()
         return child
@@ -1045,6 +1924,15 @@ class _LazyNode(QWidget):
     def head(self):
         """L'entete cliquable (ce que _make_accordion ecoute)."""
         return self._head.head
+
+    def _stack_key(self) -> str:
+        """Cle de la pile de ses enfants : onglet + chemin des titres (enregistrement de leur ordre)."""
+        titles, node = [], self
+        while node is not None:
+            if isinstance(node, _LazyNode):
+                titles.append(node.node.title)
+            node = node.parentWidget()
+        return f"{self._values.title or 'General'}|" + "/".join(reversed(titles))
 
     def is_collapsed(self) -> bool:
         return self._head.is_collapsed()
@@ -1063,27 +1951,31 @@ class _LazyNode(QWidget):
         node = self.node
         with _section_host(self):
             if node.group:
-                self._head.add(build_group(
-                    node.group, self._values, self._colors, self._store.setdefault("fields", {}),
-                    self._store.setdefault("toggles", {}), self._store.setdefault("resizers", []),
-                    self._store.setdefault("specs", []) if self.wired else None,
-                    self._store.get("on_change"), self._store.get("on_range")))
+                self._group_widget = self._make_group()
+                self._head.add(self._group_widget)
             if node.children:
                 wrap = QWidget()
                 wrap.setStyleSheet("background: transparent;")
                 wl = QVBoxLayout(wrap)
                 wl.setContentsMargins(0, 0, 0, 0)
-                wl.setSpacing(6)
+                wl.setSpacing(0)               # l'ecart entre titres = leurs paddings (Titres > Paragraphes)
                 children = self._child_nodes = []
                 self._child_wrap = wrap
-                for child in node.children:
-                    children.append(_LazyNode(child, min(self.level + 1, 5), self._values, self._colors,
-                                              self._store, self._eager, self._child_refresh, wrap, self.wired))
-                    wl.addWidget(children[-1])
+                key = self._stack_key()
+                ordered = self._store.get("title_order")
+                for child in (ordered(node.children, key) if ordered else node.children):
+                    _add_stacked(wl, children, _LazyNode(child, min(self.level + 1, 5), self._values, self._colors,
+                                                         self._store, self._eager, self._child_refresh, wrap,
+                                                         self.wired))
                 _make_accordion(children)      # en deplier un replie les soeurs, sauf avec Ctrl
                 # Titres des enfants a leur retrait absolu : pas de decalage
                 # de corps (voir _BodyMixin._holds_titles).
                 self._head._body_layout.addWidget(wrap)
+                for child in children:     # leur retrait se calcule depuis ce paragraphe, desormais parent
+                    child._head.apply_box()
+                make_stack = self._store.get("title_stack")
+                if make_stack is not None:
+                    make_stack(wrap, children, key)
         after = self._store.get("after_build")
         if after is not None:
             after()
@@ -1091,6 +1983,174 @@ class _LazyNode(QWidget):
             # Pas encore branche : on le montre mais on ne le laisse pas modifier
             # (une valeur changee ici ne serait ni appliquee ni enregistree).
             self._head._body.setEnabled(False)
+
+    def _make_group(self) -> QWidget:
+        return build_group(
+            self.node.group, self._values, self._colors, self._store.setdefault("fields", {}),
+            self._store.setdefault("toggles", {}), self._store.setdefault("resizers", []),
+            self._store.setdefault("specs", []) if self.wired else None,
+            self._store.get("on_change"), self._store.get("on_range"))
+
+    def rebuild_group(self):
+        """Tableau du groupe refait avec les valeurs COURANTES des reglages (changees hors de la fenetre :
+        tableau a la volee de la visionneuse). Ses dimensions (largeurs, hauteurs...) passent a la copie."""
+        old = getattr(self, "_group_widget", None)
+        if not self._built or old is None:
+            return
+        frames = ([old] if isinstance(old, _TableFrame) else []) + old.findChildren(_TableFrame)
+        for frame in frames:
+            if frame._dims_applied:
+                _TABLE_DIMS[frame.dimsKey()] = frame.collectDims()
+        mine = lambda w: w is old or old.isAncestorOf(w)
+        store = self._store
+        if "specs" in store:
+            store["specs"][:] = [e for e in store["specs"] if not mine(e[1])]
+        for name in ("fields", "toggles"):
+            for key in [k for k, w in store.get(name, {}).items() if mine(w)]:
+                del store[name][key]
+        if "resizers" in store:
+            store["resizers"][:] = [h for h in store["resizers"] if not mine(h)]
+        with _section_host(self):
+            new = self._make_group()
+        for row in self._head._body_rows:
+            if row.indexOf(old) >= 0:
+                row.replaceWidget(old, new)
+                break
+        self._group_widget = new
+        old.hide()
+        old.deleteLater()
+        after = store.get("after_build")
+        if after is not None:
+            after()
+
+
+class _TitleStack:
+    """Paragraphes freres (titres d'une meme pile) reordonnes en TIRANT leur titre : le paragraphe
+    entier suit le curseur, son ancienne place reste a 25 %, les emplacements possibles s'allument a
+    l'approche (le meme retour visuel que les colonnes / lignes, _ReorderOverlay sur l'axe vertical).
+    L'ordre est retenu par titres (`on_order(cle, [titres])`). Protocole de _ReorderOverlay :
+    `_order` et `_column_spans()` (indices = places au debut du geste)."""
+
+    def __init__(self, container: QWidget, nodes: list, key: str, on_order: Callable):
+        self.container, self.nodes, self.key, self.on_order = container, nodes, key, on_order
+        self._base: list = []
+        self._order: list = []
+        self._overlay = None
+        self._gpos = None
+        # Pres du haut / du bas de la page, elle defile toute seule (emplacement hors de la vue).
+        self._scroll_timer = QTimer(container)
+        self._scroll_timer.setInterval(16)
+        self._scroll_timer.timeout.connect(self._auto_scroll)
+        for node in nodes:
+            self.attach(node)
+
+    def attach(self, node: "_LazyNode"):
+        node.head.drag_handler = self
+
+    def _column_spans(self) -> list:
+        spans = []
+        for node in self._base:
+            top = node.mapTo(self.container, QPoint(0, 0)).y()
+            spans.append((top, top + node.height()))
+        return spans
+
+    def begin(self, header, press) -> bool:
+        node = next((n for n in self.nodes if n.head is header), None)
+        if node is None or len(self.nodes) < 2:
+            return False
+        self._base = list(self.nodes)
+        self._order = list(range(len(self._base)))
+        top = node.mapTo(self.container, QPoint(0, 0)).y()
+        ghost = self.container.grab(QRect(0, top, self.container.width(), node.height()))
+        self._overlay = _ReorderOverlay(self.container, self, self._base.index(node), ghost, 0,
+                                        self.container.mapFromGlobal(press).y() - top, axis="y")
+        return True
+
+    _EDGE = 40          # px du bord de la page ou elle commence a defiler
+
+    def _scroller(self):
+        widget = self.container
+        while widget is not None and not isinstance(widget, QScrollArea):
+            widget = widget.parentWidget()
+        return widget
+
+    def move(self, gpos):
+        self._gpos = gpos
+        if self._overlay is not None:
+            self._overlay.follow(self.container.mapFromGlobal(gpos).y())
+            if not self._scroll_timer.isActive():
+                self._scroll_timer.start()
+
+    def _auto_scroll(self):
+        scroller = self._scroller()
+        if self._overlay is None or scroller is None or self._gpos is None:
+            self._scroll_timer.stop()
+            return
+        y = scroller.viewport().mapFromGlobal(self._gpos).y()
+        height = scroller.viewport().height()
+        step = 0
+        if y < self._EDGE:
+            step = -max(2, (self._EDGE - y) // 2)
+        elif y > height - self._EDGE:
+            step = max(2, (y - (height - self._EDGE)) // 2)
+        if step:
+            bar = scroller.verticalScrollBar()
+            bar.setValue(bar.value() + step)
+            self._overlay.follow(self.container.mapFromGlobal(self._gpos).y())
+
+    def end(self):
+        self._scroll_timer.stop()
+        overlay, self._overlay = self._overlay, None
+        if overlay is None:
+            return
+        gap = overlay.target
+        overlay.hide()
+        overlay.deleteLater()
+        if gap is None:
+            return
+        order = [i for i in self._order if i != overlay.source]
+        order.insert(gap - (1 if gap > overlay.source else 0), overlay.source)
+        self.apply([self._base[i] for i in order])
+        self.on_order(self.key, [n.node.title for n in self.nodes])
+
+    def apply(self, nodes: list):
+        """Pose `nodes` dans cet ordre : layout, liste des freres (accordeon), voisins des boites."""
+        layout = self.container.layout()
+        base = min(layout.indexOf(n) for n in self.nodes)
+        for node in self.nodes:
+            layout.removeWidget(node)
+        for pos, node in enumerate(nodes):
+            layout.insertWidget(base + pos, node)
+        self.nodes[:] = nodes
+        for pos, node in enumerate(nodes):
+            node._head._box_prev = nodes[pos - 1]._head if pos else None
+            node._head._box_next = nodes[pos + 1]._head if pos + 1 < len(nodes) else None
+        for node in nodes:
+            node._head.apply_box()
+        layout.activate()
+        _reflow_ancestors(self.container)
+
+
+def ordered_nodes(nodes, titles) -> list:
+    """`nodes` dans l'ordre enregistre `titles` (titres inconnus : a la fin, dans leur ordre)."""
+    nodes = list(nodes)
+    if not titles:
+        return nodes
+    rank = {title: i for i, title in enumerate(titles)}
+    return sorted(nodes, key=lambda n: (rank.get(n.title, len(rank)), nodes.index(n)))
+
+
+def _add_stacked(layout: QVBoxLayout, nodes: list, node: _LazyNode):
+    """Empile `node` sous ses freres `nodes`, sans espaceur : l'ecart entre titres vient du padding du
+    titre et des paragraphes (Titres > Paragraphes > Padding (titre) / Padding / Margin). Le layout doit avoir
+    un espacement nul. Chaque titre connait ses voisins (boites collees : filet unique, coins droits)."""
+    if nodes:
+        above = nodes[-1]._head
+        above._box_next, node._head._box_prev = node._head, above
+        above.apply_box()
+        node._head.apply_box()
+    nodes.append(node)
+    layout.addWidget(node)
 
 
 def expand_all(root: QWidget):
@@ -1110,11 +2170,17 @@ def expand_all(root: QWidget):
 def _head_hex(colors: dict, value: str) -> str:
     """Couleur d'entete des tableaux (pastille d'appli ou couleur libre) en hexa, comme
     _HeaderColorField._current_hex."""
-    probe = _HeaderColorField(colors, value)
-    try:
-        return probe._current_hex()
-    finally:
-        probe.deleteLater()
+    # Calcul pur (meme regle que le champ) : creer un _HeaderColorField pour le lire coutait ~3 ms, une
+    # douzaine de fois par cran d'un glisser de couleur (signale : « ca rame »).
+    from app_style import split_color_ref, with_alpha
+    from settings_store import _SLOT_REAL
+    from settings_widgets import _SLOT_LABELS
+    value, alpha = split_color_ref(value) if isinstance(value, str) else ("skinN1", 100)
+    if not (value in _SLOT_LABELS or value.startswith("#")):
+        value = "skinN1"
+    if value.startswith("#"):
+        return value
+    return with_alpha(colors.get(_SLOT_REAL.get(value, "chrome"), "#000000"), alpha)
 
 
 def _padding_tuple(sides: dict) -> tuple:
@@ -1124,7 +2190,167 @@ def _padding_tuple(sides: dict) -> tuple:
 
 # Sections de l'onglet General deja BRANCHEES (lues, appliquees en direct,
 # enregistrees). Les autres s'affichent mais restent grisees.
-WIRED_SECTIONS = ("Colonnes", "TITRE", "Tableaux", "Toggles", "Sliders")
+# Sections renommees (TITRE -> TITRES, Espacements -> Padding (titre seulement), Fond -> Paragraphes) :
+# la cle des dimensions d'un tableau suit les titres (_TableFrame.dimsKey). Les anciennes cles sont
+# RECOPIEES (jamais deplacees : la v1 garde les siennes) vers les nouvelles si celles-ci manquent.
+_DIMS_RENAMES = (("TITRE/Espacements#", "TITRES/Padding (titre seulement)#"),
+                 ("TITRE/Fond/", "TITRES/Paragraphes/"),
+                 ("TITRE/", "TITRES/"))
+
+
+def _renamed_dims(dims: dict) -> dict:
+    out = dict(dims)
+    for key, value in dims.items():
+        for old, new in _DIMS_RENAMES:
+            if key.startswith(old):
+                out.setdefault(new + key[len(old):], value)
+                break
+    # Tableaux lies : avant le lien, chaque niveau avait ses dimensions ; on part de celles du premier.
+    for group, (prefix, shared) in _LINKED_TABLES.items():
+        if shared not in out:
+            legacy = sorted(k for k in out if k.startswith(prefix) and k != shared)
+            if legacy:
+                out[shared] = out[legacy[0]]
+    if isinstance(out.get("TITRES/Paragraphes#0"), dict):
+        out["TITRES/Paragraphes#0"] = _shift_paragraph_rows(out["TITRES/Paragraphes#0"])
+    for part in _TOGGLE_TABLE_PARTS:            # tableaux des toggles : on part de ceux du Toggle 1
+        shared = f"Toggles/{part}#0"
+        if shared not in out:
+            legacy = sorted((k for k in out if re.fullmatch(rf"Toggles/[^/]+/{part}#0", k)),
+                            key=lambda k: (k != f"Toggles/Toggle 1/{part}#0", k))
+            if legacy:
+                out[shared] = out[legacy[0]]
+    return out
+
+
+_ROW_KEYED = ("align", "split", "split_order", "split_align", "split_head_align", "split_titles")
+
+
+def _shift_paragraph_rows(dims: dict) -> dict:
+    """Paragraphes > Niveau N a recu 2 lignes (Padding (titre), Padding (paragraphe)) apres « Padding » :
+    les dimensions enregistrees avant (5 lignes, la derniere au rang 4) decalent Bordures et Border
+    radius de 2 rangs (r3 -> r5, r4 -> r6). Deja a 7 lignes : rien a faire."""
+    rows = {int(k[1:].split("c")[0]) for k in (dims.get("split") or {}) if k.startswith("r") and "c" in k}
+    if not rows or max(rows) != 4:
+        return dims
+
+    def shifted(key: str) -> str:
+        row, _, col = key[1:].partition("c")
+        return f"r{int(row) + 2}c{col}" if int(row) >= 3 else key
+
+    out = dict(dims)
+    for name in _ROW_KEYED:
+        if isinstance(dims.get(name), dict):
+            out[name] = {shifted(k): v for k, v in dims[name].items()}
+    heights = list(dims.get("row_heights") or [])
+    if len(heights) > 3:
+        out["row_heights"] = heights[:3] + [0, 0] + heights[3:]
+    return out
+
+
+# Tableaux LIES : un meme tableau repete (un par niveau) n'a qu'UNE serie de dimensions. Modifier
+# une largeur de colonne ou de sous-cellule, une hauteur de ligne, un ordre ou une justification
+# dans l'un se reporte en direct sur tous les autres (_link_tables). {groupe: (prefixe des cles
+# deduites des titres, cle partagee)}.
+_LINKED_TABLES = {"paragraphes": ("TITRES/Paragraphes/", "TITRES/Paragraphes#0")}
+
+
+def seed_table_look(settings: dict):
+    """Etat de depart de l'habillage des tableaux (filets interieurs, padding, couleur d'entete, de
+    selection, lignes deplacables) : chaque tableau le lit a sa creation."""
+    colors = settings["colors"]
+    _set_table_inner_border(*(
+        (settings[f"table_inner_{axis}_enabled"], _resolve_color_value(settings[f"table_inner_{axis}_color"], colors),
+         settings[f"table_inner_{axis}_thickness"]) for axis in ("h", "v")))
+    _set_flat_tables_style(padding=_padding_tuple(settings.get("table_cell_padding") or {}))
+    _TABLE_HEAD["bg"] = _head_hex(colors, settings.get("table_head_color", "tableHead"))
+    _TABLE_HEAD["cell_bg"] = _head_hex(colors, settings.get("table_cell_head_color", "tableHead"))
+    _TABLE_SELECTION["color"] = _resolve_color_value(settings.get("table_selection_color", "#5f9bd0"), colors)
+    _ROWS_MOVABLE["enabled"] = bool(settings.get("table_rows_movable", True))
+    _set_table_shadow(shadow_look(settings, "table_shadow", lambda value: _resolve_color_value(value, colors)))
+    seed_above_text_look(settings)         # textes au-dessus des lignes
+
+
+def seed_window_look(settings: dict):
+    """Style commun que les champs et tableaux lisent a leur creation (zones de saisie, palette,
+    curseurs, toggles, titres, tableaux) : la fenetre v2, et toute fenetre flottante construite avec
+    les memes briques (ex. settings_quick_style.QuickStyleWindow)."""
+    _set_input_radius(int(settings.get("input_radius", 0)))
+    _set_button_radius(int(settings.get("button_radius", 0)))
+    _sync_dynamic_M(settings["colors"])
+    _sync_slider_style(settings)
+    _sync_toggle_style(settings)
+    _sync_title_level_style(settings)
+    _seed_flat_tables_style(int(settings.get("table_radius", 0)), (
+        _coerce_side_enabled(settings.get("table_border_enabled", True)),
+        {k: _resolve_color_value(v, settings["colors"]) for k, v in (settings.get("table_border") or {}).items()},
+        int(settings.get("table_border_thickness", 1))))
+    seed_table_look(settings)
+    seed_extra_window_look(settings)       # fenetres additionnelles (cadre, ombre, barres)
+    import settings_element_style          # « Override settings » (clic droit) + styles propres enregistres
+    settings_element_style.load(settings)
+
+# Tableaux des styles de toggle : tous les styles ont les MEMES tableaux (Type, Cadre, Coche), lies
+# d'un style a l'autre, nouveaux compris. Reconnus par leur groupe du CATALOG (le titre d'un style
+# est renommable), cle partagee `Toggles/<tableau>#0`.
+_TOGGLE_TABLE_PARTS = ("Type", "Cadre", "Coche")
+_TOGGLE_TABLE_GROUP = re.compile(r"^toggle\d+ : (Type|Cadre|Coche)$")
+
+
+def _linked_group(frame: QWidget):
+    """(groupe, cle partagee) d'un tableau lie, sinon None."""
+    key = frame.dimsKey()
+    for group, (prefix, shared) in _LINKED_TABLES.items():
+        if key.startswith(prefix):
+            return group, shared
+    node = frame.parentWidget()
+    while node is not None and not isinstance(node, _LazyNode):
+        node = node.parentWidget()
+    match = _TOGGLE_TABLE_GROUP.match(node.node.group or "") if node is not None else None
+    if match:
+        return f"toggles:{match.group(1)}", f"Toggles/{match.group(1)}#0"
+    return None
+
+
+def _space_menu_extra(widget: QWidget, menu) -> None:
+    """Fournisseur de menu contextuel (voir settings_widgets.CONTEXT_MENU_EXTRAS) : seulement dans la v2."""
+    window = widget.window()
+    if isinstance(window, SettingsWindowV2):
+        window.add_space_action(widget, menu)
+
+
+CONTEXT_MENU_EXTRAS.append(_space_menu_extra)
+
+
+def _toggle_title_menu_extra(widget: QWidget, menu) -> None:
+    """Clic droit sur le titre d'un style de toggle (Toggles > <nom>) : renommer / supprimer."""
+    window = widget.window()
+    if not isinstance(window, SettingsWindowV2) or not isinstance(widget, _SectionHeader):
+        return
+    node = widget.parentWidget()
+    while node is not None and not isinstance(node, _LazyNode):
+        node = node.parentWidget()
+    if node is not None and node.node.toggle_key:
+        window.populate_toggle_menu(menu, node.node.toggle_key)
+
+
+CONTEXT_MENU_EXTRAS.insert(0, _toggle_title_menu_extra)
+
+
+def _toggle_style_listener(toggle: QWidget, key: str | None) -> None:
+    """Style choisi au clic droit sur un toggle de la fenetre : enregistre pour CE toggle."""
+    window = toggle.window()
+    if isinstance(window, SettingsWindowV2):
+        window._set_toggle_style(toggle, key)
+
+
+TOGGLE_STYLE_LISTENERS.append(_toggle_style_listener)
+
+
+WIRED_SECTIONS = ("Colonnes", "TITRES", "Tableaux", "Toggles", "Sliders", "Application", "Visionneuse",
+                  "Menu contextuel", "Fenêtres additionnelles",
+                  "Dossiers et fichiers à omettre", "LUT", "Polices principales", "Couleurs", "Geometrie",
+                  "ICONES", "RACCOURCI")
 
 # Enregistrement EN TEMPS REEL de ce qui n'est pas un reglage a valider : taille/position de la
 # fenetre, dimensions des tableaux (largeur, colonnes, cellules, justifications) et plages des
@@ -1172,20 +2398,12 @@ class SettingsWindowV2(QDialog):
         self._persist_timer.timeout.connect(self._persist_now)
         # Memes prerequis de style que SettingsWindow.__init__ : les widgets
         # lisent ces reglages a leur creation.
-        _set_table_dims(self.settings.get("table_dims") or {})
-        _set_input_radius(int(self.settings.get("input_radius", 0)))
-        _set_button_radius(int(self.settings.get("button_radius", 0)))
-        _sync_dynamic_M(self.settings["colors"])
-        _sync_slider_style(self.settings)
-        _sync_toggle_style(self.settings)
-        _sync_title_level_style(self.settings)
-        _seed_flat_tables_style(int(self.settings.get("table_radius", 0)), (
-            _coerce_side_enabled(self.settings.get("table_border_enabled", True)),
-            {k: _resolve_color_value(v, self.settings["colors"])
-             for k, v in (self.settings.get("table_border") or {}).items()},
-            int(self.settings.get("table_border_thickness", 1))))
-
-        self._seed_table_look()
+        _set_table_dims(_renamed_dims(self.settings.get("table_dims") or {}))
+        seed_window_look(self.settings)
+        # Override d'un element enregistre pendant que la fenetre est ouverte : sa copie des
+        # reglages (renvoyee par l'apercu en direct) le connait aussi.
+        import settings_element_style
+        settings_element_style.add_listener(self._on_element_style_saved)
         self._columns_resizable = bool(self.settings.get("columns_resizable", True))
         self._style_sigs: dict[str, str] = {}
         self.stores: dict[str, dict] = {}        # par onglet : fields / toggles / resizers / specs
@@ -1202,6 +2420,7 @@ class SettingsWindowV2(QDialog):
         root.setSpacing(0)
         self.titlebar = _SettingsTitleBar(self, title="Reglages v2 (General branche)")
         self.titlebar.closeClicked.connect(self.reject)
+        self.titlebar.saveClicked.connect(self._on_apply)      # clic sur « modifications non enregistrees »
         root.addWidget(self.titlebar)
 
         subbar = QWidget()
@@ -1221,7 +2440,9 @@ class SettingsWindowV2(QDialog):
         self.status = QLabel("")
         self.status.setStyleSheet(f"color: {M['label_dim']}; background: {M['toolbar_bg']}; padding: 6px 20px;")
         root.addWidget(self.status)
-        root.addWidget(self._build_bottom_bar())
+        buttons = self._build_bottom_bar()
+        root.addWidget(buttons)
+        install_extra_window(self, panel, outer, root, self.titlebar, buttons)   # Fenetres additionnelles
 
         if eager:
             for i in range(len(SCOPES)):
@@ -1246,14 +2467,30 @@ class SettingsWindowV2(QDialog):
         if AUTOSAVE and self.isVisible():
             self._persist_timer.start()      # relance : on n'ecrit qu'a la fin du geste
 
-    def _autosave(self, partial: dict):
+    def _autosave(self, partial: dict, drop: tuple = ()):
         """Ecrit `partial` sur le disque tout de suite, sans toucher au reste (relit le disque : une
-        autre fenetre a pu enregistrer entre-temps) — comme le fait _on_save."""
+        autre fenetre a pu enregistrer entre-temps) — comme le fait _on_save. `drop` : cles a retirer
+        (reglages d'un style de toggle supprime)."""
         settings = load_settings()
         settings.update(partial)
+        for key in drop:
+            settings.pop(key, None)
         save_settings(settings)
         self.settings.update(partial)
         self._original_settings.update(json.loads(json.dumps(partial)))
+        for key in drop:
+            self.settings.pop(key, None)
+            self._original_settings.pop(key, None)
+
+    def _write_now(self, partial: dict, drop: tuple = ()):
+        """Etat a garder tout de suite (styles de toggle crees/renommes/supprimes) : sur le disque si
+        l'enregistrement en temps reel est actif, sinon dans les reglages de la fenetre."""
+        if AUTOSAVE:
+            self._autosave(partial, drop)
+            return
+        self.settings.update(partial)
+        for key in drop:
+            self.settings.pop(key, None)
 
     def _persist_now(self):
         if not AUTOSAVE:
@@ -1267,36 +2504,182 @@ class SettingsWindowV2(QDialog):
         if dims != (self.settings.get("table_dims") or {}):
             _set_table_dims(dims)
             self._autosave({"table_dims": dims})
+        for key in ("element_spaces", "element_spaces_below", "title_order", "toggle_style_overrides"):
+            state = self.settings.get(key) or {}
+            if state != (self._original_settings.get(key) or {}):
+                self._autosave({key: dict(state)})
 
     def _add_toggle_style(self):
         name, ok = QInputDialog.getText(self, "Nouveau toggle", "Nom du nouveau toggle :")
         if ok and name.strip():
             self.add_toggle_style(name.strip())
 
+    def _unique_toggle_name(self, name: str, own_key: str | None = None) -> str:
+        taken = {s["name"] for s in toggle_style_list(self.settings) if s["key"] != own_key}
+        unique, n = name, 2
+        while unique in taken:
+            unique, n = f"{name} ({n})", n + 1
+        return unique
+
     def add_toggle_style(self, name: str) -> str:
-        """Cree un style de toggle (reglages copies sur le Toggle 1, enregistres tout de suite),
-        sa sous-section Toggles > <nom> (Cadre + Coche) et sa carte dans le choix du style."""
-        customs = list(self.settings.get("toggle_custom_styles") or [])
-        taken = {c["key"] for c in customs} | {"toggle1", "toggle2"}
+        """Cree un style de toggle (reglages copies sur le style par defaut, enregistres tout de suite),
+        sa sous-section Toggles > <nom> (Type + Cadre + Coche) et sa carte dans le choix du style."""
+        styles = toggle_style_list(self.settings)
+        taken = {s["key"] for s in styles} | {"toggle1", "toggle2"}
         number = 3
         while f"toggle{number}" in taken:
             number += 1
         key = f"toggle{number}"
-        partial = {k.replace("toggle1_", f"{key}_", 1): copy.deepcopy(v)
-                   for k, v in self.settings.items() if k.startswith("toggle1_")}
-        partial["toggle_custom_styles"] = customs + [{"key": key, "name": name}]
-        if AUTOSAVE:
-            self._autosave(partial)
-        else:
-            self.settings.update(partial)
+        name = self._unique_toggle_name(name)
+        current = self.current_values()
+        source = current.get("toggle_style")
+        source = source if source in {s["key"] for s in styles} else styles[0]["key"]
+        partial = {f"{key}_{k[len(source) + 1:]}": copy.deepcopy(v)
+                   for k, v in current.items() if k.startswith(f"{source}_")}
+        partial["toggle_styles"] = styles + [{"key": key, "name": name}]
+        partial["toggle_custom_styles"] = []         # ancienne liste : fondue dans toggle_styles
+        self._write_now(partial)
         register_toggle_catalog(key)
-        _sync_toggle_style(self.settings)
+        _sync_toggle_style(self.current_values())
         for picker in self.findChildren(_ToggleStylePicker):
             picker.addOption(key, name)
         for node in self.findChildren(_LazyNode):
             if node.level == 1 and node.node.title == "Toggles" and node._built:
                 node.add_child(_toggle_style_node(key, name))
         return key
+
+    def rename_toggle_style(self, key: str, name: str) -> str | None:
+        """Renomme un style (carte, sous-section, menus « Style du toggle ») ; enregistre aussitot."""
+        name = name.strip()
+        styles = toggle_style_list(self.settings)
+        if not name or key not in {s["key"] for s in styles}:
+            return None
+        name = self._unique_toggle_name(name, key)
+        styles = [dict(s, name=name) if s["key"] == key else s for s in styles]
+        self._write_now({"toggle_styles": styles, "toggle_custom_styles": []})
+        _TOGGLE_STYLE_NAMES[key] = name
+        for picker in self.findChildren(_ToggleStylePicker):
+            picker.renameOption(key, name)
+        for node in self.findChildren(_LazyNode):
+            if node.node.toggle_key == key:
+                node.node = replace(node.node, title=name)
+                node._head._title_text = name
+                node._head._name_label.setText(name.upper())
+        return name
+
+    def delete_toggle_style(self, key: str) -> bool:
+        """Supprime un style (jamais le dernier) : sa carte, sa sous-section, ses reglages. Les toggles
+        qui l'utilisaient reprennent le style par defaut."""
+        styles = toggle_style_list(self.settings)
+        if len(styles) <= 1 or key not in {s["key"] for s in styles}:
+            return False
+        styles = [s for s in styles if s["key"] != key]
+        for node in list(self.findChildren(_LazyNode)):
+            if node.node.toggle_key == key:
+                self._remove_node(node)
+        for picker in self.findChildren(_ToggleStylePicker):
+            picker.removeOption(key)        # s'il etait choisi, le premier restant le devient
+        partial = {"toggle_styles": styles, "toggle_custom_styles": [],
+                   "toggle_style_overrides": {k: v for k, v in (self.settings.get("toggle_style_overrides") or {}).items()
+                                              if v != key}}
+        if self.settings.get("toggle_style") == key:
+            partial["toggle_style"] = styles[0]["key"]
+        # Reglages du style : retires (sauf toggle1/toggle2, dont les cles par defaut existent toujours).
+        drop = tuple(k for k in self.settings if k.startswith(f"{key}_")) if key not in ("toggle1", "toggle2") else ()
+        self._write_now(partial, drop)
+        CATALOG.pop(f"{key} : Type", None), CATALOG.pop(f"{key} : Cadre", None), CATALOG.pop(f"{key} : Coche", None)
+        self._restyle_toggles(self.current_values())
+        return True
+
+    def _remove_node(self, node: "_LazyNode"):
+        """Retire une sous-section construite : voisins recolles, champs oublies par la fenetre."""
+        parent = node.parentWidget()
+        while parent is not None and not isinstance(parent, _LazyNode):
+            parent = parent.parentWidget()
+        siblings = getattr(parent, "_child_nodes", None) if parent is not None else None
+        prev = nxt = None
+        if siblings is not None and node in siblings:
+            i = siblings.index(node)
+            prev = siblings[i - 1]._head if i > 0 else None
+            nxt = siblings[i + 1]._head if i + 1 < len(siblings) else None
+            if prev is not None:
+                prev._box_next = nxt
+            if nxt is not None:
+                nxt._box_prev = prev
+            siblings.pop(i)
+
+        def inside(widget) -> bool:
+            return isinstance(widget, QWidget) and (widget is node or node.isAncestorOf(widget))
+
+        for store in self.stores.values():
+            if "specs" in store:
+                store["specs"][:] = [(s, w) for s, w in store["specs"] if not inside(w)]
+            if "resizers" in store:
+                store["resizers"][:] = [w for w in store["resizers"] if not inside(w)]
+            for name in ("fields", "toggles"):
+                for k in [k for k, w in store.get(name, {}).items() if inside(w)]:
+                    del store[name][k]
+        node.hide()
+        node.setParent(None)
+        node.deleteLater()
+        for title in (prev, nxt):
+            if title is not None:
+                title.apply_box()
+        if parent is not None:
+            parent._child_refresh()
+
+    def populate_toggle_menu(self, menu: QMenu, key: str):
+        """Lignes « Renommer le toggle… » / « Supprimer le toggle » (grisee s'il ne reste qu'un style)."""
+        menu.addAction("Renommer le toggle…").triggered.connect(lambda _c=False: self._ask_rename_toggle(key))
+        delete = menu.addAction("Supprimer le toggle")
+        delete.setEnabled(len(toggle_style_list(self.settings)) > 1)
+        delete.triggered.connect(lambda _c=False: self._ask_delete_toggle(key))
+
+    def _ask_rename_toggle(self, key: str):
+        current = _TOGGLE_STYLE_NAMES.get(key, key)
+        name, ok = QInputDialog.getText(self, "Renommer le toggle", "Nouveau nom :", text=current)
+        if ok and name.strip() and name.strip() != current:
+            self.rename_toggle_style(key, name)
+
+    def _ask_delete_toggle(self, key: str):
+        name = _TOGGLE_STYLE_NAMES.get(key, key)
+        answer = QMessageBox.question(self, "Supprimer le toggle",
+                                      f"Supprimer le style « {name} » et ses réglages ?")
+        if answer == QMessageBox.Yes:
+            self.delete_toggle_style(key)
+
+    # -- style choisi pour un toggle (clic droit sur le toggle) --
+
+    def _toggle_id(self, toggle: _Toggle) -> str | None:
+        if toggle.style_id:
+            return toggle.style_id
+        path = widget_path(toggle, self)
+        return f"ui:{path}" if path else None
+
+    def _set_toggle_style(self, toggle: _Toggle, key: str | None):
+        toggle_id = self._toggle_id(toggle)
+        if toggle_id is None:
+            return
+        overrides = dict(self.settings.get("toggle_style_overrides") or {})
+        if key:
+            overrides[toggle_id] = key
+        else:
+            overrides.pop(toggle_id, None)
+        self.settings["toggle_style_overrides"] = overrides
+        self._schedule_persist()
+
+    def _apply_toggle_styles(self):
+        """Style choisi a la main pour chaque toggle deja construit (une fois par toggle)."""
+        overrides = self.settings.get("toggle_style_overrides") or {}
+        if not overrides:
+            return
+        for toggle in self.findChildren(_Toggle):
+            if getattr(toggle, "_style_restored", False):
+                continue
+            toggle._style_restored = True
+            key = overrides.get(self._toggle_id(toggle))
+            if key:
+                toggle.setStyleKey(key)
 
     def _on_range(self, key: str, low: int, high: int):
         """Clic droit sur un curseur > Modifier la plage : enregistre tout de suite."""
@@ -1326,11 +2709,11 @@ class SettingsWindowV2(QDialog):
     def showEvent(self, event):
         super().showEvent(event)
         # WS_THICKFRAME cote Windows : sans lui nativeEvent n'aurait aucun bord a saisir.
-        apply_dwm_frame(self, 0, M["panel_border"], resizable=True)
+        apply_dwm_frame(self, 0, "none", resizable=True)      # cadre et ombre peints (fenetre additionnelle)
 
     def nativeEvent(self, eventType, message):
         if eventType == b"windows_generic_MSG":
-            result = resize_hit_test(self, message, self._RESIZE_BORDER)
+            result = resize_hit_test(self, message, self._RESIZE_BORDER, shadow_margins(self))
             if result is not None:
                 return result
         return super().nativeEvent(eventType, message)
@@ -1349,15 +2732,31 @@ class SettingsWindowV2(QDialog):
                       height=27, padding="0 13px")
         cancel.clicked.connect(self.reject)
         lay.addWidget(cancel)
+        # Appliquer = enregistrer SANS fermer (demande de l'utilisateur) : Annuler ne revient plus
+        # qu'a l'etat applique.
+        apply = _Btn("Appliquer", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"],
+                     height=27, padding="0 13px")
+        apply.clicked.connect(self._on_apply)
+        lay.addWidget(apply)
         save = _Btn("Enregistrer", M["accent"], M["accent_border"], M["accent_fg"], M["accent_hover"],
                     height=27, weight=600, padding="0 17px")
         save.clicked.connect(self._on_save)
         lay.addWidget(save)
         return bar
 
+    def _show_dirty(self, dirty: bool):
+        """Etat « modifications non enregistrees » : texte de la barre de titre ET bordure de la fenetre en
+        rouge (demande de l'utilisateur) — bordure peinte du panneau et filet DWM de Windows ; ne touche au
+        cadre que quand l'etat change (le filet DWM coute ~20 ms)."""
+        self._dirty = dirty
+        self.titlebar.set_dirty(dirty)
+        if getattr(self, "_frame_dirty", None) == dirty:
+            return
+        self._frame_dirty = dirty
+        self.panel.setAlert(M["dirty_frame"] if dirty else None)      # bordure peinte du panneau
+
     def _mark_dirty(self):
-        self._dirty = True
-        self.titlebar.set_dirty(True)
+        self._show_dirty(True)
         # PAS de restart() : on laisse tourner le minuteur en cours, pour appliquer toutes les
         # 30 ms PENDANT un glissement (relancer l'echeance a chaque mouvement n'appliquait rien
         # avant la fin du geste, d'ou des sauts). Meme logique que SettingsWindow._mark_dirty.
@@ -1366,14 +2765,60 @@ class SettingsWindowV2(QDialog):
 
     def wired_values(self) -> dict:
         """Valeurs COURANTES de tous les champs branches deja construits (les
-        sections jamais ouvertes n'existent pas : leurs cles restent celles du disque)."""
+        sections jamais ouvertes n'existent pas : leurs cles restent celles du disque).
+        Onglets de surcharge : leurs valeurs vont dans les dictionnaires de surcharge (voir
+        _override_values), jamais dans les cles generales."""
         out: dict = {}
-        for store in self.stores.values():
+        scopes = dict(SCOPES)
+        overrides = {}
+        for label, store in self.stores.items():
+            if scopes.get(label) is not None:
+                overrides[scopes[label]] = store
+                for spec, widget in store.get("specs", ()):
+                    if not isinstance(spec, str) and spec.flat:      # reglage propre a la colonne
+                        out.update(read_spec(spec, widget))
+                continue
             for spec, widget in store.get("specs", ()):
                 if isinstance(spec, str):                 # interrupteur d'override du General
                     out[spec] = widget.isChecked()
                 else:
                     out.update(read_spec(spec, widget))
+        if any(store.get("specs") for store in overrides.values()):
+            out.update(self._override_values(overrides))
+        palette = {k[len("colors:"):]: out.pop(k) for k in [k for k in out if k.startswith("colors:")]}
+        if palette:                                  # Couleurs : fondues dans la palette
+            out["colors"] = {**(self.settings.get("colors") or {}), **palette}
+        return out
+
+    def _override_values(self, stores: dict) -> dict:
+        """Les 6 dictionnaires de surcharge (memes cles que SettingsWindow._column_override_values) :
+        ceux des reglages, mis a jour cle par cle avec les lignes des onglets DEJA construits (une ligne
+        jamais affichee garde sa valeur enregistree). Valeur = lue dans le champ, actif = toggle de la
+        ligne, « lier les 4 » (`<cle>_linked` lu par le champ) = dictionnaire `linked`, cle `<cle>`."""
+        names = {"overrides": ("column_type_overrides", "column_overrides_by_title"),
+                 "enabled": ("column_type_override_enabled", "column_override_enabled_by_title"),
+                 "linked": ("column_type_override_linked", "column_override_linked_by_title")}
+        out = {name: copy.deepcopy(self.settings.get(name) or {}) for pair in names.values() for name in pair}
+        for title, store in stores.items():
+            def target(kind):
+                type_key, by_title_key = names[kind]
+                return out[type_key] if title == "Type" else out[by_title_key].setdefault(title, {})
+            overrides, enabled, linked = target("overrides"), target("enabled"), target("linked")
+            toggles = store.get("toggles", {})
+            for spec, widget in store.get("specs", ()):
+                if isinstance(spec, str) or spec.flat:
+                    continue
+                toggle = toggles.get(spec.key)
+                for key, value in read_spec(spec, widget).items():
+                    if key.endswith("_linked"):
+                        linked[key[:-len("_linked")]] = value
+                    else:
+                        overrides[key] = value
+                        if toggle is not None:
+                            enabled[key] = toggle.isChecked()
+                if toggle is not None:
+                    for key in spec.extra_keys:          # ex. cles *_override des etats de selection
+                        enabled[key] = toggle.isChecked()
         return out
 
     def current_values(self) -> dict:
@@ -1389,6 +2834,10 @@ class SettingsWindowV2(QDialog):
             "titles": (("title_level",), self._restyle_titles),
             "tables": (("table_", "columns_resizable"), self._restyle_tables),
             "toggles": (("toggle",), self._restyle_toggles),
+            "geometry": (("input_radius", "button_radius"), self._restyle_geometry),
+            "colors": (("colors",), self._restyle_colors),
+            # Fenetres additionnelles (celle-ci comprise) : en direct.
+            "extra_windows": (("extra_window_", "colors"), seed_extra_window_look),
         }
 
     def _apply_look(self, merged: dict, values: dict | None = None):
@@ -1404,8 +2853,17 @@ class SettingsWindowV2(QDialog):
                     continue
                 self._style_sigs[name] = sig
             restyle(merged)
+        import settings_element_style            # un restylage general ne doit pas effacer un override
+        settings_element_style.reapply_soon(self, self.settings)
 
     def _flush_live(self):
+        # Une bascule de toggle est en cours : l'apercu en direct (~50 ms sur le fil de l'interface)
+        # attend sa fin, sinon le toggle reste fige puis saute a la fin de sa course.
+        left = toggle_animation_left_ms()
+        if left > 0:
+            self._live_timer.start(left + 8)
+            return
+        self._live_timer.setInterval(30)
         values = self.wired_values()                  # une seule lecture des champs
         merged = dict(self.settings)
         merged.update(values)
@@ -1413,10 +2871,43 @@ class SettingsWindowV2(QDialog):
         if snapshot == self._last_live_snapshot:       # rien n'a reellement change : on n'embete personne
             return
         self._last_live_snapshot = snapshot
+        start = time.perf_counter()
         self._apply_look(merged, values)
         self.settingsChanged.emit(merged)
+        # Cadence ADAPTEE au cout de l'apercu : au moins autant de temps libre que de travail, sinon un
+        # glisser (couleur, curseur) n'a plus la main et l'interface rame (signale).
+        spent = int((time.perf_counter() - start) * 1000)
+        self._live_timer.setInterval(max(30, 2 * spent))
 
     # -- restylages de la fenetre elle-meme (equivalents de SettingsWindow._apply_*) --
+
+    def _restyle_colors(self, merged: dict):
+        """Section Couleurs changee (ou preset change fenetre ouverte) : la palette PARTAGEE par toutes les
+        sections (`self.settings["colors"]`, donnee aux sections construites ET a venir) est mise a jour SUR
+        PLACE, et chaque champ couleur la reprend (menu des pastilles de l'appli, pastille « @slot »). Avant,
+        les champs gardaient la palette de l'ouverture : leurs menus ne correspondaient plus a la section
+        Couleurs (signale)."""
+        palette = self.settings.get("colors")
+        new = merged.get("colors")
+        if not isinstance(palette, dict) or not isinstance(new, dict):
+            return
+        if new is not palette:
+            fresh = dict(new)
+            palette.clear()
+            palette.update(fresh)
+        for widget in self.findChildren(QWidget):
+            refresh = getattr(widget, "refresh_colors", None)
+            if refresh is None:
+                continue
+            try:
+                refresh(palette)
+            except TypeError:
+                refresh()
+
+    def _restyle_geometry(self, merged: dict):
+        # Zones de saisie et boutons inscrits (settings_theme) : leur arrondi suit Geometrie.
+        _set_input_radius(int(merged.get("input_radius", 0)))
+        _set_button_radius(int(merged.get("button_radius", 0)))
 
     def _restyle_sliders(self, merged: dict):
         # thumb/track changent la hauteur des curseurs : il faut rejouer apply_style().
@@ -1431,24 +2922,22 @@ class SettingsWindowV2(QDialog):
             section._name_label.setFont(_title_font(1))
             section._name_label.setStyleSheet(f"color: {_title_color(1)}; background: transparent;")
             section._chevron.setColor(_title_color(1))
-            indent = _title_indent(1)
-            section._title_indent = indent
-            section._head_layout.setContentsMargins(indent, 0, 0, 0 if section._collapsed else _title_gap_next(1))
-            section.set_body_offset(indent + 16 + 10)
+            section._title_indent = _title_indent(1)
         for sub in self.findChildren(_SubSection):
             level = sub._level
             sub._name_label.setFont(_title_font(level))
             sub._name_label.setStyleSheet(f"color: {_title_color(level)}; background: transparent;")
             sub._chevron.setColor(_title_color(level))
-            indent = _subsection_left_margin(level)
-            sub._left_margin = indent
-            sub._head_layout.setContentsMargins(indent, 0, 0, 0 if sub._collapsed else _title_gap_next(level))
-            sub.set_body_offset(indent + 11 + 6)
-        _refresh_gap_spacers(self)
+            sub._left_margin = _subsection_left_margin(level)
+        # Paragraphes (retrait, paddings, fond) : parents d'abord, l'abscisse d'un enfant en depend.
+        titles = self.findChildren(_Section) + self.findChildren(_SubSection)
+        depth = {t: sum(isinstance(a, (_Section, _SubSection)) for a in _ancestors(t)) for t in titles}
+        for title in sorted(titles, key=depth.get):
+            title.apply_box()
         _reflow_all(self)
 
     def _restyle_toggles(self, merged: dict):
-        _sync_toggle_style(merged)
+        _sync_toggle_style(merged)        # registre : styles supprimes / renommes / ajoutes
         for toggle in self.findChildren(_Toggle):
             toggle.apply_style()
         for picker in self.findChildren(_ToggleStylePicker):
@@ -1462,6 +2951,18 @@ class SettingsWindowV2(QDialog):
             (merged[f"table_inner_{axis}_enabled"], _resolve_color_value(merged[f"table_inner_{axis}_color"], colors),
              merged[f"table_inner_{axis}_thickness"]) for axis in ("h", "v")))
         _TABLE_HEAD["bg"] = _head_hex(colors, merged.get("table_head_color", "tableHead"))
+        _TABLE_HEAD["cell_bg"] = _head_hex(colors, merged.get("table_cell_head_color", "tableHead"))
+        _TABLE_SELECTION["color"] = _resolve_color_value(merged.get("table_selection_color", "#5f9bd0"), colors)
+        _ROWS_MOVABLE["enabled"] = bool(merged.get("table_rows_movable", True))
+        _set_table_shadow(shadow_look(merged, "table_shadow", lambda value: _resolve_color_value(value, colors)))
+        seed_above_text_look(merged)          # textes au-dessus des lignes (Tableaux > Texte au dessus)
+        for head in self.findChildren(_ResizableTableHeader):
+            for i in range(len(head._cells)):
+                head._refresh_cell_style(i)
+        for split in self.findChildren(SplitCell):
+            split.update()
+        for picker in self.findChildren(_ToggleStylePicker):
+            picker.refreshPreviews()          # cartes : cadre des tableaux, couleur de selection
         _set_flat_tables_style(
             radius=int(merged.get("table_radius", 0)),
             border=(enabled, border_colors, int(merged.get("table_border_thickness", 1))),
@@ -1480,15 +2981,157 @@ class SettingsWindowV2(QDialog):
         for frame in self.findChildren(_TableFrame):
             frame.setWidthResizable(enabled)
 
+    # -- Espace au-dessus d'un element d'une zone titre (clic droit) --
+
+    SPACE_MAX = 200
+    # Espaces par defaut de TOUT tableau des reglages (demande de l'utilisateur) : au-dessus / en dessous,
+    # tant que le tableau n'a pas les siens (clic droit > « Ajouter une espace... », 0 compris).
+    TABLE_SPACE = {False: 5, True: 15}
+
+    def _default_space(self, element: QWidget, below: bool) -> int:
+        return self.TABLE_SPACE[below] if isinstance(element, _TableFrame) else 0
+
+    def _space_element(self, widget: QWidget):
+        """Element sous le clic : le tableau, sinon le titre (son noeud), sinon n'importe quel autre
+        element de la fenetre empile verticalement (barre d'onglets, pied de fenetre...)."""
+        node = widget
+        while node is not None:
+            if isinstance(node, (_TableFrame, _LazyNode)):
+                return node
+            node = node.parentWidget()
+        return space_target(widget, self)
+
+    def _space_key(self, element: QWidget) -> str | None:
+        """Cle stable : onglet + chemin des titres (+ cle de dimensions pour un tableau) ; autre
+        element : son chemin dans la fenetre (`ui:`)."""
+        if not isinstance(element, (_TableFrame, _LazyNode)):
+            path = widget_path(element, self)
+            return f"ui:{path}" if path else None
+        titles, scope, node = [], None, element if isinstance(element, _LazyNode) else element.parentWidget()
+        while node is not None:
+            if isinstance(node, _LazyNode):
+                titles.append(node.node.title)
+                scope = scope or (node._values.title or "General")
+            node = node.parentWidget()
+        path = "/".join(reversed(titles))
+        if isinstance(element, _TableFrame):
+            return f"{scope}|table:{element.dimsKey()}"
+        return f"{scope}|title:{path}"
+
+    _SPACE_KEYS = {False: "element_spaces", True: "element_spaces_below"}
+
+    # -- ordre des paragraphes (titres tires a la souris, _TitleStack) --
+
+    def _ordered_children(self, nodes, key: str) -> list:
+        return ordered_nodes(nodes, (self.settings.get("title_order") or {}).get(key))
+
+    def _make_title_stack(self, container: QWidget, nodes: list, key: str):
+        container._title_stack = _TitleStack(container, nodes, key, self._set_title_order)
+
+    def _set_title_order(self, key: str, titles: list):
+        orders = dict(self.settings.get("title_order") or {})
+        orders[key] = list(titles)
+        self.settings["title_order"] = orders
+        self._schedule_persist()
+
+    def _place_space(self, element: QWidget, height: int, below: bool = False):
+        (set_space_below if below else set_space_above)(element, height)
+        if isinstance(element, _LazyNode):          # un titre decolle de son voisin : plus de filet partage
+            for title in (element._head, element._head._box_next if below else element._head._box_prev):
+                if title is not None:
+                    title.apply_box()
+
+    def _set_space(self, element: QWidget, key: str, height: int, below: bool = False):
+        name = self._SPACE_KEYS[below]
+        spaces = dict(self.settings.get(name) or {})
+        if int(height) == self._default_space(element, below):
+            spaces.pop(key, None)                  # valeur par defaut : rien a retenir
+        elif height or self._default_space(element, below):
+            spaces[key] = int(height)              # 0 retenu quand le defaut ne l'est pas (tableau)
+        else:
+            spaces.pop(key, None)
+        self.settings[name] = spaces
+        self._place_space(element, height, below)
+        self._schedule_persist()
+
+    def _apply_saved_spaces(self):
+        for below, name in self._SPACE_KEYS.items():
+            spaces = self.settings.get(name) or {}
+            flag = "_space_below_applied" if below else "_space_applied"
+            for element in self.findChildren(_TableFrame) + self.findChildren(_LazyNode):
+                if getattr(element, flag, False):
+                    continue
+                setattr(element, flag, True)
+                height = spaces.get(self._space_key(element), self._default_space(element, below))
+                if height:
+                    self._place_space(element, height, below)
+            for key, height in spaces.items():           # autres elements : retrouves par leur chemin
+                if key.startswith("ui:") and height:
+                    element = widget_at_path(self, key[3:])
+                    if element is not None and not getattr(element, flag, False):
+                        setattr(element, flag, True)
+                        self._place_space(element, height, below)
+
+    def add_space_action(self, widget: QWidget, menu: QMenu):
+        """Clic droit sur un element d'une zone titre : « Ajouter une espace au-dessus » + curseur."""
+        element = self._space_element(widget)
+        key = self._space_key(element) if element is not None else None
+        if key is None:
+            return
+        above = int((self.settings.get("element_spaces") or {}).get(
+            key, getattr(element, "_space_above_px", self._default_space(element, False))))
+        below = int((self.settings.get("element_spaces_below") or {}).get(
+            key, getattr(element, "_space_below_px", self._default_space(element, True))))
+        make_space_actions(menu, above, below, lambda v, e=element, k=key: self._set_space(e, k, v),
+                           lambda v, e=element, k=key: self._set_space(e, k, v, below=True), self.SPACE_MAX,
+                           widget=widget)
+
+    def contextMenuEvent(self, event):
+        """Clic droit que personne n'a pris (rien n'a de menu a cet endroit) : espace au-dessus de
+        l'element clique, partout dans la fenetre."""
+        menu = Menu(self)
+        self.add_space_action(self.childAt(event.pos()) or self, menu)
+        if menu.actions():
+            menu.exec(event.globalPos())
+        event.accept()
+
     def _after_build(self):
         """Appele apres la construction d'un tableau : lui applique les reglages de tableau deja
         modifies (sinon un tableau ne naitrait qu'avec le style de depart)."""
         for frame in self.findChildren(_TableFrame):
             if not getattr(frame, "_v2_wired", False):
                 frame._v2_wired = True
+                self._link_table(frame)
                 frame.dimsChanged.connect(self._schedule_persist)
         if not self._columns_resizable:
             self._apply_resizable(False)
+        self._apply_saved_spaces()
+        self._apply_toggle_styles()
+        import settings_element_style            # styles propres (« Override settings ») des elements construits
+        settings_element_style.reapply_soon(self, self.settings)
+
+    _syncing_dims = False
+
+    def _link_table(self, frame: _TableFrame):
+        """Tableau d'un groupe lie (_LINKED_TABLES) : cle de dimensions partagee, et toute modification
+        de ses dimensions est recopiee aussitot sur les autres tableaux du groupe."""
+        linked = _linked_group(frame)
+        if linked is not None:
+            frame._link_group, frame._dims_key = linked
+            frame.dimsChanged.connect(lambda f=frame: self._sync_linked(f))
+
+    def _sync_linked(self, source: _TableFrame):
+        if self._syncing_dims or not source._dims_applied:
+            return
+        dims = source.collectDims()
+        _TABLE_DIMS[source.dimsKey()] = dims        # un tableau du groupe construit plus tard la reprend
+        self._syncing_dims = True
+        try:
+            for frame in self.findChildren(_TableFrame):
+                if frame is not source and frame._dims_applied and                         getattr(frame, "_link_group", None) == source._link_group:
+                    frame.applyDims(dims)
+        finally:
+            self._syncing_dims = False
 
     def _relayout(self):
         """Un padding/une bordure modifie la hauteur des tableaux deja depliees : on remonte la
@@ -1502,38 +3145,66 @@ class SettingsWindowV2(QDialog):
             if inner is None:
                 continue
             inner.layout().activate()
-            height = max(scroller.viewport().height(), inner.minimumSizeHint().height())
-            if inner.height() != height or inner.width() != scroller.viewport().width():
-                inner.resize(scroller.viewport().width(), height)
+            _fit_inner(scroller)
 
     def _seed_table_look(self):
-        """Etat de depart de l'habillage des tableaux (filets interieurs, padding, couleur d'entete) :
-        chaque tableau le lit a sa creation."""
-        settings, colors = self.settings, self.settings["colors"]
-        _set_table_inner_border(*(
-            (settings[f"table_inner_{axis}_enabled"], _resolve_color_value(settings[f"table_inner_{axis}_color"], colors),
-             settings[f"table_inner_{axis}_thickness"]) for axis in ("h", "v")))
-        _set_flat_tables_style(padding=_padding_tuple(settings.get("table_cell_padding") or {}))
-        _TABLE_HEAD["bg"] = _head_hex(colors, settings.get("table_head_color", "tableHead"))
+        seed_table_look(self.settings)
+
+    def _on_element_style_saved(self, key: str, value):
+        try:
+            self.settings[key] = value
+        except RuntimeError:
+            pass
+
+    def external_values(self, values: dict):
+        """Reglages changes et ENREGISTRES hors de la fenetre (tableau a la volee de la visionneuse) : la
+        fenetre les reprend (copie des reglages, valeurs d'origine) et refait les tableaux deja construits
+        qui les montrent ; sinon ses champs, restes a l'ancienne valeur, l'ecraseraient a l'apercu suivant
+        ou a l'enregistrement."""
+        if not values:
+            return
+        palette = self.settings.get("colors")
+        self.settings.update(copy.deepcopy(values))
+        self._original_settings.update(copy.deepcopy(values))
+        if isinstance(palette, dict) and "colors" in values:
+            # Meme objet pour toutes les sections : mis a jour SUR PLACE, puis les champs le reprennent.
+            new, self.settings["colors"] = self.settings["colors"], palette
+            self._restyle_colors({"colors": new})
+        changed = set(values)
+        for node in self.findChildren(_LazyNode):
+            group = node.node.group
+            if not (node._built and group and group in CATALOG):
+                continue
+            keys = {k for sp in CATALOG[group] for k in (sp.key, *sp.extra_keys, f"{sp.key}_linked")}
+            if keys & changed:
+                node.rebuild_group()
 
     def _on_save(self):
+        self._write_settings()
+        self._saved = True
+        self.accept()
+
+    def _on_apply(self):
+        """Bouton Appliquer : enregistre et applique, la fenetre reste ouverte ; ce qui est applique
+        devient l'etat de reference (Annuler n'y revient plus en arriere)."""
+        settings = self._write_settings()
+        self._original_settings = json.loads(json.dumps(settings))
+
+    def _write_settings(self) -> dict:
         # Comme SettingsWindow._on_save hors mode "tout" : on relit le disque et on n'y reporte
         # que ce que CETTE fenetre a modifie, sans ecraser ce qu'une autre fenetre a enregistre.
         values = self.wired_values()
+        for key in ("title_order", "element_spaces", "element_spaces_below"):
+            values[key] = dict(self.settings.get(key) or {})
         settings = load_settings()
         settings.update({k: v for k, v in values.items() if v != self._original_settings.get(k)})
         save_settings(settings)
         # Preset actif : le mettre a jour aussi, sinon le recharger plus tard rejouerait l'ancienne valeur.
-        default_preset = settings.get("default_preset")
-        presets = _load_presets()
-        if default_preset in presets and default_preset != "Personnalise":
-            presets[default_preset] = settings
-            _save_presets(presets)
+        update_active_preset(settings)
         self.settings = settings
-        self._saved = True
-        self.titlebar.set_dirty(False)
+        self._show_dirty(False)
         self.settingsSaved.emit(settings)
-        self.accept()
+        return settings
 
     def reject(self):
         if not self._saved and self._dirty:
@@ -1566,7 +3237,7 @@ class SettingsWindowV2(QDialog):
         page.setStyleSheet(f"background: {M['panel_bg']};")
         outer = QVBoxLayout(page)
         outer.setContentsMargins(0, 0, 0, 0)
-        scroller = _NoSqueezeScrollArea(page)
+        scroller = _WideScrollArea(page)
         scroller.setWidgetResizable(True)
         scroller.setFrameShape(QFrame.NoFrame)
         scroller.setStyleSheet(f"background: {M['panel_bg']};")
@@ -1574,25 +3245,36 @@ class SettingsWindowV2(QDialog):
         inner = QWidget(scroller.viewport())
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(20, 18, 18, 26)
-        lay.setSpacing(18)
+        lay.setSpacing(0)                  # l'ecart entre sections = leurs paddings (Titres > Paragraphes)
         values = ScopeValues(self.settings, title)
         if title is None:
             values.hooks["add_toggle"] = self._add_toggle_style
+            values.hooks["toggle_actions"] = {"add": self._add_toggle_style, "rename": self._ask_rename_toggle,
+                                              "delete": self._ask_delete_toggle}
         store = self.stores.setdefault(label, {})
         store["on_change"] = self._mark_dirty
         store["after_build"] = self._after_build
         store["on_range"] = self._on_range
+        store["title_order"] = self._ordered_children
+        store["title_stack"] = self._make_title_stack
         colors = self.settings["colors"]
         level = 1 if title is None else 2
+        top_key = f"{title or 'General'}|"
         with _section_host(inner):
             sections = []
-            for node in nodes_for(title, self.settings):
-                sections.append(_LazyNode(node, level, values, colors, store, self.eager, None, inner,
-                                          wired=(title is None and node.title in WIRED_SECTIONS)))
-                lay.addWidget(sections[-1])
+            for node in self._ordered_children(nodes_for(title, self.settings), top_key):
+                # Onglets de surcharge : tout est branche (valeurs -> dictionnaires de surcharge).
+                _add_stacked(lay, sections, _LazyNode(
+                    node, level, values, colors, store, self.eager, None, inner,
+                    wired=(title is not None or node.title in WIRED_SECTIONS)))
             _make_accordion(sections)
+            self._make_title_stack(inner, sections, top_key)
         lay.addStretch(1)
         scroller.setWidget(inner)
+        self._apply_saved_spaces()
+        self._apply_toggle_styles()
+        import settings_element_style
+        settings_element_style.reapply_soon(self, self.settings)
         return page
 
     def widget_count(self) -> int:

@@ -1,14 +1,17 @@
 from typing import Any
 from PySide6.QtCore import (
-    QPoint, Qt, Signal,
+    QEvent, QMimeData, QPoint, Qt, Signal,
 )
 from PySide6.QtGui import (
     QColor,
+    QDrag,
     QFont,
     QPainter,
     QPen,
+    QPixmap,
 )
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -24,6 +27,9 @@ from app_style import (
     SMOOTHING_LABELS_SHORT,
     auto_family_for_role,
     installed_font_families,
+    join_color_ref,
+    split_color_ref,
+    with_alpha,
 )
 from settings_theme import _input_radius, _register_input, _set_text_role, _text_label  # noqa: F401
 from settings_store import (
@@ -36,7 +42,9 @@ from settings_colorpicker import (
     _ColorField,
 )
 from settings_widgets import (
+    Menu, menu_row,
     _ColorPickerPopup,
+    DRAG_GHOST_OPACITY,
     _ColorSwatchButton,
     _FontSelectField,
     _SLOT_LABELS,
@@ -654,7 +662,7 @@ class _HeaderColorField(QWidget):
     def __init__(self, colors: dict, current_value: str, parent=None):
         super().__init__(parent)
         self._colors = colors
-        self._value = current_value if (current_value in _SLOT_LABELS or current_value.startswith("#")) else "skinN1"
+        self._value = current_value if (split_color_ref(current_value)[0] in _SLOT_LABELS or current_value.startswith("#")) else "skinN1"
         self._radius = _input_radius()
         _register_input(self)
         self._before_pick = self._value
@@ -717,7 +725,8 @@ class _HeaderColorField(QWidget):
     def _current_hex(self) -> str:
         if self._is_custom():
             return self._value
-        return self._colors.get(_SLOT_REAL.get(self._value, "chrome"), "#000000")
+        slot, alpha = split_color_ref(self._value)
+        return with_alpha(self._colors.get(_SLOT_REAL.get(slot, "chrome"), "#000000"), alpha)
 
     def _refresh_style(self):
         """Habillage (fond/bordure/coins) de la boite hex — a part de
@@ -814,7 +823,7 @@ class _HeaderColorField(QWidget):
         preset (voir SettingsWindow._apply_values_to_controls), qui
         doivent pouvoir changer les deux d'un coup sans emettre `changed` a
         chaque etape intermediaire."""
-        self._value = value if (value in _SLOT_LABELS or value.startswith("#")) else "skinN1"
+        self._value = value if (split_color_ref(value)[0] in _SLOT_LABELS or value.startswith("#")) else "skinN1"
         self._colors = colors
         is_custom = self._is_custom()
         self.app_toggle.blockSignals(True)
@@ -1041,6 +1050,11 @@ class _CompactAppOrCustomColorField(QWidget):
         self.swatch = _ColorSwatchButton()
         self.swatch.setFixedSize(swatch_size, swatch_size)
         self.swatch.clicked.connect(self._on_swatch_clicked)
+        # Glisser une pastille sur une autre = lui copier sa couleur (demande de l'utilisateur, tous les
+        # tableaux) : voir eventFilter.
+        self.swatch.setAcceptDrops(True)
+        self.swatch.installEventFilter(self)
+        self._drag_press = None
         layout.addWidget(self.swatch)
 
         # "sys" a DROITE de son toggle, tres rapproches.
@@ -1073,44 +1087,53 @@ class _CompactAppOrCustomColorField(QWidget):
     def _resolved_hex(self) -> str:
         return _resolve_color_value(self._value, self._colors)
 
+    def _slot_alpha(self) -> tuple[str, int]:
+        """(pastille, opacite %) d'une valeur « @slot » ou « @slot/75 »."""
+        ref, alpha = split_color_ref(self._value)
+        return ref[1:], alpha
+
     def _refresh(self):
         hexval = self._resolved_hex()
         self.swatch.setColorHex(hexval)
-        self.swatch.setToolTip(_SLOT_LABELS.get(self._value[1:], hexval) if self._is_slot() else hexval)
+        if self._is_slot():
+            slot, alpha = self._slot_alpha()
+            label = _SLOT_LABELS.get(slot, hexval)
+            self.swatch.setToolTip(label if alpha >= 100 else f"{label} · {alpha} %")
+        else:
+            self.swatch.setToolTip(hexval)
 
+    # "app" et "sys" sont exclusifs : cocher l'un OU decocher l'autre change
+    # de mode, et la VALEUR suit toujours (decocher "app" laissait la valeur
+    # sur la pastille alors que "sys" s'affichait coche).
     def _on_app_toggled(self, checked: bool):
-        if checked:
-            self.system_toggle.blockSignals(True)
-            self.system_toggle.setChecked(False)
-            self.system_toggle.blockSignals(False)
-            if not self._is_slot():
-                # Bascule vers "app" depuis une couleur personnalisee (voir
-                # la remarque de l'utilisateur, "les couleurs applications
-                # ne fonctionnent pas") : sans ceci, la valeur restait
-                # figee sur l'ancien hex personnalise jusqu'a un clic
-                # SUPPLEMENTAIRE sur la pastille — bascule desormais tout
-                # de suite sur une pastille semantique par defaut (la 1ere
-                # par ordre alphabetique, MEME liste que _open_menu).
-                default_slot = sorted(SEMANTIC_COLOR_SLOTS, key=lambda t: t[2])[0][0]
-                self._select_slot(default_slot)
-        elif not self.system_toggle.isChecked():
-            self.system_toggle.blockSignals(True)
-            self.system_toggle.setChecked(True)
-            self.system_toggle.blockSignals(False)
+        self._use_app() if checked else self._use_system()
 
     def _on_system_toggled(self, checked: bool):
-        if checked:
-            self.app_toggle.blockSignals(True)
-            self.app_toggle.setChecked(False)
-            self.app_toggle.blockSignals(False)
-            if self._is_slot():
-                self._value = self._resolved_hex()
-                self._refresh()
-                self.changed.emit(self._value)
-        elif not self.app_toggle.isChecked():
-            self.app_toggle.blockSignals(True)
-            self.app_toggle.setChecked(True)
-            self.app_toggle.blockSignals(False)
+        self._use_system() if checked else self._use_app()
+
+    def _sync_mode_toggles(self, app: bool):
+        for toggle, on in ((self.app_toggle, app), (self.system_toggle, not app)):
+            toggle.blockSignals(True)
+            toggle.setChecked(on)
+            toggle.blockSignals(False)
+
+    def _use_app(self):
+        self._sync_mode_toggles(True)
+        if not self._is_slot():
+            # Retour a la derniere pastille choisie, sinon la 1ere par ordre
+            # alphabetique (MEME liste que _open_menu).
+            self._last_custom = self._value
+            slot = getattr(self, "_last_slot", None) or sorted(SEMANTIC_COLOR_SLOTS, key=lambda t: t[2])[0][0]
+            self._select_slot(slot)
+
+    def _use_system(self):
+        self._sync_mode_toggles(False)
+        if self._is_slot():
+            # Retour a la derniere couleur personnalisee, sinon la couleur de la pastille.
+            self._last_slot = self._slot_alpha()[0]
+            self._value = getattr(self, "_last_custom", None) or self._resolved_hex()
+            self._refresh()
+            self.changed.emit(self._value)
 
     def _on_swatch_clicked(self):
         if self.app_toggle.isChecked():
@@ -1119,20 +1142,31 @@ class _CompactAppOrCustomColorField(QWidget):
             self._open_custom_picker()
 
     def _open_menu(self):
-        menu = QMenu(self)
-        menu.setFont(_qfont(11, 400))
-        menu.setStyleSheet(
-            f"QMenu {{ background: {M['toolbar_bg']}; border: 1px solid {M['field_border']}; padding: 4px 0; }}"
-            f"QMenu::item {{ padding: 5px 16px; color: {M['value_fg']}; }}"
-            f"QMenu::item:selected {{ background: {M['accent']}; color: {M['accent_fg']}; }}"
-        )
+        # Menu contextuel de l'appli (habillage des reglages) : opacite de la couleur choisie (demande de
+        # l'utilisateur : transparence sur une couleur de l'appli, partout), puis les pastilles.
+        menu = Menu(self)
+        alpha = self._slot_alpha()[1] if self._is_slot() else 100
+        field = _SliderField(0, 100, alpha, unit="%")
+        field.valueChanged.connect(self._set_alpha)
+        menu_row(menu, "Opacité", field)
+        menu.addSeparator()
         for slot, real, label in sorted(SEMANTIC_COLOR_SLOTS, key=lambda t: t[2]):
             action = menu.addAction(_solid_icon(self._colors.get(real, "#000")), label)
             action.triggered.connect(lambda _c=False, s=slot: self._select_slot(s))
         menu.exec(self.swatch.mapToGlobal(QPoint(0, self.swatch.height())))
 
+    def _set_alpha(self, alpha: int):
+        if not self._is_slot():
+            return
+        slot = self._slot_alpha()[0]
+        self._value = join_color_ref(f"@{slot}", alpha)
+        self._refresh()
+        self.changed.emit(self._value)
+
     def _select_slot(self, slot: str):
-        self._value = f"@{slot}"
+        # L'opacite choisie est gardee quand on change de pastille.
+        alpha = self._slot_alpha()[1] if self._is_slot() else 100
+        self._value = join_color_ref(f"@{slot}", alpha)
         self._refresh()
         self.changed.emit(self._value)
 
@@ -1167,6 +1201,71 @@ class _CompactAppOrCustomColorField(QWidget):
     def refresh_colors(self, colors: dict):
         self._colors = colors
         self._refresh()
+
+    # -- glisser une couleur sur une autre : copie de la valeur (pastille de l'appli + opacite, ou couleur
+    # personnalisee) ; la pastille tiree suit le curseur a DRAG_GHOST_OPACITY, la pastille visee s'entoure
+    # de l'accent. Sans Ctrl : ce n'est pas un deplacement, le clic garde son sens (menu / selecteur). --
+
+    MIME = "application/x-pipeline-color"
+
+    def eventFilter(self, obj, event):
+        if obj is not self.swatch:
+            return super().eventFilter(obj, event)
+        kind = event.type()
+        if kind == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+            self._drag_press = event.position().toPoint()
+        elif kind == QEvent.MouseMove and self._drag_press is not None and event.buttons() & Qt.LeftButton:
+            if (event.position().toPoint() - self._drag_press).manhattanLength() >= QApplication.startDragDistance():
+                self._start_color_drag()
+                return True
+        elif kind == QEvent.MouseButtonRelease:
+            self._drag_press = None
+        elif kind == QEvent.DragEnter:
+            source = event.source()
+            if event.mimeData().hasFormat(self.MIME) and source is not self.swatch:
+                event.acceptProposedAction()
+                self.swatch.set_drop_hover(True)
+            else:
+                event.ignore()
+            return True
+        elif kind == QEvent.DragLeave:
+            self.swatch.set_drop_hover(False)
+        elif kind == QEvent.Drop:
+            self.swatch.set_drop_hover(False)
+            if event.mimeData().hasFormat(self.MIME):
+                value = bytes(event.mimeData().data(self.MIME)).decode("utf-8")
+                event.acceptProposedAction()
+                self.receive_color(value)
+            return True
+        return super().eventFilter(obj, event)
+
+    def _start_color_drag(self):
+        press, self._drag_press = self._drag_press, None
+        self.swatch.setDown(False)
+        mime = QMimeData()
+        mime.setData(self.MIME, self._value.encode("utf-8"))
+        grab = self.swatch.grab()
+        ghost = QPixmap(grab.size())
+        ghost.setDevicePixelRatio(grab.devicePixelRatio())
+        ghost.fill(Qt.transparent)
+        painter = QPainter(ghost)
+        painter.setOpacity(DRAG_GHOST_OPACITY)
+        painter.drawPixmap(0, 0, grab)
+        painter.end()
+        drag = QDrag(self.swatch)
+        drag.setMimeData(mime)
+        drag.setPixmap(ghost)
+        drag.setHotSpot(press)
+        drag.exec(Qt.CopyAction)
+        self.swatch.setDown(False)
+
+    def receive_color(self, value: str):
+        """Couleur deposee (valeur complete « @slot/75 » ou « #hex ») : prise telle quelle, signalee comme
+        un choix de l'utilisateur (apercu en direct, enregistrement, cotes lies)."""
+        if not value or value == self._value:
+            return
+        _CompactAppOrCustomColorField.setValue(self, value)
+        self.changed.emit(self._value)
 
 class _SideColorsField(QWidget):
     """4 pastilles de couleur cote a cote (Gauche/Haut/Bas/Droite — meme
@@ -1385,7 +1484,8 @@ class _ToggleSideColorsField(QWidget):
     changed = Signal()
 
     def __init__(self, enabled: dict, sides: dict, colors: dict, parent=None,
-                 thickness_field: QWidget | None = None, thickness_label: str = "Epaisseur"):
+                 thickness_field: QWidget | None = None, thickness_label: str = "Epaisseur",
+                 linked: bool = False):
         super().__init__(parent)
         # Fond transparent EXPLICITE : meme piege/correctif que
         # _SideColorsField ci-dessus (voir son commentaire) — voir la
@@ -1397,10 +1497,12 @@ class _ToggleSideColorsField(QWidget):
         layout.setSpacing(14)
         # GABARIT "bordures" (voir _build_linked_sides_toggle) : pas de
         # bouton "Copier", toggle "lier les 4" AVANT le toggle.
-        toggle_row, self.link_toggle = _build_linked_sides_toggle(False)
+        toggle_row, self.link_toggle = _build_linked_sides_toggle(linked)
         self.link_toggle.toggled.connect(self._on_link_toggled)
         layout.addWidget(toggle_row)
         self.sides = _SideColorsField(sides, colors, enabled)
+        if linked:
+            self.sides.setLinked(True)
         self.sides.changed.connect(self.changed.emit)
         layout.addWidget(self.sides)
         # Epaisseur DESORMAIS DANS LA MEME ligne (voir la remarque de
@@ -1425,6 +1527,9 @@ class _ToggleSideColorsField(QWidget):
     def _on_link_toggled(self, checked: bool):
         self.sides.setLinked(checked)
         self.changed.emit()
+
+    def isLinked(self) -> bool:
+        return self.link_toggle.isChecked()
 
     def sidesValue(self) -> dict[str, str]:
         return self.sides.value()

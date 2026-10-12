@@ -31,6 +31,8 @@ BUTTON_RADIUS = 0
 PREVIEW_IMAGE_PAD: dict = {}
 
 PREVIEW_IMAGE_RADIUS: dict = {}
+ITEM_EXT_COLOR = None            # Colonnes > Lignes > Texte > « Couleur des extensions » (resolue) ou None
+PREVIEW_IMAGE_SHADOW = None       # Focus > Image > Ombres (settings_widgets.shadow_look) ou None
 
 # Style EFFECTIF du cadre de redimensionnement (voir _show_resize_width/
 # _resize_width_indicator, General > Colonnes > "Cadre de redimensionnement"
@@ -83,3 +85,8 @@ SHORTCUT_TEXT_STYLE: dict = {
 # ICONES > General) — reglage Settings > Colonnes > Focus > Bouton
 # repliement > "Icone".
 COLLAPSE_TOGGLE_MODE = "chevrons"
+
+# Derniers reglages APPLIQUES (apply_all_settings) : apercu en direct d'une fenetre de reglages compris.
+# A lire plutot que load_settings() (le disque) pour tout restylage declenche par un rafraichissement,
+# sinon on ecrase l'apercu en cours. None tant que rien n'a ete applique.
+APPLIED_SETTINGS: dict | None = None

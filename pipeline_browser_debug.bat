@@ -31,7 +31,7 @@ if not exist "%VENV%\Scripts\python.exe" (
 
 echo --- Installation / verification des dependances de l'application ---
 "%VENV%\Scripts\python.exe" -m pip install --upgrade pip
-"%VENV%\Scripts\python.exe" -m pip install PySide6 ezdxf matplotlib
+"%VENV%\Scripts\python.exe" -m pip install PySide6 ezdxf matplotlib markdown-it-py mdit-py-plugins
 echo.
 
 echo Les apercus DWG necessitent aussi ODA File Converter.

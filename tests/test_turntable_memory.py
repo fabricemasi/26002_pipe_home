@@ -1,4 +1,7 @@
 """Validation opt-in sur un vrai modele lourd, avec limite de memoire."""
+import os as _os, sys as _sys  # jamais les vrais reglages / presets de l'utilisateur (tests/_isolate.py)
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import _isolate  # noqa: E402,F401
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import ctypes

@@ -10,6 +10,7 @@ import math
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -19,17 +20,20 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import (
-    QEvent, QEventLoop, QObject, QPointF, QRunnable, QSize, Qt, QThreadPool, QTimer,
+    QEvent, QEventLoop, QObject, QPointF, QRectF, QRunnable, QSize, Qt, QThreadPool, QTimer,
     QUrl, Signal, QBuffer, QByteArray, QIODevice,
 )
 from PySide6.QtMultimedia import QMediaPlayer, QVideoSink
 from PySide6.QtGui import (
     QColor,
+    QFont,
+    QFontDatabase,
     QImage,
     QImageReader,
     QPainter,
     QPen,
     QPixmap,
+    QRadialGradient,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -70,17 +74,22 @@ from app_style import (
 )
 from config import (
     ABC_EXTENSIONS,
+    ABR_EXTENSIONS,
     BLEND_EXTENSIONS,
     CUSTOM_SOFTWARE_ICON_DIR,
     DATA_DIR,
     DWG_EXTENSIONS,
+    DXF_EXTENSIONS,
     EXR_EXTENSIONS,
     FBX_EXTENSIONS,
+    FONT_EXTENSIONS,
     GLOBAL_OMIT_DIR_NAMES,
     GLOBAL_OMIT_FILE_EXTENSIONS,
     GLOBAL_OMIT_FILE_NAMES,
     CUBE_EXTENSIONS,
     HDR_EXTENSIONS,
+    HOUDINI_SCENE_EXTENSIONS,
+    ILLUSTRATOR_EXTENSIONS,
     RAW_EXTENSIONS,
     MAYA_SCENE_EXTENSIONS,
     OBJ_EXTENSIONS,
@@ -226,6 +235,114 @@ UI_ICON_SHORTCUT = "ui_shortcut"
 
 _UI_ICON_CACHE: dict[tuple[str, int], tuple[float, QPixmap]] = {}
 
+# Dates de modification memorisees un court instant : le dessin de CHAQUE ligne verifiait a chaque
+# repeinture si une icone perso / une vignette de dossier existe et a change (2 a 3 stat par ligne,
+# ~150 par repeinture, lents sur un dossier synchronise). Ce que l'appli ecrit elle-meme (vignette,
+# icone) appelle forget_mtime : visible aussitot ; un changement exterieur, au plus 1,5 s apres.
+_MTIME_CACHE: dict[str, tuple[float, float | None]] = {}
+_MTIME_TTL = 1.5
+
+
+# « Memoire seulement » (memory_only) : pendant une animation (pellicule de la visionneuse), aucune
+# lecture disque sur le fil de l'interface — une date inconnue ou trop vieille est relue EN FOND
+# (_refresh_mtimes) et `MTIME_SIGNALS.refreshed` previent quand elle est connue. Apres un long moment
+# sans visionneuse, ces stat sur le disque dur coutaient ~180 ms a la 1re image : l'animation sautait.
+_MEMORY_ONLY = threading.local()
+_MTIME_PENDING: set = set()
+_MTIME_PENDING_LOCK = threading.Lock()
+
+
+class _MtimeSignals(QObject):
+    refreshed = Signal()
+
+
+MTIME_SIGNALS = _MtimeSignals()
+
+
+class memory_only:
+    """`with memory_only():` — cached_mtime ne lit pas le disque (valeur memorisee, meme ancienne).
+    `memory_only(hold=True)` : en plus, file_image_pixmap(asynchronous=True) ne lance AUCUN decodage
+    (pendant une animation : les decodages en fond, en Python, gardent le GIL et hachent l'animation ;
+    ils sont demandes a la peinture suivante, hors animation)."""
+
+    def __init__(self, hold: bool = False):
+        self.hold = hold
+
+    def __enter__(self):
+        _MEMORY_ONLY.on = getattr(_MEMORY_ONLY, "on", 0) + 1
+        if self.hold:
+            _MEMORY_ONLY.hold = getattr(_MEMORY_ONLY, "hold", 0) + 1
+
+    def __exit__(self, *exc):
+        _MEMORY_ONLY.on -= 1
+        if self.hold:
+            _MEMORY_ONLY.hold -= 1
+        return False
+
+
+def requests_held() -> bool:
+    return bool(getattr(_MEMORY_ONLY, "hold", 0))
+
+
+def _refresh_mtimes() -> None:
+    while True:
+        with _MTIME_PENDING_LOCK:
+            if not _MTIME_PENDING:
+                return
+            key = _MTIME_PENDING.pop()
+        try:
+            info = os.stat(key)
+            mtime = info.st_mtime if not os.path.isdir(key) else None
+        except OSError:
+            mtime = None
+        _MTIME_CACHE[key] = (time.monotonic(), mtime)
+        with _MTIME_PENDING_LOCK:
+            last = not _MTIME_PENDING
+        if last:
+            try:
+                MTIME_SIGNALS.refreshed.emit()
+            except RuntimeError:
+                pass
+
+
+def _queue_mtime(key: str) -> None:
+    with _MTIME_PENDING_LOCK:
+        start = not _MTIME_PENDING
+        _MTIME_PENDING.add(key)
+    if start:
+        threading.Thread(target=_refresh_mtimes, name="mtime-refresh", daemon=True).start()
+
+
+def cached_mtime(path) -> float | None:
+    """Date de modification du FICHIER `path` (None s'il n'existe pas ou est un dossier). Dans
+    `memory_only()` : jamais de disque (valeur memorisee, ou None et relue en fond)."""
+    key = str(path)
+    now = time.monotonic()
+    hit = _MTIME_CACHE.get(key)
+    if hit is not None and now - hit[0] < _MTIME_TTL:
+        return hit[1]
+    if getattr(_MEMORY_ONLY, "on", 0):
+        _queue_mtime(key)
+        return hit[1] if hit is not None else None
+    try:
+        info = os.stat(key)
+        mtime = info.st_mtime if not os.path.isdir(key) else None
+    except OSError:
+        mtime = None
+    if len(_MTIME_CACHE) > 8192:
+        _MTIME_CACHE.clear()
+    _MTIME_CACHE[key] = (now, mtime)
+    return mtime
+
+
+def forget_mtime(path=None) -> None:
+    """Oublie la date memorisee de `path` (de tout, sans argument) : a appeler apres avoir ecrit ou
+    supprime une vignette / une icone."""
+    if path is None:
+        _MTIME_CACHE.clear()
+    else:
+        _MTIME_CACHE.pop(str(path), None)
+
 
 def custom_ui_icon_pixmap(key: str, size: int) -> QPixmap | None:
     """Pixmap perso pour une icone d'INTERFACE (voir les UI_ICON_* ci-
@@ -235,10 +352,7 @@ def custom_ui_icon_pixmap(key: str, size: int) -> QPixmap | None:
     mtime que software_icon_pixmap : pas de purge explicite necessaire au
     moment de l'enregistrement depuis la fenetre de parametres."""
     path = custom_software_icon_path(key)
-    try:
-        mtime = path.stat().st_mtime if path.is_file() else None
-    except OSError:
-        mtime = None
+    mtime = cached_mtime(path)
     if mtime is None:
         return None
     cache_key = (key, size)
@@ -351,6 +465,15 @@ FILE_IMAGE_CACHE_MAX_DIM = 640
 # qu'un fichier source change).
 FILE_IMAGE_DISK_CACHE_DIR = DATA_DIR / ".pipeline_preview_cache"
 
+# SUSPENDU a la demande de l'utilisateur (systeme a repenser) : rendus AUTOMATIQUES — le balayage
+# d'inactivite (_IdlePreviewScheduler) ne rend plus rien en arriere-plan (fichiers 3D, apercus
+# perimes) ; les rendus lances a la main (menu) restent.
+AUTO_RENDER_ENABLED = False
+# Mise en cache disque des apercus d'IMAGES (2D et videos) : REMISE a la demande de l'utilisateur
+# (les originaux ne doivent pas etre relus a chaque demarrage).
+IMAGE_DISK_CACHE_ENABLED = True
+_IMAGE_CACHE_SUFFIXES = TWO_D_IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
+
 # La cle de cache disque ne depend que du chemin source et de son mtime :
 # un changement du CODE de rendu (ex. _decode_obj_image) ne les fait pas
 # bouger, donc un vieux rendu perime resterait sinon servi indefiniment tant
@@ -360,7 +483,8 @@ FILE_IMAGE_DISK_CACHE_DIR = DATA_DIR / ".pipeline_preview_cache"
 _PREVIEW_CACHE_VERSION = 57
 _TURNTABLE_CACHE_VERSION = 1
 TURNTABLE_FRAME_COUNT = 72
-TURNTABLE_EXTENSIONS = OBJ_EXTENSIONS | ABC_EXTENSIONS | BLEND_EXTENSIONS | MAYA_SCENE_EXTENSIONS | FBX_EXTENSIONS
+TURNTABLE_EXTENSIONS = (OBJ_EXTENSIONS | ABC_EXTENSIONS | BLEND_EXTENSIONS | MAYA_SCENE_EXTENSIONS | FBX_EXTENSIONS
+                        | HOUDINI_SCENE_EXTENSIONS)
 
 
 def _cache_slug(text: str, limit: int) -> str:
@@ -488,7 +612,7 @@ def _file_image_cache_signature(
 ) -> str:
     template_signature = ""
     suffix = path.suffix.lower()
-    renderable_3d = OBJ_EXTENSIONS | ABC_EXTENSIONS | BLEND_EXTENSIONS | MAYA_SCENE_EXTENSIONS | FBX_EXTENSIONS
+    renderable_3d = RENDERABLE_3D_EXTENSIONS
     if suffix in renderable_3d:
         profiles = profiles_snapshot if profiles_snapshot is not None else _RENDER_PROFILES
         profile_name = "HIGH POLY" if render_mode == "high" else "LOW POLY"
@@ -1166,16 +1290,45 @@ def _load_render_profiles() -> dict[str, dict[str, object]]:
     return profiles
 
 
-# Instantane initial; les rendus manuels et chaque nouveau scan automatique
-# rechargent le fichier avant de determiner si un cache reste valide.
-_RENDER_PROFILES = _load_render_profiles()
+# Profils de rendu : `parametres rendus.txt` n'est lu QUE pour lancer un rendu (manuel ou lot
+# automatique, _reload_render_profiles) — jamais pour afficher une image 2D ou un rendu 3D deja
+# fait. Entre deux rendus, les cles de cache 3D se calculent avec les profils du DERNIER rendu,
+# gardes dans RENDER_PROFILES_SNAPSHOT (relu au demarrage ; le fichier texte seulement s'il manque).
+RENDER_PROFILES_SNAPSHOT = DATA_DIR / "render_profiles_snapshot.json"
+
+
+def _write_profiles_snapshot(profiles: dict) -> None:
+    try:
+        temp = RENDER_PROFILES_SNAPSHOT.with_suffix(".json.tmp")
+        temp.write_text(json.dumps(profiles, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+        os.replace(temp, RENDER_PROFILES_SNAPSHOT)
+    except OSError:
+        pass
+
+
+def _initial_render_profiles() -> dict[str, dict[str, object]]:
+    try:
+        profiles = json.loads(RENDER_PROFILES_SNAPSHOT.read_text(encoding="utf-8"))
+        if isinstance(profiles, dict):
+            return profiles
+    except (OSError, ValueError):
+        pass
+    profiles = _load_render_profiles()
+    if profiles:
+        _write_profiles_snapshot(profiles)
+    return profiles
+
+
+_RENDER_PROFILES = _initial_render_profiles()
 _AUTOMATIC_RENDER_PROFILE: dict[str, object] | None = None
 _AUTOMATIC_RENDER_PROFILES: dict[str, dict[str, object]] | None = None
 
 
 def _reload_render_profiles() -> None:
+    """Relit `parametres rendus.txt` : uniquement au lancement d'un rendu."""
     global _RENDER_PROFILES
     _RENDER_PROFILES = _load_render_profiles()
+    _write_profiles_snapshot(_RENDER_PROFILES)
 
 
 def _begin_automatic_render_batch() -> None:
@@ -1484,7 +1637,7 @@ if target_size <= 1e-12: fail("Le cube de bounding box a une taille nulle")
 initial_objects = {obj.as_pointer() for obj in scene.objects}
 report(8, "Import du fichier dans le template")
 try:
-    if kind in {"abc", "maya"}:
+    if kind in {"abc", "maya", "houdini"}:
         bpy.ops.wm.alembic_import(filepath=src, scale=1.0, validate_meshes=False)
     elif kind == "blend":
         with bpy.data.libraries.load(src, link=False) as (data_from, data_to):
@@ -1559,8 +1712,8 @@ for obj in objects:
     obj.hide_viewport = False
     obj.hide_set(False)
 bpy.context.view_layer.update()
-if kind in {"ma", "mb", "maya"}:
-    report(16, "Selection de tous les objets Maya et fusion avec Ctrl+J")
+if kind in {"ma", "mb", "maya", "houdini"}:
+    report(16, "Selection de tous les objets de la scene et fusion avec Ctrl+J")
     bpy.ops.object.select_all(action="DESELECT")
     for obj in objects:
         obj.select_set(True)
@@ -1651,7 +1804,7 @@ transform = Matrix.Translation(target_center) @ Matrix.Scale(uniform_scale, 4) @
 # Une seule transformation est calculee depuis la bounding box globale puis
 # cuite dans la geometrie. Les objets Maya ont ete joints et leurs transforms
 # appliques avant le calcul de cette bounding box.
-report(32, "Scale et centrage du maillage Maya fusionne dans le cube" if kind in {"ma", "mb", "maya"} else "Mise a l'echelle et centrage dans le cube")
+report(32, "Scale et centrage du maillage fusionne dans le cube" if kind in {"ma", "mb", "maya", "houdini"} else "Mise a l'echelle et centrage dans le cube")
 for obj in objects:
     original_world = world_matrices[obj]
     obj.data = obj.data.copy()
@@ -2423,6 +2576,155 @@ cmds.AbcExport(j=" ".join(parts))
         return None
 
 
+def _hython_executable() -> str | None:
+    """Trouve hython (Python de Houdini), necessaire pour lire les .hip : HOUDINI_HYTHON, puis
+    $HFS/bin, puis la version la plus recente sous Side Effects Software."""
+    configured = os.environ.get("HOUDINI_HYTHON")
+    if configured and Path(configured).is_file():
+        return configured
+    candidates = []
+    if os.environ.get("HFS"):
+        candidates.append(Path(os.environ["HFS"]) / "bin" / "hython.exe")
+    root = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Side Effects Software"
+    try:
+        candidates.extend(root.glob("Houdini*/bin/hython.exe"))
+    except OSError:
+        pass
+
+    def version_key(path: Path):
+        return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", path.parent.parent.name)]
+    existing = sorted((p for p in candidates if p.is_file()), key=version_key, reverse=True)
+    return str(existing[0]) if existing else None
+
+
+# Execute DANS hython (pas dans l'appli) : ouvre la scene SANS jamais l'enregistrer, reunit la
+# geometrie AFFICHEE de /obj a l'image courante (jamais les objets masques : les cuire peut prendre
+# des minutes ; une scene rendue via Solaris sans objet affiche echoue donc tout de suite), en
+# espace monde, depaquetee et convertie en polygones,
+# puis l'exporte en Alembic. Les scenes non commerciales (.hipnc) n'ont pas le droit d'exporter
+# en Alembic : OBJ ecrit en Python pur a la place (sens des faces inverse : Houdini tourne dans
+# le sens horaire). Imprime « PIPE_FORMAT abc|obj » pour l'appli.
+_HIP_EXPORT_SCRIPT = r'''import sys
+import hou
+src, dst_abc, dst_obj = sys.argv[sys.argv.index("--") + 1:sys.argv.index("--") + 4]
+hou.hipFile.load(src, suppress_save_prompt=True, ignore_load_warnings=True)
+
+def geometry_objects(displayed_only=True):
+    found = []
+    for node in hou.node("/obj").allSubChildren():
+        if not isinstance(node, hou.ObjNode) or node.name() == "__pipe_preview":
+            continue
+        kind = node.type().name().split("::")[0].lower()
+        if "cam" in kind or "light" in kind:
+            continue
+        try:
+            sop = node.displayNode()
+        except Exception:
+            sop = None
+        if sop is None:
+            continue
+        if displayed_only and not node.isObjectDisplayed():
+            continue
+        found.append(node)
+    return found
+
+objects = geometry_objects(True)
+if not objects:
+    raise RuntimeError("Error: aucun objet affiche dans /obj (scene rendue via Solaris ?)")
+preview = hou.node("/obj").createNode("geo", "__pipe_preview")
+for child in preview.children():
+    child.destroy()
+merge = preview.createNode("object_merge")
+merge.parm("numobj").set(len(objects))
+for index, node in enumerate(objects, 1):
+    merge.parm("objpath%d" % index).set(node.path())
+merge.parm("xformtype").set(1)
+last = merge
+for _ in range(3):
+    last = last.createOutputNode("unpack")
+last = last.createOutputNode("convert")
+geometry = last.geometry()
+polygons = [prim for prim in geometry.prims() if prim.type() == hou.primType.Polygon] if geometry else []
+if not polygons:
+    raise RuntimeError("Error: aucun polygone dans la geometrie affichee a l'image %s" % hou.frame())
+try:
+    rop = last.createOutputNode("rop_alembic")
+    rop.parm("filename").set(dst_abc.replace("\\", "/"))
+    rop.parm("trange").set(0)
+    rop.render()
+    print("PIPE_FORMAT abc")
+except hou.OperationFailed:
+    positions = geometry.pointFloatAttribValues("P")
+    with open(dst_obj, "w") as stream:
+        for i in range(0, len(positions), 3):
+            stream.write("v %.6g %.6g %.6g\n" % (positions[i], positions[i + 1], positions[i + 2]))
+        for prim in polygons:
+            numbers = [point.number() + 1 for point in prim.points()]
+            if len(numbers) >= 3:
+                stream.write("f %s\n" % " ".join(str(n) for n in reversed(numbers)))
+    print("PIPE_FORMAT obj")
+'''
+
+
+def _render_hip_wireframe(path: Path, max_dim: int, progress_callback=None, cancel_event=None,
+                          render_mode: str = "low", profile_override=None) -> QImage | None:
+    """Scene Houdini : hython en exporte la geometrie affichee (_HIP_EXPORT_SCRIPT), puis meme rendu
+    Blender que les autres fichiers 3D (profils low/high, turntable). None sans Houdini, scene
+    illisible ou sans polygone."""
+    hython = _hython_executable()
+    if not hython:
+        if progress_callback:
+            progress_callback(99, f"Houdini/hython introuvable pour lire le fichier {path.suffix.lower()}")
+        return None
+    try:
+        with tempfile.TemporaryDirectory(prefix="pipe_hip_preview_") as temp_dir:
+            temp = Path(temp_dir)
+            script_path, abc_path, obj_path = temp / "export.py", temp / "scene.abc", temp / "scene.obj"
+            log_path = temp / "houdini.log"
+            script_path.write_text(_HIP_EXPORT_SCRIPT, encoding="utf-8")
+            log_stream = log_path.open("w", encoding="utf-8", errors="replace")
+            kwargs = {"stdout": log_stream, "stderr": log_stream}
+            if sys.platform == "win32":
+                kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            if progress_callback:
+                progress_callback(5, "Ouverture de la scene dans hython")
+            proc = subprocess.Popen([hython, str(script_path), "--", str(path.resolve()), str(abc_path),
+                                     str(obj_path)], **kwargs)
+            # Demarrage de Houdini (10-20 s) + cuisson de la scene a l'image courante.
+            deadline = time.monotonic() + 300
+            while proc.poll() is None:
+                if (cancel_event is not None and cancel_event.is_set()) or time.monotonic() >= deadline:
+                    timed_out = time.monotonic() >= deadline
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=3)
+                    log_stream.close()
+                    if timed_out and progress_callback:
+                        progress_callback(99, "Delai depasse pendant l'ouverture Houdini")
+                    return None
+                time.sleep(0.1)
+            log_stream.close()
+            source = next((p for p in (abc_path, obj_path) if p.is_file() and p.stat().st_size > 0), None)
+            if proc.returncode != 0 or source is None:
+                if progress_callback:
+                    lines = [line.strip() for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                             if line.strip() and "dehancer" not in line]
+                    detail = next((line for line in reversed(lines) if "Error" in line or "rror:" in line),
+                                  lines[-1] if lines else "")
+                    progress_callback(99, f"Echec Houdini : {detail or 'export impossible'}")
+                return None
+            if progress_callback:
+                progress_callback(32, "Scene Houdini exportee; rendu Eevee dans le template")
+            return _render_wireframe_eevee(source, max_dim, progress_callback, cancel_event,
+                                           kind_override="houdini" if source == abc_path else "obj",
+                                           render_mode=render_mode, profile_override=profile_override)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
 def _rasterize_obj_numpy(
     transformed: list[tuple[float, float, float]], faces: list[tuple[int, int, int]],
     vertex_shade: list[float], max_dim: int, scale: float, ox: float, oy: float,
@@ -2610,6 +2912,55 @@ def _render_pdf_page(path: Path, max_dim: int, page: int = 0) -> QImage | None:
         return flat
     finally:
         doc.close()
+
+
+def ai_has_pdf_content(path: Path) -> bool:
+    """Vrai si le .ai porte un vrai contenu PDF. Enregistre sans l'option « Creer un fichier
+    compatible PDF », il reste un PDF, mais d'une seule page d'avertissement d'Adobe (« ... saved
+    without PDF Content ... ») qu'il ne faut pas montrer comme apercu."""
+    try:
+        from PySide6.QtPdf import QPdfDocument
+    except ImportError:
+        return False
+    doc = QPdfDocument()
+    try:
+        if doc.load(str(path)) != QPdfDocument.Error.None_ or doc.pageCount() <= 0:
+            return False
+        return "without pdf content" not in doc.getAllText(0).text().casefold()
+    finally:
+        doc.close()
+
+
+def _decode_ai_xmp_thumbnail(path: Path) -> QImage | None:
+    """Vignette JPEG qu'Illustrator range dans les metadonnees XMP (`xmpGImg:image`, base64), pres
+    du debut du fichier, qu'il soit PDF ou PostScript. None si absente."""
+    import base64
+    try:
+        with open(path, "rb") as f:
+            data = f.read(64 * 1024 * 1024)
+    except OSError:
+        return None
+    start = data.find(b"<xmpGImg:image>")
+    end = data.find(b"</xmpGImg:image>", start)
+    if start < 0 or end < 0:
+        return None
+    encoded = data[start + len(b"<xmpGImg:image>"):end].replace(b"&#xA;", b"").replace(b"&#xD;", b"")
+    try:
+        raw = base64.b64decode(b"".join(encoded.split()), validate=False)
+    except ValueError:
+        return None
+    image = QImage.fromData(raw)
+    return None if image.isNull() else image
+
+
+def _decode_ai_image(path: Path, max_dim: int) -> QImage | None:
+    """Illustrator .ai : premiere planche rendue comme un PDF (voir ILLUSTRATOR_EXTENSIONS), sinon
+    la vignette XMP."""
+    if ai_has_pdf_content(path):
+        image = _render_pdf_page(path, max_dim)
+        if image is not None:
+            return image
+    return _decode_ai_xmp_thumbnail(path)
 
 
 def _decode_psd_thumbnail(path: Path) -> QImage | None:
@@ -3289,21 +3640,136 @@ def _oda_file_converter() -> str | None:
     return None
 
 
-def _decode_dwg_image(path: Path, max_dim: int, progress_callback=None, cancel_event=None) -> QImage | None:
-    """Convertit le DWG en DXF puis rend le model space en image 2D."""
-    converter = _oda_file_converter()
-    if not converter:
-        if progress_callback:
-            progress_callback(99, "ODA File Converter requis pour lire les fichiers DWG")
+_DWG_THUMBNAIL_SENTINEL = bytes((0x1F, 0x25, 0x6D, 0x07, 0xD4, 0x36, 0x28, 0x28,
+                                 0x9D, 0x57, 0xCA, 0x3F, 0x9D, 0x44, 0x10, 0x2B))
+
+
+def _decode_dwg_thumbnail(path: Path) -> QImage | None:
+    """Vignette qu'AutoCAD range dans le DWG (option « enregistrer une vignette », active par
+    defaut) : sans aucun outil externe. Adresse de la section a l'octet 0x0D de l'entete (en clair
+    dans toutes les versions R13+), section = sentinelle de 16 octets, taille, nombre d'entrees,
+    puis (code, debut, taille) par entree : 2 = BMP sans entete de fichier (DIB), 6 = PNG
+    (AutoCAD 2013+). La plus grande image lisible ; None si le fichier n'en a pas."""
+    import struct
+    try:
+        with open(path, "rb") as f:
+            head = f.read(0x11)
+            if len(head) < 0x11 or not head.startswith(b"AC10"):
+                return None
+            f.seek(struct.unpack_from("<I", head, 0x0D)[0])
+            block = f.read(21)
+            if len(block) < 21 or block[:16] != _DWG_THUMBNAIL_SENTINEL:
+                return None
+            entries = []
+            for _ in range(block[20]):
+                raw = f.read(9)
+                if len(raw) < 9:
+                    break
+                entries.append(struct.unpack("<BII", raw))
+            best = None
+            for code, start, size in entries:
+                if code not in (2, 6) or not 0 < size < 64 * 1024 * 1024:
+                    continue
+                f.seek(start)
+                data = f.read(size)
+                if code == 2 and len(data) >= 40:
+                    # DIB : entete de fichier BMP ajoute (debut des pixels = apres l'entete
+                    # d'image et la palette eventuelle) pour que Qt le lise.
+                    header_size = struct.unpack_from("<I", data, 0)[0]
+                    bits = struct.unpack_from("<H", data, 14)[0]
+                    colors = struct.unpack_from("<I", data, 32)[0] or ((1 << bits) if bits <= 8 else 0)
+                    data = b"BM" + struct.pack("<IHHI", 14 + len(data), 0, 0, 14 + header_size + colors * 4) + data
+                image = QImage.fromData(data)
+                if not image.isNull() and (best is None or image.width() * image.height() > best.width() * best.height()):
+                    best = image
+            return best
+    except (OSError, struct.error):
         return None
+
+
+def _decode_dwg_image(path: Path, max_dim: int, progress_callback=None, cancel_event=None) -> QImage | None:
+    """Convertit le DWG en DXF puis rend le model space en image 2D. Sans ODA File Converter, ou
+    si la conversion echoue : la vignette integree au DWG (_decode_dwg_thumbnail)."""
+    image = _render_dwg_with_oda(path, max_dim, progress_callback, cancel_event)
+    if image is None and not (cancel_event is not None and cancel_event.is_set()):
+        image = _decode_dwg_thumbnail(path)
+        if image is not None and max(image.width(), image.height()) > max_dim:
+            image = image.scaled(max_dim, max_dim, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    return image
+
+
+def _render_dxf_file(dxf_path: Path, max_dim: int, progress_callback=None) -> QImage | None:
+    """Dessin VECTORIEL du model space d'un DXF (ezdxf + matplotlib), traits clairs sur fond
+    sombre, image cadree sur le dessin (proportions du plan, grand cote = `max_dim`). Sert aux .dxf
+    et aux .dwg convertis par ODA File Converter. None si illisible ou dependances absentes."""
     try:
         import ezdxf
-        from ezdxf.addons.drawing import Frontend, RenderContext
         from ezdxf import recover
+        from ezdxf.addons.drawing import Frontend, RenderContext
         from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
         from ezdxf.addons.drawing.properties import LayoutProperties
         from matplotlib.backends.backend_agg import FigureCanvasAgg
         from matplotlib.figure import Figure
+    except ImportError as exc:
+        if progress_callback:
+            progress_callback(99, f"Dependances d'apercu DXF manquantes : {exc}")
+        return None
+    if progress_callback:
+        progress_callback(42, "Lecture du dessin 2D")
+    try:
+        try:
+            doc, auditor = recover.readfile(str(dxf_path))
+        except Exception:
+            doc = ezdxf.readfile(str(dxf_path))
+            auditor = None
+    except (OSError, ezdxf.DXFError):
+        return None
+    if auditor is not None and auditor.errors:
+        if progress_callback:
+            progress_callback(99, "Le dessin DXF contient des erreurs")
+        return None
+    layout = doc.modelspace()
+    inches = 6.0
+    with _DWG_RENDER_LOCK:
+        figure = Figure(figsize=(inches, inches), dpi=max(96.0, max_dim / inches))
+        canvas = FigureCanvasAgg(figure)
+        axes = figure.add_axes((0, 0, 1, 1))
+        axes.set_aspect("equal", adjustable="datalim")
+        context = RenderContext(doc)
+        properties = LayoutProperties.from_layout(layout)
+        properties.set_colors("#17191b", "#d6d9dc")
+        if progress_callback:
+            progress_callback(68, "Rendu du model space en 2D")
+        Frontend(context, MatplotlibBackend(axes)).draw_layout(
+            layout, finalize=True, layout_properties=properties
+        )
+        # Cadrage sur le dessin : la figure prend les proportions du plan (bornees a 1:4) au lieu
+        # d'un carre ou un plan large flottait entre deux grandes bandes vides.
+        width, height = axes.dataLim.width, axes.dataLim.height
+        if width > 0 and height > 0:
+            ratio = max(0.25, min(4.0, width / height))
+            figure.set_size_inches(inches if ratio >= 1 else inches * ratio,
+                                   inches / ratio if ratio >= 1 else inches)
+        canvas.draw()
+        buffer = io.BytesIO()
+        canvas.print_png(buffer)
+    image = QImage.fromData(buffer.getvalue(), "PNG")
+    if image.isNull():
+        return None
+    if max(image.width(), image.height()) > max_dim:
+        image = image.scaled(max_dim, max_dim, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    return image
+
+
+def _render_dwg_with_oda(path: Path, max_dim: int, progress_callback=None, cancel_event=None) -> QImage | None:
+    """Rendu complet du model space (ODA File Converter + ezdxf + matplotlib). None sans ODA."""
+    converter = _oda_file_converter()
+    if not converter:
+        if progress_callback:
+            progress_callback(90, "ODA File Converter absent : vignette integree au DWG")
+        return None
+    try:
+        import ezdxf
     except ImportError as exc:
         if progress_callback:
             progress_callback(99, f"Dependances d'apercu DWG manquantes : {exc}")
@@ -3355,40 +3821,7 @@ def _decode_dwg_image(path: Path, max_dim: int, progress_callback=None, cancel_e
                 if progress_callback:
                     progress_callback(99, "Conversion DWG impossible avec ODA File Converter")
                 return None
-            if progress_callback:
-                progress_callback(42, "Lecture du dessin 2D")
-            try:
-                doc, auditor = recover.readfile(str(dxf_path))
-            except Exception:
-                doc = ezdxf.readfile(str(dxf_path))
-                auditor = None
-            if auditor is not None and auditor.errors:
-                if progress_callback:
-                    progress_callback(99, "Le dessin DXF converti contient des erreurs")
-                return None
-            layout = doc.modelspace()
-            with _DWG_RENDER_LOCK:
-                figure = Figure(figsize=(6, 6), dpi=max(96, int(max_dim / 6)))
-                canvas = FigureCanvasAgg(figure)
-                axes = figure.add_axes((0, 0, 1, 1))
-                axes.set_aspect("equal", adjustable="datalim")
-                context = RenderContext(doc)
-                properties = LayoutProperties.from_layout(layout)
-                properties.set_colors("#17191b", "#d6d9dc")
-                if progress_callback:
-                    progress_callback(68, "Rendu du model space en 2D")
-                Frontend(context, MatplotlibBackend(axes)).draw_layout(
-                    layout, finalize=True, layout_properties=properties
-                )
-                canvas.draw()
-                buffer = io.BytesIO()
-                canvas.print_png(buffer)
-            image = QImage.fromData(buffer.getvalue(), "PNG")
-            if image.isNull():
-                return None
-            if max(image.width(), image.height()) > max_dim:
-                image = image.scaled(max_dim, max_dim, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            return image
+            return _render_dxf_file(dxf_path, max_dim, progress_callback)
     except (OSError, subprocess.SubprocessError, ezdxf.DXFStructureError) as exc:
         if progress_callback:
             progress_callback(99, f"Erreur de rendu DWG 2D : {exc}")
@@ -3453,6 +3886,256 @@ def _read_preview_pixmap(path: Path, mtime: float) -> tuple[QPixmap | None, bool
     return None, False
 
 
+_FONT_RENDER_LOCK = threading.Lock()
+
+
+def _decode_font_image(path: Path, max_dim: int) -> QImage | None:
+    """Planche d'echantillons d'une police (.ttf/.otf...) : nom, "Aa",
+    alphabet, chiffres et phrase en plusieurs tailles. La police est chargee
+    le temps du rendu puis retiree (aucune installation systeme)."""
+    width = max(480, min(max_dim, 1100))
+    height = round(width * 0.75)
+    with _FONT_RENDER_LOCK:
+        font_id = QFontDatabase.addApplicationFont(str(path))
+        if font_id < 0:
+            return None
+        try:
+            families = QFontDatabase.applicationFontFamilies(font_id)
+            if not families:
+                return None
+            family = families[0]
+            image = QImage(width, height, QImage.Format_ARGB32)
+            image.fill(QColor("#f4f4f2"))
+            painter = QPainter(image)
+            try:
+                painter.setRenderHint(QPainter.Antialiasing, True)
+                painter.setRenderHint(QPainter.TextAntialiasing, True)
+                painter.setPen(QColor("#1c1c1c"))
+                margin = round(width * 0.05)
+                inner = width - 2 * margin
+                y = margin
+
+                def _line(text: str, px: int, fam: str = family) -> None:
+                    nonlocal y
+                    font = QFont(fam)
+                    font.setPixelSize(max(6, px))
+                    painter.setFont(font)
+                    metrics = painter.fontMetrics()
+                    text = metrics.elidedText(text, Qt.ElideRight, inner)
+                    y += metrics.ascent()
+                    painter.drawText(margin, y, text)
+                    y += metrics.descent() + round(px * 0.35)
+
+                _line("Aa", round(width * 0.2))
+                painter.setPen(QColor("#6a6a6a"))
+                _line(family, round(width * 0.035))
+                painter.setPen(QColor("#1c1c1c"))
+                _line("ABCDEFGHIJKLMNOPQRSTUVWXYZ", round(width * 0.05))
+                _line("abcdefghijklmnopqrstuvwxyz", round(width * 0.05))
+                _line("0123456789 !?&@#%()[]{}", round(width * 0.05))
+                _line("Portez ce vieux whisky au juge blond qui fume", round(width * 0.032))
+                _line("The quick brown fox jumps over the lazy dog", round(width * 0.022))
+            finally:
+                painter.end()
+            return image
+        finally:
+            QFontDatabase.removeApplicationFont(font_id)
+
+
+# Brosses Photoshop (.abr) : planche des pointes ECHANTILLONNEES (image en niveaux de gris
+# stockee dans le fichier). Parseur maison, aucune dependance ; meme lecture que GIMP
+# (gimpbrush-load.c) : versions 1/2 (anciennes) et 6/7/10 (section 8BIM "samp").
+_ABR_MAX_BRUSHES = 48        # au-dela, la planche serait illisible en vignette
+_ABR_SAMPLE_MAX_DIM = 256    # chaque pointe est reduite des sa lecture (memoire bornee)
+
+
+def _abr_unpackbits(f, height: int, row_bytes: int) -> bytes:
+    """Echantillon compresse : longueur de chaque ligne (uint16) puis lignes en PackBits."""
+    lengths = struct.unpack(f">{height}H", f.read(2 * height))
+    out = bytearray()
+    for length in lengths:
+        row, line, i = f.read(length), bytearray(), 0
+        while i < len(row):
+            c = row[i]
+            i += 1
+            if c < 128:                     # c+1 octets litteraux
+                line += row[i:i + c + 1]
+                i += c + 1
+            elif c > 128:                   # 1 octet repete 257-c fois (128 = rien)
+                line += row[i:i + 1] * (257 - c)
+                i += 1
+        out += bytes(line[:row_bytes]).ljust(row_bytes, b"\0")
+    return bytes(out)
+
+
+def _abr_read_sample(f) -> QImage | None:
+    """Bornes (4 x int32), profondeur, compression puis pixels d'une pointe -> QImage
+    niveaux de gris (255 = peinture pleine), reduite a _ABR_SAMPLE_MAX_DIM."""
+    top, left, bottom, right = struct.unpack(">4i", f.read(16))
+    depth, compression = struct.unpack(">HB", f.read(3))
+    width, height = right - left, bottom - top
+    if width <= 0 or height <= 0 or width * height > 64_000_000 or depth not in (8, 16):
+        return None
+    bpp = depth // 8
+    data = _abr_unpackbits(f, height, width * bpp) if compression else f.read(width * height * bpp)
+    if bpp == 2:
+        data = data[0::2]                   # 16 bits gros-boutiste : octet de poids fort
+    if len(data) < width * height:
+        return None
+    image = QImage(data, width, height, width, QImage.Format_Grayscale8).copy()
+    if max(width, height) > _ABR_SAMPLE_MAX_DIM:
+        image = image.scaled(_ABR_SAMPLE_MAX_DIM, _ABR_SAMPLE_MAX_DIM, Qt.KeepAspectRatio,
+                             Qt.SmoothTransformation)
+    return image
+
+
+def _abr_brushes(path: Path) -> list:
+    """Pointes d'un .abr, dans l'ordre du fichier : QImage (echantillon) ou tuple
+    ("round", diametre, durete %, rondeur %, angle) pour une pointe calculee (v1/v2)."""
+    brushes: list = []
+    with open(path, "rb") as f:
+        head = f.read(4)
+        if len(head) < 4:
+            return brushes
+        version, second = struct.unpack(">HH", head)
+        if version in (1, 2):
+            for _ in range(second):         # `second` = nombre de pointes
+                if len(brushes) >= _ABR_MAX_BRUSHES:
+                    break
+                kind, size = struct.unpack(">HI", f.read(6))
+                next_brush = f.tell() + size
+                if kind == 1:
+                    _misc, _spacing, diameter, roundness, angle, hardness = struct.unpack(">IHHHhH", f.read(14))
+                    brushes.append(("round", diameter, hardness, roundness, angle))
+                elif kind == 2:
+                    f.seek(6, 1)                                  # divers + espacement
+                    if version == 2:
+                        (chars,) = struct.unpack(">I", f.read(4))
+                        f.seek(2 * chars, 1)                      # nom (UTF-16)
+                    f.seek(1 + 8, 1)                              # anticrenelage + bornes courtes
+                    sample = _abr_read_sample(f)
+                    if sample is not None:
+                        brushes.append(sample)
+                f.seek(next_brush)
+        elif version in (6, 7, 9, 10):
+            sections = {}                     # cle 8BIM -> (debut, fin) ; on ne lit que ce qui sert
+            while True:
+                section = f.read(12)
+                if len(section) < 12 or section[:4] != b"8BIM":
+                    break
+                (size,) = struct.unpack(">I", section[8:12])
+                sections.setdefault(section[4:8], (f.tell(), f.tell() + size))
+                f.seek(size, 1)
+            order = []
+            if b"desc" in sections:
+                start, end = sections[b"desc"]
+                f.seek(start)
+                order = _abr_desc_order(f.read(end - start))[:_ABR_MAX_BRUSHES]
+            wanted = {e for e in order if isinstance(e, str)}
+            samples = {}
+            if b"samp" in sections:
+                start, end = sections[b"samp"]
+                f.seek(start)
+                # Sans description lisible : les pointes echantillonnees dans l'ordre du fichier.
+                while f.tell() + 4 <= end and (len(samples) < (len(wanted) if order else _ABR_MAX_BRUSHES)):
+                    (length,) = struct.unpack(">I", f.read(4))
+                    begin = f.tell()
+                    uuid = f.read(37)[1:].decode("ascii", "replace")     # "$" + identifiant
+                    if not order or uuid in wanted:
+                        f.seek(10 if second == 1 else 264, 1)            # entete propre a la sous-version
+                        sample = _abr_read_sample(f)
+                        if sample is not None:
+                            samples[uuid] = sample
+                    f.seek(begin + length + (-length % 4))              # pointes alignees sur 4 octets
+            if order:
+                brushes = [samples[e] if isinstance(e, str) else e for e in order
+                           if not isinstance(e, str) or e in samples]
+            else:
+                brushes = list(samples.values())
+    return brushes
+
+
+def _abr_desc_order(desc: bytes) -> list:
+    """Pointes dans l'ordre de Photoshop, lues dans la section "desc" (descripteur d'action) :
+    identifiant de l'echantillon (str) pour une pointe echantillonnee, tuple ("round",
+    diametre, durete %, rondeur %, angle) pour une pointe calculee. Lecture par motifs (cles
+    "Brsh"/"Dmtr"/"Hrdn"... en clair) plutot qu'un parseur complet du descripteur."""
+    starts = [(m.start(), m.group(1)) for m in
+              re.finditer(rb"BrshObjc.{6}\x00\x00\x00[\x0c\x0d](computedBrush|sampledBrush)", desc, re.S)]
+    order = []
+    for index, (start, kind) in enumerate(starts):
+        chunk = desc[start:starts[index + 1][0] if index + 1 < len(starts) else len(desc)]
+        if kind == b"sampledBrush":
+            m = re.search(rb"sampledDataTEXT(.{4})", chunk, re.S)
+            if m:
+                (chars,) = struct.unpack(">I", m.group(1))
+                raw = chunk[m.end():m.end() + 2 * chars]
+                order.append(raw.decode("utf-16-be", "replace").rstrip("\0"))
+            continue
+        params = {k.decode(): struct.unpack(">d", v)[0] for k, v in
+                  re.findall(rb"(Dmtr|Hrdn|Angl|Rndn)UntF#\w{3}(.{8})", chunk[:400], re.S)}
+        order.append(("round", params.get("Dmtr", 10.0), params.get("Hrdn", 100.0),
+                      params.get("Rndn", 100.0), params.get("Angl", 0.0)))
+    return order
+
+
+def _decode_abr_image(path: Path, max_dim: int) -> QImage | None:
+    """Planche des pointes d'une bibliotheque de brosses Photoshop : une case par pointe,
+    peinture sombre sur fond clair (comme la planche des polices). None si aucune pointe lisible."""
+    try:
+        brushes = _abr_brushes(path)
+    except (OSError, struct.error, ValueError):
+        return None
+    if not brushes:
+        return None
+    width = max(480, min(max_dim, 1100))
+    cols = math.ceil(math.sqrt(len(brushes)))
+    rows = math.ceil(len(brushes) / cols)
+    cell = width / cols
+    pad = cell * 0.08
+    background = 244
+    image = QImage(width, max(1, round(rows * cell)), QImage.Format_ARGB32)
+    image.fill(QColor(background, background, background))
+    # Niveau de peinture (255 = plein) -> gris affiche (fond clair -> noir).
+    ink = bytes(round(background * (1 - v / 255)) for v in range(256))
+    biggest = max((b[1] for b in brushes if isinstance(b, tuple)), default=1) or 1
+    painter = QPainter(image)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        for index, brush in enumerate(brushes):
+            box = QRectF((index % cols) * cell + pad, (index // cols) * cell + pad, cell - 2 * pad, cell - 2 * pad)
+            if isinstance(brush, tuple):
+                _kind, diameter, hardness, roundness, angle = brush
+                # Racine : une pointe de 3 px reste visible a cote d'une de 300 px.
+                radius = box.width() / 2 * max(0.12, math.sqrt(max(diameter, 0) / biggest))
+                gradient = QRadialGradient(QPointF(0, 0), radius)
+                gradient.setColorAt(0, QColor(0, 0, 0))
+                # Durete = part du rayon peinte pleine (100 % : bord net, pas de degrade).
+                gradient.setColorAt(max(0.0, min(0.97, hardness / 100)), QColor(0, 0, 0))
+                gradient.setColorAt(1, QColor(0, 0, 0, 0))
+                painter.save()
+                painter.translate(box.center())
+                painter.rotate(-angle)
+                painter.scale(1, max(0.05, roundness / 100))
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(gradient)
+                painter.drawEllipse(QPointF(0, 0), radius, radius)
+                painter.restore()
+                continue
+            gray = brush.convertToFormat(QImage.Format_Grayscale8)
+            raw = bytes(gray.constBits())[:gray.sizeInBytes()]
+            shown = QImage(raw.translate(ink), gray.width(), gray.height(), gray.bytesPerLine(),
+                           QImage.Format_Grayscale8).copy()
+            scaled = shown.size().scaled(box.size().toSize(), Qt.KeepAspectRatio)   # remplit sa case
+            target = QRectF(0, 0, scaled.width(), scaled.height())
+            target.moveCenter(box.center())
+            painter.drawImage(target, shown)
+    finally:
+        painter.end()
+    return image
+
+
 def _decode_2d_image(path: Path, max_dim: int, progress_callback=None, cancel_event=None) -> QImage | None:
     """Decode all static 2D preview formats to a bounded QImage."""
     suffix = path.suffix.lower()
@@ -3460,8 +4143,12 @@ def _decode_2d_image(path: Path, max_dim: int, progress_callback=None, cancel_ev
         progress_callback(12, f"Lecture de l'image 2D {suffix}")
     if suffix in DWG_EXTENSIONS:
         image = _decode_dwg_image(path, max_dim, progress_callback, cancel_event)
+    elif suffix in DXF_EXTENSIONS:
+        image = _render_dxf_file(path, max_dim, progress_callback)
     elif suffix in PDF_EXTENSIONS:
         image = _render_pdf_page(path, max_dim)
+    elif suffix in ILLUSTRATOR_EXTENSIONS:
+        image = _decode_ai_image(path, max_dim)
     elif suffix in PSD_EXTENSIONS:
         image = _decode_psd_thumbnail(path)
     elif suffix in EXR_EXTENSIONS:
@@ -3470,6 +4157,10 @@ def _decode_2d_image(path: Path, max_dim: int, progress_callback=None, cancel_ev
         image = _decode_hdr_image(path, max_dim)
     elif suffix in CUBE_EXTENSIONS:
         image = _decode_cube_image(path, max_dim)
+    elif suffix in FONT_EXTENSIONS:
+        image = _decode_font_image(path, max_dim)
+    elif suffix in ABR_EXTENSIONS:
+        image = _decode_abr_image(path, max_dim)
     elif suffix in RAW_EXTENSIONS:
         image = _decode_raw_image(path, max_dim)
     elif suffix in TX_EXTENSIONS:
@@ -3505,9 +4196,16 @@ def file_image_pixmap(path: Path, asynchronous: bool = False) -> QPixmap | None:
     Le recadrage carre final se fait au dessin (voir _paint_row_image), a
     la taille reelle de la ligne. None si le fichier n'est plus lisible ou
     n'a pas de contenu exploitable."""
-    try:
-        mtime = path.stat().st_mtime
-    except OSError:
+    # Les lignes des colonnes l'appellent a CHAQUE repeinture (asynchronous) : date memorisee un
+    # instant (cached_mtime) ; l'inspecteur (synchrone) relit le disque.
+    if asynchronous:
+        mtime = cached_mtime(path)
+    else:
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            mtime = None
+    if mtime is None:
         return None
     key = str(path)
     cache_path = _file_image_cache_path(path, mtime)
@@ -3524,6 +4222,8 @@ def file_image_pixmap(path: Path, asynchronous: bool = False) -> QPixmap | None:
         miss_key = (key, int(mtime))
         if miss_key in _FILE_IMAGE_COLUMN_LOOKUP_MISSES:
             return None
+        if requests_held():                     # animation en cours : rien a decoder maintenant
+            return None
         suffix = path.suffix.lower()
         # Les vignettes sont chargées/décodées en worker pour que l'ouverture
         # d'une colonne ne fasse jamais de lecture image sur le thread UI.
@@ -3531,9 +4231,9 @@ def file_image_pixmap(path: Path, asynchronous: bool = False) -> QPixmap | None:
             _PREVIEW_DECODE_MANAGER.request(
                 path, mtime, quiet=True, cache_only=False, force_render=key in _STALE_PREVIEW_PATHS
             )
-        elif suffix in OBJ_EXTENSIONS | ABC_EXTENSIONS | BLEND_EXTENSIONS | MAYA_SCENE_EXTENSIONS | FBX_EXTENSIONS:
+        elif suffix in RENDERABLE_3D_EXTENSIONS:
             _PREVIEW_DECODE_MANAGER.request(path, mtime, quiet=True, cache_only=True)
-        elif suffix in DWG_EXTENSIONS:
+        elif suffix in DWG_EXTENSIONS | DXF_EXTENSIONS:
             _PREVIEW_DECODE_MANAGER.request(path, mtime, quiet=True, cache_only=False)
         return None
     cached_pix, is_stale = _read_preview_pixmap(path, mtime)
@@ -3547,15 +4247,15 @@ def file_image_pixmap(path: Path, asynchronous: bool = False) -> QPixmap | None:
         # Les rendus OBJ/ABC sont explicites (menu contextuel) ou lances par
         # le balayage d'inactivite ; ne pas les demarrer a la simple selection.
         return None
-    elif suffix in DWG_EXTENSIONS:
-        # Conversion DWG couteuse : elle est generee en arriere-plan.
+    elif suffix in DWG_EXTENSIONS | DXF_EXTENSIONS:
+        # Conversion / dessin DWG-DXF couteux : genere en arriere-plan.
         _PREVIEW_DECODE_MANAGER.request(path, mtime)
         return None
     elif suffix in BLEND_EXTENSIONS:
         # Un .blend ne se rend qu'a la demande via son menu contextuel;
         # une fois genere, son cache est affiche comme les autres apercus.
         return None
-    elif suffix in MAYA_SCENE_EXTENSIONS | FBX_EXTENSIONS:
+    elif suffix in MAYA_SCENE_EXTENSIONS | FBX_EXTENSIONS | HOUDINI_SCENE_EXTENSIONS:
         # Les scenes Maya se rendent a la demande ou pendant le balayage d'inactivite.
         return None
     elif suffix in TWO_D_IMAGE_EXTENSIONS:
@@ -3571,6 +4271,8 @@ def file_image_pixmap(path: Path, asynchronous: bool = False) -> QPixmap | None:
     pix = QPixmap.fromImage(image)
     _STALE_PREVIEW_PATHS.discard(key)
     _cache_file_preview(key, mtime, pix)
+    if not IMAGE_DISK_CACHE_ENABLED:
+        return pix                              # mise en cache disque des images suspendue
     try:
         was_new = not FILE_IMAGE_DISK_CACHE_DIR.is_dir()
         FILE_IMAGE_DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -3754,7 +4456,8 @@ class _PreviewDecodeTask(QRunnable):
                     image = None
             else:
                 image = self._decode()
-            if (image is not None and not image.isNull() and not self.loaded_stale
+            keep_on_disk = IMAGE_DISK_CACHE_ENABLED or self.path.suffix.lower() not in _IMAGE_CACHE_SUFFIXES
+            if (image is not None and not image.isNull() and not self.loaded_stale and keep_on_disk
                     and (self.force_render or not cache_path.is_file())):
                 try:
                     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3877,9 +4580,11 @@ class _PreviewDecodeTask(QRunnable):
             # conservee et Blender detecte/applique la subdivision comme
             # dans le chemin automatique.
             return _render_wireframe_eevee(self.path, OBJ_PREVIEW_DIM, report, self.cancel_event, render_mode=self.render_mode, profile_override=self.profile_override)
+        if suffix in HOUDINI_SCENE_EXTENSIONS: return _render_hip_wireframe(self.path, OBJ_PREVIEW_DIM, report, self.cancel_event, render_mode=self.render_mode, profile_override=self.profile_override)
         if suffix in MAYA_SCENE_EXTENSIONS: return _render_ma_wireframe(self.path, OBJ_PREVIEW_DIM, report, self.cancel_event, render_mode=self.render_mode, profile_override=self.profile_override)
         if suffix in FBX_EXTENSIONS: return _render_wireframe_eevee(self.path, OBJ_PREVIEW_DIM, report, self.cancel_event, render_mode=self.render_mode, profile_override=self.profile_override)
         if suffix in DWG_EXTENSIONS: return _decode_dwg_image(self.path, OBJ_PREVIEW_DIM, report, self.cancel_event)
+        if suffix in DXF_EXTENSIONS: return _render_dxf_file(self.path, OBJ_PREVIEW_DIM, report)
         if suffix in TWO_D_IMAGE_EXTENSIONS: return _decode_2d_image(self.path, FILE_IMAGE_CACHE_MAX_DIM, report, self.cancel_event)
         if suffix in VIDEO_EXTENSIONS: return _decode_video_frame(self.path, FILE_IMAGE_CACHE_MAX_DIM)
         return None
@@ -3889,6 +4594,9 @@ _PREVIEW_DECODE_POOL = QThreadPool()
 _PREVIEW_DECODE_POOL.setMaxThreadCount(2)
 _IDLE_SCAN_POOL = QThreadPool()
 _IDLE_SCAN_POOL.setMaxThreadCount(1)
+_IMAGE_DECODE_POOL = QThreadPool()
+_IMAGE_DECODE_POOL.setMaxThreadCount(max(2, min(4, (os.cpu_count() or 4) - 2)))
+_image_decode_order = 0
 
 
 class _PreviewDecodeManager(QObject):
@@ -3919,12 +4627,6 @@ class _PreviewDecodeManager(QObject):
                 _reload_render_profiles()
                 profile_override = _render_profile(render_mode)
                 profiles_snapshot = json.loads(json.dumps(_RENDER_PROFILES))
-        elif not automatic:
-            # Même les aperçus servis depuis le cache doivent calculer leur
-            # clé avec le contenu actuel des paramètres de rendu. Ainsi, une
-            # modification de parametres rendus.txt est prise en compte dès
-            # le prochain aperçu, sans devoir redémarrer l'application.
-            _reload_render_profiles()
         task = _PreviewDecodeTask(path, mtime, quiet=quiet, cancel_event=cancel_event,
                                   cache_only=cache_only, force_render=force_render,
                                   render_mode=render_mode, profile_override=profile_override,
@@ -3938,7 +4640,15 @@ class _PreviewDecodeManager(QObject):
             self._write_task_log(task, f"> Aperçu en cours : {path}")
         if not quiet:
             self.started.emit(key)
-        _PREVIEW_DECODE_POOL.start(task)
+        if path.suffix.lower() in _IMAGE_CACHE_SUFFIXES:
+            # Images 2D / videos : file a part, plusieurs decodages a la fois, les DERNIERES
+            # demandees d'abord (les lignes / vignettes visibles, peintes en dernier) ; jamais
+            # derriere un rendu Blender / Maya.
+            global _image_decode_order
+            _image_decode_order += 1
+            _IMAGE_DECODE_POOL.start(task, _image_decode_order)
+        else:
+            _PREVIEW_DECODE_POOL.start(task)
 
     def _on_finished(self, task, path_str: str, mtime: float, image):
         self.active.pop(path_str, None)
@@ -4064,7 +4774,8 @@ class _IdlePreviewScheduler(QObject):
         _PREVIEW_DECODE_MANAGER.turntable_ready.connect(self._on_preview_ready)
         _PREVIEW_DECODE_MANAGER.started.connect(self._on_preview_started)
         _PREVIEW_DECODE_MANAGER.progress.connect(self._on_preview_progress)
-        self.timer.start()
+        if AUTO_RENDER_ENABLED:                   # rendus automatiques suspendus (voir AUTO_RENDER_ENABLED)
+            self.timer.start()
 
     def eventFilter(self, watched, event):
         if sys.platform != "win32" and event.type() in {
@@ -4097,6 +4808,8 @@ class _IdlePreviewScheduler(QObject):
         return (time.monotonic() - self.last_activity) * 1000 >= self.IDLE_DELAY_MS
 
     def _poll(self):
+        if not AUTO_RENDER_ENABLED:
+            return
         idle_now = self._user_is_idle()
         if not idle_now:
             self.is_idle = False

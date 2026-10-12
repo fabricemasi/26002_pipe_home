@@ -8,7 +8,7 @@ import subprocess
 import time
 from pathlib import Path
 from PySide6.QtCore import (
-    QEvent, QObject, QPointF, QRunnable, QRect, QRectF, QSize, Qt, QThreadPool, Signal,
+    QEvent, QObject, QPointF, QRunnable, QRect, QRectF, QSize, Qt, QThreadPool, QTimer, Signal,
 )
 from PySide6.QtGui import (
     QColor,
@@ -17,8 +17,10 @@ from PySide6.QtGui import (
     QPainter,
     QPen,
     QPixmap,
+    QPolygonF,
 )
 from PySide6.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -90,6 +92,22 @@ def _dim_effect(parent):
     return effect
 
 
+def style_focus_button(button: "IconButton", title: str = PREVIEW_STACK_TITLE) -> None:
+    """Taille, fond, bordure et rayon des boutons de la colonne Focus (Colonnes > Focus > Bouton
+    repliement) : repli, « masquer », planche, et le bouton de planche flottant (focus sans
+    colonne Focus, voir PipelineBrowser._sync_floating_gallery_btn)."""
+    s = column_style_for(title)
+    w = scaled(int(s.get("preview_toggle_width", 22)))
+    h = scaled(int(s.get("preview_toggle_height", 22)))
+    button.setFixedSize(max(1, w), max(1, h))
+    radius = _radius_dict(scaled(int(s.get("preview_toggle_radius", 4)), 0))
+    enabled = _coerce_side_enabled(s.get("preview_toggle_border_enabled", False))
+    colors = {k: resolve_color_ref(v) for k, v in (s.get("preview_toggle_border") or {}).items()}
+    thickness = scaled(int(s.get("preview_toggle_border_thickness", 1)), 0)
+    bg = resolve_color_ref(s.get("preview_toggle_bg_color", "#960f1114"))
+    button.set_frame_style(bg, enabled, colors, thickness, radius)
+
+
 class PreviewColumn(QWidget):
     """Colonne sans contenu de dossier propre, juste un apercu (voir
     PipelineBrowser.update_preview_stack) — utilisee pour
@@ -122,7 +140,7 @@ class PreviewColumn(QWidget):
 
     def __init__(self, title: str, parent=None, on_toggle=None,
                  user_width: int | None = None, on_resize=None, fit_height: bool = False,
-                 display_title: str | None = None, on_hide_columns=None):
+                 display_title: str | None = None, on_hide_columns=None, on_gallery=None):
         super().__init__(parent)
         self.column_title = title
         # `display_title` (texte de l'entete, ex. "Focus Projet"/"Focus
@@ -263,6 +281,22 @@ class PreviewColumn(QWidget):
             self.hide_btn.setToolTip("Masquer les colonnes de set")
             self.hide_btn.clicked.connect(on_hide_columns)
             self.hide_btn.raise_()
+        # Troisieme bouton, a droite de « masquer », VISIBLE SEULEMENT colonnes masquees (etat
+        # focus, voir set_buttons_only) : bascule entre l'image en cours et la planche de toutes
+        # les images du dossier (voir PipelineBrowser._toggle_focus_gallery). Meme style.
+        self.gallery_btn = None
+        # Rangee des boutons de la visionneuse reordonnee par l'appli (Ctrl + glisser, voir
+        # PipelineBrowser._layout_viewer_buttons) : appele apres chaque placement par defaut.
+        self.on_buttons_placed = None
+        if on_gallery is not None and self.hide_btn is not None:
+            self.gallery_btn = IconButton(
+                "gallery", role_color("buttons", "#c4cacf"), C["text"], parent=self
+            )
+            self.gallery_btn.setCursor(Qt.ArrowCursor)
+            self.gallery_btn.setFlat(True)
+            self.gallery_btn.setToolTip("Toutes les images du dossier")
+            self.gallery_btn.clicked.connect(on_gallery)
+            self.gallery_btn.hide()
 
         # Largeur PAR DEFAUT (tant que l'utilisateur n'a pas encore glisse
         # son bord, voir _user_width ci-dessus) : pour le fantome "Fichiers
@@ -400,6 +434,7 @@ class PreviewColumn(QWidget):
         la bordure de redimensionnement inaccessible des que le curseur
         survole un bloc."""
         etype = event.type()
+        self._defocus_click_filter(obj, event)
         if etype == QEvent.MouseMove:
             if self._resizing:
                 self.resize_update(event.globalPosition().toPoint().x())
@@ -417,6 +452,31 @@ class PreviewColumn(QWidget):
         elif etype == QEvent.Leave and not self._resizing:
             obj.unsetCursor()
         return False
+
+    def _defocus_click_filter(self, obj, event):
+        """Clic gauche simple sur le TITRE ou l'IMAGE d'un bloc (pas la rangee IN/OVER/OUT ni la
+        bordure de redimensionnement) : meme effet qu'un re-clic sur le dossier selectionne de sa
+        vraie colonne (PipelineBrowser.on_reclicked) — il est defocalise."""
+        etype = event.type()
+        if etype not in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease) or event.button() != Qt.LeftButton:
+            return
+        block = obj.parentWidget()
+        while block is not None and not isinstance(block, _PreviewBlock):
+            block = block.parentWidget()
+        if block is None or obj not in (block._title_bar, block._image_wrap, block.image):
+            return              # (l'evenement remonte ensuite jusqu'a la carte : ne rien effacer)
+        if etype == QEvent.MouseButtonPress:
+            local_x = obj.mapTo(self, event.position().toPoint()).x()
+            self._defocus_press = None if self._in_resize_zone(local_x) else event.globalPosition().toPoint()
+            return
+        start, self._defocus_press = getattr(self, "_defocus_press", None), None
+        source = block._source_column
+        if (start is None or self._resizing or source is None
+                or (event.globalPosition().toPoint() - start).manhattanLength() >= QApplication.startDragDistance()):
+            return
+        handler = getattr(self.window(), "on_reclicked", None)
+        if handler is not None:
+            QTimer.singleShot(0, source, lambda: handler(source))     # annule si la colonne disparait
 
     def mouseMoveEvent(self, event):
         if self._resizing:
@@ -555,8 +615,9 @@ class PreviewColumn(QWidget):
         self._update_card_mask()
         if self.toggle_btn is not None:
             self.toggle_btn.set_colors(role_color("buttons", "#c4cacf"), C["text"])
-            if self.hide_btn is not None:
-                self.hide_btn.set_colors(role_color("buttons", "#c4cacf"), C["text"])
+            for button in (self.hide_btn, self.gallery_btn):
+                if button is not None:
+                    button.set_colors(role_color("buttons", "#c4cacf"), C["text"])
             self.refresh_toggle_style()
 
     def refresh_toggle_style(self):
@@ -571,26 +632,30 @@ class PreviewColumn(QWidget):
         coin superieur gauche de la colonne), plus un padding implicite."""
         if self.toggle_btn is None:
             return
-        s = column_style_for(self.column_title)
-        w = scaled(int(s.get("preview_toggle_width", 22)))
-        h = scaled(int(s.get("preview_toggle_height", 22)))
-        self.toggle_btn.setFixedSize(max(1, w), max(1, h))
-        radius = _radius_dict(scaled(int(s.get("preview_toggle_radius", 4)), 0))
-        enabled = _coerce_side_enabled(s.get("preview_toggle_border_enabled", False))
-        colors = {k: resolve_color_ref(v) for k, v in (s.get("preview_toggle_border") or {}).items()}
-        thickness = scaled(int(s.get("preview_toggle_border_thickness", 1)), 0)
-        bg = resolve_color_ref(s.get("preview_toggle_bg_color", "#960f1114"))
-        self.toggle_btn.set_frame_style(bg, enabled, colors, thickness, radius)
-        if self.hide_btn is not None:
-            self.hide_btn.setFixedSize(max(1, w), max(1, h))
-            self.hide_btn.set_frame_style(bg, enabled, colors, thickness, radius)
-            self._place_hide_btn()
+        for button in (self.toggle_btn, self.hide_btn, self.gallery_btn):
+            if button is not None:
+                style_focus_button(button, self.column_title)
+        self._place_hide_btn()
 
     def _place_hide_btn(self):
-        """A droite du bouton de repliement."""
+        """A droite du bouton de repliement (et le bouton de la planche a droite de celui-ci)."""
         if self.hide_btn is None or self.toggle_btn is None:
             return
         self.hide_btn.move(self.toggle_btn.x() + self.toggle_btn.width() + scaled(4, 0), self.toggle_btn.y())
+        if self.gallery_btn is not None:
+            self.gallery_btn.move(self.hide_btn.x() + self.hide_btn.width() + scaled(4, 0), self.hide_btn.y())
+        if self.on_buttons_placed is not None:
+            self.on_buttons_placed()
+
+    def fit_buttons(self):
+        """Mode « colonnes masquees » : la colonne couvre ses boutons, ou que la rangee les ait places."""
+        if not getattr(self, "_buttons_only", False):
+            return
+        buttons = [b for b in (self.toggle_btn, self.hide_btn, self.gallery_btn) if b is not None and not b.isHidden()]
+        right = max((b.geometry().right() for b in buttons), default=0) + scaled(10, 0)
+        bottom = max((b.geometry().bottom() for b in buttons), default=0) + scaled(8, 0)
+        if (right, bottom) != (self.width(), self.height()):
+            self.setFixedSize(right, bottom)
 
     def set_toggle_state(self, collapsed: bool):
         """Met a jour l'icone (voir __init__, `on_toggle`) apres un repli/
@@ -611,6 +676,14 @@ class PreviewColumn(QWidget):
         self.hide_btn.set_kind("show_columns" if hidden else "fade_columns")
         self.hide_btn.setToolTip("Afficher les colonnes de set" if hidden else "Masquer les colonnes de set")
 
+    def set_gallery_state(self, shown: bool):
+        """Icone/infobulle du bouton de la planche : grille (aller a la planche) ou image seule
+        (revenir a l'image en cours)."""
+        if self.gallery_btn is None:
+            return
+        self.gallery_btn.set_kind("single_image" if shown else "gallery")
+        self.gallery_btn.setToolTip("Revenir a l'image en cours" if shown else "Toutes les images du dossier")
+
     def _set_toggle_usable(self, usable: bool):
         if self.toggle_btn is None:
             return
@@ -623,7 +696,9 @@ class PreviewColumn(QWidget):
         restaure tout. Instantane : le fondu est joue par PipelineBrowser."""
         if on == getattr(self, "_buttons_only", False):
             return
-        buttons = [b for b in (self.toggle_btn, self.hide_btn) if b is not None]
+        buttons = [b for b in (self.toggle_btn, self.hide_btn, self.gallery_btn) if b is not None]
+        if self.gallery_btn is not None:
+            self.gallery_btn.setVisible(on)          # n'a de sens qu'en etat focus
         if on:
             self._buttons_only = True
             self._place_hide_btn()
@@ -948,6 +1023,80 @@ class _PureRefExportTask(QRunnable):
                     pass
         self.signals.finished.emit(str(self.path), self.mtime, exported, error)
 
+# -- Images d'une planche comme FICHIERS (visionneuse du mode focus) ----------------------------
+# Chaque image d'un .pur devient un vrai fichier image du cache (meme dossier que l'export PureRef
+# 2.x : FILE_IMAGE_DISK_CACHE_DIR/pureref_images/<empreinte chemin + date>) : la visionneuse les
+# traite alors comme n'importe quelle image (decodage en fond, vignettes, zoom).
+
+def _pur_cache_dir(path: Path, mtime: float) -> Path:
+    digest = hashlib.sha256(f"{path}|{mtime}".encode("utf-8", errors="replace")).hexdigest()
+    return FILE_IMAGE_DISK_CACHE_DIR / "pureref_images" / digest
+
+
+def _pur_listed(folder: Path) -> list[Path]:
+    return sorted((p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in (".png", ".jpg", ".jpeg")
+                   and p.stat().st_size > 0), key=lambda p: p.name.casefold())
+
+
+def pur_image_files(path: Path, mtime: float) -> list[Path] | None:
+    """Images de la planche DEJA disponibles en fichiers (rapide : aucune lecture de la planche) ;
+    None si elles restent a extraire (PureRefImagesTask)."""
+    folder = _pur_cache_dir(path, mtime)
+    for marker in (".export_complete", ".embedded_complete"):
+        if (folder / marker).is_file():
+            try:
+                return _pur_listed(folder)
+            except OSError:
+                return None
+    return None
+
+
+def extract_pur_embedded_images(path: Path, mtime: float) -> list[Path]:
+    """PureRef 1.x : recopie (sans decodage) chaque image embarquee dans le cache, une fois."""
+    folder = _pur_cache_dir(path, mtime)
+    marker = folder / ".embedded_complete"
+    if marker.is_file():
+        return _pur_listed(folder)
+    ranges = pur_embedded_image_ranges(path, mtime)
+    if not ranges:
+        return []
+    folder.mkdir(parents=True, exist_ok=True)
+    with path.open("rb") as stream:
+        for rank, (start, end, fmt) in enumerate(ranges, 1):
+            stream.seek(start)
+            (folder / f"{rank:04d}.{'jpg' if fmt == 'JPEG' else 'png'}").write_bytes(stream.read(end - start))
+    marker.touch()
+    return _pur_listed(folder)
+
+
+class _PureRefImagesSignals(QObject):
+    finished = Signal(str, float, object, str)      # planche, date, fichiers (str), erreur
+
+
+class PureRefImagesTask(QRunnable):
+    """En fond : images d'une planche en fichiers. 1.x : recopie des images embarquees ; 2.x : export
+    par le CLI de PureRef (_PureRefExportTask, son cache est reutilise)."""
+
+    def __init__(self, path: Path, mtime: float):
+        super().__init__()
+        self.path, self.mtime = path, mtime
+        self.signals = _PureRefImagesSignals()
+
+    def run(self):
+        version = pur_file_major_version(self.path)
+        if version is not None and version >= 2:
+            export = _PureRefExportTask(self.path, self.mtime)
+            export.signals.finished.connect(self.signals.finished.emit)
+            export.run()
+            return
+        files, error = [], ""
+        try:
+            files = [str(p) for p in extract_pur_embedded_images(self.path, self.mtime)]
+        except OSError as exc:
+            error = str(exc)
+        self.signals.finished.emit(str(self.path), self.mtime, files, error)
+
+
 _PUR_EXPORT_POOL = QThreadPool()
 
 _PUR_EXPORT_POOL.setMaxThreadCount(1)
@@ -1003,11 +1152,24 @@ class IconButton(QPushButton):
         # les settings de style du bouton repliement : taille bouton ...
         # border ... couleur fond".
         self._frame = None   # (bg, enabled, colors, thickness, radius) | None
+        self._text = ""      # kind "text" : libelle centre (boutons PureRef de la visionneuse)
+        self._alert = None   # couleur de fond imposee (bouton filtre de la planche : rouge quand un filtre agit)
+
+    def set_text_label(self, text: str):
+        self._text = text
+        self.update()
 
     def set_colors(self, color: str, hover_color: str):
         self._color = color
         self._hover_color = hover_color
         self.update()
+
+    def set_alert(self, color: str | None):
+        """Fond plein `color` (None = habillage normal) : bouton filtre de la planche, rouge quand un
+        filtre est applique."""
+        if color != self._alert:
+            self._alert = color
+            self.update()
 
     def set_kind(self, kind: str):
         self._kind = kind
@@ -1026,12 +1188,18 @@ class IconButton(QPushButton):
             painter = QPainter(self)
             bg, enabled, colors, thickness, radius = self._frame
             painter.setRenderHint(QPainter.Antialiasing, _radius_any(radius))
-            _paint_bordered_rect(painter, self.rect(), radius, enabled, thickness, colors, bg)
+            _paint_bordered_rect(painter, self.rect(), radius, enabled, thickness, colors, self._alert or bg)
         else:
             super().paintEvent(event)
             painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         rect = self.rect()
+        if self._kind == "text":
+            painter.setPen(QColor(self._hover_color if self.underMouse() else self._color))
+            painter.setFont(self.font())
+            painter.drawText(rect, Qt.AlignCenter, self._text)
+            painter.end()
+            return
         custom_pix = self._custom_icon_pixmap(rect)
         if custom_pix is not None:
             target = QRect(0, 0, custom_pix.width(), custom_pix.height())
@@ -1039,7 +1207,7 @@ class IconButton(QPushButton):
             painter.drawPixmap(target, custom_pix)
             painter.end()
             return
-        color = self._hover_color if self.underMouse() else self._color
+        color = self._hover_color if (self.underMouse() or self._alert) else self._color
         pen = QPen(QColor(color))
         pen.setWidthF(1.3)
         pen.setCapStyle(Qt.FlatCap)
@@ -1084,6 +1252,33 @@ class IconButton(QPushButton):
                 painter.setBrush(bar_color)
                 x = cx + (i - 1) * (bar_w + gap) - bar_w / 2
                 painter.drawRect(QRectF(x, cy - bar_h / 2, bar_w, bar_h))
+        elif self._kind == "gallery":
+            # Planche : 2 x 2 vignettes.
+            cell, gap = s * 1.05, s * 0.45
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(color))
+            for i in range(2):
+                for j in range(2):
+                    painter.drawRoundedRect(QRectF(cx - cell - gap / 2 + i * (cell + gap),
+                                                   cy - cell - gap / 2 + j * (cell + gap), cell, cell),
+                                            s * 0.2, s * 0.2)
+        elif self._kind == "filter":
+            # Filtre : un entonnoir.
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(color))
+            painter.drawPolygon(QPolygonF([QPointF(cx - s * 1.7, cy - s * 1.3), QPointF(cx + s * 1.7, cy - s * 1.3),
+                                           QPointF(cx + s * 0.4, cy + s * 0.15), QPointF(cx + s * 0.4, cy + s * 1.5),
+                                           QPointF(cx - s * 0.4, cy + s * 1.0), QPointF(cx - s * 0.4, cy + s * 0.15)]))
+        elif self._kind == "single_image":
+            # Image seule : un cadre avec un sommet (montagne) dedans.
+            painter.setBrush(Qt.NoBrush)
+            frame = QRectF(cx - s * 1.5, cy - s * 1.15, s * 3.0, s * 2.3)
+            painter.drawRoundedRect(frame, s * 0.25, s * 0.25)
+            painter.drawPolyline(QPolygonF([QPointF(frame.left() + s * 0.35, frame.bottom() - s * 0.35),
+                                  QPointF(cx - s * 0.2, cy - s * 0.2),
+                                  QPointF(cx + s * 0.35, cy + s * 0.35),
+                                  QPointF(cx + s * 0.75, cy),
+                                  QPointF(frame.right() - s * 0.35, frame.bottom() - s * 0.35)]))
         elif self._kind in ("dchevron_left", "dchevron_right"):
             # Repli/depli de Type/Projets/Sous-projet (voir
             # Column.set_collapsed) : double chevron ("«"/"»") pointant vers

@@ -26,9 +26,12 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMenu,
     QPushButton,
+    QBoxLayout,
     QSizePolicy,
+    QSpacerItem,
     QVBoxLayout,
     QWidget,
+    QWidgetAction,
 )
 from app_style import (
     SEMANTIC_COLOR_SLOTS,
@@ -43,6 +46,7 @@ from settings_theme import (  # noqa: F401 (reexportes)
     _input_radius, _qfont, _register_input, _register_radius, _set_button_radius, _set_input_radius,
     _set_text_role, _text_label,
 )
+from settings_menu import Menu, menu_row  # noqa: F401 (reexporte : menus contextuels)
 from settings_store import (
     M,
     _CORNERS,
@@ -56,6 +60,255 @@ from settings_store import (
 # ==========================================================================
 # Petits widgets reproduisant les controles de la maquette.
 # ==========================================================================
+
+
+# Lignes ajoutees aux menus contextuels de la fenetre de reglages (cellules, entetes de tableau,
+# curseurs, titres) : chaque fournisseur recoit (widget clique, menu) et y ajoute ce qu'il veut.
+# Le moteur ne sait rien de ce qui est ajoute (ex. « Ajouter une espace au-dessus » en v2).
+CONTEXT_MENU_EXTRAS: list = []
+
+# Style PROPRE d'un element (« Override settings », settings_element_style) : identifiant de
+# l'element (« table:<cle de dimensions> ») -> etat resolu (voir settings_layout.table_look_scope).
+# Rempli depuis les reglages (`element_style_overrides`), lu par chaque tableau a son affichage.
+ELEMENT_LOOKS: dict = {}
+
+# Style PROPRE d'une partie d'un tableau (« Override settings » > cellule / ligne / colonne, et police
+# du tableau entier) : cle de dimensions du tableau -> {("cell", r, c) | ("row", r) | ("col", c) |
+# ("table",) : {"bg", "padding", "font"}} (indices LOGIQUES), pose par settings_layout.apply_part_looks.
+PART_LOOKS: dict = {}
+
+
+# Fournisseurs appeles APRES tous les autres (fin de menu) : « Override settings » quand aucune
+# ligne d'espace ne l'a deja pose (voir SPACE_MENU_HOOKS).
+CONTEXT_MENU_FINAL: list = []
+
+# Rappels (widget clique, menu, contexte des espaces) poses a la suite des lignes « Ajouter une espace
+# au-dessus / en dessous » (make_space_actions) : « Override settings » apparait partout ou elles sont.
+# Contexte : {"above", "below", "set_above", "set_below"}.
+SPACE_MENU_HOOKS: list = []
+
+
+def add_context_extras(widget: QWidget, menu: QMenu) -> None:
+    for provider in list(CONTEXT_MENU_EXTRAS):
+        provider(widget, menu)
+    for provider in list(CONTEXT_MENU_FINAL):
+        provider(widget, menu)
+
+
+def run_space_menu_hooks(widget: QWidget | None, menu: QMenu, context: dict) -> None:
+    """Apres des lignes d'espace : les rappels de SPACE_MENU_HOOKS (une seule fois par menu)."""
+    if widget is None or getattr(menu, "_space_hooks_done", False):
+        return
+    menu._space_hooks_done = True
+    for hook in list(SPACE_MENU_HOOKS):
+        hook(widget, menu, context)
+
+
+# Couleur des selections des tableaux (Tableaux > Couleur de selection) : colonnes et sous-cellules
+# selectionnees (teinte translucide), carte du toggle choisi (Toggles > Style).
+_TABLE_SELECTION = {"color": "#5f9bd0"}
+
+
+def _selection_color(alpha: int) -> QColor:
+    color = QColor(_TABLE_SELECTION["color"])
+    color.setAlpha(alpha)
+    return color
+
+
+def _locate_in_layout(layout, widget: QWidget):
+    """(layout, rang) du layout (eventuellement imbrique) qui contient directement `widget`."""
+    for i in range(layout.count()):
+        item = layout.itemAt(i)
+        if item.widget() is widget:
+            return layout, i
+        if item.layout() is not None:
+            found = _locate_in_layout(item.layout(), widget)
+            if found:
+                return found
+    return None
+
+
+def space_target(widget: QWidget | None, root: QWidget) -> QWidget | None:
+    """Element de l'interface sous un clic droit auquel on peut ajouter une espace au-dessus : le
+    premier widget (en remontant depuis `widget`) qui occupe une place dans un empilement VERTICAL
+    (ou seul dans une ligne horizontale imbriquee, comme un tableau dans le corps d'un titre)."""
+    w = widget
+    while w is not None and w is not root:
+        parent = w.parentWidget()
+        if parent is None:
+            return None
+        lay = parent.layout()
+        found = _locate_in_layout(lay, w) if lay is not None else None
+        if found is not None:
+            layout = found[0]
+            if isinstance(layout, QBoxLayout) and layout.direction() in (QBoxLayout.TopToBottom,
+                                                                         QBoxLayout.BottomToTop):
+                return w
+            if layout is not lay and isinstance(layout, QHBoxLayout) and                     sum(1 for i in range(layout.count()) if layout.itemAt(i).widget()) == 1:
+                return w
+        w = parent
+    return None
+
+
+def widget_path(widget: QWidget, root: QWidget) -> str | None:
+    """Chemin stable de `widget` sous `root` (type + rang parmi les enfants de ce type), pour
+    retrouver l'element a la reouverture (voir widget_at_path)."""
+    parts, w = [], widget
+    while w is not None and w is not root:
+        parent = w.parentWidget()
+        if parent is None:
+            return None
+        same = [c for c in parent.children() if isinstance(c, QWidget) and type(c) is type(w)]
+        parts.append(f"{type(w).__name__}#{same.index(w)}")
+        w = parent
+    return "/".join(reversed(parts)) if w is root else None
+
+
+def widget_at_path(root: QWidget, path: str) -> QWidget | None:
+    w = root
+    for part in path.split("/"):
+        name, _, rank = part.rpartition("#")
+        kids = [c for c in w.children() if isinstance(c, QWidget) and type(c).__name__ == name]
+        if not rank.isdigit() or int(rank) >= len(kids):
+            return None
+        w = kids[int(rank)]
+    return w
+
+
+SPACE_ABOVE_TEXT = "Ajouter une espace au-dessus"
+SPACE_BELOW_TEXT = "Ajouter une espace en dessous"
+
+
+def make_space_action(menu: QMenu, value: int, on_change, maximum: int = 200, text_font=None,
+                      text: str = SPACE_ABOVE_TEXT, separator: bool = True) -> None:
+    """Ligne de menu « Ajouter une espace au-dessus » (ou `text`) + curseur (px, en direct). Police et
+    alignement : ceux des menus contextuels (settings_menu ; `text_font` n'est plus utilise)."""
+    field = _SliderField(0, maximum, int(value), slider_width=140, box_width=60)
+    field.valueChanged.connect(on_change)
+    if separator and menu.actions():
+        menu.addSeparator()
+    menu_row(menu, text, field)
+
+
+def make_space_actions(menu: QMenu, above: int, below: int, on_above, on_below, maximum: int = 200,
+                       text_font=None, widget: QWidget | None = None) -> None:
+    """Les deux lignes « Ajouter une espace au-dessus / en dessous » + leurs curseurs, groupees ;
+    `widget` (element clique) : suivies des lignes de SPACE_MENU_HOOKS (« Override settings »)."""
+    make_space_action(menu, above, on_above, maximum, text_font)
+    make_space_action(menu, below, on_below, maximum, text_font, text=SPACE_BELOW_TEXT, separator=False)
+    run_space_menu_hooks(widget, menu, {"above": above, "below": below, "set_above": on_above,
+                                        "set_below": on_below, "maximum": maximum})
+
+
+def set_space_above(widget: QWidget, height: int) -> None:
+    """Espace vide de `height` px AU-DESSUS de `widget`, dans le layout qui le contient (0 = aucun).
+    Layout vertical : un espaceur fixe juste avant lui ; ligne horizontale (un tableau dans le corps
+    d'un titre) : la marge haute de cette ligne. Retenu dans `widget._space_above_px`."""
+    height = max(0, int(height))
+    widget._space_above_px = height
+    parent = widget.parentWidget()
+    found = _locate_in_layout(parent.layout(), widget) if parent is not None and parent.layout() is not None else None
+    if found is None:
+        return
+    layout, index = found
+    if isinstance(layout, QHBoxLayout):
+        m = layout.contentsMargins()
+        layout.setContentsMargins(m.left(), height, m.right(), m.bottom())
+        return
+    spacer = getattr(widget, "_space_above_item", None)
+    if spacer is None:
+        if not height:
+            return
+        spacer = QSpacerItem(0, height, QSizePolicy.Minimum, QSizePolicy.Fixed)
+        layout.insertItem(index, spacer)
+        widget._space_above_item = spacer
+    else:
+        spacer.changeSize(0, height, QSizePolicy.Minimum, QSizePolicy.Fixed)
+    layout.invalidate()
+
+
+def set_space_below(widget: QWidget, height: int) -> None:
+    """Espace vide de `height` px EN DESSOUS de `widget` (pendant de set_space_above) : un espaceur
+    fixe juste apres lui, ou la marge basse de sa ligne horizontale. Retenu dans
+    `widget._space_below_px`."""
+    height = max(0, int(height))
+    widget._space_below_px = height
+    parent = widget.parentWidget()
+    found = _locate_in_layout(parent.layout(), widget) if parent is not None and parent.layout() is not None else None
+    if found is None:
+        return
+    layout, index = found
+    if isinstance(layout, QHBoxLayout):
+        m = layout.contentsMargins()
+        layout.setContentsMargins(m.left(), m.top(), m.right(), height)
+        return
+    spacer = getattr(widget, "_space_below_item", None)
+    if spacer is None:
+        if not height:
+            return
+        spacer = QSpacerItem(0, height, QSizePolicy.Minimum, QSizePolicy.Fixed)
+        layout.insertItem(index + 1, spacer)
+        widget._space_below_item = spacer
+    else:
+        spacer.changeSize(0, height, QSizePolicy.Minimum, QSizePolicy.Fixed)
+    layout.invalidate()
+
+
+class _WidthBadge(QLabel):
+    """Encart « N px » pose sur un entete (titre de colonne, legende de sous-cellule) pendant son
+    redimensionnement, SANS toucher au titre. Un encart par colonne / sous-cellule concernee ; la
+    valeur est la largeur REELLE mesuree (pas la largeur demandee : un minimum, un contenu plus large
+    ou la derniere colonne extensible peuvent la changer, surtout en multiselection)."""
+
+    _GAP = 3
+
+    def __init__(self, host: QWidget):
+        super().__init__(host)
+        _set_text_role(self, "width_badge")
+        self.setAlignment(Qt.AlignCenter)
+        self.setContentsMargins(5, 0, 5, 0)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)   # simple texte, aucun controle
+        self.hide()
+
+    def show_on(self, rect: QRect, width: int):
+        """Affiche la largeur `width` dans `rect` (repere de l'hote) : collee a droite de l'entete,
+        centree s'il est trop etroit, sans jamais deborder de l'hote."""
+        self.setText(f"{width} px")
+        self.adjustSize()
+        w, h = self.width(), min(self.height(), max(10, rect.height() - 2))
+        self.resize(w, h)
+        if rect.width() >= w + 2 * self._GAP:
+            x = rect.right() + 1 - w - self._GAP
+        else:
+            x = rect.center().x() - w // 2
+        host = self.parentWidget()
+        x = max(0, min(x, host.width() - w))
+        self.move(x, rect.top() + (rect.height() - h) // 2)
+        self.raise_()
+        self.show()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setPen(QPen(QColor(M["accent_border"]), 1))
+        p.setBrush(QColor(M["accent"]))
+        p.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 3, 3)
+        p.end()
+        super().paintEvent(event)
+
+
+def _width_badges(host: QWidget, count: int) -> list:
+    """Encarts de largeur d'un entete (un par colonne / sous-cellule), crees a la demande."""
+    badges = getattr(host, "_width_badge_list", None)
+    if badges is None or len(badges) < count:
+        badges = (badges or []) + [_WidthBadge(host) for _ in range(count - len(badges or []))]
+        host._width_badge_list = badges
+    return badges
+
+
+def _hide_width_badges(host: QWidget):
+    for badge in getattr(host, "_width_badge_list", None) or []:
+        badge.hide()
 
 
 class _Btn(QPushButton):
@@ -148,14 +401,29 @@ class _MiniSlider(QWidget):
             thumb_w = _SLIDER_STYLE["thumb_w"]
             knob_center = round(self._pct() * self.width())
             self._grab_offset = x - knob_center if abs(x - knob_center) <= thumb_w // 2 + 2 else 0
-            self._set_from_x(x - self._grab_offset)
+            # Ancrage ECRAN du glisser : la valeur suit le deplacement de la souris depuis le clic,
+            # pas sa position dans le curseur. Un reglage applique en direct qui deplace le curseur
+            # lui-meme (ex. padding gauche d'un titre qui decale le tableau) ne fait donc plus
+            # repartir la valeur en arriere sous la souris immobile (a-coups en boucle).
+            self._press_x = x - self._grab_offset
+            self._press_global_x = event.globalPosition().x()
+            self._set_from_x(self._press_x)
 
     def mouseMoveEvent(self, event):
         if event.buttons() & Qt.LeftButton:
-            self._set_from_x(event.position().toPoint().x() - self._grab_offset)
+            start = getattr(self, "_press_global_x", None)
+            if start is None:
+                self._set_from_x(event.position().toPoint().x() - self._grab_offset)
+            else:
+                self._set_from_x(round(self._press_x + event.globalPosition().x() - start))
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._press_global_x = None
+        super().mouseReleaseEvent(event)
 
     def _paint_bordered(self, p: QPainter, rect: QRect, radius, border_on,
-                         border_colors: dict, fill_layers):
+                         border_colors: dict, fill_layers, key=None):
         """Peint `rect` (rail ou selecteur) avec, cote par cote actif, une
         bordure 1px MITREE (diagonales depuis le centre vers chaque coin,
         comme un cadre photo) plutot que 4 bandes droites independantes —
@@ -177,8 +445,15 @@ class _MiniSlider(QWidget):
         alors jusqu'a ce bord tout en restant en retrait des autres, actifs.
         `fill_layers` (callable prenant `p, inner_rect`) peint l'interieur —
         `inner_rect` deja calcule en tenant compte de cet inset asymetrique,
-        rempli JUSQU'AU bord de chaque cote sans bordure active."""
+        rempli JUSQU'AU bord de chaque cote sans bordure active.
+        `key` (decrit tout ce qui est peint) : rendu sur-echantillonne et lisse (_paint_smooth),
+        clip arrondi du remplissage compris (un setClipPath direct n'est pas antialiase)."""
         if rect.width() <= 0 or rect.height() <= 0:
+            return
+        if key is not None and _smooth_paintable(p, rect):
+            _paint_smooth(p, rect, (key, _hashable(radius), _hashable(border_on), _hashable(border_colors)),
+                          lambda sp, local: self._paint_bordered(sp, local, radius, border_on,
+                                                                 border_colors, fill_layers))
             return
         if isinstance(border_on, dict):
             sides_on = {k: bool(border_on.get(k, False)) for k in ("top", "right", "bottom", "left")}
@@ -301,6 +576,8 @@ class _MiniSlider(QWidget):
             p, track_rect, _SLIDER_STYLE["track_radius"], track_border_on,
             {side: _SLIDER_STYLE[f"track_border_{side}"] for side in ("top", "right", "bottom", "left")},
             _fill_track,
+            key=("track", self._value, self._min, self._max, _SLIDER_STYLE["track_empty"],
+                 _SLIDER_STYLE["track_fill"]),
         )
 
         # -- selecteur : meme principe, une couleur de bordure par cote
@@ -318,6 +595,7 @@ class _MiniSlider(QWidget):
             p, thumb_rect, _SLIDER_STYLE["thumb_radius"], thumb_border_on,
             {side: _SLIDER_STYLE[f"thumb_border_{side}"] for side in ("top", "right", "bottom", "left")},
             _fill_thumb,
+            key=("thumb", _SLIDER_STYLE["thumb_color"]),
         )
         p.end()
 
@@ -338,6 +616,7 @@ class _SliderField(QWidget):
         self.box = box = QWidget()
         box.setObjectName("SliderValueBox")
         box.setAttribute(Qt.WA_StyledBackground, True)
+        box._free_object = True        # objets libres (Ctrl+Maj / Ctrl+Maj+X) : la case entiere, pas son champ
         box.setFixedSize(box_width, 25)
         self._refresh_box_style()
         box_l = QHBoxLayout(box)
@@ -575,14 +854,18 @@ class _RowBorderField(QWidget):
     changed = Signal()
 
     def __init__(self, enabled: bool, color: str, thickness: int, colors: dict,
-                 thickness_range: tuple[int, int] = (0, 8), title: str = "Couleur de bordure", parent=None):
+                 thickness_range: tuple[int, int] = (0, 8), title: str = "Couleur de bordure", parent=None,
+                 color_factory=None):
         super().__init__(parent)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
         self.toggle = _Toggle(bool(enabled), style_override="toggle1", show_label=False)
         layout.addWidget(self.toggle)
-        self.color_field = _AppOrCustomColorField(color, colors, swatch_size=24, title=title)
+        # `color_factory(color, colors, title)` : autre champ couleur (meme interface), ex. le champ compact
+        # app | pastille | sys de la fenetre v2.
+        self.color_field = (color_factory(color, colors, title) if color_factory is not None
+                            else _AppOrCustomColorField(color, colors, swatch_size=24, title=title))
         layout.addWidget(self.color_field)
         self.thickness_field = _SliderField(
             thickness_range[0], thickness_range[1], int(thickness), slider_width=140, box_width=54)
@@ -665,10 +948,15 @@ class _SelectField(QPushButton):
             f"QMenu {{ background: {M['toolbar_bg']}; border: 1px solid {M['field_border']}; "
             f"border-radius: {self._radius}px; padding: 4px 0; }}"
             f"QMenu::item {{ padding: 5px 16px; color: {M['value_fg']}; }}"
-            f"QMenu::item:selected {{ background: {M['accent']}; color: {M['accent_fg']}; }}"
+            f"QMenu::item:selected, QMenu::item:checked {{ background: {M['accent']}; color: {M['accent_fg']}; }}"
         )
         for opt in self._options:
             action = menu.addAction(opt)
+            # L'option courante reste visible meme quand le curseur ne la
+            # survole pas : la coche + le fond accentue indiquent la valeur
+            # active dans la liste des couleurs d'application.
+            action.setCheckable(True)
+            action.setChecked(opt == self._value)
             action.triggered.connect(lambda _checked=False, o=opt: self._select(o))
         menu.exec(self.mapToGlobal(QPoint(0, self.height())))
 
@@ -953,28 +1241,45 @@ _TOGGLE_SHAPE_DEFAULTS = {
     "text_font": {"family": "", "bold": True, "italic": False, "size": 10, "smoothing": "current",
                   "color": "#ffffff"},
     "icon": "", "icon_color": "#ffffff",
+    # Type : "qt" (cadre + coche peints) ou "icons" (images ON/OFF + sequence optionnelle entre les
+    # deux, dans data/toggle_icons/) ; mouvement de la coche : "slide" (glissiere) ou "fade" (centree,
+    # fondu) ; duree de l'animation ON <-> OFF.
+    "kind": "qt", "motion": "slide", "icon_on": "", "icon_off": "", "icon_frames": [], "anim_ms": 140,
 }
 
 _TOGGLE1_STYLE = dict(_TOGGLE_SHAPE_DEFAULTS)
 
 _TOGGLE2_STYLE = dict(_TOGGLE_SHAPE_DEFAULTS)
 
-_TOGGLE2_STYLE.update({"outer_w": 22, "outer_h": 22})
+_TOGGLE2_STYLE.update({"outer_w": 22, "outer_h": 22, "motion": "fade"})
 
 # Registre des styles : toggle1, toggle2 et ceux que l'utilisateur ajoute (toggle3...).
 _TOGGLE_STYLES: dict[str, dict] = {"toggle1": _TOGGLE1_STYLE, "toggle2": _TOGGLE2_STYLE}
 _TOGGLE_STYLE_NAMES: dict[str, str] = {"toggle1": "Toggle 1", "toggle2": "Toggle 2"}
 
+# Reglages de chaque style deja vu, meme supprime du registre (une annulation le fait revenir).
+_TOGGLE_STYLE_DICTS: dict[str, dict] = dict(_TOGGLE_STYLES)
+
 def _toggle_style_dict(key: str) -> dict:
-    """Reglages d'un style (cree a la demande, a partir des valeurs par defaut)."""
-    style = _TOGGLE_STYLES.get(key)
+    """Reglages d'un style (crees a la demande, a partir des valeurs par defaut). N'inscrit PAS le
+    style au registre : seul _sync_toggle_style le fait, depuis la liste des reglages."""
+    style = _TOGGLE_STYLES.get(key) or _TOGGLE_STYLE_DICTS.get(key)
     if style is None:
         import copy
-        style = _TOGGLE_STYLES[key] = copy.deepcopy(_TOGGLE_SHAPE_DEFAULTS)
+        style = _TOGGLE_STYLE_DICTS[key] = copy.deepcopy(_TOGGLE_SHAPE_DEFAULTS)
     return style
 
+def _resolve_toggle_key(key: str | None) -> str:
+    """Style reellement dessine pour `key` : lui s'il existe encore, sinon le style par defaut de la
+    fenetre, sinon le premier (un style supprime ne laisse jamais un toggle sans apparence)."""
+    if key in _TOGGLE_STYLES:
+        return key
+    if _TOGGLE_STYLE in _TOGGLE_STYLES:
+        return _TOGGLE_STYLE
+    return next(iter(_TOGGLE_STYLES), "toggle1")
+
 def _active_toggle_style() -> dict:
-    return _toggle_style_dict(_TOGGLE_STYLE)
+    return _toggle_style_dict(_resolve_toggle_key(_TOGGLE_STYLE))
 
 def _sync_toggle_shape_style(target: dict, settings: dict, prefix: str) -> None:
     """Recopie les reglages `{prefix}_*` de `settings` dans `target`
@@ -995,8 +1300,8 @@ def _sync_toggle_shape_style(target: dict, settings: dict, prefix: str) -> None:
     for side in ("top", "right", "bottom", "left"):
         target[f"outer_border_{side}"] = _resolve_color_value(
             outer_border.get(side, target[f"outer_border_{side}"]), colors)
-    target["outer_bg"] = settings.get(f"{prefix}_outer_bg", target["outer_bg"])
-    target["outer_bg_on"] = settings.get(f"{prefix}_outer_bg_on", target["outer_bg_on"])
+    target["outer_bg"] = _resolve_color_value(settings.get(f"{prefix}_outer_bg", target["outer_bg"]), colors)
+    target["outer_bg_on"] = _resolve_color_value(settings.get(f"{prefix}_outer_bg_on", target["outer_bg_on"]), colors)
     target["coche_w"] = max(2, int(settings.get(f"{prefix}_coche_width", target["coche_w"])))
     target["coche_margin"] = max(0, int(settings.get(f"{prefix}_coche_margin", target["coche_margin"])))
     # coche_h LIEE a outer_h (voir la remarque de l'utilisateur), pas un
@@ -1011,7 +1316,7 @@ def _sync_toggle_shape_style(target: dict, settings: dict, prefix: str) -> None:
     for side in ("top", "right", "bottom", "left"):
         target[f"coche_border_{side}"] = _resolve_color_value(
             coche_border.get(side, target[f"coche_border_{side}"]), colors)
-    target["coche_color"] = settings.get(f"{prefix}_coche_color", target["coche_color"])
+    target["coche_color"] = _resolve_color_value(settings.get(f"{prefix}_coche_color", target["coche_color"]), colors)
     target["skin"] = settings.get(f"{prefix}_coche_skin", "none")
     target["text"] = str(settings.get(f"{prefix}_coche_text", ""))
     smoothing_on = bool(settings.get(f"{prefix}_coche_text_font_smoothing_enabled", False))
@@ -1025,14 +1330,27 @@ def _sync_toggle_shape_style(target: dict, settings: dict, prefix: str) -> None:
     }
     target["icon"] = str(settings.get(f"{prefix}_coche_icon", "") or "")
     target["icon_color"] = _resolve_color_value(settings.get(f"{prefix}_coche_icon_color", "#ffffff"), colors)
+    target["kind"] = "icons" if settings.get(f"{prefix}_kind") == "icons" else "qt"
+    motion = settings.get(f"{prefix}_motion", "fade" if prefix == "toggle2" else "slide")
+    target["motion"] = "fade" if motion == "fade" else "slide"
+    target["icon_on"] = str(settings.get(f"{prefix}_icon_on", "") or "")
+    target["icon_off"] = str(settings.get(f"{prefix}_icon_off", "") or "")
+    target["icon_frames"] = [str(f) for f in (settings.get(f"{prefix}_icon_frames") or []) if f]
+    target["anim_ms"] = max(0, int(settings.get(f"{prefix}_anim_ms", 140)))
 
 def _sync_toggle_style(settings: dict) -> None:
+    """Registre des styles = la liste des reglages (toggle_style_list), dans son ordre : un style
+    supprime en sort, un style renomme change de nom ; puis les reglages de chacun."""
     global _TOGGLE_STYLE
-    for custom in settings.get("toggle_custom_styles") or []:
-        _toggle_style_dict(custom["key"])
-        _TOGGLE_STYLE_NAMES[custom["key"]] = custom.get("name") or custom["key"]
+    from settings_store import toggle_style_list
+    styles = toggle_style_list(settings)
+    kept = {entry["key"]: _toggle_style_dict(entry["key"]) for entry in styles}
+    _TOGGLE_STYLES.clear()
+    _TOGGLE_STYLES.update(kept)
+    _TOGGLE_STYLE_NAMES.clear()
+    _TOGGLE_STYLE_NAMES.update({entry["key"]: entry["name"] for entry in styles})
     style = settings.get("toggle_style", "toggle1")
-    _TOGGLE_STYLE = style if style in _TOGGLE_STYLES else "toggle1"
+    _TOGGLE_STYLE = style if style in _TOGGLE_STYLES else styles[0]["key"]
     for key, target in list(_TOGGLE_STYLES.items()):
         _sync_toggle_shape_style(target, settings, key)
 
@@ -1107,49 +1425,74 @@ def _quadrant_path(corner: QPointF, center: QPointF) -> QPainterPath:
     path.addRect(QRectF(corner, center).normalized())
     return path
 
-_RING_PIXMAP_CACHE: dict[tuple, tuple[QPixmap, int]] = {}
+# Lissage des petites formes (toggles, curseurs, coches, selections de lignes...) : la forme ENTIERE
+# (bordures + fond) est peinte sur-echantillonnee (8x, 4x au-dela de _SMOOTH_SS8_AREA), REDUITE par
+# moyenne de zone (QImage.scaled + SmoothTransformation : chaque pixel = moyenne de ses ss x ss
+# sous-pixels, un vrai filtre) a la taille PHYSIQUE, puis collee pixel pour pixel. Ne JAMAIS laisser
+# drawPixmap reduire un pixmap a devicePixelRatio 4 ou 8 : son filtrage bilineaire ne lit que 2 x 2
+# sous-pixels sur 8 x 8, le sur-echantillonnage est perdu et le bord crenele (ancien _ring_pixmap).
+# Un clip (setClipPath) n'est pas lisse par Qt : dans l'image sur-echantillonnee, il le devient.
+_SMOOTH_CACHE: dict = {}
+_SMOOTH_CACHE_MAX = 512
+_SMOOTH_MAX_AREA = 24000        # pixels physiques ; au-dela (grands cadres) : trace vectoriel direct
+_SMOOTH_SS8_AREA = 4096
 
-_RING_PIXMAP_CACHE_MAX = 256
 
-def _ring_pixmap(width: int, height: int, radius, thickness: int, color: str) -> tuple[QPixmap, int]:
-    """Anneau (bordure uniforme, voir _paint_bordered_rect, cas RAPIDE)
-    sur-echantillonne 8x puis mis a l'echelle, mis en CACHE par (taille,
-    rayon, epaisseur, couleur) — sa geometrie ne depend QUE de ca, jamais
-    de la position a l'ecran : memes reglages -> MEME pixmap, reutilise
-    tel quel sur toutes les lignes d'une liste ET sur chaque frame
-    (~60fps) d'une animation de toggle, au lieu d'etre reconstruit (2
-    QPainter + 1 QPixmap alloues) a CHAQUE paintEvent — voir la remarque
-    de l'utilisateur, "il y a des ralentissements dans les animations,
-    optimise un maximum"."""
-    radius_key = tuple(sorted(radius.items())) if isinstance(radius, dict) else radius
-    key = (width, height, radius_key, thickness, color)
-    cached = _RING_PIXMAP_CACHE.get(key)
-    if cached is not None:
-        return cached
-    if len(_RING_PIXMAP_CACHE) >= _RING_PIXMAP_CACHE_MAX:
-        _RING_PIXMAP_CACHE.clear()
-    ss = 8
-    pad = max(1, int(thickness))
-    rect = QRect(0, 0, width, height)
-    inner_rect = QRect(thickness, thickness, width - 2 * thickness, height - 2 * thickness)
-    has_inner = inner_rect.width() > 0 and inner_rect.height() > 0
-    pixmap = QPixmap(max(1, round((width + 2 * pad) * ss)), max(1, round((height + 2 * pad) * ss)))
-    pixmap.fill(Qt.transparent)
-    sp = QPainter(pixmap)
-    sp.setRenderHint(QPainter.Antialiasing, True)
-    sp.scale(ss, ss)
-    sp.translate(pad, pad)
-    outer = _rounded_rect_path(rect, radius)
-    inner = _rounded_rect_path(inner_rect, _radius_shrink(radius, thickness)) if has_inner else QPainterPath()
-    ring_shape = outer.subtracted(inner) if has_inner else outer
-    sp.setPen(Qt.NoPen)
-    sp.setBrush(QColor(color))
-    sp.drawPath(ring_shape)
-    sp.end()
-    pixmap.setDevicePixelRatio(ss)
-    result = (pixmap, pad)
-    _RING_PIXMAP_CACHE[key] = result
-    return result
+def _smooth_paintable(p: QPainter, rect: QRect) -> bool:
+    t = p.deviceTransform()
+    if t.isRotating() or t.m11() <= 0 or t.m22() <= 0:
+        return False
+    return rect.width() * t.m11() * rect.height() * t.m22() <= _SMOOTH_MAX_AREA
+
+
+def _paint_smooth(p: QPainter, rect: QRect, key, draw) -> None:
+    """Peint `draw(painter, QRect(0, 0, w, h))` a la place de `rect`, sur-echantillonne puis reduit
+    (voir plus haut). `key` (hachable, decrit TOUT ce que dessine `draw`) met le resultat en cache :
+    la position a l'ecran n'y entre que par son decalage sous-pixel."""
+    import math
+    t = p.deviceTransform()
+    sx, sy = t.m11(), t.m22()
+    origin = t.map(QPointF(rect.topLeft()))
+    ox, oy = math.floor(origin.x()), math.floor(origin.y())
+    ss = 8 if rect.width() * sx * rect.height() * sy <= _SMOOTH_SS8_AREA else 4
+    fx, fy = round((origin.x() - ox) * ss) / ss, round((origin.y() - oy) * ss) / ss
+    w_dev = math.ceil(rect.width() * sx + fx) + 2         # 1 px de marge de chaque cote
+    h_dev = math.ceil(rect.height() * sy + fy) + 2
+    full_key = (key, rect.width(), rect.height(), round(sx, 4), round(sy, 4), fx, fy)
+    pix = _SMOOTH_CACHE.get(full_key)
+    if pix is None:
+        from PySide6.QtGui import QImage
+        image = QImage(w_dev * ss, h_dev * ss, QImage.Format_ARGB32_Premultiplied)
+        image.fill(Qt.transparent)
+        sp = QPainter(image)
+        sp.setRenderHint(QPainter.Antialiasing, True)
+        sp.scale(ss, ss)
+        sp.translate(1 + fx, 1 + fy)
+        sp.scale(sx, sy)
+        draw(sp, QRect(0, 0, rect.width(), rect.height()))
+        sp.end()
+        pix = QPixmap.fromImage(image.scaled(w_dev, h_dev, Qt.IgnoreAspectRatio, Qt.SmoothTransformation))
+        pix.setDevicePixelRatio(sx)
+        if len(_SMOOTH_CACHE) >= _SMOOTH_CACHE_MAX:
+            _SMOOTH_CACHE.clear()
+        _SMOOTH_CACHE[full_key] = pix
+    inverse, _ok = t.inverted()
+    p.drawPixmap(inverse.map(QPointF(ox - 1, oy - 1)), pix)     # 1:1 sur les pixels physiques
+
+
+def _hidpi_pixmap(image, width: int, height: int, dpr: float, keep_aspect: bool = True) -> QPixmap:
+    """`image` (QImage, generalement plus grande) reduite par moyenne de zone a width x height
+    LOGIQUES, a la densite `dpr` de l'ecran : affichee 1:1, sans reduction bilineaire au dessin."""
+    mode = Qt.KeepAspectRatio if keep_aspect else Qt.IgnoreAspectRatio
+    small = image.scaled(max(1, round(width * dpr)), max(1, round(height * dpr)), mode, Qt.SmoothTransformation)
+    pix = QPixmap.fromImage(small)
+    pix.setDevicePixelRatio(dpr)
+    return pix
+
+
+def _app_dpr() -> float:
+    app = QGuiApplication.instance()
+    return float(app.devicePixelRatio()) if app is not None else 1.0
 
 def _paint_bordered_rect(p: QPainter, rect: QRect, radius: int, border_on, thickness: int,
                           border_colors: dict, fill_color: str | None):
@@ -1172,7 +1515,37 @@ def _paint_bordered_rect(p: QPainter, rect: QRect, radius: int, border_on, thick
     `radius` : int (rayon uniforme, retro-compatible) OU dict {"top_left":
     int, ...} — un rayon INDEPENDANT par coin (voir _rounded_rect_path/la
     remarque de l'utilisateur, "si deux colonnes sont cote a cote ... le
-    rayon contre l'autre colonne doit etre a zero", voir _ColumnPreview)."""
+    rayon contre l'autre colonne doit etre a zero", voir _ColumnPreview).
+
+    Petites formes (toggles, curseurs, selections de lignes...) : peintes SUR-ECHANTILLONNEES puis
+    reduites par moyenne de zone (_paint_smooth) — bordure et fond lisses, arrondis compris. Les
+    grandes (cadres de colonnes...) : trace vectoriel direct (_paint_bordered_vector)."""
+    if rect.width() <= 0 or rect.height() <= 0:
+        return
+    if _smooth_paintable(p, rect):
+        key = ("bordered", _hashable(radius), _hashable(border_on), int(thickness),
+               _hashable(border_colors), _hashable(fill_color))
+        _paint_smooth(p, rect, key, lambda sp, local: _paint_bordered_vector(
+            sp, local, radius, border_on, thickness, border_colors, fill_color))
+        return
+    _paint_bordered_vector(p, rect, radius, border_on, thickness, border_colors, fill_color)
+
+
+def _hashable(value):
+    """Cle de cache d'un reglage (dict/list -> tuples, QColor -> nom)."""
+    if isinstance(value, dict):
+        return tuple(sorted((k, _hashable(v)) for k, v in value.items()))
+    if isinstance(value, (list, tuple)):
+        return tuple(_hashable(v) for v in value)
+    if isinstance(value, QColor):
+        return value.name(QColor.NameFormat.HexArgb)
+    return value
+
+
+def _paint_bordered_vector(p: QPainter, rect: QRect, radius, border_on, thickness: int,
+                           border_colors: dict, fill_color):
+    """Trace vectoriel de _paint_bordered_rect : direct pour les grandes formes, dans l'image
+    sur-echantillonnee de _paint_smooth pour les petites."""
     if rect.width() <= 0 or rect.height() <= 0:
         return
     if isinstance(border_on, dict):
@@ -1190,64 +1563,25 @@ def _paint_bordered_rect(p: QPainter, rect: QRect, radius: int, border_on, thick
     has_inner = inner_rect.width() > 0 and inner_rect.height() > 0
     p.save()
     p.setRenderHint(QPainter.Antialiasing, _radius_any(radius))
-    # Cas RAPIDE, cote uniforme (voir plus bas, MEME resultat GEOMETRIQUE que
-    # la decoupe MITREE ci-dessous, mais peint en UN SEUL drawPath via un
-    # QPen — pas de sous-remplissage manuel/union de wedges) : tous les
-    # cotes actifs, meme couleur — de tres loin le cas le plus courant
-    # (Colonnes > Bordure "liee", Toggles/Sliders...). A un PETIT rayon
-    # (proche de l'epaisseur, ex. rayon 5 / epaisseur 1) le sous-remplissage
-    # par wedges (outer moins inner, coupe en 4 coins puis reunis) laissait
-    # un arc visiblement plus FONCE/moins sature que les segments droits —
-    # voir la remarque de l'utilisateur, "les arrondis apparaissent... plus
-    # sombre que la bordure elle-meme" : l'anneau y est si fin (1px de
-    # rayon entre le cercle interieur et exterieur) que chaque triangle-
-    # wedge, rasterise et rempli INDEPENDAMMENT avant sa reunion, y perd de
-    # la couverture sous-pixel — un trait STROKE (QPen, le rasteriseur de
-    # contour dedie de Qt, concu pour garder une epaisseur visuelle
-    # CONSTANTE tout le long d'un chemin, virages compris) rend cette meme
-    # geometrie sans ce sous-remplissage.
-    ring_painted = False
-    if any_on and all(sides_on.values()) and thickness > 0:
-        uniform_colors = {border_colors[s] for s in ("top", "right", "bottom", "left")}
-        if len(uniform_colors) == 1:
-            # Degenere si l'epaisseur mange tout le rectangle (voir
-            # _ring_pixmap, inner_rect y deviendrait <= 0 des 2 cotes a la
-            # fois) — meme garde que l'ancien centerline_rect.width() > 0,
-            # sans construire de QRectF juste pour ce test.
-            if rect.width() - thickness > 0 and rect.height() - thickness > 0:
-                # Anneau sur-echantillonne 8x (voir _ring_pixmap, cache par
-                # taille/rayon/epaisseur/couleur — sa geometrie ne depend
-                # QUE de ca) : a UNE seule passe d'antialiasing, un trait de
-                # 1px sur un PETIT rayon (proche de l'epaisseur) ne couvre
-                # par endroits qu'une fraction du pixel le long de la
-                # diagonale — lu par l'oeil comme un arc plus terne que les
-                # segments droits (voir la remarque de l'utilisateur, "je
-                # veux que le lissage de l'arrondi soit parfait" / "il faut
-                # que l'epaisseur de la bordure soit a 1px", contrainte
-                # fixe). Le REMPLISSAGE d'un anneau (outer moins inner) sur-
-                # echantillonne resout ca sans ce sous-remplissage — voir la
-                # remarque de l'utilisateur, "essaye de trouver un autre
-                # algorithme... celui-ci est vraiment pas beau".
-                pixmap, pad = _ring_pixmap(
-                    rect.width(), rect.height(), radius, thickness, next(iter(uniform_colors)))
-                # SmoothPixmapTransform EXPLICITE sur `p` : sans lui, la
-                # mise a l'echelle 8x -> 1x de ce drawPixmap (via le simple
-                # ecart de devicePixelRatio entre le pixmap et `p`) retombe
-                # sur un plus-proche-voisin BLOCS, pas un filtrage lisse —
-                # annulant tout le benefice du sur-echantillonnage (voir la
-                # remarque de l'utilisateur, capture a l'appui, "il n'est
-                # pas antialiase la ?").
-                p.setRenderHint(QPainter.SmoothPixmapTransform, True)
-                p.drawPixmap(QPointF(rect.left() - pad, rect.top() - pad), pixmap)
-                ring_painted = True   # deja peint : saute le sous-remplissage MITRE ci-dessous
-                # any_on RESTE True (pas touche) : le remplissage plus bas
-                # (fill_color) doit continuer a cibler inner_rect, PAS le
-                # rect ENTIER, sinon il repeindrait PAR-DESSUS l'anneau
-                # qu'on vient de tracer (voir la remarque de l'utilisateur,
-                # "les arrondis... plus sombre" — 1er essai de ce correctif,
-                # qui mettait any_on a False ici, recouvrait justement le
-                # trait par le fond).
-    if any_on and not ring_painted:
+    p.setPen(Qt.NoPen)
+    # Fond D'ABORD, sous la bordure, en CHEMIN lisse : un setClipPath + fillRect (ancienne methode)
+    # n'est pas antialiase par Qt, d'ou des arrondis crenelés (disque plein d'un toggle...).
+    if fill_color is not None:
+        target_rect = inner_rect if any_on else rect
+        if target_rect.width() > 0 and target_rect.height() > 0:
+            fill_radius = _radius_shrink(radius, thickness) if any_on else radius
+            if _radius_any(fill_radius):
+                p.setBrush(QColor(fill_color))
+                p.drawPath(_rounded_rect_path(target_rect, fill_radius))
+            else:
+                p.fillRect(target_rect, QColor(fill_color))
+    if any_on and all(sides_on.values()) and len({border_colors[k] for k in sides_on}) == 1:
+        # Bordure uniforme (cas le plus courant) : l'anneau exterieur moins interieur, en UN chemin.
+        inner_path = _rounded_rect_path(inner_rect, _radius_shrink(radius, thickness)) if has_inner else None
+        outer_path = _rounded_rect_path(rect, radius)
+        p.setBrush(QColor(border_colors["top"]))
+        p.drawPath(outer_path.subtracted(inner_path) if inner_path is not None else outer_path)
+    elif any_on:
         outer_path = _rounded_rect_path(rect, radius)
         inner_radius = _radius_shrink(radius, thickness)
         ring = outer_path.subtracted(_rounded_rect_path(inner_rect, inner_radius)) if has_inner else outer_path
@@ -1335,13 +1669,6 @@ def _paint_bordered_rect(p: QPainter, rect: QRect, radius: int, border_on, thick
         for color, path in color_paths.items():
             p.setBrush(QColor(color))
             p.drawPath(path)
-    if fill_color is not None:
-        target_rect = inner_rect if any_on else rect
-        if target_rect.width() > 0 and target_rect.height() > 0:
-            clip_radius = _radius_shrink(radius, thickness) if any_on else radius
-            if _radius_any(clip_radius):
-                p.setClipPath(_rounded_rect_path(target_rect, clip_radius))
-            p.fillRect(target_rect, QColor(fill_color))
     p.restore()
 
 def _blend_hex(off_hex: str, on_hex: str, t: float) -> str:
@@ -1382,6 +1709,9 @@ def _paint_toggle_shape(p: QPainter, x: int, y: int, style_key: str, style: dict
       qu'a l'etat ON — animee ici par un FONDU (opacite = progress)."""
     if progress is None:
         progress = 1.0 if checked else 0.0
+    if style.get("kind") == "icons":
+        _paint_toggle_icons(p, QRect(x, y, style["outer_w"], style["outer_h"]), style, progress)
+        return
     outer_rect = QRect(x, y, style["outer_w"], style["outer_h"])
     outer_colors = {side: style[f"outer_border_{side}"] for side in ("top", "right", "bottom", "left")}
     outer_bg = _blend_hex(style["outer_bg"], style["outer_bg_on"], progress)
@@ -1393,7 +1723,8 @@ def _paint_toggle_shape(p: QPainter, x: int, y: int, style_key: str, style: dict
     # ce qui centre deja la coche verticalement — vrai pour les 2 styles,
     # quel que soit l'etat.
     cy = y + margin
-    if style_key == "toggle2":
+    fade = style.get("motion", "slide") == "fade"
+    if fade:
         if progress <= 0.0:
             return   # coche invisible a l'etat OFF (rien a peindre)
         cx = x + (style["outer_w"] - style["coche_w"]) // 2
@@ -1403,7 +1734,7 @@ def _paint_toggle_shape(p: QPainter, x: int, y: int, style_key: str, style: dict
         cx = x + round(off_x + (on_x - off_x) * progress)
     coche_rect = QRect(cx, cy, style["coche_w"], style["coche_h"])
     coche_colors = {side: style[f"coche_border_{side}"] for side in ("top", "right", "bottom", "left")}
-    if style_key == "toggle2" and progress < 1.0:
+    if fade and progress < 1.0:
         p.save()
         p.setOpacity(p.opacity() * progress)
         _paint_bordered_rect(p, coche_rect, style["coche_border_radius"], style["coche_border_enabled"],
@@ -1415,35 +1746,105 @@ def _paint_toggle_shape(p: QPainter, x: int, y: int, style_key: str, style: dict
                               style["coche_border_thickness"], coche_colors, style["coche_color"])
         _paint_coche_skin(p, coche_rect, style)
 
+_TOGGLE_IMAGE_CACHE: dict = {}
+
+def _toggle_image_pixmap(name: str, width: int, height: int, dpr: float | None = None) -> QPixmap | None:
+    """Image importee pour un toggle « icones » (data/toggle_icons/), a ses couleurs d'origine,
+    ajustee dans width x height (proportions gardees), nette en haute densite. Cache par
+    (nom, taille, date du fichier)."""
+    from settings_store import _TOGGLE_ICONS_DIR
+    path = _TOGGLE_ICONS_DIR / name
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    dpr = dpr or _app_dpr()
+    key = (name, width, height, mtime, dpr)
+    if key in _TOGGLE_IMAGE_CACHE:
+        return _TOGGLE_IMAGE_CACHE[key]
+    if len(_TOGGLE_IMAGE_CACHE) > 512:
+        _TOGGLE_IMAGE_CACHE.clear()
+    from PySide6.QtGui import QImage
+    pix = None
+    if path.suffix.lower() == ".svg":
+        from PySide6.QtSvg import QSvgRenderer
+        renderer = QSvgRenderer(str(path))
+        if renderer.isValid():
+            ss = 4                                  # rendu 4x, puis reduit par moyenne de zone
+            size = renderer.defaultSize()
+            size.scale(round(width * dpr) * ss, round(height * dpr) * ss, Qt.KeepAspectRatio)
+            image = QImage(max(1, size.width()), max(1, size.height()), QImage.Format_ARGB32_Premultiplied)
+            image.fill(Qt.transparent)
+            painter = QPainter(image)
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            renderer.render(painter)
+            painter.end()
+            pix = _hidpi_pixmap(image, width, height, dpr)
+    else:
+        source = QImage(str(path))
+        if not source.isNull():
+            pix = _hidpi_pixmap(source.convertToFormat(QImage.Format_ARGB32_Premultiplied), width, height, dpr)
+    _TOGGLE_IMAGE_CACHE[key] = pix
+    return pix
+
+def _toggle_icon_frame(style: dict, progress: float) -> str:
+    """Image a montrer pour `progress` (0 = OFF, 1 = ON) : OFF, puis la sequence importee dans
+    l'ordre, puis ON — jouee a l'envers de ON vers OFF (meme progress, parcouru dans l'autre sens)."""
+    frames = [style.get("icon_off", "")] + list(style.get("icon_frames") or []) + [style.get("icon_on", "")]
+    index = round(max(0.0, min(1.0, progress)) * (len(frames) - 1))
+    return frames[index]
+
+def _paint_toggle_icons(p: QPainter, rect: QRect, style: dict, progress: float) -> None:
+    """Toggle « icones » : l'image de l'etat (ou de l'etape de l'animation), centree dans le cadre
+    (Cadre > Largeur / Hauteur). Sans sequence, fondu entre OFF et ON."""
+    def draw(name: str, opacity: float = 1.0):
+        pix = _toggle_image_pixmap(name, rect.width(), rect.height(), p.device().devicePixelRatioF()) if name else None
+        if pix is None or opacity <= 0.0:
+            return
+        size = pix.deviceIndependentSize()
+        p.save()
+        p.setOpacity(p.opacity() * opacity)
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        p.drawPixmap(QPointF(rect.x() + (rect.width() - size.width()) / 2,
+                             rect.y() + (rect.height() - size.height()) / 2), pix)
+        p.restore()
+
+    if style.get("icon_frames") or progress in (0.0, 1.0):
+        draw(_toggle_icon_frame(style, progress))
+        return
+    draw(style.get("icon_off", ""), 1.0 - progress)
+    draw(style.get("icon_on", ""), progress)
+
 _TOGGLE_ICON_CACHE: dict = {}
 
-def _toggle_icon_pixmap(name: str, size: int, color: str) -> QPixmap | None:
+def _toggle_icon_pixmap(name: str, size: int, color: str, dpr: float | None = None) -> QPixmap | None:
     """Icone de icons/ pour l'habillage d'une coche : un SVG est recolore (trace uni, rendu comme
     un masque), un PNG garde ses couleurs. Cache par (nom, taille, couleur)."""
-    key = (name, size, color)
+    dpr = dpr or _app_dpr()
+    key = (name, size, color, dpr)
     if key in _TOGGLE_ICON_CACHE:
         return _TOGGLE_ICON_CACHE[key]
     from settings_store import _ICONS_DIR
     path = _ICONS_DIR / name
     pix = None
     if path.is_file() and size > 0:
-        scale = 4
+        from PySide6.QtGui import QImage
         if path.suffix.lower() == ".svg":
             from PySide6.QtSvg import QSvgRenderer
-            pix = QPixmap(size * scale, size * scale)
-            pix.fill(Qt.transparent)
-            painter = QPainter(pix)
+            side = round(size * dpr) * 4            # rendu 4x, puis reduit par moyenne de zone
+            image = QImage(side, side, QImage.Format_ARGB32_Premultiplied)
+            image.fill(Qt.transparent)
+            painter = QPainter(image)
             painter.setRenderHint(QPainter.Antialiasing, True)
             QSvgRenderer(str(path)).render(painter)
             painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
-            painter.fillRect(pix.rect(), QColor(color))
+            painter.fillRect(image.rect(), QColor(color))
             painter.end()
+            pix = _hidpi_pixmap(image, size, size, dpr)
         else:
-            source = QPixmap(str(path))
+            source = QImage(str(path))
             if not source.isNull():
-                pix = source.scaled(size * scale, size * scale, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        if pix is not None:
-            pix.setDevicePixelRatio(scale)
+                pix = _hidpi_pixmap(source.convertToFormat(QImage.Format_ARGB32_Premultiplied), size, size, dpr)
     _TOGGLE_ICON_CACHE[key] = pix
     return pix
 
@@ -1465,11 +1866,31 @@ def _paint_coche_skin(p: QPainter, rect: QRect, style: dict) -> None:
         p.restore()
     elif skin == "icon" and style.get("icon"):
         size = max(1, min(rect.width(), rect.height()) - 2)
-        pix = _toggle_icon_pixmap(style["icon"], size, style["icon_color"])
+        pix = _toggle_icon_pixmap(style["icon"], size, style["icon_color"], p.device().devicePixelRatioF())
         if pix is not None:
             logical = pix.deviceIndependentSize()
             p.drawPixmap(round(rect.center().x() - logical.width() / 2 + 0.5),
                          round(rect.center().y() - logical.height() / 2 + 0.5), pix)
+
+def _precise_clock(enable: bool) -> None:
+    """Windows : horloge a 1 ms pendant une animation (sinon les minuteurs tombent tous les ~15,6 ms et
+    une image sur deux est ratee). Appels apparies ; sans effet ailleurs."""
+    import sys
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        (ctypes.windll.winmm.timeBeginPeriod if enable else ctypes.windll.winmm.timeEndPeriod)(1)
+    except (AttributeError, OSError):
+        pass
+
+
+def toggle_animation_left_ms() -> int:
+    """Temps (ms) restant a la bascule de toggle en cours la plus longue (0 = aucune) : un travail lourd
+    declenche par la bascule (apercu en direct...) attend ce delai, sinon il fige l'animation."""
+    import time
+    return max(0, int(_Toggle._anim_until - time.monotonic() * 1000.0))
+
 
 class _Toggle(QWidget):
     """Interrupteur peint a la main selon le style COURANT (voir
@@ -1484,6 +1905,7 @@ class _Toggle(QWidget):
     quand le toggle passe de l'etat on a l'etat off et vice versa"."""
 
     _ANIM_MS = 140
+    _anim_until = 0.0        # fin (ms, horloge monotone) de la bascule en cours la plus longue
 
     toggled = Signal(bool)
 
@@ -1510,25 +1932,63 @@ class _Toggle(QWidget):
         # l'annotation actif a cote du toggle, uniquement le toggle en lui
         # meme" (memes interrupteurs par cote).
         self._style_override = style_override
+        # Style d'origine (celui du code) : « Par defaut » du menu contextuel y revient. Le style
+        # choisi par l'utilisateur pour CE toggle (clic droit) remplace _style_override.
+        self._base_override = style_override
+        # Identifiant stable pose par la fenetre qui le contient (enregistrement du style choisi).
+        self.style_id: str | None = None
         self._show_label = show_label
         self.setCursor(Qt.PointingHandCursor)
         self._anim = QVariantAnimation(self)
         self._anim.setDuration(self._ANIM_MS)
-        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.setEasingCurve(self._CURVE)
         self._anim.valueChanged.connect(self._on_anim_value)
+        self._anim.stateChanged.connect(self._on_anim_state)
+        self._precise = False                 # horloge fine tenue pendant la bascule
         self.apply_style()
+
+    # Courbe de la glissiere : depart vif mais sans saut (OutCubic faisait ~40 % de la course des la
+    # premiere image), pas d'image plus longue qu'une autre.
+    _CURVE = QEasingCurve.OutSine
+
+    def _on_anim_state(self, new, _old):
+        running = new == QVariantAnimation.Running
+        if running != self._precise:
+            self._precise = running
+            _precise_clock(running)
 
     def _on_anim_value(self, value):
         self._progress = float(value)
         self.update()
 
     def _style_key(self) -> str:
-        return self._style_override or _TOGGLE_STYLE
+        return _resolve_toggle_key(self._style_override or _TOGGLE_STYLE)
 
     def _style(self) -> dict:
-        if self._style_override:
-            return _toggle_style_dict(self._style_override)
-        return _active_toggle_style()
+        # Style PROPRE a ce toggle (« Override settings », settings_element_style) sinon son style nomme.
+        return getattr(self, "_look_style", None) or _toggle_style_dict(self._style_key())
+
+    def chosenStyle(self) -> str | None:
+        """Style choisi a la main pour ce toggle (None : celui d'origine)."""
+        return self._style_override if self._style_override != self._base_override else None
+
+    def setStyleKey(self, key: str | None):
+        """Style de CE toggle (None : celui d'origine, voir __init__)."""
+        self._style_override = key or self._base_override
+        self.apply_style()
+
+    def contextMenuEvent(self, event):
+        """Clic droit sur un toggle : choix de son style parmi tous les styles crees."""
+        if getattr(self, "_ctx_menu_handled", False):
+            # Deja propose par le menu qui le contient (edition d'un menu contextuel, settings_menu).
+            self._ctx_menu_handled = False
+            event.accept()
+            return
+        menu = Menu(self)
+        add_toggle_style_menu(self, menu)
+        add_context_extras(self, menu)
+        menu.exec(event.globalPos())
+        event.accept()
 
     def apply_style(self):
         """Rejoue le style COURANT (voir _TOGGLE_STYLE), OU celui fige par
@@ -1539,14 +1999,32 @@ class _Toggle(QWidget):
         change."""
         style = self._style()
         self._outer_w = style["outer_w"]
-        h = max(25, style["outer_h"] + 8)
-        # Pas de place reservee au libelle (+9+40) si `show_label` est
-        # False (voir __init__) : juste le cadre, une petite marge (6px,
-        # meme valeur que le 1er terme de "9" ci-dessous arrondi) pour ne
-        # pas coller le cadre au bord du widget.
-        w = max(30, style["outer_w"]) + (9 + 40 if self._show_label else 6)
+        self._anim.setDuration(int(style.get("anim_ms", self._ANIM_MS)))
+        # Une sequence d'images se joue a vitesse constante ; la glissiere garde sa courbe.
+        self._anim.setEasingCurve(QEasingCurve.Linear if style.get("kind") == "icons" else self._CURVE)
+        if self._show_label:
+            h = max(25, style["outer_h"] + 8)
+            w = max(30, style["outer_w"]) + 9 + 40
+        else:
+            # Sans libelle : le widget = ce qui est DESSINE (cadre, ou coche qui en deborde avec une
+            # marge negative), +1 px de chaque cote pour l'antialiasing. Plus de taille minimale
+            # (36 x 25) : elle laissait une grande marge invisible autour des petits toggles, meme
+            # avec un padding de cellule a 0.
+            w, h = self._drawn_size(style)
+            w, h = w + 2, h + 2
         self.setFixedSize(w, h)
         self.update()
+
+    @staticmethod
+    def _drawn_size(style: dict) -> tuple[int, int]:
+        """Largeur / hauteur de ce que peint _paint_toggle_shape : le cadre, agrandi de ce que la
+        coche en deborde (marge negative : elle deborde des deux cotes, symetriquement)."""
+        w, h = style["outer_w"], style["outer_h"]
+        if style.get("kind") != "icons":
+            over = max(0, -int(style.get("coche_margin", 0)))
+            w = max(w, style.get("coche_w", 0), w + 2 * over)
+            h = max(h, style.get("coche_h", 0))
+        return w, h
 
     def isChecked(self) -> bool:
         return self._checked
@@ -1565,6 +2043,8 @@ class _Toggle(QWidget):
         self._anim.setStartValue(self._progress)
         self._anim.setEndValue(1.0 if checked else 0.0)
         self._anim.start()
+        import time
+        _Toggle._anim_until = max(_Toggle._anim_until, time.monotonic() * 1000.0 + self._anim.duration())
         self.toggled.emit(checked)
 
     def mousePressEvent(self, event):
@@ -1602,6 +2082,33 @@ class _Toggle(QWidget):
             p.drawText(label_x, 0, 40, self.height(), Qt.AlignVCenter | Qt.AlignLeft,
                        self._on_label if self._checked else self._off_label)
         p.end()
+
+# Appeles quand l'utilisateur choisit le style d'un toggle (clic droit > Style du toggle) :
+# (toggle, cle de style ou None pour « Par defaut »). La fenetre qui le contient l'enregistre.
+TOGGLE_STYLE_LISTENERS: list = []
+
+_DEFAULT_STYLE_LABEL = "Par défaut"
+
+
+def add_toggle_style_menu(toggle: "_Toggle", menu: QMenu) -> None:
+    """Ligne « Style du toggle » + menu deroulant de tous les styles crees (« Par defaut » = celui
+    d'origine du toggle)."""
+    names = [_TOGGLE_STYLE_NAMES.get(k, k) for k in _TOGGLE_STYLES]
+    chosen = toggle.chosenStyle()
+    current = _TOGGLE_STYLE_NAMES.get(chosen, _DEFAULT_STYLE_LABEL) if chosen in _TOGGLE_STYLES else _DEFAULT_STYLE_LABEL
+    select = _SelectField([_DEFAULT_STYLE_LABEL] + names, current, width=160)
+    by_name = {_TOGGLE_STYLE_NAMES.get(k, k): k for k in _TOGGLE_STYLES}
+
+    def chosen_key(label: str):
+        key = None if label == _DEFAULT_STYLE_LABEL else by_name.get(label)
+        toggle.setStyleKey(key)
+        for listener in list(TOGGLE_STYLE_LISTENERS):
+            listener(toggle, key)
+        menu.close()
+
+    select.changed.connect(chosen_key)
+    menu_row(menu, "Style du toggle", select)
+
 
 class _ToggleShapePreview(QWidget):
     """Apercu ON+OFF cote a cote pour un style ("toggle1"/"toggle2") — LIT
@@ -1665,36 +2172,65 @@ class _ToggleStyleCard(QWidget):
 
     clicked = Signal()
 
+    # Fond des cartes : noir a 25 % ; carte choisie : teinte de selection des tableaux par-dessus.
+    _BG = QColor(0, 0, 0, 64)
+    _SELECTED_ALPHA = 56
+
     def __init__(self, style_key: str, label: str, parent=None):
         super().__init__(parent)
         self._selected = False
+        self.style_key = style_key
         self.setObjectName("ToggleStyleCard")
-        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.PointingHandCursor)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 10, 16, 10)
         layout.setSpacing(8)
-        title = QLabel(label)
+        title = self.title = QLabel(label)
         _set_text_role(title, "card_title")
         title.setAlignment(Qt.AlignHCenter)
         layout.addWidget(title, 0, Qt.AlignHCenter)
         self.preview = _ToggleShapePreview(style_key)
         layout.addWidget(self.preview, 0, Qt.AlignHCenter)
-        self._refresh_style()
 
     def _refresh_style(self):
-        border = M["accent"] if self._selected else M["field_border"]
-        bg = M["btn_hover"] if self._selected else M["field_bg"]
-        self.setStyleSheet(f"#ToggleStyleCard {{ background: {bg}; border: 1px solid {border}; border-radius: 4px; }}")
+        self.update()
 
     def setSelected(self, selected: bool):
         if selected != self._selected:
             self._selected = selected
-            self._refresh_style()
+            self.update()
+
+    def setLabel(self, label: str):
+        self.title.setText(label)
+
+    def paintEvent(self, event):
+        """Cadre = celui des tableaux (Tableaux > Bordure, Rayon des angles), fond noir a 25 %."""
+        from settings_layout import _FLAT_TABLE_STYLE        # tardif : settings_layout importe ce module
+        enabled, colors, thickness = _FLAT_TABLE_STYLE.get("border") or (True, {}, 1)
+        colors = {side: (colors or {}).get(side) or M["field_border"] for side in ("top", "right", "bottom", "left")}
+        radius = _FLAT_TABLE_STYLE.get("radius", 0) or 0
+        p = QPainter(self)
+        rect = self.rect()
+        _paint_bordered_rect(p, rect, radius, enabled, thickness, colors, self._BG.name(QColor.NameFormat.HexArgb))
+        if self._selected:
+            _paint_bordered_rect(p, rect, radius, enabled, thickness, colors,
+                                 _selection_color(self._SELECTED_ALPHA).name(QColor.NameFormat.HexArgb))
+        p.end()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.clicked.emit()
+
+    def contextMenuEvent(self, event):
+        """Clic droit sur une carte : renommer / supprimer CE style (grise s'il n'en reste qu'un)."""
+        picker = self.parentWidget()
+        menu = Menu(self)
+        if isinstance(picker, _ToggleStylePicker):
+            picker.populate_card_menu(menu, self.style_key)
+        add_context_extras(self, menu)
+        if menu.actions():
+            menu.exec(event.globalPos())
+        event.accept()
 
 class _ToggleStylePicker(QWidget):
     """Choix du style visuel de TOUS les toggles de cette fenetre (voir
@@ -1704,15 +2240,20 @@ class _ToggleStylePicker(QWidget):
     styles)."""
 
     changed = Signal(str)
+    # Le selecteur s'est elargi (carte ajoutee, nom plus long) : sa colonne de tableau s'elargit
+    # d'autant (build_cells_table), au lieu de rogner ou de superposer les cartes.
+    contentGrew = Signal()
 
     def __init__(self, value: str, parent=None):
         super().__init__(parent)
-        # Les cartes viennent du registre : toggle1, toggle2 et les styles ajoutes par l'utilisateur.
-        self._value = value if value in _TOGGLE_STYLES else "toggle1"
+        # Les cartes viennent du registre (Toggles > Style), dans son ordre.
+        self._value = _resolve_toggle_key(value)
         self._layout = QHBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(14)
         self._cards: dict[str, _ToggleStyleCard] = {}
+        # Actions fournies par la fenetre : {"add": f(), "rename": f(cle), "delete": f(cle)}.
+        self.style_actions: dict = {}
         for key in list(_TOGGLE_STYLES):
             self.addOption(key, _TOGGLE_STYLE_NAMES.get(key, key))
 
@@ -1725,6 +2266,47 @@ class _ToggleStylePicker(QWidget):
         card.clicked.connect(lambda _checked=False, k=key: self._select(k))
         self._cards[key] = card
         self._layout.addWidget(card)
+        self._equalize()
+
+    def removeOption(self, key: str):
+        """Retire la carte d'un style supprime ; s'il etait choisi, le premier restant le devient."""
+        card = self._cards.pop(key, None)
+        if card is None:
+            return
+        self._layout.removeWidget(card)
+        card.deleteLater()
+        if self._value == key and self._cards:
+            self._select(next(iter(self._cards)))
+        self._equalize()
+
+    def renameOption(self, key: str, label: str):
+        if key in self._cards:
+            self._cards[key].setLabel(label)
+            self._equalize()
+
+    def populate_card_menu(self, menu: QMenu, key: str):
+        actions = self.style_actions
+        if "rename" in actions:
+            menu.addAction("Renommer le toggle…").triggered.connect(lambda _c=False: actions["rename"](key))
+        if "delete" in actions:
+            delete = menu.addAction("Supprimer le toggle")
+            delete.setEnabled(len(self._cards) > 1)        # il reste toujours un style
+            delete.triggered.connect(lambda _c=False: actions["delete"](key))
+        if "add" in actions:
+            menu.addSeparator()
+            menu.addAction("Ajouter un nouveau toggle…").triggered.connect(lambda _c=False: actions["add"]())
+
+    def _equalize(self):
+        """Toutes les cartes ont la MEME largeur : celle de la plus large."""
+        cards = list(self._cards.values())
+        for card in cards:
+            card.setMinimumWidth(0)
+            card.setMaximumWidth(16777215)
+        width = max((card.sizeHint().width() for card in cards), default=0)
+        for card in cards:
+            card.setFixedWidth(width)
+        self.updateGeometry()
+        self.contentGrew.emit()
 
     def _select(self, key: str):
         if key != self._value:
@@ -1748,6 +2330,8 @@ class _ToggleStylePicker(QWidget):
         refresh)."""
         for card in self._cards.values():
             card.preview.refresh()
+            card.update()
+        self._equalize()
 
 class _CornerPositionCard(QWidget):
     """Une carte cliquable du selecteur de position (voir
@@ -2440,7 +3024,16 @@ class _ColorSwatchButton(QPushButton):
         p.setPen(QPen(QColor(border_color), 1))
         p.setBrush(Qt.NoBrush)
         p.drawPath(path)
+        if getattr(self, "_drop_hover", False):
+            # Couleur glissee au-dessus (copie, settings_sections) : cette pastille la recevra.
+            p.setPen(QPen(QColor(M["accent"]), 2))
+            p.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 2, 2)
         p.end()
+
+    def set_drop_hover(self, on: bool):
+        if getattr(self, "_drop_hover", False) != on:
+            self._drop_hover = on
+            self.update()
 
 class _PopupHeader(QWidget):
     """En-tete du popup couleur — glissable : le popup n'a pas d'autre
@@ -2580,6 +3173,7 @@ class _ColorPickerPopup(QWidget):
         for i, (label, unit) in enumerate((("Teinte", "°"), ("Saturation", "%"), ("Luminosite", "%"))):
             row, slider, val_label = self._make_row(label, unit)
             slider.changed.connect(lambda f, idx=i: self._on_hsl(idx, f))
+            self._wire_value(val_label, 360 if i == 0 else 100, lambda f, idx=i: self._on_hsl(idx, f))
             self._hsl_rows.append((slider, val_label))
             hsl_row.addLayout(row)
         body.addLayout(hsl_row)
@@ -2593,6 +3187,7 @@ class _ColorPickerPopup(QWidget):
         for i, label in enumerate(("Rouge", "Vert", "Bleu")):
             row, slider, val_label = self._make_row(label, "")
             slider.changed.connect(lambda f, idx=i: self._on_rgb(idx, f))
+            self._wire_value(val_label, 255, lambda f, idx=i: self._on_rgb(idx, f))
             self._rgb_rows.append((slider, val_label))
             rgb_col.addLayout(row)
         body.addLayout(rgb_col)
@@ -2608,6 +3203,7 @@ class _ColorPickerPopup(QWidget):
         body.addWidget(self._tag_label("TRANSPARENCE"))
         alpha_row, alpha_slider, alpha_val = self._make_row("Alpha", "%", checkerboard=True)
         alpha_slider.changed.connect(self._on_alpha)
+        self._wire_value(alpha_val, 100, self._on_alpha)
         self._alpha_slider, self._alpha_val = alpha_slider, alpha_val
         body.addLayout(alpha_row)
 
@@ -2709,6 +3305,24 @@ class _ColorPickerPopup(QWidget):
         line.setStyleSheet(f"background: {M['edge_off']};")
         return line
 
+    def _wire_value(self, edit: QLineEdit, maximum: int, on_fraction) -> None:
+        """Valeur tapee (0..maximum) -> meme chemin que le curseur de la ligne (fraction 0..1), a la
+        validation (Entree / clic ailleurs) ; hors bornes : ramenee dans les bornes."""
+        # Chiffres seulement, autant que le maximum en a : borne a 0..maximum a la validation (un
+        # validateur borne a `maximum` gardait « 999 » affiche sans jamais valider).
+        edit.setValidator(QIntValidator(0, 10 ** len(str(maximum)) - 1, edit))
+
+        def commit():
+            try:
+                value = int(edit.text())
+            except ValueError:
+                self._refresh_all()          # vide : la valeur courante revient
+                return
+            on_fraction(max(0, min(maximum, value)) / maximum)
+            self._refresh_all()              # valeur ramenee dans les bornes affichee
+
+        edit.editingFinished.connect(commit)
+
     def _make_row(self, label: str, unit: str, checkerboard: bool = False):
         row = QHBoxLayout()
         row.setSpacing(9)
@@ -2732,14 +3346,18 @@ class _ColorPickerPopup(QWidget):
         # C'est une zone de saisie comme les autres : meme rayon que hex_box
         # (self._input_radius) — voir la remarque de l'utilisateur, capture
         # annotee a l'appui ("zone de saisie donc arrondie les angles").
+        # Valeur SAISISSABLE (demande de l'utilisateur : les textes du selecteur n'etaient pas
+        # modifiables) : zone de saisie sans cadre dans la boite, entiers seulement (voir _wire_value).
         box.setStyleSheet(
             f"#ValBox {{ background: {M['field_bg']}; border: 1px solid {M['field_border']}; "
             f"border-radius: {self._input_radius}px; }}"
+            "#ValBox QLineEdit { border: none; padding: 0; margin: 0; }"
         )
         box_l = QHBoxLayout(box)
         box_l.setContentsMargins(9, 0, 9, 0)
         box_l.setSpacing(2)
-        val_label = QLabel("0")
+        val_label = QLineEdit("0")
+        val_label.setFrame(False)
         _set_text_role(val_label, "value_mono")
         val_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         box_l.addWidget(val_label, 1)
@@ -3027,6 +3645,9 @@ def _apply_stylesheet_cached(widget: QWidget, stylesheet: str) -> None:
 # soit encore moins perceptibles ... generalise ca pour tous les elements
 # inactif/grise".
 _DIMMED_OPACITY = 0.2
+# Opacite de TOUT element tire pendant un deplacement (lignes, colonnes, sous-cellules, titres, menus,
+# lignes et colonnes de la fenetre principale) : demande de l'utilisateur, valable pour tout deplacement a venir.
+DRAG_GHOST_OPACITY = 0.75
 
 def _set_dimmed(widget: QWidget, dimmed: bool) -> None:
     """setEnabled(not dimmed) + un QGraphicsOpacityEffect a _DIMMED_OPACITY
@@ -3139,8 +3760,14 @@ class _TableFrame(QWidget):
 
     # -- Largeur du tableau (bordure droite agrippable) + dimensions enregistrees --
 
+    # Colonnes libres (tableaux de la v2) : la largeur du tableau = somme de ses colonnes, posee par
+    # `_fit_columns` (fourni par le tableau) ; plus de largeur imposee ni de bordure droite a tirer
+    # (c'est la bordure de la derniere colonne). `_legacy_dims` convertit d'anciennes dimensions.
+    _fit_columns = None
+    _legacy_dims = None
+
     def setWidthResizable(self, enabled: bool):
-        self._grip.setVisible(bool(enabled))
+        self._grip.setVisible(bool(enabled) and self._fit_columns is None)
 
     def tableWidth(self) -> int:
         """Largeur imposee (0 = pleine largeur disponible)."""
@@ -3148,6 +3775,11 @@ class _TableFrame(QWidget):
         return 0 if w >= 16777215 else w
 
     def setTableWidth(self, width: int):
+        if self._fit_columns is not None:
+            self._align_left(True)
+            self._fit_columns()
+            self.dimsChanged.emit()
+            return
         width = int(width) if width and int(width) > 0 else 0
         self.setMaximumWidth(width or 16777215)
         self._align_left(bool(width))
@@ -3187,8 +3819,14 @@ class _TableFrame(QWidget):
         self._grip.setGeometry(self.width() - _TableEdgeGrip.WIDTH, 0, _TableEdgeGrip.WIDTH, self.height())
         self._grip.raise_()
 
+    # Cle imposee (tableaux LIES qui partagent les memes dimensions, voir la fenetre v2) ; sinon
+    # la cle se deduit des titres.
+    _dims_key: str | None = None
+
     def dimsKey(self) -> str:
         """Cle stable : titres des sections ancetres + rang parmi les tableaux de la section."""
+        if self._dims_key:
+            return self._dims_key
         titles = []
         node = self.parentWidget()
         owner = None
@@ -3226,6 +3864,8 @@ class _TableFrame(QWidget):
         return dims
 
     def applyDims(self, dims: dict):
+        if self._legacy_dims is not None:
+            dims = self._legacy_dims(dims)
         head, resizer = self._dims_children()
         cols = dims.get("cols") or []
         if head is not None and cols:
@@ -3244,6 +3884,15 @@ class _TableFrame(QWidget):
             dims = _TABLE_DIMS.get(self.dimsKey())
             if dims:
                 self.applyDims(dims)
+            look = ELEMENT_LOOKS.get(f"table:{self.dimsKey()}")
+            if look:
+                from settings_layout import set_table_look
+                set_table_look(self, look)
+            if PART_LOOKS.get(self.dimsKey()):
+                from settings_layout import apply_part_looks
+                apply_part_looks(self)
+            # Reglages > Tableaux > Ombres : sous-couche voisine (l'ombre deborde du tableau).
+            attach_shadow(self, lambda: _TABLE_SHADOW["look"], lambda: self._radius)
             # Branche APRES la restauration (elle ne doit pas se reenregistrer) : une
             # colonne tiree a la main previent la fenetre.
             head, resizer = self._dims_children()
@@ -3261,7 +3910,10 @@ class _TableFrame(QWidget):
             # carre au coin arrondi, la ou une bordure a epaisseur nulle
             # (mais toujours "solid") reste correctement decoupee par le
             # border-radius du meme cote.
-            if t <= 0 or not self._border_enabled.get(side, True):
+            # Tableau coupe (« Split au-dessus ») : la bordure est peinte partie par partie (paintEvent).
+            # Les espaceurs, pas _split_gaps() : juste apres la coupe, leur geometrie est encore nulle (mise
+            # en page pas faite) et la bordure QSS restait, visible a gauche / a droite dans l'espace (signale).
+            if t <= 0 or not self._border_enabled.get(side, True) or self._split_spacers:
                 return "0px solid transparent"
             return f"{t}px solid {self._border_colors.get(side, M['panel_border'])}"
 
@@ -3275,6 +3927,39 @@ class _TableFrame(QWidget):
     def setRadius(self, radius: int):
         self._radius = max(0, int(radius))
         self._refresh_style()
+
+    # -- « Split au-dessus » : tableau coupe en parties separees par un espace (settings_cells) --
+    _split_spacers: list = []
+
+    def _split_gaps(self) -> list:
+        """(haut, bas) de chaque espace de coupe, en coordonnees du cadre (vide : pas de coupe)."""
+        gaps = []
+        for item in self._split_spacers:
+            geo = item.geometry()
+            if geo.height() > 0:
+                gaps.append((geo.top(), geo.bottom() + 1))
+        return sorted(gaps)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        gaps = self._split_gaps()
+        if not gaps:
+            return
+        # Une partie par morceau : sa bordure complete et ses 4 coins arrondis ; la bordure deborde
+        # d'un pixel dans l'espace (le contenu est en retrait de 1 px, voir _table_frame).
+        t = self._border_thickness
+        on = {k: bool(self._border_enabled.get(k, True)) and t > 0 for k in ("top", "right", "bottom", "left")}
+        corners = {c: self._radius for c in ("top_left", "top_right", "bottom_right", "bottom_left")}
+        tops = [0] + [bottom - 1 for _top, bottom in gaps]
+        bottoms = [top + 1 for top, _bottom in gaps] + [self.height()]
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        for top, bottom in zip(tops, bottoms):
+            if bottom - top <= 3:               # espace en tete (texte au-dessus de la 1re ligne) : pas de partie
+                continue
+            _paint_bordered_vector(p, QRect(0, top, self.width(), bottom - top), corners, on, t,
+                                   self._border_colors, None)
+        p.end()
 
     def setBorder(self, enabled: dict, colors: dict, thickness: int):
         """Tableaux > Bordure (voir _ToggleSideColorsField, MEME widget que
@@ -3350,12 +4035,14 @@ class _TableRow(QWidget):
 
     def paintEvent(self, event):
         super().paintEvent(event)
+        self._paint_part_backgrounds()
+        self._paint_row_mark()
         head = getattr(self, "_sel_head", None)
         if head is not None and head._selected:
             p = QPainter(self)
             for i, (left, edge) in enumerate(head._column_spans()):
                 if i in head._selected:
-                    p.fillRect(left, 0, edge - left, self.height(), QColor(95, 155, 208, 40))
+                    p.fillRect(left, 0, edge - left, self.height(), _selection_color(40))
             p.end()
         boundary = getattr(self, "_v_boundary", None)
         if boundary is not None:
@@ -3367,6 +4054,112 @@ class _TableRow(QWidget):
             xs = [c.x() for c in cells[1:]]
         _paint_inner_vlines(self, xs)
 
+def _table_row_paint_part_backgrounds(self):
+    """Fond PROPRE d'une cellule (« Override settings » > cellule / ligne / colonne, `_part_look`) :
+    toute la hauteur de la ligne, sous le filet du haut, dans les coins arrondis du bas."""
+    cells = [c for c in self.children() if isinstance(c, QWidget) and c.objectName() == "TableCell"
+             and (getattr(c, "_part_look", None) or {}).get("bg")]
+    if not cells:
+        return
+    h = _TABLE_INNER_BORDER["h"]
+    top = 0 if getattr(self, "_first_row", True) or not h["enabled"] else h["thickness"]
+    p = QPainter(self)
+    radius = getattr(self, "_bottom_radius", 0)
+    if radius:
+        path = QPainterPath()
+        path.setFillRule(Qt.WindingFill)
+        path.addRoundedRect(QRectF(self.rect()), radius, radius)
+        path.addRect(QRectF(0, 0, self.width(), max(0, self.height() - radius)))
+        p.setClipPath(path)
+    for cell in cells:
+        p.fillRect(QRect(cell.x(), top, cell.width(), self.height() - top), QColor(cell._part_look["bg"]))
+    p.end()
+
+
+_TableRow._paint_part_backgrounds = _table_row_paint_part_backgrounds
+
+
+def set_row_mark(widget: QWidget, look: dict | None) -> None:
+    """Ligne d'un tableau MARQUEE (ex. fenetre des filtres : lignes ou un filtre agit) : `look` =
+    {"bg": couleur ou None, "sides": {cote: bool}, "colors": {cote: couleur}, "thickness": px,
+    "radius": {coin: px} (facultatif), "margin": {cote: px} (facultatif, retrait dans la ligne)} ; None =
+    plus de marque. `widget` : la ligne ou un widget qu'elle contient."""
+    row = widget
+    while row is not None and not isinstance(row, _TableRow):
+        row = row.parentWidget()
+    if row is None or getattr(row, "_mark_look", None) == look:
+        return
+    row._mark_look = look
+    row.update()
+
+
+def _table_row_paint_mark(self):
+    """Marque de la ligne (set_row_mark) : fond sur toute la ligne, sous le filet du haut, puis bordures
+    des cotes allumes, a l'interieur de la ligne."""
+    look = getattr(self, "_mark_look", None)
+    if not look:
+        return
+    h = _TABLE_INNER_BORDER["h"]
+    top = 0 if getattr(self, "_first_row", True) or not h["enabled"] else h["thickness"]
+    margin = look.get("margin") or {}
+    rect = QRect(0, top, self.width(), self.height() - top).adjusted(
+        margin.get("left", 0), margin.get("top", 0), -margin.get("right", 0), -margin.get("bottom", 0))
+    if rect.width() <= 0 or rect.height() <= 0:
+        return
+    p = QPainter(self)
+    radius = getattr(self, "_bottom_radius", 0)
+    if radius:
+        path = QPainterPath()
+        path.setFillRule(Qt.WindingFill)
+        path.addRoundedRect(QRectF(self.rect()), radius, radius)
+        path.addRect(QRectF(0, 0, self.width(), max(0, self.height() - radius)))
+        p.setClipPath(path)
+    t = max(0, int(look.get("thickness") or 0))
+    sides, colors = look.get("sides") or {}, look.get("colors") or {}
+    corners = _radius_dict(look.get("radius") or 0)
+    if any(corners.values()):
+        # Marque arrondie : fond = chemin arrondi ; bordure = anneau (chemin moins le meme retire de
+        # l'epaisseur sur les cotes allumes), chaque cote dans sa couleur, jusqu'aux diagonales des coins.
+        p.setRenderHint(QPainter.Antialiasing, True)
+        outer = _rounded_rect_path(rect, corners)
+        if look.get("bg"):
+            p.fillPath(outer, QColor(look["bg"]))
+        if t and any(sides.get(s) for s in ("left", "top", "right", "bottom")):
+            inner_rect = rect.adjusted(t if sides.get("left") else 0, t if sides.get("top") else 0,
+                                       -t if sides.get("right") else 0, -t if sides.get("bottom") else 0)
+            ring = outer.subtracted(_rounded_rect_path(inner_rect, {k: max(0, v - t) for k, v in corners.items()}))                 if inner_rect.width() > 0 and inner_rect.height() > 0 else outer
+            r = QRectF(rect)
+            c = r.center()
+            wedges = {"top": (r.topLeft(), r.topRight()), "right": (r.topRight(), r.bottomRight()),
+                      "bottom": (r.bottomRight(), r.bottomLeft()), "left": (r.bottomLeft(), r.topLeft())}
+            d = max(r.width(), r.height())
+            for side, (a, b) in wedges.items():
+                if not sides.get(side):
+                    continue
+                wedge = QPainterPath()                    # secteur du cote : centre -> ses 2 coins, prolonge
+                wedge.moveTo(c)
+                wedge.lineTo(c + (a - c) * (1 + d))
+                wedge.lineTo(c + (b - c) * (1 + d))
+                wedge.closeSubpath()
+                p.fillPath(ring.intersected(wedge), QColor(colors.get(side) or "#808080"))
+        p.end()
+        return
+    if look.get("bg"):
+        p.fillRect(rect, QColor(look["bg"]))
+    if t:
+        bands = {"top": QRect(rect.left(), rect.top(), rect.width(), t),
+                 "bottom": QRect(rect.left(), rect.bottom() - t + 1, rect.width(), t),
+                 "left": QRect(rect.left(), rect.top(), t, rect.height()),
+                 "right": QRect(rect.right() - t + 1, rect.top(), t, rect.height())}
+        for side, band in bands.items():
+            if sides.get(side):
+                p.fillRect(band, QColor(colors.get(side) or "#808080"))
+    p.end()
+
+
+_TableRow._paint_row_mark = _table_row_paint_mark
+
+
 def _restyle_table_row(row: QWidget, bg: str, first: bool, top_radius: int = 0, bottom_radius: int = 0):
     """(Re)applique le fond/filet/coins d'une ligne de donnees. `top_radius`
     n'est utile que pour la toute premiere ligne d'un tableau SANS entete
@@ -3375,6 +4168,16 @@ def _restyle_table_row(row: QWidget, bg: str, first: bool, top_radius: int = 0, 
     touche toujours le coin bas du cadre, entete ou pas) — voir
     SettingsWindow._apply_table_radius et homologues, qui recalculent ces
     deux valeurs a chaque cran du slider Geometrie > Tableaux."""
+    # « Split au-dessus » (settings_cells.apply_row_splits) : la ligne ouvre une nouvelle partie du tableau
+    # (pas de filet au-dessus, coins hauts arrondis) ; celle d'avant la ferme (coins bas arrondis). Lu ICI,
+    # par toute (re)application du style des lignes, pour que le split survive a tout restylage.
+    frame = row.parentWidget()
+    frame_radius = getattr(frame, "_radius", 0) if isinstance(frame, _TableFrame) else 0
+    if getattr(row, "_split_above", False):
+        first, top_radius = True, max(top_radius, frame_radius)
+    if getattr(row, "_split_below", False):
+        bottom_radius = max(bottom_radius, frame_radius)
+    row._first_row, row._bottom_radius = first, bottom_radius      # fonds propres des cellules
     border = "" if first else f"border-top: {_inner_h_edge()};"
     _apply_stylesheet_cached(
         row,
@@ -3389,6 +4192,12 @@ def _restyle_table_row(row: QWidget, bg: str, first: bool, top_radius: int = 0, 
 # ==========================================================================
 
 _SLOT_LABELS = {slot: label for slot, _real, label in SEMANTIC_COLOR_SLOTS}
+
+def _slot_of(value: str) -> str:
+    """Nom de la pastille d'une valeur « @slot » ou « @slot/75 » (opacite)."""
+    from app_style import split_color_ref
+    return split_color_ref(value)[0][1:]
+
 
 class _AppOrCustomColorField(QWidget):
     """GABARIT "couleur" (voir la remarque de l'utilisateur, "TOUTES LES
@@ -3436,7 +4245,7 @@ class _AppOrCustomColorField(QWidget):
         layout.addWidget(app_label)
         self.app_toggle = _Toggle(is_slot, show_label=False)
         layout.addWidget(self.app_toggle)
-        current_label = self._slot_to_label.get(value[1:], labels[0]) if is_slot else labels[0]
+        current_label = self._slot_to_label.get(_slot_of(value), labels[0]) if is_slot else labels[0]
         self.app_field = _SelectField(labels, current_label, width=170)
         layout.addWidget(self.app_field)
 
@@ -3465,7 +4274,7 @@ class _AppOrCustomColorField(QWidget):
     def _refresh(self):
         hexval = self._resolved_hex()
         self.swatch.setColorHex(hexval)
-        self.swatch.setToolTip(_SLOT_LABELS.get(self._value[1:], hexval) if self._is_slot() else hexval)
+        self.swatch.setToolTip(_SLOT_LABELS.get(_slot_of(self._value), hexval) if self._is_slot() else hexval)
 
     def _refresh_dim(self):
         _set_dimmed(self.app_field, not self.app_toggle.isChecked())
@@ -3544,8 +4353,8 @@ class _AppOrCustomColorField(QWidget):
         self.system_toggle.setChecked(not is_slot)
         self.app_toggle.blockSignals(False)
         self.system_toggle.blockSignals(False)
-        if is_slot and value[1:] in self._slot_to_label:
-            self.app_field.setValue(self._slot_to_label[value[1:]])
+        if is_slot and _slot_of(value) in self._slot_to_label:
+            self.app_field.setValue(self._slot_to_label[_slot_of(value)])
         self._refresh_dim()
         self._refresh()
 
@@ -3555,3 +4364,409 @@ class _AppOrCustomColorField(QWidget):
         doit suivre EN DIRECT la couleur reelle de sa pastille semantique."""
         self._colors = colors
         self._refresh()
+
+
+class _ShortcutField(QLineEdit):
+    """Zone de saisie d'un raccourci clavier : cliquer dedans puis taper la touche (avec ses
+    modificateurs) ; Retour arriere / Suppr = aucun raccourci, Echap = quitter sans changer.
+    Valeur = texte portable de QKeySequence (« Ctrl+D », « F »), `changed` a chaque modification.
+    Habillee comme les autres zones de saisie (suit Geometrie > Zones de saisie)."""
+
+    changed = Signal()
+    _MODIFIER_KEYS = (Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt, Qt.Key_Meta, Qt.Key_AltGr)
+
+    def __init__(self, value: str = "", width: int = 120):
+        super().__init__()
+        self.setReadOnly(True)                  # pas de curseur de texte : on capte la touche
+        self.setAlignment(Qt.AlignCenter)
+        self.setFixedSize(width, 25)
+        self.setPlaceholderText("aucun")
+        self.setToolTip("Cliquer puis taper le raccourci (Retour arrière : aucun)")
+        self.setContextMenuPolicy(Qt.NoContextMenu)
+        self._value = ""
+        self._setting = False
+        self._radius = _input_radius()
+        _register_input(self)
+        self._restyle()
+        self.set_value(value)
+        # Texte pose autrement que par la frappe (code, tests) : lu comme le nouveau raccourci.
+        self.textChanged.connect(self._on_text_changed)
+
+    def setRadius(self, radius: int):           # suit Geometrie > Zones de saisie
+        self._radius = radius
+        self._restyle()
+
+    def _restyle(self):
+        self.setStyleSheet(
+            f"QLineEdit {{ background: {M['field_bg']}; border: 1px solid {M['field_border']}; "
+            f"border-radius: {self._radius}px; color: {M['value_fg']}; padding: 0 6px; }}"
+            f"QLineEdit:focus {{ border: 1px solid {M['accent_border']}; }}")
+
+    def value(self) -> str:
+        return self._value
+
+    def set_value(self, value: str):
+        from PySide6.QtGui import QKeySequence
+        sequence = QKeySequence(str(value or ""))
+        self._value = sequence.toString(QKeySequence.PortableText)
+        self._setting = True
+        try:
+            self.setText(sequence.toString(QKeySequence.NativeText))
+        finally:
+            self._setting = False
+
+    def _on_text_changed(self, text: str):
+        if self._setting:
+            return
+        from PySide6.QtGui import QKeySequence
+        value = QKeySequence(text.strip()).toString(QKeySequence.PortableText)
+        if value != self._value:
+            self._value = value
+            self.changed.emit()
+
+    def keyPressEvent(self, event):
+        from PySide6.QtCore import QKeyCombination
+        from PySide6.QtGui import QKeySequence
+        key, mods = event.key(), event.modifiers() & ~Qt.KeypadModifier
+        if key in self._MODIFIER_KEYS or key == Qt.Key_unknown:
+            return
+        if key == Qt.Key_Escape and not mods:
+            self.clearFocus()
+            return
+        if key in (Qt.Key_Backspace, Qt.Key_Delete) and not mods:
+            value = ""
+        else:
+            value = QKeySequence(QKeyCombination(mods, Qt.Key(key))).toString(QKeySequence.PortableText)
+        if value != self._value:
+            self.set_value(value)
+            self.changed.emit()
+
+    def event(self, event):
+        # Tab et Maj+Tab sont des raccourcis possibles : ne pas les laisser deplacer le clavier.
+        if event.type() == QEvent.KeyPress and event.key() in (Qt.Key_Tab, Qt.Key_Backtab):
+            self.keyPressEvent(event)
+            return True
+        return super().event(event)
+
+
+# ==========================================================================
+# Ombres (lignes « Ombres » : lier les 4 | G | H | B | D | Taille — meme gabarit que les Bordures)
+# ==========================================================================
+# Cles d'une ligne Ombres de prefixe P : `P_enabled` (cotes actifs), `P` (couleur par cote, opacite
+# comprise), `P_size` (taille en px), `P_enabled_linked`. Une ombre se dessine SOUS l'element, hors de
+# sa forme (arrondie comme lui), cote par cote : chaque cote actif la pousse de ce cote-la (tous les
+# cotes = halo tout autour). Rendu : un petit MODELE (forme minimale + ombre) calcule une fois et garde
+# en cache, pose en 9 morceaux (coins tels quels, bords etires) : n'importe quelle taille, sans calcul
+# (planche, image qui vole, image zoomee...). Ombre douce = couches empilees en addition (profil en S,
+# _shadow_profile), forme videe ensuite (rien sous une image transparente).
+
+_SHADOW_SIDES = ("top", "right", "bottom", "left")
+_CORNER_SIDES = {"top_left": ("top", "left"), "top_right": ("top", "right"),
+                 "bottom_right": ("bottom", "right"), "bottom_left": ("bottom", "left")}
+_SHADOW_CACHE: dict = {}
+_SHADOW_CACHE_MAX = 96
+_SHADOW_DEFAULT = "#8c000000"
+_TABLE_SHADOW: dict = {"look": None}     # Reglages > Tableaux > Ombres (tous les tableaux des reglages)
+
+
+def shadow_keys(prefix: str) -> tuple:
+    """(cle des cotes, cle des couleurs, cle de la taille) d'une ligne Ombres."""
+    return f"{prefix}_enabled", prefix, f"{prefix}_size"
+
+
+def shadow_look(values: dict, prefix: str, resolve=None) -> dict | None:
+    """Ombre reglee par la ligne de prefixe `prefix` dans `values`, ou None (aucun cote actif, taille
+    nulle). `resolve(valeur)` -> hex : references « @pastille » (defaut : valeur telle quelle)."""
+    enabled_key, colors_key, size_key = shadow_keys(prefix)
+    sides = _coerce_side_enabled_local(values.get(enabled_key))
+    try:
+        size = max(0, int(values.get(size_key, 0) or 0))
+    except (TypeError, ValueError):
+        size = 0
+    if size <= 0 or not any(sides.values()):
+        return None
+    raw = values.get(colors_key)
+    colors = {}
+    for side in _SHADOW_SIDES:
+        value = raw.get(side) if isinstance(raw, dict) else raw
+        value = value or _SHADOW_DEFAULT
+        if resolve is not None:
+            value = resolve(value) or _SHADOW_DEFAULT
+        colors[side] = QColor(value).name(QColor.NameFormat.HexArgb)
+    return {"on": sides, "colors": colors, "size": size}
+
+
+def _coerce_side_enabled_local(value) -> dict:
+    if isinstance(value, dict):
+        return {k: bool(value.get(k, False)) for k in _SHADOW_SIDES}
+    return {k: bool(value) for k in _SHADOW_SIDES}
+
+
+def _shadow_radius(radius) -> dict:
+    if isinstance(radius, dict):
+        return {k: max(0, int(round(float(radius.get(k, 0) or 0)))) for k in _CORNERS}
+    return {k: max(0, int(round(float(radius or 0)))) for k in _CORNERS}
+
+
+def _shadow_profile(t: float) -> float:
+    """Opacite de l'ombre a la fraction `t` de sa taille (1 au bord de la forme, 0 au bout) : courbe en
+    S (proche d'un flou gaussien), plus etalee qu'une decroissance rapide qui la reduisait a un liseré."""
+    t = max(0.0, min(1.0, t))
+    return 1.0 - t * t * (3.0 - 2.0 * t)
+
+
+def _shadow_reach(radius: dict, look: dict) -> int:
+    """Distance au bord ou l'ombre cesse de varier le long d'un cote (coin arrondi, estompage vers un cote
+    eteint) : les 9 morceaux coupent au-dela, le milieu etire y est constant."""
+    return max(max(radius.values()) if radius else 0, look["size"])
+
+
+def _render_shadow(inner_w: int, inner_h: int, radius: dict, look: dict, dpr: float) -> QPixmap:
+    """Ombre d'une forme `inner_w` x `inner_h` (px logiques, arrondie `radius`) : pixmap de la forme plus
+    `look["size"]` px de marge tout autour, forme videe."""
+    from PySide6.QtGui import QImage
+    margin = look["size"]
+    width, height = inner_w + 2 * margin, inner_h + 2 * margin
+    out = QImage(max(1, round(width * dpr)), max(1, round(height * dpr)), QImage.Format_ARGB32_Premultiplied)
+    out.setDevicePixelRatio(dpr)
+    out.fill(Qt.transparent)
+    shape = QRectF(margin, margin, inner_w, inner_h)
+    steps = max(1, round(margin * dpr))
+    composer = QPainter(out)
+    composer.setRenderHint(QPainter.Antialiasing, True)
+    # UNE forme d'ombre pour tous les cotes allumes (forme agrandie de chacun d'eux, coins arrondis qui
+    # grandissent entre deux cotes allumes) : rien du cote d'un cote eteint, et pas d'ombre doublee.
+    # Chaque cote en prend son SECTEUR (decoupe par les diagonales des coins) dans sa couleur, puis
+    # s'estompe vers un cote voisin eteint.
+    on = {q: bool(look["on"].get(q)) for q in _SHADOW_SIDES}
+    # Secteurs prolonges A L'INTERIEUR de la forme le long des diagonales (de `k`, au moins le plus grand
+    # rayon) : sinon le coin entre l'arrondi et l'angle droit n'appartenait a aucun cote et restait vide
+    # (encoche claire au coin de toute forme arrondie, vue sur les menus).
+    k = min(max(radius.values(), default=0) + 1.0, inner_w / 2.0, inner_h / 2.0)
+    sl, st, sr, sb = shape.left(), shape.top(), shape.right(), shape.bottom()
+    sectors = {
+        "top": ((0, 0), (width, 0), (sr - k, st + k), (sl + k, st + k)),
+        "bottom": ((0, height), (width, height), (sr - k, sb - k), (sl + k, sb - k)),
+        "left": ((0, 0), (0, height), (sl + k, sb - k), (sl + k, st + k)),
+        "right": ((width, 0), (width, height), (sr - k, sb - k), (sr - k, st + k)),
+    }
+    for side in _SHADOW_SIDES:
+        if not on[side]:
+            continue
+        layer = QImage(out.size(), QImage.Format_ARGB32_Premultiplied)
+        layer.setDevicePixelRatio(dpr)
+        layer.fill(Qt.transparent)
+        painter = QPainter(layer)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setCompositionMode(QPainter.CompositionMode_Plus)
+        painter.setPen(Qt.NoPen)
+        base = QColor(look["colors"][side])
+        alpha = base.alphaF()
+        for k in range(1, steps + 1):
+            e = k / dpr                                   # expansion de cette couche (px logiques)
+            t0, t1 = (k - 1) / steps, k / steps
+            weight = _shadow_profile(t0) - _shadow_profile(t1)   # somme = 1
+            color = QColor(base)
+            color.setAlphaF(max(0.0, min(1.0, alpha * weight)))
+            grown = {q: (e if on[q] else 0.0) for q in _SHADOW_SIDES}
+            rect = shape.adjusted(-grown["left"], -grown["top"], grown["right"], grown["bottom"])
+            corners = {c: r + (e if grown[_CORNER_SIDES[c][0]] and grown[_CORNER_SIDES[c][1]] else 0.0)
+                       for c, r in radius.items()}
+            painter.setBrush(color)
+            painter.drawPath(_rounded_rect_path(rect, corners))
+        # Secteur de ce cote seulement (masque sur toute l'image : le reste est efface).
+        mask = QImage(out.size(), QImage.Format_ARGB32_Premultiplied)
+        mask.setDevicePixelRatio(dpr)
+        mask.fill(Qt.transparent)
+        mp = QPainter(mask)
+        # SANS lissage : chaque pixel appartient a un seul secteur. Lisses, deux secteurs voisins ne
+        # couvraient pas entierement leur diagonale commune -> trait clair en travers des coins.
+        mp.setRenderHint(QPainter.Antialiasing, False)
+        mp.setPen(Qt.NoPen)
+        mp.setBrush(QColor(0, 0, 0, 255))
+        from PySide6.QtGui import QPolygonF
+        mp.drawPolygon(QPolygonF([QPointF(x, y) for x, y in sectors[side]]))
+        mp.end()
+        painter.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+        painter.drawImage(0, 0, mask)
+        # Transition DOUCE vers un cote voisin eteint : l'ombre de ce cote s'estompe sur ses derniers
+        # pixels (longueur = la taille de l'ombre, la moitie du cote au plus), sans rien poser sur le
+        # cote eteint (avant : bande coupee net au coin).
+        horizontal = side in ("top", "bottom")
+        fade = min(margin, (inner_w if horizontal else inner_h) / 2.0)
+        for end in (("left", "right") if horizontal else ("top", "bottom")):
+            if on[end] or fade <= 0:
+                continue
+            start = {"left": shape.left(), "right": shape.right(), "top": shape.top(), "bottom": shape.bottom()}[end]
+            stop = start + fade if end in ("left", "top") else start - fade
+            ramp = QLinearGradient(start, 0, stop, 0) if horizontal else QLinearGradient(0, start, 0, stop)
+            for t in (0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0):
+                ramp.setColorAt(t, QColor(0, 0, 0, round(255 * (1.0 - _shadow_profile(t)))))
+            painter.fillRect(QRectF(0, 0, width, height), ramp)
+        painter.end()
+        composer.drawImage(0, 0, layer)
+    # Forme videe : l'ombre n'existe que DEHORS (rien sous une image transparente).
+    composer.setCompositionMode(QPainter.CompositionMode_DestinationOut)
+    composer.setPen(Qt.NoPen)
+    composer.setBrush(QColor(0, 0, 0, 255))
+    composer.drawPath(_rounded_rect_path(shape, radius))
+    composer.end()
+    pix = QPixmap.fromImage(out)
+    pix.setDevicePixelRatio(dpr)
+    return pix
+
+
+def _shadow_template(radius: dict, look: dict, dpr: float, size=None):
+    """(pixmap, largeur interieure, hauteur interieure) du modele en cache. `size` (w, h) : forme trop
+    petite pour les 9 morceaux, rendue a sa taille exacte."""
+    reach = _shadow_reach(radius, look)
+    inner = (2 * reach + 8, 2 * reach + 8) if size is None else size
+    key = (inner, tuple(sorted(radius.items())), tuple(sorted(look["on"].items())),
+           tuple(sorted(look["colors"].items())), look["size"], round(dpr, 3))
+    pix = _SHADOW_CACHE.get(key)
+    if pix is None:
+        pix = _render_shadow(inner[0], inner[1], radius, look, dpr)
+        if len(_SHADOW_CACHE) >= _SHADOW_CACHE_MAX:
+            _SHADOW_CACHE.pop(next(iter(_SHADOW_CACHE)))
+        _SHADOW_CACHE[key] = pix
+    return pix, inner[0], inner[1]
+
+
+def paint_shadow(painter: QPainter, rect, radius, look: dict | None, strength: float = 1.0) -> None:
+    """Ombre de la forme `rect` (QRect/QRectF, arrondie `radius` : int ou dict des 4 coins) selon `look`
+    (shadow_look), a dessiner AVANT l'element. `strength` (0-1) : attenuation (ex. vol d'une image)."""
+    if look is None or strength <= 0.0:
+        return
+    rect = QRectF(rect)
+    if rect.width() <= 0 or rect.height() <= 0:
+        return
+    device = painter.device()
+    dpr = (device.devicePixelRatioF() if device is not None else 1.0) or 1.0
+    corners = _shadow_radius(radius)
+    reach = _shadow_reach(corners, look)
+    margin = look["size"]
+    painter.save()
+    painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+    if strength < 1.0:
+        painter.setOpacity(painter.opacity() * strength)
+    if rect.width() < 2 * reach + 8 or rect.height() < 2 * reach + 8:
+        # Petite forme : modele a sa taille exacte (garde en cache lui aussi).
+        pix, w, h = _shadow_template(corners, look, dpr, (max(1, round(rect.width())), max(1, round(rect.height()))))
+        painter.drawPixmap(QRectF(rect.x() - margin, rect.y() - margin, rect.width() + 2 * margin,
+                                  rect.height() + 2 * margin), pix, QRectF(pix.rect()))
+        painter.restore()
+        return
+    pix, w, h = _shadow_template(corners, look, dpr)
+    # 9 morceaux, coupes en pixels PHYSIQUES entiers du modele.
+    cut = round((margin + reach + 2) * dpr)                    # coin : marge + rayon + 2 px
+    pw, ph = pix.width(), pix.height()
+    sx = (0, cut, pw - cut, pw)
+    sy = (0, cut, ph - cut, ph)
+    c = cut / dpr
+    left, top = rect.x() - margin, rect.y() - margin
+    right, bottom = rect.right() + margin, rect.bottom() + margin
+    if isinstance(rect, QRectF):
+        right, bottom = rect.x() + rect.width() + margin, rect.y() + rect.height() + margin
+    tx = (left, left + c, right - c, right)
+    ty = (top, top + c, bottom - c, bottom)
+    for j in range(3):
+        for i in range(3):
+            if i == 1 and j == 1:
+                continue                                       # interieur de la forme : vide
+            source = QRectF(sx[i], sy[j], sx[i + 1] - sx[i], sy[j + 1] - sy[j])
+            target = QRectF(tx[i], ty[j], tx[i + 1] - tx[i], ty[j + 1] - ty[j])
+            if source.width() > 0 and source.height() > 0 and target.width() > 0 and target.height() > 0:
+                painter.drawPixmap(target, pix, source)
+    painter.restore()
+
+
+class ShadowUnderlay(QWidget):
+    """Ombre d'un widget-ENFANT dessinee par un voisin place juste sous lui (meme parent, meme place
+    agrandie de la taille de l'ombre) : l'ombre deborde du widget, que lui-meme ne peut pas peindre.
+    `look_fn()` -> shadow_look ou None ; `radius_fn()` -> rayon. Suit le widget (place, visibilite)."""
+
+    _ALL: list = []
+
+    def __init__(self, target: QWidget, look_fn, radius_fn):
+        super().__init__(target.parentWidget())
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self._target = target
+        self._look_fn = look_fn
+        self._radius_fn = radius_fn
+        target.installEventFilter(self)
+        ShadowUnderlay._ALL.append(self)
+        self.destroyed.connect(lambda *_a, s=self: ShadowUnderlay._ALL.remove(s) if s in ShadowUnderlay._ALL else None)
+        target.destroyed.connect(self.deleteLater)
+        self.sync()
+
+    def sync(self):
+        target = self._target
+        try:
+            look = self._look_fn()
+            visible = look is not None and target.isVisible() and target.parentWidget() is self.parentWidget()
+        except RuntimeError:
+            return
+        if not visible:
+            self.hide()
+            return
+        margin = look["size"]
+        self.setGeometry(target.geometry().adjusted(-margin, -margin, margin, margin))
+        self.stackUnder(target)
+        self.show()
+        self.update()
+
+    def eventFilter(self, obj, event):
+        if obj is self._target and event.type() in (QEvent.Move, QEvent.Resize, QEvent.Show, QEvent.Hide,
+                                                    QEvent.ZOrderChange, QEvent.ParentChange):
+            QTimer.singleShot(0, self._safe_sync)
+        return False
+
+    def _safe_sync(self):
+        try:
+            self.sync()
+        except RuntimeError:                 # detruit entre-temps
+            pass
+
+    def paintEvent(self, event):
+        look = self._look_fn()
+        if look is None:
+            return
+        margin = look["size"]
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        paint_shadow(painter, QRectF(margin, margin, self._target.width(), self._target.height()),
+                     self._radius_fn(), look)
+        painter.end()
+
+    @classmethod
+    def refresh_all(cls):
+        """Reglages d'ombre changes : chaque ombre se recale et se repeint."""
+        for underlay in list(cls._ALL):
+            try:
+                underlay.sync()
+            except RuntimeError:
+                pass
+
+
+def attach_shadow(target: QWidget, look_fn, radius_fn) -> "ShadowUnderlay":
+    """Ombre (voir ShadowUnderlay) d'un widget ; une seule par widget."""
+    existing = getattr(target, "_shadow_underlay", None)
+    if existing is not None:
+        try:
+            if existing.parentWidget() is target.parentWidget():
+                existing.sync()
+                return existing
+            existing.deleteLater()
+        except RuntimeError:
+            pass
+    underlay = ShadowUnderlay(target, look_fn, radius_fn)
+    target._shadow_underlay = underlay
+    return underlay
+
+
+def _set_table_shadow(look: dict | None) -> None:
+    """Reglages > Tableaux > Ombres : tous les tableaux des reglages (et ceux construits avec leurs
+    briques) la suivent en direct."""
+    _TABLE_SHADOW["look"] = look
+    ShadowUnderlay.refresh_all()

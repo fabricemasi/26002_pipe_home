@@ -49,14 +49,19 @@ from app_style import (
 import ui_state
 from config import (
     ABC_EXTENSIONS,
+    ABR_EXTENSIONS,
     BLEND_EXTENSIONS,
     DATA_DIR,
     DWG_EXTENSIONS,
+    DXF_EXTENSIONS,
     EXR_EXTENSIONS,
     FBX_EXTENSIONS,
     CUBE_EXTENSIONS,
     RAW_EXTENSIONS,
     HDR_EXTENSIONS,
+    HOUDINI_SCENE_EXTENSIONS,
+    FONT_EXTENSIONS,
+    ILLUSTRATOR_EXTENSIONS,
     IMAGE_EXTENSIONS,
     MAYA_SCENE_EXTENSIONS,
     OBJ_EXTENSIONS,
@@ -70,6 +75,7 @@ from config import (
     TEXT_PREVIEW_PANEL_HEIGHT,
     TX_EXTENSIONS,
     VIDEO_EXTENSIONS,
+    VIDEO_PLAYBACK_ENABLED,
     _MANUAL_3D_PREVIEW_MODE,
     _MANUAL_3D_PREVIEW_REQUESTS,
     _STALE_PREVIEW_PATHS,
@@ -90,7 +96,6 @@ from previews import (
     _is_preview_protected,
     _read_preview_pixmap,
     _read_render_log_entries,
-    _reload_render_profiles,
     _render_log_line,
     _render_log_path,
     _set_preview_protected,
@@ -100,13 +105,13 @@ from previews import (
 )
 from settings_store import (
     M,
-    _coerce_side_enabled,
     _sync_dynamic_M,
     load_settings,
 )
+from settings_theme import _set_text_role
 from settings_widgets import (
+    Menu, menu_row,
     _MiniSlider,
-    _TableFrame,
     _Toggle,
     _radius_dict,
     _radius_shrink,
@@ -129,14 +134,17 @@ from capture_widgets import (
 from preview_column import (
     _PUR_EXPORT_POOL,
     _PureRefExportTask,
+    pur_image_files,
     pur_embedded_image_ranges,
     pur_file_major_version,
     read_pur_embedded_image,
     read_pur_exported_image,
     read_text_preview,
 )
+import markdown_preview
 from previews import (
     delete_preview_cache,
+    ai_has_pdf_content,
     pdf_page_count,
     _render_pdf_page,
 )
@@ -282,7 +290,7 @@ class DetailPanel(QWidget):
         name_row_layout.setContentsMargins(0, 0, 0, 0)
         name_row_layout.setSpacing(6)
         name_row_layout.addWidget(self.name, 1)
-        _sync_toggle_style(load_settings())
+        _sync_toggle_style(ui_state.APPLIED_SETTINGS or load_settings())
         self.render_protection_toggle = _Toggle(
             False, style_override="toggle1", show_label=False, parent=self
         )
@@ -333,11 +341,10 @@ class DetailPanel(QWidget):
         self.pur_next_button.clicked.connect(lambda: self._navigate_pur_image(1))
 
         self.well = QFrame()
+        self.well.setObjectName("PreviewWell")
         self.well.setMinimumHeight(PREVIEW_MIN_HEIGHT)
         self.well.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.well.setStyleSheet(
-            f"background: {C['well']}; border: 1px solid #282c30;"
-        )
+        self.well.setStyleSheet(self._well_qss())
         self._preview_pixmap: QPixmap | None = None
         self._preview_request_path: str | None = None
         self._current_path: str | None = None
@@ -353,6 +360,8 @@ class DetailPanel(QWidget):
         self._pur_exported_images: list[str] = []
         self._pur_export_task: _PureRefExportTask | None = None
         self._pur_image_index = 0
+        # (planche, rang) demande par la visionneuse (image regardee) : applique des que cette image existe.
+        self._pur_wanted: tuple | None = None
         self._preview_generation_paths: set[str] = set()
         self._auto_preview_paths: set[str] = set()
         self._auto_preview_log_count = 0
@@ -366,8 +375,6 @@ class DetailPanel(QWidget):
             preview_widget.setContextMenuPolicy(Qt.CustomContextMenu)
             preview_widget.customContextMenuRequested.connect(
                 lambda pos, w=preview_widget: self._show_preview_context_menu(w.mapToGlobal(pos)))
-        self.preview_info_table = _TableFrame()
-        self.preview_info_table.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         self._turntable_frame_paths = []
         self._turntable_frame_index = 0
         self._preview_media_preferences = {}
@@ -375,15 +382,6 @@ class DetailPanel(QWidget):
         self._turntable_timer = QTimer(self)
         self._turntable_timer.setInterval(83)
         self._turntable_timer.timeout.connect(self._advance_turntable)
-        self._preview_info_cell_layouts = []
-        self._preview_info_cells = []
-        info_layout = QGridLayout(self.preview_info_table)
-        info_layout.setContentsMargins(1, 1, 1, 1)
-        info_layout.setSpacing(0)
-        info_layout.setHorizontalSpacing(1)
-        info_layout.setVerticalSpacing(1)
-        for column in range(3):
-            info_layout.setColumnStretch(column, 1)
         self.preview_dimensions_value = QLabel("—")
         self.preview_dimensions_value.setObjectName("PreviewInfoValue")
         self.preview_dimensions_value.setWordWrap(True)
@@ -465,48 +463,11 @@ class DetailPanel(QWidget):
         self._video_player.setLoops(QMediaPlayer.Loops.Infinite)
 
         self.values: dict[str, QLabel] = {}
-        self.key_labels: dict[str, QLabel] = {}
         for key in self.FIELDS:
-            key_label = QLabel(key.upper())
-            key_label.setObjectName("PreviewInfoHeading")
-            key_label.setFont(role_font("info", 9, 600))
-            self.key_labels[key] = key_label
             value = QLabel("")
             value.setObjectName("PreviewInfoValue")
-            value.setFont(role_font("info", 11, 400))
             value.setWordWrap(True)
             self.values[key] = value
-
-        def add_info_cell(key: str, row: int, column: int, column_span: int = 1):
-            cell = QWidget(self.preview_info_table)
-            cell.setStyleSheet(f"background: {M['table_row_a']};")
-            self._preview_info_cells.append(cell)
-            cell_layout = QVBoxLayout(cell)
-            cell_layout.setContentsMargins(6, 3, 6, 3)
-            cell_layout.setSpacing(1)
-            self._preview_info_cell_layouts.append(cell_layout)
-            cell_layout.addWidget(self.key_labels[key])
-            cell_layout.addWidget(self.values[key])
-            info_layout.addWidget(cell, row, column, 1, column_span)
-
-        add_info_cell("kind", 0, 0)
-        add_info_cell("size", 0, 1)
-        add_info_cell("modified", 0, 2)
-        dimensions_cell = QWidget(self.preview_info_table)
-        dimensions_cell.setStyleSheet(f"background: {M['table_row_a']};")
-        self._preview_info_cells.append(dimensions_cell)
-        dimensions_layout = QVBoxLayout(dimensions_cell)
-        dimensions_layout.setContentsMargins(6, 3, 6, 3)
-        dimensions_layout.setSpacing(1)
-        self._preview_info_cell_layouts.append(dimensions_layout)
-        self.preview_dimensions_heading = QLabel("DIMENSIONS · RATIO · TAILLE")
-        self.preview_dimensions_heading.setObjectName("PreviewInfoHeading")
-        self.preview_dimensions_heading.setFont(role_font("info", 9, 600))
-        dimensions_heading_row = QHBoxLayout()
-        dimensions_heading_row.setContentsMargins(0, 0, 0, 0)
-        dimensions_heading_row.setSpacing(5)
-        dimensions_heading_row.addWidget(self.preview_dimensions_heading)
-        dimensions_heading_row.addStretch(1)
         self.preview_stale_badge = QLabel("PÉRIMÉ")
         self.preview_stale_badge.setFont(role_font("info2", 8, 700))
         self.preview_stale_badge.setToolTip("Aperçu conservé en attendant sa régénération")
@@ -514,22 +475,18 @@ class DetailPanel(QWidget):
             "color: #1d1608; background: #e5b85c; border-radius: 2px; padding: 1px 5px;"
         )
         self.preview_stale_badge.hide()
-        dimensions_layout.addLayout(dimensions_heading_row)
-        dimensions_layout.addWidget(self.preview_dimensions_value)
-        info_layout.addWidget(dimensions_cell, 1, 2)
-        info_layout.setRowStretch(0, 0)
-        info_layout.setRowStretch(1, 0)
-        self.preview_controls_cell = QWidget(self.preview_info_table)
-        self.preview_controls_cell.setStyleSheet(f"background: {M['table_row_a']};")
-        self._preview_info_cells.append(self.preview_controls_cell)
-        # Cellule des boutons : UNE ligne compacte, aussi haute que la ligne du dessus
-        # (voir _reflow_preview_controls : elle se range sur plusieurs lignes seulement
-        # quand le panneau est trop etroit).
+        # Tableau des informations = un VRAI tableau des reglages (style commun des tableaux, clic droit
+        # > Override settings pour lui donner le sien) : Parametre | Valeur, une ligne par information
+        # (Type, Taille, Modifie, Dimensions), puis la ligne des boutons d'apercu sur toute la largeur.
+        self.preview_info_table = self._build_info_table()
+        self.preview_controls_cell = QWidget()
+        self.preview_controls_cell.setStyleSheet("background: transparent;")
+        # Cellule des boutons : UNE ligne compacte (voir _reflow_preview_controls : elle se range sur
+        # plusieurs lignes seulement quand le tableau est trop etroit).
         controls_layout = QGridLayout(self.preview_controls_cell)
-        controls_layout.setContentsMargins(6, 3, 6, 3)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
         controls_layout.setHorizontalSpacing(3)
         controls_layout.setVerticalSpacing(3)
-        self._preview_info_cell_layouts.append(controls_layout)
         self._preview_controls_layout = controls_layout
         self.preview_media_row = QWidget(self.preview_controls_cell)
         media_layout = QHBoxLayout(self.preview_media_row)
@@ -592,9 +549,7 @@ class DetailPanel(QWidget):
         ]
         self._preview_controls_wide = None
         self._reflow_preview_controls(True)
-        info_layout.addWidget(self.preview_controls_cell, 1, 0, 1, 2)
-        self._info_layout = info_layout
-        self._info_dimensions_cell = dimensions_cell
+        self._attach_controls_row()
 
         self.turntable_controls = QWidget()
         turntable_controls_layout = QHBoxLayout(self.turntable_controls)
@@ -654,7 +609,10 @@ class DetailPanel(QWidget):
         content.addWidget(self.well, 1)
         content.addWidget(self.turntable_controls)
         content.addWidget(self.text_preview)
-        content.addWidget(self.video_widget)
+        content.addWidget(self.video_widget, 1)
+        # Ressort final (facteur 0) : il ne prend la place que quand aucun element extensible
+        # (apercu, video, note) n'est affiche — sans selection, le tableau reste donc en haut.
+        content.addStretch(0)
 
         # self.card/self._inner : MEME structure a 2 niveaux que Column.card/
         # Column._content (voir leurs remarques respectives) — self.card
@@ -879,6 +837,9 @@ class DetailPanel(QWidget):
         colonne inspecteur est toujours aussi peinible a selectionner pour
         la redimension"."""
         etype = event.type()
+        if etype in (QEvent.Move, QEvent.Resize, QEvent.Show, QEvent.Hide) and                 obj in getattr(self, "_md_slot_watch", ()):
+            self._place_markdown_view()
+            return False
         if obj in getattr(self, "_preview_widgets", ()):
             # Apercu : seul le double-clic est intercepte (voir
             # preview_double_clicked), le reste suit son cours normal.
@@ -949,18 +910,19 @@ class DetailPanel(QWidget):
             reload_browser()
 
     def _set_preview_controls_visible(self, visible: bool):
-        """Affiche/masque la cellule des boutons ; sans elle, la cellule des
-        dimensions occupe toute la ligne."""
-        self.preview_controls_cell.setVisible(visible)
-        layout = getattr(self, "_info_layout", None)
-        cell = getattr(self, "_info_dimensions_cell", None)
-        if layout is None or cell is None:
+        """Affiche/masque la ligne des boutons du tableau ; masquee, elle sort aussi des lignes du
+        tableau (le style commun arrondit alors le bas de la ligne des valeurs)."""
+        row = getattr(self, "_controls_row", None)
+        if row is None:
             return
-        layout.removeWidget(cell)
-        if visible:
-            layout.addWidget(cell, 1, 2)
-        else:
-            layout.addWidget(cell, 1, 0, 1, 3)
+        meta = self.preview_info_table._flat_rows
+        entry = self._controls_row_meta
+        if visible and entry not in meta:
+            meta.append(entry)
+        elif not visible and entry in meta:
+            meta.remove(entry)
+        row.setVisible(visible)
+        self._restyle_info_table()
 
     def _reflow_preview_controls(self, wide: bool):
         """Range les boutons sur UNE ligne (panneau large) ou sur plusieurs
@@ -993,7 +955,7 @@ class DetailPanel(QWidget):
         if not path_text:
             return
         path = Path(path_text)
-        menu = QMenu(self)
+        menu = Menu(self)
         menu.setFont(font(11, 400))
         act_reveal = menu.addAction("Afficher dans l'explorateur")
         menu.addSeparator()
@@ -1048,6 +1010,11 @@ class DetailPanel(QWidget):
         self._video_player.setSource(QUrl())
         self.video_widget.hide()
 
+    @staticmethod
+    def _well_qss() -> str:
+        """Cadre de l'apercu : fond, filet et coins arrondis (3 px), sur lui seul (selecteur par nom)."""
+        return f"#PreviewWell {{ background: {C['well']}; border: 1px solid #282c30; border-radius: 3px; }}"
+
     def clear(self):
         self._turntable_timer.stop()
         self._turntable_frame_paths = []
@@ -1058,6 +1025,7 @@ class DetailPanel(QWidget):
         self._pur_image_ranges = []
         self._pur_exported_images = []
         self._pur_image_index = 0
+        self._pur_wanted = None
         self._pdf_path = None
         self.pur_navigation.hide()
         self.name.setText("")
@@ -1071,7 +1039,7 @@ class DetailPanel(QWidget):
         self.well_label.show()
         self.preview_log.hide()
         self.preview_progress.hide()
-        self.text_preview.hide()
+        self._hide_text_views()
         self.text_preview.clear()
         self._stop_video()
         for value in self.values.values():
@@ -1091,24 +1059,9 @@ class DetailPanel(QWidget):
             f"color: {role_color('folders' if is_dir else 'files', C['text'])}; background: transparent;"
         )
         self.open_render_log_button.setFont(role_font("buttons", 10, 500))
-        for key_label in self.key_labels.values():
-            key_label.setFont(role_font("info", 9, 600))
-            key_label.setStyleSheet(
-                f"color: {M['table_head_fg']}; background: transparent; border: none;"
-            )
-        for value in self.values.values():
-            value.setFont(role_font("info2", 11, 400))
-            value.setStyleSheet(
-                f"color: {M['value_fg']}; background: transparent; border: none;"
-            )
-        self.preview_dimensions_heading.setFont(role_font("info", 9, 600))
-        self.preview_dimensions_heading.setStyleSheet(
-            f"color: {M['table_head_fg']}; background: transparent; border: none;"
-        )
-        self.preview_dimensions_value.setFont(role_font("info2", 11, 400))
-        self.preview_dimensions_value.setStyleSheet(
-            f"color: {M['value_fg']}; background: transparent; border: none;"
-        )
+        # Valeurs du tableau : role de texte des reglages (voir _build_info_table).
+        for value in (*self.values.values(), self.preview_dimensions_value):
+            _set_text_role(value, "value")
         self.preview_stale_badge.setFont(role_font("info2", 8, 700))
 
     def refresh_colors(self):
@@ -1125,7 +1078,7 @@ class DetailPanel(QWidget):
         self.card.setFrameStyle(
             frame["bg"], scaled_radius, frame["enabled"], frame["colors"], scaled(frame["thickness"], 0))
         self._update_card_mask()
-        self.well.setStyleSheet(f"background: {C['well']}; border: 1px solid #282c30;")
+        self.well.setStyleSheet(self._well_qss())
         self._apply_preview_table_style()
         self.open_render_log_button.setStyleSheet(
             f"QPushButton {{ background: {C['btn']}; color: {C['text']}; border: 1px solid {C['btn_border']}; "
@@ -1134,47 +1087,97 @@ class DetailPanel(QWidget):
         )
         self.refresh_fonts(True if not self.values["kind"].text() else self.values["kind"].text() == "Dossier")
 
+    INFO_TABLE_DIMS = "Inspecteur/Informations#0"
+
+    _INFO_ROWS = (("kind", "Type"), ("size", "Taille"), ("modified", "Modifié"),
+                  ("dimensions", "Dimensions · ratio · taille"))
+
+    def _build_info_table(self):
+        """Tableau des informations : le tableau Parametre | Valeur des reglages (_flat_cells_table) ;
+        style commun des tableaux, Override settings au clic droit, dimensions enregistrees."""
+        import settings_window_v2 as v2
+        from settings_cells import keep_table_dims
+        settings = ui_state.APPLIED_SETTINGS or load_settings()
+        v2.seed_window_look(settings)
+        rows = []
+        for key, label in self._INFO_ROWS:
+            value = self.preview_dimensions_value if key == "dimensions" else self.values[key]
+            _set_text_role(value, "value")
+            value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)     # meme justification que sa cellule
+            rows.append((label, value, None))
+        frame = v2._flat_cells_table(rows)
+        keep_table_dims(frame, self.INFO_TABLE_DIMS, settings)
+        return frame
+
+    def _fit_info_table(self):
+        """Tant que les colonnes n'ont pas ete reglees a la main (dimensions enregistrees), le tableau
+        prend toute la largeur de l'inspecteur : la colonne Valeur recoit ce que laisse celle des
+        libelles ; reglees, elles gardent leur largeur (comme tout tableau des reglages)."""
+        from settings_layout import _ResizableTableHeader
+        from settings_widgets import _TABLE_DIMS
+        frame = getattr(self, "preview_info_table", None)
+        if frame is None or _TABLE_DIMS.get(frame.dimsKey()):
+            return
+        head = frame.findChild(_ResizableTableHeader)
+        margins = self._content_layout.contentsMargins() if hasattr(self, "_content_layout") else None
+        room = self.width() - (margins.left() + margins.right() if margins is not None else 32)
+        room -= frame.layout().contentsMargins().left() + frame.layout().contentsMargins().right()
+        if head is None or room < 120:
+            return
+        widths = head.columnWidths()
+        widths = [widths[0], max(60, room - widths[0])]
+        if widths == head.columnWidths():
+            return
+        frame._dims_autosave_paused = True
+        try:
+            head.setColumnWidths(widths)
+        finally:
+            frame._dims_autosave_paused = False
+
+    def _attach_controls_row(self):
+        """Ligne des boutons d'apercu : une ligne du tableau sur toute sa largeur (style des lignes du
+        tableau, alternance et arrondi du bas compris)."""
+        from settings_layout import _table_row
+        row, row_layout = _table_row(M["table_row_b"], False)
+        row_layout.setContentsMargins(6, 4, 6, 4)
+        row_layout.addWidget(self.preview_controls_cell)
+        self.preview_info_table.layout().addWidget(row)
+        self._controls_row = row
+        self._controls_row_meta = (row, M["table_row_b"], False)
+        self.preview_info_table._flat_rows.append(self._controls_row_meta)
+        self._restyle_info_table()
+
+    def _restyle_info_table(self):
+        """Style du tableau : le sien s'il a un override (clic droit > Override settings), sinon le commun."""
+        from settings_layout import set_table_look
+        from settings_widgets import ELEMENT_LOOKS
+        frame = self.preview_info_table
+        set_table_look(frame, ELEMENT_LOOKS.get(f"table:{frame.dimsKey()}"))
+        from settings_layout import apply_part_looks
+        from settings_widgets import PART_LOOKS
+        if PART_LOOKS.get(frame.dimsKey()) or getattr(frame, "_text_look", None):    # cellule / ligne / colonne, police
+            apply_part_looks(frame)
+
     def _apply_preview_table_style(self):
-        """Applique au tableau de l'inspecteur les reglages des tableaux Parametres."""
-        settings = load_settings()
+        """Applique au tableau de l'inspecteur le style des tableaux des reglages (ceux APPLIQUES, apercu
+        en direct compris : relire le disque ecrasait l'apercu de la fenetre de reglages ouverte)."""
+        import settings_window_v2 as v2
+        settings = ui_state.APPLIED_SETTINGS or load_settings()
+        # Rien de ce que lit ce tableau n'a change (ex. couleur d'un menu en cours de glisser) : ~10 ms
+        # economisees a chaque cran de l'apercu en direct.
+        sig = json.dumps({k: v for k, v in settings.items()
+                          if k == "colors" or k.startswith(("table_", "toggle", "element_style", "slider_"))},
+                         sort_keys=True, default=str)
+        if sig == getattr(self, "_preview_table_sig", None):
+            return
+        self._preview_table_sig = sig
         colors = settings.get("colors") or {}
         _sync_dynamic_M(colors)
-        self.preview_info_table.setRadius(int(settings.get("table_radius", 0)))
-        border_enabled = _coerce_side_enabled(settings.get("table_border_enabled", True))
-        border_colors = {
-            side: resolve_color_ref(value, M["panel_border"])
-            for side, value in (settings.get("table_border") or {}).items()
-        }
-        self.preview_info_table.setBorder(
-            border_enabled, border_colors, int(settings.get("table_border_thickness", 1))
-        )
-        padding = settings.get("table_cell_padding") or {}
-        margins = (
-            max(0, int(padding.get("left", 14))),
-            max(0, int(padding.get("top", 8))),
-            max(0, int(padding.get("right", 14))),
-            max(0, int(padding.get("bottom", 8))),
-        )
-        for layout in self._preview_info_cell_layouts:
-            layout.setContentsMargins(*(margins if layout is not self.preview_controls_cell.layout()
-                                        else (4, 3, 4, 3)))
-        for cell in self._preview_info_cells:
-            cell.setStyleSheet(f"background: {M['table_row_a']};")
+        if "colors" in settings:
+            v2.seed_window_look(settings)
+        self._restyle_info_table()
         _sync_toggle_style(settings)
         self.render_protection_toggle.apply_style()
-        heading_style = (
-            f"color: {M['table_head_fg']}; background: transparent; border: none; "
-            "padding: 0; font-size: 9px;"
-        )
-        value_style = (
-            f"color: {M['value_fg']}; background: transparent; border: none; "
-            "padding: 0; font-size: 11px;"
-        )
-        for label in self.preview_info_table.findChildren(QLabel):
-            if label.objectName() == "PreviewInfoHeading":
-                label.setStyleSheet(heading_style)
-            elif label.objectName() == "PreviewInfoValue":
-                label.setStyleSheet(value_style)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1182,7 +1185,8 @@ class DetailPanel(QWidget):
         if handle is not None:
             handle.setGeometry(0, 0, scaled(16), self.height())
             handle.raise_()
-        self._reflow_preview_controls(self.preview_info_table.width() * 2 // 3 >= scaled(520))
+        self._fit_info_table()
+        self._reflow_preview_controls(self.preview_info_table.width() >= scaled(520))
         self._update_preview()
 
     def _update_preview(self):
@@ -1227,6 +1231,248 @@ class DetailPanel(QWidget):
             final_w, final_h, Qt.KeepAspectRatio, Qt.SmoothTransformation
         )
         self.well_label.setPixmap(scaled)
+
+    # -- Notes Markdown : rendu avec le CSS d'Obsidian (markdown_preview) et edition --
+
+    _MD_AUTOSAVE_MS = 800
+
+    def _md_widgets(self) -> list:
+        return [w for w in (getattr(self, "markdown_bar", None), getattr(self, "markdown_slot", None),
+                            getattr(self, "markdown_editor", None)) if w is not None]
+
+    def _text_shown(self) -> bool:
+        """Un apercu texte (brut ou note Markdown, lue ou editee) occupe la place de l'image."""
+        return self.text_preview.isVisible() or any(w.isVisible() for w in self._md_widgets())
+
+    def _hide_markdown(self):
+        self._flush_markdown()
+        self._md_path = None                   # plus de note active (Ctrl+E / Ctrl+S sans effet)
+        for widget in self._md_widgets():
+            widget.hide()
+
+    def _hide_text_views(self):
+        self.text_preview.hide()
+        self._hide_markdown()
+
+    def _ensure_markdown_widgets(self) -> bool:
+        """Barre (Modifier / Lecture + etat d'enregistrement), vue web (lecture) et editeur
+        (source), crees au premier .md ; ils prennent toute la hauteur de l'apercu."""
+        if getattr(self, "markdown_view", None) is not None:
+            return True
+        try:
+            from PySide6.QtWebEngineWidgets import QWebEngineView
+            from PySide6.QtGui import QKeySequence, QShortcut
+        except ImportError:
+            return False
+        self._md_path = None          # note affichee
+        self._md_info = None          # encodage / fins de ligne / date lue (markdown_preview.read_note)
+        self._md_dirty = False
+        self._md_editing = False      # mode garde d'une note a l'autre, comme un onglet d'Obsidian
+        self._md_save_timer = QTimer(self)
+        self._md_save_timer.setSingleShot(True)
+        self._md_save_timer.setInterval(self._MD_AUTOSAVE_MS)
+        self._md_save_timer.timeout.connect(self._save_markdown)
+
+        bar = self.markdown_bar = QWidget()
+        bar_layout = QHBoxLayout(bar)
+        bar_layout.setContentsMargins(0, 0, 0, 0)
+        bar_layout.setSpacing(8)
+        button = self.markdown_mode_button = QPushButton("Modifier")
+        button.setCursor(Qt.PointingHandCursor)
+        button.setFixedHeight(scaled(24))
+        button.setToolTip("Basculer lecture / edition (Ctrl+E) ; enregistrement automatique (Ctrl+S pour forcer)")
+        button.setStyleSheet(
+            f"QPushButton {{ background: {C['btn']}; color: {C['text']}; padding: 0 10px; "
+            f"border: 1px solid {C['btn_border']}; border-radius: 3px; }}"
+            f"QPushButton:hover {{ background: {C['btn_hover']}; border-color: {C['btn_hover_bd']}; }}")
+        button.clicked.connect(self._toggle_markdown_mode)
+        status = self.markdown_status = QLabel("")
+        status.setStyleSheet(f"color: {role_color('info', '#aab1b6')}; background: transparent;")
+        bar_layout.addWidget(button)
+        bar_layout.addWidget(status)
+        bar_layout.addStretch(1)
+
+        # La vue web n'est PAS dans la carte : la carte est decoupee a ses coins arrondis par un
+        # QGraphicsEffect (_RoundedCornersEffect), et une vue web sous un effet reste figee a
+        # l'ecran sur sa premiere image (la page defile, l'affichage non). Elle est donc enfant
+        # direct du panneau, posee sur `markdown_slot`, qui lui garde sa place dans la mise en
+        # page (voir _place_markdown_view) ; sa visibilite est celle de la place.
+        slot = self.markdown_slot = QWidget()
+        slot.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        view = self.markdown_view = QWebEngineView(self)
+        view.hide()
+        view.page().setBackgroundColor(QColor(C["well"]))
+        view.setContextMenuPolicy(Qt.NoContextMenu)
+
+        editor = self.markdown_editor = QPlainTextEdit()
+        editor.setFrameShape(QFrame.NoFrame)
+        editor.setFont(font(11, 400, mono=True))
+        editor.setLineWrapMode(QPlainTextEdit.WidgetWidth)
+        editor.setTabStopDistance(4 * editor.fontMetrics().horizontalAdvance(" "))
+        editor.setStyleSheet(
+            f"QPlainTextEdit {{ background: {C['well']}; color: {C['text']};"
+            f" border: 1px solid #282c30; padding: 10px; }}")
+        editor.textChanged.connect(self._on_markdown_edited)
+
+        layout = self._content_layout
+        index = layout.indexOf(self.text_preview) + 1
+        layout.insertWidget(index, bar)
+        layout.insertWidget(index + 1, slot, 1)
+        layout.insertWidget(index + 2, editor, 1)
+        for widget in (bar, slot, editor):
+            widget.hide()
+        self._md_slot_watch = (slot, self._inner, self.card)   # la place bouge avec eux
+        for widget in self._md_slot_watch:
+            if widget is not self.card:                         # deja filtre (redimensionnement)
+                widget.installEventFilter(self)
+        for keys, slot in (("Ctrl+E", self._toggle_markdown_mode), ("Ctrl+S", self._flush_markdown)):
+            shortcut = QShortcut(QKeySequence(keys), self)
+            shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(lambda slot=slot: self._md_path is not None and slot())
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self._flush_markdown)      # rien de perdu en quittant
+        return True
+
+    def _show_markdown(self, path: Path) -> bool:
+        """Note .md : lue comme dans Obsidian (son CSS + celui du coffre, voir markdown_preview) ou
+        editee en texte source, au choix (bouton Modifier / Lecture, Ctrl+E). Faux si ce n'est pas
+        une note ou si QtWebEngine / markdown-it manquent : l'extrait texte brut prend le relais."""
+        if path.suffix.lower() not in markdown_preview.MARKDOWN_EXTENSIONS or not markdown_preview.available():
+            return False
+        if not self._ensure_markdown_widgets():
+            return False
+        if (self._md_path == path and self.markdown_bar.isVisible()
+                and not markdown_preview.changed_on_disk(path, self._md_info)):
+            return True                        # meme note reaffichee : edition (curseur, annulation) intacte
+        self._flush_markdown()                 # la note precedente d'abord
+        try:
+            text, info = markdown_preview.read_note(path)
+        except OSError:
+            return False
+        self._md_path, self._md_info, self._md_dirty = path, info, False
+        self.text_preview.hide()
+        self.markdown_bar.show()
+        self._load_markdown_editor(text)
+        self._apply_markdown_mode(text)
+        return True
+
+    def _load_markdown_editor(self, text: str, keep_cursor: bool = False):
+        """Texte de la note dans l'editeur ; `keep_cursor` : rechargement de la meme note (curseur
+        garde a sa place, borne a la nouvelle longueur)."""
+        editor = self.markdown_editor
+        position = editor.textCursor().position() if keep_cursor else 0
+        editor.blockSignals(True)
+        editor.setPlainText(text)
+        editor.blockSignals(False)
+        editor.document().clearUndoRedoStacks()
+        if keep_cursor:
+            cursor = editor.textCursor()
+            cursor.setPosition(min(position, len(text)))
+            editor.setTextCursor(cursor)
+
+    def _apply_markdown_mode(self, text: str | None = None):
+        """Affiche la note dans le mode courant ; en lecture, rendu du texte `text` (celui de
+        l'editeur : ce qu'on vient d'ecrire, sans relire le disque)."""
+        path = self._md_path
+        if path is None:
+            return
+        editing = self._md_editing
+        self.markdown_mode_button.setText("Lecture" if editing else "Modifier")
+        self.markdown_slot.setVisible(not editing)
+        self.markdown_editor.setVisible(editing)
+        if editing:
+            self.markdown_editor.setFocus()
+        else:
+            page = markdown_preview.render_page(path, text if text is not None else self.markdown_editor.toPlainText())
+            self.markdown_view.setHtml(page, QUrl.fromLocalFile(str(path.parent) + "/"))
+        self._update_markdown_status()
+
+    def _place_markdown_view(self):
+        """Pose la vue web sur sa place (`markdown_slot`) : meme rectangle, meme visibilite."""
+        slot, view = self.markdown_slot, self.markdown_view
+        shown = slot.isVisibleTo(self)
+        if shown:
+            view.setGeometry(QRect(slot.mapTo(self, QPoint(0, 0)), slot.size()))
+            handle = getattr(self, "_resize_handle", None)
+            if not view.isVisibleTo(self):
+                view.show()
+                view.raise_()
+                if handle is not None:
+                    handle.raise_()             # la poignee de redimensionnement reste au-dessus
+        elif view.isVisibleTo(self):
+            view.hide()
+
+    def _toggle_markdown_mode(self):
+        if self._md_path is None:
+            return
+        if self._md_editing and not self._flush_markdown():
+            return                             # enregistrement refuse (conflit) : on reste en edition
+        if not self._md_editing and markdown_preview.changed_on_disk(self._md_path, self._md_info):
+            # Modifiee ailleurs pendant la lecture : on edite la version du disque.
+            try:
+                text, self._md_info = markdown_preview.read_note(self._md_path)
+                self._load_markdown_editor(text, keep_cursor=True)
+            except OSError:
+                pass
+        self._md_editing = not self._md_editing
+        self._apply_markdown_mode()
+
+    def _on_markdown_edited(self):
+        self._md_dirty = True
+        self._md_save_timer.start()
+        self._update_markdown_status()
+
+    def _update_markdown_status(self):
+        if not self._md_editing:
+            text = ""
+        elif self._md_dirty:
+            text = "Modifications en cours…"
+        else:
+            text = "Enregistré"
+        self.markdown_status.setText(text)
+
+    def _flush_markdown(self) -> bool:
+        """Enregistre tout de suite les modifications en attente (changement de fichier, retour en
+        lecture, Ctrl+S, fermeture). Faux si l'enregistrement a ete refuse."""
+        timer = getattr(self, "_md_save_timer", None)
+        if timer is not None:
+            timer.stop()
+        return self._save_markdown()
+
+    def _save_markdown(self) -> bool:
+        """Ecrit la note si elle a change. Si le fichier a ete modifie ailleurs depuis sa lecture
+        (Obsidian, synchro), on demande : garder ma version, ou recharger celle du disque."""
+        path, info = getattr(self, "_md_path", None), getattr(self, "_md_info", None)
+        if path is None or info is None or not self._md_dirty:
+            return True
+        if markdown_preview.changed_on_disk(path, info):
+            box = QMessageBox(QMessageBox.Warning, "Note modifiée ailleurs",
+                              f"« {path.name} » a été modifiée en dehors de l'inspecteur "
+                              "(Obsidian, synchronisation…) depuis son ouverture.", parent=self)
+            keep = box.addButton("Garder ma version", QMessageBox.AcceptRole)
+            reload = box.addButton("Recharger le fichier", QMessageBox.DestructiveRole)
+            box.addButton("Annuler", QMessageBox.RejectRole)
+            box.exec()
+            if box.clickedButton() is reload:
+                try:
+                    text, self._md_info = markdown_preview.read_note(path)
+                except OSError:
+                    return False
+                self._md_dirty = False
+                self._load_markdown_editor(text, keep_cursor=True)
+                self._update_markdown_status()
+                return True
+            if box.clickedButton() is not keep:
+                return False
+        try:
+            markdown_preview.write_note(path, self.markdown_editor.toPlainText(), info)
+        except OSError as exc:
+            QMessageBox.warning(self, "Enregistrement impossible", f"{path.name} :\n{exc}")
+            return False
+        self._md_dirty = False
+        self._update_markdown_status()
+        return True
 
     def focus_source(self):
         """Objet en focus (aujourd'hui : l'apercu image/turntable affiche) pour
@@ -1300,7 +1546,6 @@ class DetailPanel(QWidget):
             self._update_preview()
             self._refresh_preview_stale_badge(path)
             return
-        _reload_render_profiles()
         try:
             mode = self._preview_render_modes.get((self._current_path, "turntable"), "low")
             self._turntable_frame_paths = _turntable_frames(path, path.stat().st_mtime,
@@ -1505,6 +1750,25 @@ class DetailPanel(QWidget):
         self.pur_previous_button.setEnabled(self._pdf_page > 0)
         self.pur_next_button.setEnabled(self._pdf_page + 1 < self._pdf_pages)
 
+    def select_pur_image(self, path_str: str, index: int):
+        """Visionneuse -> inspecteur : la planche `path_str` montre son image n° `index` (celle regardee),
+        pas la premiere. Images pas encore connues (extraction en cours) : rang retenu, applique des qu'il
+        existe (_apply_pur_wanted)."""
+        self._pur_wanted = (path_str, int(index))
+        if self._pur_image_path == path_str and self._apply_pur_wanted(path_str):
+            self._navigate_pur_image(0)
+
+    def _apply_pur_wanted(self, path_str: str) -> bool:
+        wanted = self._pur_wanted
+        if wanted is None or wanted[0] != path_str:
+            return False
+        total = len(self._pur_exported_images) or len(self._pur_image_ranges)
+        if wanted[1] >= total:
+            return False                       # pas encore extraite : on attend
+        self._pur_image_index = wanted[1]
+        self._pur_wanted = None
+        return True
+
     def _navigate_pur_image(self, step: int):
         if self._pdf_path is not None:
             self._navigate_pdf_page(step)
@@ -1553,6 +1817,7 @@ class DetailPanel(QWidget):
         except OSError:
             return
         self._pur_exported_images = list(files)
+        self._apply_pur_wanted(path_str)
         self.pur_next_button.setEnabled(self._pur_image_index + 1 < len(files))
         self._navigate_pur_image(0)
 
@@ -1569,6 +1834,7 @@ class DetailPanel(QWidget):
             return
         if files:
             self._pur_exported_images = list(files)
+            self._apply_pur_wanted(path_str)
             self._pur_image_index = min(self._pur_image_index, len(files) - 1)
             self.pur_next_button.setEnabled(self._pur_image_index + 1 < len(files))
             self._navigate_pur_image(0)
@@ -1704,10 +1970,10 @@ class DetailPanel(QWidget):
         was_idle = not self._preview_generation_paths
         self._preview_generation_paths.add(path_str)
         automatic = path_str in self._auto_preview_paths
-        if self.text_preview.isVisible() or self.video_widget.isVisible():
+        if self._text_shown() or self.video_widget.isVisible():
             if not automatic:
                 return
-            self.text_preview.hide()
+            self._hide_text_views()
             self._stop_video()
             self.well.show()
         if was_idle:
@@ -1733,10 +1999,10 @@ class DetailPanel(QWidget):
     def _on_preview_generation_progress(self, path_str: str, percent: int, message: str):
         if path_str not in self._preview_generation_paths:
             return
-        if self.text_preview.isVisible() or self.video_widget.isVisible():
+        if self._text_shown() or self.video_widget.isVisible():
             if path_str not in self._auto_preview_paths:
                 return
-            self.text_preview.hide()
+            self._hide_text_views()
             self._stop_video()
             self.well.show()
         if not self.preview_log.isVisible():
@@ -1783,7 +2049,13 @@ class DetailPanel(QWidget):
             # repeindre leur fait afficher le rendu qui vient d'etre produit.
             for widget in QApplication.allWidgets():
                 if isinstance(widget, QAbstractItemView):
-                    widget.viewport().update()
+                    # Une vue qui sait ne repeindre que la case concernee (la planche de la visionneuse,
+                    # qui ne doit rien refaire pendant son animation d'ouverture) le fait elle-meme.
+                    hook = getattr(widget, "preview_ready", None)
+                    if hook is not None:
+                        hook(path_str)
+                    else:
+                        widget.viewport().update()
         selected_mode = self._preview_render_modes.get((path_str, "image"), "low")
         show_result = completed_mode == selected_mode or path.suffix.lower() not in RENDERABLE_3D_EXTENSIONS
         if (self._preview_request_path == path_str or self._current_path == path_str) and show_result:
@@ -1802,7 +2074,7 @@ class DetailPanel(QWidget):
         if not was_requested:
             return
         if self._preview_generation_paths:
-            if not self.text_preview.isVisible() and not self.video_widget.isVisible():
+            if not self._text_shown() and not self.video_widget.isVisible():
                 completion_percent = 100 if pix is not None else 0
                 completion_message = "Aperçu terminé" if pix is not None else "Aperçu indisponible"
                 self.preview_log.appendPlainText(
@@ -1810,7 +2082,7 @@ class DetailPanel(QWidget):
                 )
                 self.preview_log.ensureCursorVisible()
             return
-        if not self.text_preview.isVisible() and not self.video_widget.isVisible():
+        if not self._text_shown() and not self.video_widget.isVisible():
             completion_percent = 100 if pix is not None else 0
             completion_message = "Aperçu terminé" if pix is not None else "Aperçu indisponible"
             self.preview_log.appendPlainText(
@@ -1916,6 +2188,8 @@ class DetailPanel(QWidget):
         self._video_player.play()
 
     def show_path(self, path: Path):
+        if getattr(self, "_md_path", None) is not None and Path(self._md_path) != path:
+            self._flush_markdown()             # note en cours d'edition : enregistree avant de partir
         self._turntable_timer.stop()
         self.turntable_play_button.setText("▶")
         self._turntable_frame_paths = []
@@ -1931,6 +2205,8 @@ class DetailPanel(QWidget):
         self._pur_image_ranges = []
         self._pur_exported_images = []
         self._pur_image_index = 0
+        if self._pur_wanted is not None and self._pur_wanted[0] != str(path):
+            self._pur_wanted = None              # rang demande pour une autre planche : oublie
         self._pdf_path = None
         self.pur_navigation.hide()
         self.name.setText(path.name)
@@ -1958,7 +2234,8 @@ class DetailPanel(QWidget):
             self.well_label.show()
         self._stop_video()
         is_text_preview = not is_dir and path.suffix.lower() in TEXT_PREVIEW_EXTENSIONS
-        is_video = not is_dir and path.suffix.lower() in VIDEO_EXTENSIONS
+        # Lecture coupee (VIDEO_PLAYBACK_ENABLED) : une video passe par l'apercu fixe plus bas.
+        is_video = VIDEO_PLAYBACK_ENABLED and not is_dir and path.suffix.lower() in VIDEO_EXTENSIONS
         if is_video:
             # Lecture reelle (voir _stop_video/video_widget), pas la frame
             # figee de file_image_pixmap : celle-ci ne sert plus ici qu'a
@@ -1966,17 +2243,21 @@ class DetailPanel(QWidget):
             # decodee (voir _show_video). well/text_preview jamais affiches
             # en meme temps.
             self.well.hide()
-            self.text_preview.hide()
+            self._hide_text_views()
             self._show_video(path)
+        elif is_text_preview and self._show_markdown(path):
+            # Note Markdown rendue avec le CSS d'Obsidian (voir _show_markdown).
+            self.well.hide()
         elif is_text_preview:
             # Extrait de contenu (voir read_text_preview) plutot que le
             # "well" image : les deux ne s'affichent jamais ensemble.
             self.well.hide()
+            self._hide_markdown()
             content_text = read_text_preview(path)
             self.text_preview.setPlainText(content_text if content_text is not None else "(apercu indisponible)")
             self.text_preview.show()
         else:
-            self.text_preview.hide()
+            self._hide_text_views()
             self.well.show()
             if not is_dir:
                 suffix = path.suffix.lower()
@@ -2007,7 +2288,7 @@ class DetailPanel(QWidget):
                     else:
                         self._preview_pixmap = _cached_file_image_pixmap(
                             path, self._preview_render_modes.get((str(path), "image"), "low"))
-                elif suffix in (BLEND_EXTENSIONS | MAYA_SCENE_EXTENSIONS | FBX_EXTENSIONS):
+                elif suffix in (BLEND_EXTENSIONS | MAYA_SCENE_EXTENSIONS | FBX_EXTENSIONS | HOUDINI_SCENE_EXTENSIONS):
                     if str(path) in _MANUAL_3D_PREVIEW_REQUESTS:
                         _MANUAL_3D_PREVIEW_REQUESTS.discard(str(path))
                         render_mode = _MANUAL_3D_PREVIEW_MODE.pop(str(path), "low")
@@ -2017,7 +2298,15 @@ class DetailPanel(QWidget):
                     else:
                         self._preview_pixmap = _cached_file_image_pixmap(
                             path, self._preview_render_modes.get((str(path), "image"), "low"))
-                elif suffix in PDF_EXTENSIONS:
+                elif suffix in ILLUSTRATOR_EXTENSIONS and not ai_has_pdf_content(path):
+                    # .ai sans contenu PDF : vignette XMP (voir previews._decode_ai_image).
+                    pix = file_image_pixmap(path)
+                    if pix is not None and not pix.isNull():
+                        self._preview_pixmap = pix
+                    else:
+                        self.well_label.setText("Fichier Illustrator sans aperçu (enregistré sans contenu PDF).")
+                elif suffix in PDF_EXTENSIONS or suffix in ILLUSTRATOR_EXTENSIONS:
+                    # Un .ai moderne est un PDF : memes planches feuilletables.
                     self._pdf_pages = pdf_page_count(path)
                     if self._pdf_pages:
                         self._pdf_path = str(path)
@@ -2028,7 +2317,7 @@ class DetailPanel(QWidget):
                         self._navigate_pdf_page(0)
                     else:
                         self.well_label.setText("PDF illisible (protégé ou corrompu).")
-                elif suffix in DWG_EXTENSIONS:
+                elif suffix in DWG_EXTENSIONS or suffix in DXF_EXTENSIONS:
                     pix = file_image_pixmap(path)
                     if pix is not None and not pix.isNull():
                         self._preview_pixmap = pix
@@ -2047,12 +2336,18 @@ class DetailPanel(QWidget):
                         self.pur_navigation.show()
                         self.pur_previous_button.setEnabled(False)
                         self.pur_next_button.setEnabled(len(self._pur_image_ranges) > 1)
-                        if is_pur_v2:
+                        ready = pur_image_files(path, mtime) if (is_pur_v2 and mtime is not None) else None
+                        if is_pur_v2 and ready:
+                            # Deja extraites (par la visionneuse ou une visite precedente) : tout de suite,
+                            # sans attendre une nouvelle extraction (qui finissait sur la 1re image).
+                            self._pur_exported_images = [str(p) for p in ready]
+                        elif is_pur_v2:
                             self.pur_image_counter.setText("Extraction des images PureRef…")
                             self.pur_next_button.setEnabled(False)
                             if mtime is not None:
                                 self._start_pur_export(path, mtime)
-                        if self._pur_image_ranges:
+                        if self._pur_image_ranges or self._pur_exported_images:
+                            self._apply_pur_wanted(str(path))
                             self._navigate_pur_image(0)
                         else:
                             self.well_label.setText("Extraction des images PureRef en cours…")
@@ -2061,7 +2356,8 @@ class DetailPanel(QWidget):
                 elif (suffix in PSD_EXTENSIONS
                       or suffix in EXR_EXTENSIONS or suffix in HDR_EXTENSIONS
                       or suffix in CUBE_EXTENSIONS or suffix in RAW_EXTENSIONS
-                      or suffix in TX_EXTENSIONS):
+                      or suffix in TX_EXTENSIONS or suffix in FONT_EXTENSIONS
+                      or suffix in ABR_EXTENSIONS or suffix in VIDEO_EXTENSIONS):
                     # Rendu genere (.obj, voir _decode_obj_image), vignette
                     # embarquee extraite (.psd/.psb, voir
                     # _decode_psd_thumbnail) ou tone-mapping HDR (.exr/.hdr,

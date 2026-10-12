@@ -1,10 +1,11 @@
 import shutil
 from pathlib import Path
 from PySide6.QtCore import (
-    QEasingCurve, QEvent, QMimeData, QPoint, QRect, QSize, Qt, QTimer, QUrl,
+    QEasingCurve, QEvent, QFile, QMimeData, QPoint, QRect, QSize, Qt, QTimer, QUrl,
     QVariantAnimation, Signal,
 )
 from PySide6.QtGui import (
+    QCursor,
     QIcon,
     QPixmap,
 )
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidgetItem,
+    QStyleOptionViewItem,
     QMenu,
     QMessageBox,
     QPushButton,
@@ -42,6 +44,7 @@ from app_style import (
 )
 import ui_state
 from config import (
+    IMAGE_EXTENSIONS,
     RENDERABLE_3D_EXTENSIONS,
     THUMBNAIL_COLUMN_LABELS,
     _MANUAL_3D_PREVIEW_MODE,
@@ -57,8 +60,10 @@ from config import (
     GLOBAL_OMIT_FILE_NAMES,
 )
 from settings_widgets import (
+    Menu, menu_row,
     _radius_dict,
     _radius_shrink,
+    run_space_menu_hooks,
 )
 from browser_core import (
     COLUMN_MAX_WIDTH,
@@ -70,6 +75,11 @@ from browser_core import (
     GROUP_COLUMN_MIN_HEIGHT,
     ROLE_ISDIR,
     ROLE_IS_SHORTCUT,
+    ROLE_SPACE_ABOVE,
+    ROLE_SPACE_BELOW,
+    ROLE_PIN_BOTTOM,
+    ROLE_BOTTOM_GAP,
+    ROLE_TITLE_ABOVE,
     ROLE_META,
     ROLE_PATH,
     ROLE_SOURCE_LABEL,
@@ -111,12 +121,15 @@ from browser_core import (
     save_shortcuts,
     reveal_in_file_manager,
     save_layout_settings,
+    software_choices,
+    software_icon_pixmap,
 )
 from column_config import (
     ColumnConfigDialog,
 )
 from capture_widgets import (
     FileListWidget,
+    item_order_key,
     _ColumnCard,
     _RoundedCornersEffect,
     _column_suppress_left,
@@ -131,10 +144,22 @@ from row_delegates import (
 # Colonne
 # ==========================================================================
 
+def opens_in_viewer(path: Path) -> bool:
+    """Double-clic sur ce fichier = visionneuse de l'appli : image, planche PureRef, ou tout fichier dont
+    l'apercu existe deja (3D rendue, PSD, PDF, plans, videos...). Les autres gardent leur logiciel."""
+    from config import PREVIEWABLE_EXTENSIONS, PUR_PREVIEW_EXTENSIONS
+    from previews import file_image_pixmap
+    suffix = path.suffix.lower()
+    if suffix in IMAGE_EXTENSIONS or suffix in PUR_PREVIEW_EXTENSIONS:
+        return True
+    return suffix in PREVIEWABLE_EXTENSIONS and file_image_pixmap(path, asynchronous=True) is not None
+
+
 class Column(QWidget):
 
     selected = Signal(object, object)   # (Column, Path | None)
     activated = Signal(object)          # Path
+    view_requested = Signal(object)     # Path : double-clic sur une image (visionneuse de l'appli)
 
     def __init__(self, directory: Path, title: str, parent=None,
                  source_dirs: list[Path] | None = None, display_title: str | None = None,
@@ -449,6 +474,12 @@ class Column(QWidget):
                 header_layout.addWidget(btn)
                 return btn
 
+            # LOGICIELS : « + » = menu des logiciels des reglages, le choix cree son dossier ici
+            # (demande de l'utilisateur, voir _open_software_menu).
+            if self._group_kind == "logiciels":
+                self._software_btn = _group_header_btn(
+                    "+", "Ajouter un logiciel : cree son dossier dans cette colonne",
+                    lambda: self._open_software_menu())
             if on_group_maximize is not None:
                 _group_header_btn(
                     "⤢", "Agrandir cette colonne au maximum, reduire les autres a leur contenu",
@@ -465,6 +496,11 @@ class Column(QWidget):
         # que j'aimerai que tu places en haut a droite de chaque colonne
         # sauf : colonne type, colonnes focus".
         self._pin_btn = None
+        # Bouton « ouvrir le logiciel ici » (voir set_launcher), cree a la demande, place avant la punaise.
+        self._header_layout = header_layout
+        self._launch_btn = None
+        self._launch_key = None
+        self._launch_click = None
         if title != "Type":
             pin_btn = QPushButton()
             pin_btn.setFlat(True)
@@ -491,7 +527,7 @@ class Column(QWidget):
         # font PROJECT_ROW_HEIGHT) : dans les colonnes classiques, un fichier
         # image peut desormais prendre une hauteur differente des autres
         # lignes (voir RowDelegate), donc les hauteurs n'y sont plus uniformes.
-        self.list.setUniformItemSizes(self.has_thumbnails)
+        self.sync_uniform_sizes()
         # L'espacement entre lignes est gere a la main dans les delegates
         # (voir ROW_SPACING) plutot que via QListView.setSpacing(), qui
         # ajoute la valeur des DEUX cotes de chaque ligne (donc un ecart reel
@@ -1075,7 +1111,9 @@ class Column(QWidget):
         if self._group_kind is not None and obj in self._group_header_widgets:
             if etype == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
                 local_x = obj.mapTo(self, event.position().toPoint()).x()
-                if not self._in_resize_zone(local_x):
+                # Deplacer une colonne du groupe = Ctrl + glisser (demande de l'utilisateur, pour tout
+                # deplacement de l'appli).
+                if not self._in_resize_zone(local_x) and event.modifiers() & Qt.ControlModifier:
                     self._group_drag_start = event.globalPosition().toPoint()
             elif etype == QEvent.MouseMove and self._group_drag_start is not None:
                 global_pos = event.globalPosition().toPoint()
@@ -1300,6 +1338,13 @@ class Column(QWidget):
                         entries.append((target, label, step, True))
                         if shortcut.get("name"):
                             aliases[str(target)] = str(shortcut["name"])
+            # Ordre choisi a la main (voir save_item_order) : rangé dans la 1re source, sous une cle
+            # propre a CETTE colonne (la meme source peut etre affichee ailleurs avec son propre ordre).
+            store, key = self._order_store()
+            order = load_layout_settings(store).get(key) if store is not None else None
+            if isinstance(order, list) and order:
+                rank = {k: i for i, k in enumerate(order)}
+                entries.sort(key=lambda e: rank.get(item_order_key(store, e[0]), len(rank)))
             if self._only_recognized_software:
                 # Uniquement des REPERTOIRES DE LOGICIEL reconnus (voir
                 # software_icon_key/app_style.custom_softwares) — pas de
@@ -1336,6 +1381,13 @@ class Column(QWidget):
                     entries.append((target, None, None, True))
                     if shortcut.get("name"):
                         aliases[str(target)] = str(shortcut["name"])
+            # Ordre choisi a la main (colonne Type, voir FileListWidget/save_item_order) ; tri
+            # stable : une entree inconnue de l'ordre (nouveau dossier) garde son rang par defaut,
+            # apres celles qui y sont.
+            order = load_layout_settings(self.directory).get("item_order")
+            if isinstance(order, list) and order:
+                rank = {key: i for i, key in enumerate(order)}
+                entries.sort(key=lambda e: rank.get(item_order_key(self.directory, e[0]), len(rank)))
         # Filtres de contenu (voir __init__ show_dirs/show_files/omit_dirs/
         # omit_files, ColumnConfigDialog) : SEULEMENT pour un niveau de la
         # chaine CONFIGUREE — toute colonne NORMALE garde ses valeurs par
@@ -1361,6 +1413,15 @@ class Column(QWidget):
                     continue
                 filtered.append((path, label, step, is_shortcut))
             entries = filtered
+        space_store, _key = self._order_store()
+        spaces = self._item_spaces(space_store)
+        spaces_below = self._item_spaces(space_store, below=True)
+        titles = self._item_titles(space_store)
+        # « Positionner au bas de la colonne » : ces lignes passent apres les autres (tri stable, leur
+        # ordre entre elles est garde), puis sync_bottom_gap les colle en bas.
+        bottom = self._item_bottom(space_store)
+        if bottom:
+            entries.sort(key=lambda e: item_order_key(space_store, e[0]) in bottom)
         for path, label, step, is_shortcut in entries:
             # Un raccourci peut porter un NOM D'AFFICHAGE (clic droit > Renommer le raccourci) : le
             # dossier cible garde le sien.
@@ -1371,6 +1432,14 @@ class Column(QWidget):
             item.setData(ROLE_SOURCE_LABEL, label)
             item.setData(ROLE_SOURCE_STEP, step)
             item.setData(ROLE_IS_SHORTCUT, is_shortcut)
+            if space_store is not None:
+                item.setData(ROLE_SPACE_ABOVE, int(spaces.get(item_order_key(space_store, path), 0) or 0))
+                item.setData(ROLE_SPACE_BELOW, int(spaces_below.get(item_order_key(space_store, path), 0) or 0))
+                title = titles.get(item_order_key(space_store, path))
+                if isinstance(title, dict) and title.get("text"):
+                    item.setData(ROLE_TITLE_ABOVE, title)
+                if item_order_key(space_store, path) in bottom:
+                    item.setData(ROLE_PIN_BOTTOM, True)
             meta = ""
             if not is_dir:
                 try:
@@ -1385,6 +1454,291 @@ class Column(QWidget):
             if current and path == current:
                 self.list.setCurrentItem(item)
         self.list.blockSignals(False)
+        self.sync_uniform_sizes()
+        self.sync_bottom_gap()
+
+    def _order_store(self) -> tuple[Path | None, str]:
+        """(dossier, cle) ou s'enregistre l'ordre choisi a la main : le dossier de la colonne
+        (`item_order`) ; pour une colonne a plusieurs sources (IN/OVER/OUT, Logiciels), la 1re source,
+        sous `item_order@<titre de la colonne>`."""
+        if self._source_dirs is None:
+            return self.directory, "item_order"
+        if not self._source_dirs:
+            return None, ""
+        return Path(self._source_dirs[0]), f"item_order@{self.column_title}"
+
+    def sync_uniform_sizes(self):
+        """Hauteurs de ligne uniformes (optimisation Qt des colonnes a vignettes) SAUF si une ligne a
+        un espace au-dessus : Qt donnerait alors a toutes la hauteur de la premiere, et l'espace
+        serait pris SUR la ligne (ligne ecrasee, fond et apercu tronques)."""
+        spaced = any(int(self.list.item(i).data(ROLE_SPACE_ABOVE) or 0) or int(self.list.item(i).data(ROLE_SPACE_BELOW) or 0)
+                     or self.list.item(i).data(ROLE_PIN_BOTTOM)
+                     for i in range(self.list.count()))
+        self.list.setUniformItemSizes(bool(self.has_thumbnails) and not spaced)
+
+    # -- « Positionner au bas de la colonne » (clic droit sur une ligne) --
+    # Les lignes marquees (`item_bottom` du .pipeline_layout.json, liste de cles, `item_bottom@<titre>`
+    # pour une colonne a plusieurs sources) sont rangees apres les autres et empilees contre le bas :
+    # un vide (ROLE_BOTTOM_GAP) pose au-dessus de la premiere comble la place libre de la colonne.
+
+    def _bottom_key(self) -> str:
+        return "item_bottom" if self._source_dirs is None else f"item_bottom@{self.column_title}"
+
+    def _item_bottom(self, store: Path | None) -> set:
+        if store is None:
+            return set()
+        keys = load_layout_settings(store).get(self._bottom_key())
+        return {str(k) for k in keys} if isinstance(keys, list) else set()
+
+    def set_item_bottom(self, item, pinned: bool):
+        """Marque (ou demarque) la ligne « au bas de la colonne », enregistre, puis reaffiche."""
+        store, _key = self._order_store()
+        if store is None:
+            return
+        key = item_order_key(store, Path(item.data(ROLE_PATH)))
+        keys = [k for k in (load_layout_settings(store).get(self._bottom_key()) or []) if k != key]
+        if pinned:
+            keys.append(key)
+        _update_layout_setting(store, self._bottom_key(), keys)
+        self.refresh()
+        win = self.window()
+        if hasattr(win, "_columns_epoch"):
+            win._columns_epoch += 1          # captures d'animation perimees : ancienne disposition
+
+    def sync_bottom_gap(self):
+        """Recalcule le vide au-dessus de la 1re ligne « au bas de la colonne » = hauteur visible de
+        la liste - hauteur de toutes les lignes (jamais negatif : liste plus haute que la colonne =
+        lignes simplement a la fin). Appele apres chaque refresh, redimensionnement de la liste et
+        changement de hauteur de ligne."""
+        if getattr(self, "_syncing_bottom", False):
+            return
+        lst = self.list
+        first = None
+        for row in range(lst.count()):
+            if lst.item(row).data(ROLE_PIN_BOTTOM):
+                first = lst.item(row)
+                break
+        gap = 0
+        if first is not None:
+            current = int(first.data(ROLE_BOTTOM_GAP) or 0)
+            delegate, option, model = lst.itemDelegate(), QStyleOptionViewItem(), lst.model()
+            total = sum(delegate.sizeHint(option, model.index(row, 0)).height() for row in range(lst.count()))
+            gap = max(0, lst.viewport().height() - (total - current))
+        changed = False
+        for row in range(lst.count()):
+            item = lst.item(row)
+            want = gap if item is first else 0
+            if int(item.data(ROLE_BOTTOM_GAP) or 0) != want:
+                item.setData(ROLE_BOTTOM_GAP, want or None)
+                changed = True
+        if changed:
+            self._syncing_bottom = True
+            try:
+                lst.doItemsLayout()
+                lst.viewport().update()
+            finally:
+                self._syncing_bottom = False
+
+    def _spaces_key(self, below: bool = False) -> str:
+        name = "item_spaces_below" if below else "item_spaces"
+        return name if self._source_dirs is None else f"{name}@{self.column_title}"
+
+    def _item_spaces(self, store: Path | None, below: bool = False) -> dict:
+        if store is None:
+            return {}
+        spaces = load_layout_settings(store).get(self._spaces_key(below))
+        return spaces if isinstance(spaces, dict) else {}
+
+    def set_item_space(self, item, height: int, below: bool = False):
+        """Clic droit > « Ajouter une espace au-dessus / en dessous » : espace de `height` px au-dessus
+        (ou en dessous) de la ligne, en direct ; enregistre (`item_spaces` / `item_spaces_below` du
+        .pipeline_layout.json, comme l'ordre) au repos."""
+        store, _key = self._order_store()
+        if store is None:
+            return
+        item.setData(ROLE_SPACE_BELOW if below else ROLE_SPACE_ABOVE, int(height))
+        self.sync_uniform_sizes()
+        self.list.doItemsLayout()
+        self.sync_bottom_gap()
+        self.list.viewport().update()
+        key = item_order_key(store, Path(item.data(ROLE_PATH)))
+        self._pending_spaces = getattr(self, "_pending_spaces", {})
+        self._pending_spaces[(below, key)] = int(height)
+        timer = getattr(self, "_space_timer", None)
+        if timer is None:
+            timer = self._space_timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.setInterval(400)
+            timer.timeout.connect(self._save_item_spaces)
+        timer.start()
+
+    def _save_item_spaces(self):
+        store, _key = self._order_store()
+        pending, self._pending_spaces = getattr(self, "_pending_spaces", {}), {}
+        if store is None or not pending:
+            return
+        for below in (False, True):
+            changes = {key: height for (side, key), height in pending.items() if side == below}
+            if not changes:
+                continue
+            spaces = dict(self._item_spaces(store, below))
+            for key, height in changes.items():
+                if height:
+                    spaces[key] = height
+                else:
+                    spaces.pop(key, None)
+            _update_layout_setting(store, self._spaces_key(below), spaces)
+
+    # -- Titre au-dessus d'une ligne (dans son espace au-dessus) --
+    # Clic droit sur la ligne > « Ajouter un titre au-dessus… » (grise si l'espace est trop petit) ;
+    # clic droit sur le titre : renommer, supprimer, changer son style (fenetre flottante Police |
+    # Padding, « changement de style a la volee », settings_quick_style.py). Retenu comme l'espace :
+    # `item_titles` du .pipeline_layout.json.
+
+    def _titles_key(self) -> str:
+        return "item_titles" if self._source_dirs is None else f"item_titles@{self.column_title}"
+
+    def _item_titles(self, store: Path | None) -> dict:
+        if store is None:
+            return {}
+        titles = load_layout_settings(store).get(self._titles_key())
+        return titles if isinstance(titles, dict) else {}
+
+    def _item_key(self, item) -> str | None:
+        store, _key = self._order_store()
+        return item_order_key(store, Path(item.data(ROLE_PATH))) if store is not None else None
+
+    def _item_by_key(self, key: str):
+        for row in range(self.list.count()):
+            item = self.list.item(row)
+            if self._item_key(item) == key:
+                return item
+        return None
+
+    def title_area_hit(self, item, pos) -> bool:
+        """Vrai si `pos` (repere du viewport) tombe sur le titre pose au-dessus de `item`."""
+        if not item.data(ROLE_TITLE_ABOVE):
+            return False
+        top = self.list.visualItemRect(item).top() + int(item.data(ROLE_BOTTOM_GAP) or 0)
+        return top <= pos.y() < top + int(item.data(ROLE_SPACE_ABOVE) or 0)
+
+    def can_add_title(self, item) -> bool:
+        from browser_core import item_title_min_height
+        return (self._order_store()[0] is not None and not item.data(ROLE_TITLE_ABOVE)
+                and int(item.data(ROLE_SPACE_ABOVE) or 0) >= item_title_min_height())
+
+    def set_item_title(self, key: str, title: dict | None, save_now: bool = True):
+        """Pose (ou retire, `title` None) le titre de la ligne `key`, en direct ; enregistre."""
+        item = self._item_by_key(key)
+        if item is not None:
+            item.setData(ROLE_TITLE_ABOVE, title if title else None)
+            self.list.viewport().update()
+        self._pending_titles = getattr(self, "_pending_titles", {})
+        self._pending_titles[key] = title
+        if save_now:
+            self._save_item_titles()
+            return
+        timer = getattr(self, "_title_timer", None)
+        if timer is None:
+            timer = self._title_timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.setInterval(400)
+            timer.timeout.connect(self._save_item_titles)
+        timer.start()
+
+    def _save_item_titles(self):
+        store, _key = self._order_store()
+        pending, self._pending_titles = getattr(self, "_pending_titles", {}), {}
+        if store is None or not pending:
+            return
+        titles = dict(self._item_titles(store))
+        for key, title in pending.items():
+            if title:
+                titles[key] = title
+            else:
+                titles.pop(key, None)
+        _update_layout_setting(store, self._titles_key(), titles)
+
+    def _prompt_item_title(self, key: str, current: str = ""):
+        text, ok = QInputDialog.getText(self, "Titre" if not current else "Renommer le titre",
+                                        "Titre :", text=current)
+        if not ok or not text.strip():
+            return
+        item = self._item_by_key(key)
+        title = dict(item.data(ROLE_TITLE_ABOVE) or {}) if item is not None else {}
+        title["text"] = text.strip()
+        title.setdefault("style", {})
+        self.set_item_title(key, title)
+
+    def _open_title_style(self, key: str):
+        """« Changement de style a la volee » (settings_quick_style) : Police | Padding, en direct."""
+        from browser_core import item_title_style
+        from settings_quick_style import QuickStyleWindow, font_padding_specs
+        item = self._item_by_key(key)
+        if item is None or not item.data(ROLE_TITLE_ABOVE):
+            return
+        title = dict(item.data(ROLE_TITLE_ABOVE))
+        # Une seule a la fois. La fenetre se detruit a sa fermeture (WA_DeleteOnClose) : la reference
+        # est oubliee a ce moment (destroyed), sinon fermer l'ancienne levait une erreur et la 2e
+        # ouverture n'aboutissait jamais.
+        previous, self._title_style_window = getattr(self, "_title_style_window", None), None
+        if previous is not None:
+            try:
+                previous.close()
+            except RuntimeError:              # deja detruite
+                pass
+
+        def on_style(style: dict, key=key):
+            current = self._item_by_key(key)
+            if current is None or not current.data(ROLE_TITLE_ABOVE):
+                return
+            updated = dict(current.data(ROLE_TITLE_ABOVE))
+            updated["style"] = style
+            self.set_item_title(key, updated, save_now=False)
+
+        window = self._title_style_window = QuickStyleWindow(
+            "Titre de ligne", font_padding_specs("title", color_default="#9aa1a7", color_title="Couleur du titre"),
+            item_title_style(title.get("style")), title=f"Style du titre « {title.get('text', '')} »",
+            settings=ui_state.APPLIED_SETTINGS or None, parent=self.window())
+        window.styleChanged.connect(on_style)
+        window.destroyed.connect(lambda *_a, w=window: self._forget_title_style_window(w))
+        window.move(QCursor.pos() + QPoint(12, 12))
+        window.show()
+
+    def _forget_title_style_window(self, window):
+        if getattr(self, "_title_style_window", None) is window:
+            self._title_style_window = None
+
+    def _title_menu(self, item, pos):
+        """Clic droit sur le titre d'une ligne : renommer / supprimer / changer son style."""
+        key = self._item_key(item)
+        if key is None:
+            return
+        menu = Menu(self)
+        menu.setFont(font(11, 400))
+        act_rename = menu.addAction("Renommer le titre…")
+        act_delete = menu.addAction("Supprimer le titre")
+        act_style = menu.addAction("Changer le style…")
+        chosen = menu.exec(self.list.mapToGlobal(pos))
+        text = (item.data(ROLE_TITLE_ABOVE) or {}).get("text", "")
+        if chosen is act_rename:
+            QTimer.singleShot(0, lambda: self._prompt_item_title(key, text))   # apres le relachement du clic
+        elif chosen is act_delete:
+            self.set_item_title(key, None)
+        elif chosen is act_style:
+            QTimer.singleShot(0, lambda: self._open_title_style(key))
+
+    def save_item_order(self, paths: list[Path]):
+        """Enregistre l'ordre des elements (glisser dans la colonne, voir FileListWidget) dans
+        le .pipeline_layout.json du dossier, puis reaffiche la colonne (ligne courante conservee)."""
+        store, key = self._order_store()
+        if store is None:
+            return
+        _update_layout_setting(store, key, [item_order_key(store, p) for p in paths])
+        self.refresh()
+        win = self.window()
+        if hasattr(win, "_columns_epoch"):
+            win._columns_epoch += 1          # captures d'animation (masquer/replier) perimees : ancien ordre
 
     def relayout(self, do_layout: bool = True):
         """Reapplique la mise en page (tailles de ligne) apres un changement
@@ -1405,6 +1759,7 @@ class Column(QWidget):
         (couleur, bordure, rayon, padding de selection...)."""
         if do_layout:
             self.list.doItemsLayout()
+            self.sync_bottom_gap()
 
     def refresh_colors(self):
         """Reapplique les couleurs (voir C, mutable via app_style.set_color)
@@ -1559,12 +1914,114 @@ class Column(QWidget):
         )
         self._update_card_mask()
 
+    def _open_software_menu(self) -> None:
+        """Bouton « + » de l'entete de LOGICIELS : un logiciel par ligne (liste des reglages,
+        `software_choices`), ceux qui ont deja leur dossier ici grises ; le choix cree le dossier
+        (« houdini »…) dans le dossier liste par la colonne et le selectionne."""
+        existing = set()
+        try:
+            for entry in self.directory.iterdir():
+                if entry.is_dir():
+                    key = software_icon_key(entry.name)
+                    if key is not None:
+                        existing.add(key)
+        except OSError:
+            pass
+        menu = Menu(self)
+        menu.setFont(font(11, 400))
+        for key, label, folder in software_choices():
+            action = menu.addAction(QIcon(software_icon_pixmap(key, 16)), label)
+            if key in existing:
+                action.setEnabled(False)
+                action.setText(f"{label}  (deja present)")
+            action.setData(folder)
+        if menu.isEmpty():
+            menu.addAction("Aucun logiciel dans les reglages").setEnabled(False)
+        button = self._software_btn
+        chosen = menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
+        if chosen is not None and chosen.data():
+            self._create_software_folder(chosen.data())
+
+    def _create_software_folder(self, name: str) -> None:
+        new_path = self.directory / name
+        try:
+            new_path.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            QMessageBox.warning(self, "Ajouter un logiciel", f"Impossible de creer le dossier :\n{exc}")
+            return
+        self.refresh()
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            if it.data(ROLE_PATH) == str(new_path):
+                self.list.setCurrentItem(it)
+                break
+
+    def set_launcher(self, key: str | None, on_click=None) -> None:
+        """Bouton a l'icone du logiciel `key` a cote de la punaise (colonnes ouvertes sous un dossier de
+        logiciel du groupe LOGICIELS, voir PipelineBrowser._sync_software_buttons) : clic = `on_click()`,
+        le logiciel s'ouvre dans le dossier de cette colonne. None = bouton retire."""
+        if key is None:
+            if self._launch_btn is not None:
+                self._launch_btn.hide()
+            self._launch_key = None
+            return
+        if self._launch_btn is None:
+            btn = QPushButton()
+            btn.setFlat(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setFocusPolicy(Qt.NoFocus)
+            btn.setFixedSize(18, 18)
+            btn.setIconSize(QSize(14, 14))
+            btn.setStyleSheet(
+                "QPushButton { background: transparent; border: none; padding: 0; }"
+                "QPushButton:hover { background: rgba(255,255,255,0.12); border-radius: 3px; }"
+            )
+            btn.clicked.connect(lambda: self._launch_click() if self._launch_click is not None else None)
+            index = self._header_layout.indexOf(self._pin_btn) if self._pin_btn is not None else -1
+            if index < 0:
+                self._header_layout.addWidget(btn)
+            else:
+                self._header_layout.insertWidget(index, btn)
+            self._launch_btn = btn
+        self._launch_click = on_click
+        if key != self._launch_key:
+            self._launch_btn.setIcon(QIcon(software_icon_pixmap(key, 14)))
+            self._launch_btn.setToolTip(f"Ouvrir {key.capitalize()} dans ce dossier ({self.directory.name})")
+            self._launch_key = key
+        self._launch_btn.show()
+
     def _refresh_pin_icon(self):
         """Applique l'icone punaise (01 par defaut, 02 si active, voir
         _toggle_pin/_pin_icon_pixmap) — no-op sur "Type" (pas de bouton,
         voir __init__)."""
         if self._pin_btn is not None:
             self._pin_btn.setIcon(QIcon(_pin_icon_pixmap(self._pin_active, 14)))
+
+    def reload_pin_state(self):
+        """Preset change : les valeurs de punaise sont celles du NOUVEAU preset (demande de l'utilisateur,
+        voir browser_core.PIN_LAYOUT_KEYS) — relues et appliquees sur place (memes regles que __init__)."""
+        data = load_layout_settings(self.directory)
+        self._pin_active = bool(data.get("pinned", False))
+        self._pin_column_width = data.get("pinned_column_width") if self._pin_active else None
+        self._pin_row_height = data.get("pinned_row_height") if self._pin_active else None
+        raw_height = data.get("row_height") if self._pin_active else None
+        self._folder_row_height = int(raw_height) if isinstance(raw_height, (int, float)) else None
+        self._show_icon_override = self._show_preview_override = None
+        self._icon_size_override = self._icon_padding_left_override = self._text_padding_left_override = None
+        if self._pin_active or self.style_title == "Type":
+            if isinstance(data.get("show_icon"), bool):
+                self._show_icon_override = data["show_icon"]
+            if isinstance(data.get("show_preview"), bool):
+                self._show_preview_override = data["show_preview"]
+            for key, attr in (("icon_size", "_icon_size_override"),
+                              ("icon_padding_left", "_icon_padding_left_override"),
+                              ("text_padding_left", "_text_padding_left_override")):
+                if isinstance(data.get(key), (int, float)):
+                    setattr(self, attr, int(data[key]))
+        self._refresh_pin_icon()
+        self.setFixedWidth(self._pin_column_width or self._user_width or col_width(self.style_title))
+        self.list.doItemsLayout()
+        self.list.viewport().update()
 
     def _toggle_pin(self):
         """Punaise d'en-tete — voir __init__/effective_row_height, la
@@ -1708,12 +2165,37 @@ class Column(QWidget):
         self.selected.emit(self, Path(item.data(ROLE_PATH)) if item else None)
 
     def _on_double_clicked(self, item):
-        self.activated.emit(Path(item.data(ROLE_PATH)))
+        path = Path(item.data(ROLE_PATH))
+        # S'ouvrent dans la visionneuse de l'appli, pas dans le logiciel par defaut de Windows (le menu
+        # « Ouvrir » le garde) : les images, les planches PureRef, et tout fichier qui a un apercu.
+        if not item.data(ROLE_ISDIR) and opens_in_viewer(path):
+            self.view_requested.emit(path)
+            return
+        self.activated.emit(path)
+
+    def preview_source(self, path: Path):
+        """(pixmap, QRect GLOBAL) de l'apercu tel que la ligne de `path` l'affiche (dernier dessin ;
+        image entiere ajustee dans sa case), ou None : depart du vol vers la visionneuse."""
+        found = (getattr(self, "_preview_slots", None) or {}).get(str(path))
+        if found is None:
+            return None
+        slot, pixmap = found
+        if pixmap is None or pixmap.isNull() or not self.list.viewport().rect().intersects(slot):
+            return None
+        dpr = pixmap.devicePixelRatio() or 1.0
+        size = QSize(round(pixmap.width() / dpr), round(pixmap.height() / dpr))
+        size.scale(slot.size(), Qt.KeepAspectRatio)
+        rect = QRect(0, 0, size.width(), size.height())
+        rect.moveCenter(slot.center())
+        return pixmap, QRect(self.list.viewport().mapToGlobal(rect.topLeft()), rect.size())
 
     def _on_context_menu(self, pos):
         item = self.list.itemAt(pos)
+        if item is not None and self.title_area_hit(item, pos):
+            self._title_menu(item, pos)
+            return
         if not item:
-            menu = QMenu(self)
+            menu = Menu(self)
             menu.setFont(font(11, 400))
             act_new_folder = menu.addAction("Nouveau dossier")
             act_new_text_file = menu.addAction("Nouveau document texte") if self._show_files else None
@@ -1751,7 +2233,7 @@ class Column(QWidget):
             return
         path = Path(item.data(ROLE_PATH))
         is_shortcut = bool(item.data(ROLE_IS_SHORTCUT))
-        menu = QMenu(self)
+        menu = Menu(self)
         menu.setFont(font(11, 400))
         act_open = menu.addAction("Ouvrir")
         act_rename = menu.addAction("Renommer le raccourci…" if is_shortcut else "Renommer")
@@ -1824,15 +2306,55 @@ class Column(QWidget):
             menu, "Padding gauche du texte", self._text_padding_left_override or default_text_pad,
             0, 64, self._set_text_padding_left_override)
 
+        # Espace au-dessus de CETTE ligne (retenu dans le .pipeline_layout.json, voir set_item_space).
+        # « Ajouter un titre au-dessus » se place dans cet espace : grise tant qu'il est trop petit
+        # (suit le curseur ci-dessus en direct).
+        title_holder = []
+
+        def on_space(value, it=item):
+            self.set_item_space(it, value)
+            if title_holder:
+                title_holder[0].setEnabled(self.can_add_title(it))
+
+        self._add_context_slider(
+            menu, "Ajouter une espace au-dessus", int(item.data(ROLE_SPACE_ABOVE) or 0), 0, 200, on_space)
+        self._add_context_slider(
+            menu, "Ajouter une espace en dessous", int(item.data(ROLE_SPACE_BELOW) or 0), 0, 200,
+            lambda value, it=item: self.set_item_space(it, value, below=True))
+        # « Override settings » (settings_element_style), comme partout ou il y a ces lignes d'espace.
+        run_space_menu_hooks(self.list.viewport(), menu, {
+            "above": int(item.data(ROLE_SPACE_ABOVE) or 0), "below": int(item.data(ROLE_SPACE_BELOW) or 0),
+            "set_above": on_space, "set_below": lambda value, it=item: self.set_item_space(it, value, below=True),
+            "maximum": 200})
+        act_add_title = menu.addAction("Ajouter un titre au-dessus…")
+        act_add_title.setEnabled(self.can_add_title(item))
+        title_holder.append(act_add_title)
+        act_bottom = menu.addAction("Positionner au bas de la colonne")
+        act_bottom.setCheckable(True)
+        act_bottom.setChecked(bool(item.data(ROLE_PIN_BOTTOM)))
+        act_bottom.setEnabled(self._order_store()[0] is not None)
+
         menu.addSeparator()
         act_copy_file = menu.addAction("Copier")
         act_copy_path = menu.addAction("Copier le chemin")
+        # « Supprimer » (demande de l'utilisateur) : pas sur un raccourci, qui supprimerait sa CIBLE
+        # (« Retirer le raccourci » retire l'entree).
+        act_delete = menu.addAction("Supprimer") if not is_shortcut else None
         menu.addSeparator()
         # Meme menu qu'un dossier standard (renommer/image/copier agissent sur
         # le dossier CIBLE) ; "Retirer le raccourci" retire seulement l'ENTREE.
         act_remove_shortcut = menu.addAction("Retirer le raccourci") if is_shortcut else None
         act_add_shortcut = menu.addAction("Ajouter un raccourci...")
         chosen = menu.exec(self.list.mapToGlobal(pos))
+        if chosen is act_bottom:
+            pinned = act_bottom.isChecked()
+            QTimer.singleShot(0, lambda it=item: self.set_item_bottom(it, pinned))
+            return
+        if chosen is act_add_title:
+            key = self._item_key(item)
+            if key is not None:
+                QTimer.singleShot(0, lambda: self._prompt_item_title(key))
+            return
         if chosen is act_open:
             self.activated.emit(path)
         elif chosen is act_rename:
@@ -1872,6 +2394,8 @@ class Column(QWidget):
             QApplication.clipboard().setMimeData(mime)
         elif chosen is act_copy_path:
             QApplication.clipboard().setText(str(path))
+        elif act_delete is not None and chosen is act_delete:
+            QTimer.singleShot(0, lambda p=path: self.delete_path(p))     # apres la fermeture du menu
         elif act_remove_shortcut is not None and chosen is act_remove_shortcut:
             for source in (self._source_dirs if self._source_dirs is not None else [self.directory]):
                 remove_shortcut(source, path)
@@ -1889,22 +2413,13 @@ class Column(QWidget):
         settings" (remplace l'ancien QSlider habille a la main). Import
         DIFFERE (jamais au niveau module, meme raison que settings_window
         important pipeline_browser) : sans danger ici, appele bien apres
-        que les deux modules soient charges."""
+        que les deux modules soient charges. Ligne alignee comme toutes celles des menus
+        contextuels (settings_menu.menu_row)."""
         import settings_window as sw
 
-        action = QWidgetAction(menu)
-        widget = QWidget()
-        layout = QHBoxLayout(widget)
-        layout.setContentsMargins(12, 4, 12, 4)
-        layout.setSpacing(8)
-        label = QLabel(label_text)
-        label.setFont(font(11, 400))
         field = sw._SliderField(vmin, vmax, value, slider_width=120, box_width=60)
         field.valueChanged.connect(on_change)
-        layout.addWidget(label)
-        layout.addWidget(field, 1)
-        action.setDefaultWidget(widget)
-        menu.addAction(action)
+        menu_row(menu, label_text, field)
 
     def _should_autosave_context_override(self) -> bool:
         """Vrai si CE reglage du menu contextuel doit s'enregistrer SANS
@@ -2155,6 +2670,32 @@ class Column(QWidget):
             if changed:
                 save_shortcuts(source, shortcuts)
         self.refresh()
+
+    def delete_path(self, path: Path) -> bool:
+        """« Supprimer » : apres confirmation (settings_dialogs.confirm), le fichier / dossier va a la
+        CORBEILLE ; si elle le refuse (certains disques reseau), une 2e confirmation propose de le
+        supprimer definitivement. Ligne ouverte (colonnes a sa suite) : refermee d'abord, comme un
+        re-clic. Retourne True si l'element a disparu."""
+        from settings_dialogs import confirm
+        kind = "ce dossier et tout son contenu" if path.is_dir() else "ce fichier"
+        if not confirm(self, "Supprimer", path.name, f"Mettre {kind} à la corbeille ?", [str(path)], "Supprimer"):
+            return False
+        current = self.list.currentItem()
+        win = self.window()
+        if current is not None and current.data(ROLE_PATH) == str(path) and hasattr(win, "on_reclicked"):
+            win.on_reclicked(self)
+        if not QFile.moveToTrash(str(path)) and path.exists():
+            if not confirm(self, "Supprimer", path.name,
+                           "La corbeille refuse cet élément. Le supprimer DÉFINITIVEMENT (sans retour possible) ?",
+                           [str(path)], "Supprimer définitivement"):
+                return False
+            try:
+                shutil.rmtree(path) if path.is_dir() else path.unlink()
+            except OSError as exc:
+                QMessageBox.warning(self, "Supprimer", f"Impossible de supprimer :\n{exc}")
+                return False
+        self.refresh_all()
+        return not path.exists()
 
     def _rename_item(self, path: Path):
         new_name, ok = QInputDialog.getText(

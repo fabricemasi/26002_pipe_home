@@ -22,7 +22,7 @@ Ou, plus court :
 
 import sys
 
-from PySide6.QtGui import QFont, QFontDatabase
+from PySide6.QtGui import QColor, QFont, QFontDatabase
 
 # ==========================================================================
 # Design tokens (maquette Claude Design)
@@ -735,7 +735,7 @@ def set_header_style(color_slot: str, radius, border_enabled: dict, border_color
     controle que celui des colonnes")."""
     global _HEADER_COLOR_SLOT, _HEADER_RADIUS, _HEADER_BORDER_ENABLED, _HEADER_BORDER, _HEADER_BORDER_THICKNESS
     is_custom_hex = isinstance(color_slot, str) and color_slot.startswith("#")
-    _HEADER_COLOR_SLOT = color_slot if (is_custom_hex or color_slot in _SEMANTIC_TO_REAL) else "skinN1"
+    _HEADER_COLOR_SLOT = color_slot if (is_custom_hex or split_color_ref(color_slot)[0] in _SEMANTIC_TO_REAL) else "skinN1"
     _HEADER_RADIUS = _coerce_header_radius(radius)
     _HEADER_BORDER_ENABLED = {k: bool(border_enabled.get(k, False)) for k in ("top", "right", "bottom", "left")}
     border_colors = border_colors or {}
@@ -746,7 +746,8 @@ def set_header_style(color_slot: str, radius, border_enabled: dict, border_color
 def header_bg_hex() -> str:
     if _HEADER_COLOR_SLOT.startswith("#"):
         return _HEADER_COLOR_SLOT
-    return C.get(_SEMANTIC_TO_REAL.get(_HEADER_COLOR_SLOT, "chrome"), C["chrome"])
+    slot, alpha = split_color_ref(_HEADER_COLOR_SLOT)
+    return with_alpha(C.get(_SEMANTIC_TO_REAL.get(slot, "chrome"), C["chrome"]), alpha)
 
 
 def header_border_color(side: str) -> str:
@@ -849,7 +850,7 @@ COLUMN_TYPE_OVERRIDE_KEYS = COLUMN_FRAME_KEYS + [
     "item_icon_enabled", "item_icon_size", "item_icon_padding_left", "item_row_height", "item_row_spacing",
     "item_column_width", "item_header_gap",
     "item_text_padding", "item_selection_focus_color", "item_selection_unfocus_color", "item_hover_color",
-    "item_idle_color",
+    "item_idle_color", "item_row_bg_color",
     "item_selection_padding", "item_selection_border_enabled", "item_selection_border",
     "item_selection_radius", "item_selection_edge_border",
     # Non focus/Survol/Non selectionne (voir settings_window._section_
@@ -877,6 +878,7 @@ COLUMN_TYPE_OVERRIDE_KEYS = COLUMN_FRAME_KEYS + [
     "item_row_border_enabled", "item_row_border_color", "item_row_border_thickness",
     "item_image_padding", "item_image_border_enabled", "item_image_border",
     "item_image_border_thickness", "item_image_radius", "item_image_ratio",
+    "item_image_shadow_enabled", "item_image_shadow", "item_image_shadow_size",
     # Colonnes > Apercu (voir pipeline_browser.PreviewColumn/_PreviewBlock/
     # PREVIEW_STACK_TITLE) — SPECIFIQUES a cette colonne, jamais exposees
     # ni partagees ailleurs (contrairement aux cles item_* ci-dessus,
@@ -890,6 +892,7 @@ COLUMN_TYPE_OVERRIDE_KEYS = COLUMN_FRAME_KEYS + [
     # ailleurs ... pareil pour les coins arrondis") remplacent les
     # anciennes cles "preview_pad"/"preview_radius" (int uniforme).
     "preview_padding", "preview_radius",
+    "preview_shadow_enabled", "preview_shadow", "preview_shadow_size",
     "preview_title_zone_height",
     "preview_title_font_size", "preview_title_font_color",
     "preview_title_font_family", "preview_title_font_bold", "preview_title_font_italic",
@@ -951,6 +954,39 @@ def column_style_for(title: str) -> dict:
     return _COLUMN_STYLES.get(title) or _GENERAL_COLUMN_STYLE
 
 
+COLOR_ALPHA_SEP = "/"
+
+
+def split_color_ref(value: str) -> tuple[str, int]:
+    """Reference a une couleur de la palette, avec opacite optionnelle (demande de l'utilisateur : une
+    couleur de l'appli peut recevoir de la transparence, partout) : « @slot/75 » (ou « slot/75 » pour les
+    couleurs d'entete, nom nu) -> (« @slot », 75) ; sans suffixe : opacite 100."""
+    if isinstance(value, str) and COLOR_ALPHA_SEP in value and not value.startswith("#"):
+        ref, _sep, alpha = value.rpartition(COLOR_ALPHA_SEP)
+        try:
+            return ref, max(0, min(100, int(alpha)))
+        except ValueError:
+            return ref, 100
+    return value, 100
+
+
+def join_color_ref(ref: str, alpha: int) -> str:
+    """Inverse de split_color_ref : pas de suffixe a 100 %."""
+    alpha = max(0, min(100, int(alpha)))
+    return ref if alpha >= 100 else f"{ref}{COLOR_ALPHA_SEP}{alpha}"
+
+
+def with_alpha(hexval: str, alpha: int) -> str:
+    """`hexval` (#rrggbb ou #aarrggbb) a `alpha` % de son opacite -> #aarrggbb (inchange a 100 %)."""
+    if alpha >= 100 or not isinstance(hexval, str):
+        return hexval
+    color = QColor(hexval)
+    if not color.isValid():
+        return hexval
+    color.setAlphaF(color.alphaF() * max(0, alpha) / 100)
+    return color.name(QColor.HexArgb)
+
+
 def resolve_color_ref(value, fallback: str = "") -> str:
     """Meme convention que settings_window._resolve_color_value ("#rrggbb"
     direct OU reference "@<slot>" a une pastille semantique) mais resolue
@@ -959,7 +995,8 @@ def resolve_color_ref(value, fallback: str = "") -> str:
     a la fenetre de parametres (qui doit aussi suivre une palette LIVE
     pendant un glisser, voir _apply_column_preview)."""
     if isinstance(value, str) and value.startswith("@"):
-        return C.get(_SEMANTIC_TO_REAL.get(value[1:], "chrome"), C["chrome"])
+        ref, alpha = split_color_ref(value)
+        return with_alpha(C.get(_SEMANTIC_TO_REAL.get(ref[1:], "chrome"), C["chrome"]), alpha)
     return value or fallback or C["border"]
 
 
@@ -967,7 +1004,8 @@ def _column_header_bg_hex(style: dict) -> str:
     slot = style.get("header_color", "skinN1")
     if isinstance(slot, str) and slot.startswith("#"):
         return slot
-    return C.get(_SEMANTIC_TO_REAL.get(slot, "chrome"), C["chrome"])
+    slot, alpha = split_color_ref(slot)
+    return with_alpha(C.get(_SEMANTIC_TO_REAL.get(slot, "chrome"), C["chrome"]), alpha)
 
 
 def column_header_qss(object_name: str, title: str) -> str:
@@ -1254,7 +1292,12 @@ def apply_dwm_frame(widget, radius: int, border_hex: str, resizable: bool = Fals
         dwmapi.DwmSetWindowAttribute(
             hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, ctypes.byref(pref), ctypes.sizeof(pref)
         )
-        if len(hexcolor) == 6:
+        if hexcolor == "none":                 # aucun filet (fenetre qui peint son propre cadre)
+            colorref = ctypes.c_uint32(0xFFFFFFFE)       # DWMWA_COLOR_NONE
+            dwmapi.DwmSetWindowAttribute(
+                hwnd, DWMWA_BORDER_COLOR, ctypes.byref(colorref), ctypes.sizeof(colorref)
+            )
+        elif len(hexcolor) == 6:
             r, g, b = (int(hexcolor[i:i + 2], 16) for i in (0, 2, 4))
             colorref = ctypes.c_uint32((b << 16) | (g << 8) | r)
             dwmapi.DwmSetWindowAttribute(
@@ -1301,7 +1344,7 @@ def start_native_move(widget) -> None:
         handle.startSystemMove()
 
 
-def resize_hit_test(widget, message, border: int = 6):
+def resize_hit_test(widget, message, border: int = 6, inset=None):
     """Reponse a un WM_NCHITTEST pour une fenetre frameless redimensionnable
     par les bords (voir apply_dwm_frame(..., resizable=True)) : sans cadre
     natif, Windows ne sait plus quel bord/coin est survole pour proposer le
@@ -1312,6 +1355,9 @@ def resize_hit_test(widget, message, border: int = 6):
     pour que toute fenetre frameless redimensionnable de l'appli (voir
     PipelineBrowser.nativeEvent, SettingsWindow.nativeEvent) partage le
     meme calcul plutot que de le dupliquer.
+
+    `inset` (QMargins) : marge transparente autour du cadre peint (ombre d'une fenetre additionnelle) —
+    les bords saisissables sont ceux du cadre, pas ceux de la fenetre.
 
     Retourne None si l'evenement n'est pas un WM_NCHITTEST exploitable —
     l'appelant doit alors retomber sur super().nativeEvent() — ou (True,
@@ -1327,6 +1373,11 @@ def resize_hit_test(widget, message, border: int = 6):
         x = ctypes.c_short(msg.lParam & 0xFFFF).value - widget.frameGeometry().x()
         y = ctypes.c_short((msg.lParam >> 16) & 0xFFFF).value - widget.frameGeometry().y()
         w, h, b = widget.width(), widget.height(), border
+        if inset is not None:
+            x, y = x - inset.left(), y - inset.top()
+            w, h = w - inset.left() - inset.right(), h - inset.top() - inset.bottom()
+            if x < -b or y < -b or x > w + b or y > h + b:
+                return None                    # dans l'ombre, loin du cadre
         left, right = x < b, x > w - b
         top, bottom = y < b, y > h - b
         hit = None

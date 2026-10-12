@@ -62,9 +62,15 @@ ABC_EXTENSIONS = {".abc"}
 BLEND_EXTENSIONS = {".blend"}
 MAYA_SCENE_EXTENSIONS = {".ma", ".mb"}
 FBX_EXTENSIONS = {".fbx"}
+# Scenes Houdini (commerciale, Indie, non commerciale) : rendues via hython (voir
+# previews._render_hip_wireframe), comme les .ma via mayapy.
+HOUDINI_SCENE_EXTENSIONS = {".hip", ".hiplc", ".hipnc"}
 DWG_EXTENSIONS = {".dwg"}
+# DXF : format ouvert, dessine en vectoriel par ezdxf (previews._render_dxf_file), sans outil externe.
+DXF_EXTENSIONS = {".dxf"}
 RENDERABLE_3D_EXTENSIONS = (
     OBJ_EXTENSIONS | ABC_EXTENSIONS | BLEND_EXTENSIONS | MAYA_SCENE_EXTENSIONS | FBX_EXTENSIONS
+    | HOUDINI_SCENE_EXTENSIONS
 )
 _DWG_RENDER_LOCK = threading.Lock()
 
@@ -102,16 +108,36 @@ RAW_EXTENSIONS = {".arw", ".raf", ".dng", ".cr2", ".cr3", ".nef", ".orf", ".rw2"
 # module fourni avec PySide6 (ffmpeg embarque, aucune dependance externe).
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".wmv", ".m4v"}
 
+# Lecture des videos dans l'inspecteur (QMediaPlayer en boucle) : COUPEE a la demande de
+# l'utilisateur (trop gourmande) ; l'inspecteur montre la meme image fixe tiree de la video que
+# les vignettes (_decode_video_frame). Ne pas la rallumer sans qu'il le demande.
+VIDEO_PLAYBACK_ENABLED = False
+
 # Documents PDF : rendu des pages via QtPdf (fourni avec PySide6, voir
 # previews._render_pdf_page) ; les cartes-vignette montrent la page 1, l'inspecteur
 # permet de feuilleter les pages.
 PDF_EXTENSIONS = {".pdf"}
 
+# Illustrator : un .ai moderne EST un PDF (option « Creer un fichier compatible PDF », cochee par
+# defaut) : meme rendu que les PDF, planches feuilletables dans l'inspecteur. Sans contenu PDF
+# (option decochee, ou .ai PostScript d'avant CS) : vignette JPEG des metadonnees XMP (voir
+# previews._decode_ai_image).
+ILLUSTRATOR_EXTENSIONS = {".ai"}
+
+# Polices : l'apercu est une planche d'echantillons (nom, alphabet, chiffres,
+# phrase en plusieurs tailles) rendue avec la police chargee temporairement
+# (voir previews._decode_font_image).
+FONT_EXTENSIONS = {".ttf", ".otf", ".ttc", ".otc", ".woff", ".woff2"}
+
+# Brosses Photoshop : planche des pointes echantillonnees stockees dans le
+# fichier (voir previews._decode_abr_image, parseur maison sans dependance).
+ABR_EXTENSIONS = {".abr"}
+
 PREVIEWABLE_EXTENSIONS = (
-    PDF_EXTENSIONS | IMAGE_EXTENSIONS | OBJ_EXTENSIONS | ABC_EXTENSIONS | BLEND_EXTENSIONS | MAYA_SCENE_EXTENSIONS | FBX_EXTENSIONS | DWG_EXTENSIONS | PSD_EXTENSIONS | EXR_EXTENSIONS | HDR_EXTENSIONS | CUBE_EXTENSIONS | RAW_EXTENSIONS | TX_EXTENSIONS | VIDEO_EXTENSIONS
+    PDF_EXTENSIONS | ILLUSTRATOR_EXTENSIONS | IMAGE_EXTENSIONS | OBJ_EXTENSIONS | ABC_EXTENSIONS | BLEND_EXTENSIONS | MAYA_SCENE_EXTENSIONS | FBX_EXTENSIONS | HOUDINI_SCENE_EXTENSIONS | DWG_EXTENSIONS | PSD_EXTENSIONS | EXR_EXTENSIONS | HDR_EXTENSIONS | CUBE_EXTENSIONS | RAW_EXTENSIONS | TX_EXTENSIONS | FONT_EXTENSIONS | ABR_EXTENSIONS | DXF_EXTENSIONS | VIDEO_EXTENSIONS
 )
 TWO_D_IMAGE_EXTENSIONS = (
-    PDF_EXTENSIONS | IMAGE_EXTENSIONS | PSD_EXTENSIONS | EXR_EXTENSIONS | HDR_EXTENSIONS | CUBE_EXTENSIONS | RAW_EXTENSIONS | TX_EXTENSIONS | DWG_EXTENSIONS
+    PDF_EXTENSIONS | ILLUSTRATOR_EXTENSIONS | IMAGE_EXTENSIONS | PSD_EXTENSIONS | EXR_EXTENSIONS | HDR_EXTENSIONS | CUBE_EXTENSIONS | RAW_EXTENSIONS | TX_EXTENSIONS | FONT_EXTENSIONS | ABR_EXTENSIONS | DWG_EXTENSIONS | DXF_EXTENSIONS
 )
 
 _MANUAL_3D_PREVIEW_REQUESTS: set[str] = set()
@@ -141,6 +167,11 @@ _PUR_IMAGE_INDEX_CACHE: dict[str, tuple[float, list[tuple[int, int, str]]]] = {}
 # droite), plutot que le marqueur habituel. Pas de menu "changer l'image"
 # pour ces lignes : l'image EST le fichier.
 SHOW_FILE_IMAGE_PREVIEWS = True
+
+# Fenetres de reglages v1 (« Parametres visuels » / « Parametres generaux », settings_window.py)
+# DESACTIVEES a la demande de l'utilisateur : un seul bouton de reglages, qui ouvre la v2
+# (settings_window_v2.py). PipelineBrowser.open_settings redirige vers la v2 tant que c'est faux.
+SETTINGS_V1_ENABLED = False
 
 PREVIEW_MIN_HEIGHT = 104   # hauteur de la vignette sans image (ou image tres petite)
 PREVIEW_MAX_HEIGHT = 1200  # affichage natif des apercus OBJ/ABC en 1200 x 1200 px

@@ -2,11 +2,13 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 from PySide6.QtCore import (
-    QMimeData, QPoint, QRect, Qt, QUrl, Signal,
+    QMimeData, QModelIndex, QPoint, QRect, Qt, QTimer, QUrl, Signal,
 )
 from PySide6.QtGui import (
+    QColor,
     QDrag,
     QPainter,
+    QPen,
     QPixmap,
 )
 from PySide6.QtWidgets import (
@@ -40,12 +42,15 @@ from previews import (
     _cover_crop_rect,
 )
 from settings_widgets import (
+    Menu, menu_row, DRAG_GHOST_OPACITY,
     _paint_bordered_rect,
     _radius_any,
     _radius_dict,
     _rounded_rect_path,
+    attach_shadow,
 )
 from browser_core import (
+    ROLE_BOTTOM_GAP,
     ROLE_ISDIR,
     ROLE_PATH,
     STATUS_FOLDERS,
@@ -53,6 +58,7 @@ from browser_core import (
     _prompt_change_thumbnail,
     _prompt_reset_thumbnail,
     _resolve_font_family,
+    load_layout_settings,
     project_thumbnail_path,
     project_thumbnail_pixmap,
     reveal_in_file_manager,
@@ -67,10 +73,150 @@ if TYPE_CHECKING:
 # Liste avec glisser-deposer de vrais fichiers
 # ==========================================================================
 
+def item_order_key(directory: Path, path: Path) -> str:
+    """Cle d'une entree dans l'ordre enregistre (`item_order` de .pipeline_layout.json) : son nom si
+    elle est dans `directory`, son chemin complet sinon (raccourci, dossier aplati)."""
+    return path.name if path.parent == directory else str(path)
+
+
+class _ReorderOverlay(QWidget):
+    """Retour visuel du deplacement d'un element de la colonne Type (voir FileListWidget) : la ligne
+    tiree suit le curseur (glissement vertical, translucide), sa place d'origine est estompee, et
+    chaque emplacement possible est marque, le plus proche en surbrillance. Pose sur la LISTE (pas
+    sur son viewport, que le defilement decale), transparent a la souris."""
+
+    def __init__(self, view: QListWidget, row: int):
+        super().__init__(view)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.view, self.row = view, row
+        self.setGeometry(view.viewport().geometry())
+        rect = view.visualItemRect(view.item(row))
+        self._pixmap = view.viewport().grab(rect)
+        self._ghost_y = rect.top()
+        self._grab_dy = 0
+        self.target: int | None = None      # emplacement vise (indice d'insertion), None = ne bouge pas
+        self.show()
+        self.raise_()
+
+    def slots(self) -> list[tuple[int, int]]:
+        """(indice d'insertion, y) de chaque emplacement QUI DEPLACE l'element (pas ceux autour de
+        lui), y au milieu de l'ecart entre deux lignes, en coordonnees du viewport."""
+        view, count = self.view, self.view.count()
+        out = []
+        for index in range(count + 1):
+            if index in (self.row, self.row + 1):
+                continue
+            if index < count:
+                top = view.visualItemRect(view.item(index)).top()
+                above = view.visualItemRect(view.item(index - 1)).bottom() + 1 if index else top
+                out.append((index, (top + above) // 2))
+            else:
+                out.append((index, view.visualItemRect(view.item(count - 1)).bottom() + 1))
+        return out
+
+    def begin(self, press_y: int):
+        self._grab_dy = press_y - self.view.visualItemRect(self.view.item(self.row)).top()
+
+    def follow(self, y: int):
+        """Le curseur est a `y` (viewport) : deplace la ligne tiree, choisit l'emplacement le plus
+        proche de son CENTRE (ou aucun si sa place d'origine est plus proche)."""
+        self._ghost_y = y - self._grab_dy
+        center = self._ghost_y + self._pixmap.height() / self._pixmap.devicePixelRatio() / 2
+        own = self.view.visualItemRect(self.view.item(self.row))
+        best, best_dist = None, abs(center - own.center().y())
+        for index, slot_y in self.slots():
+            if abs(center - slot_y) < best_dist:
+                best, best_dist = index, abs(center - slot_y)
+        self.target = best
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        own = self.view.visualItemRect(self.view.item(self.row))
+        dim = QColor(C["window"])
+        dim.setAlpha(170)
+        painter.fillRect(own, dim)                                    # place d'origine estompee
+        accent = QColor(C["accent"])
+        size = self._pixmap.size() / self._pixmap.devicePixelRatio()
+        ghost = QRect(QPoint(own.left(), int(self._ghost_y)), size)
+        painter.setOpacity(DRAG_GHOST_OPACITY)              # element tire a 75 % (tout deplacement de l'appli)
+        painter.fillRect(ghost, QColor(C["btn"]))
+        painter.drawPixmap(ghost.topLeft(), self._pixmap)
+        painter.setOpacity(1.0)
+        painter.setPen(QPen(accent, 1))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(ghost.adjusted(0, 0, -1, -1))
+        # UN SEUL emplacement montre : le vise (demande de l'utilisateur, pour tout deplacement de
+        # l'appli), par-dessus la ligne tiree pour rester visible meme quand elle le couvre.
+        left, right = own.left() + 6, own.right() - 6
+        for index, y in self.slots():
+            if index != self.target:
+                continue
+            painter.setPen(QPen(accent, 3, Qt.SolidLine, Qt.RoundCap))
+            painter.drawLine(left, y, right, y)
+            painter.setBrush(accent)
+            painter.drawEllipse(QPoint(left, y), 3, 3)
+            painter.drawEllipse(QPoint(right, y), 3, 3)
+        painter.end()
+
+
+class _DropPreview(QWidget):
+    """Apercu EN DIRECT de l'emplacement d'un fichier / dossier glisse d'une colonne a l'autre (demande de
+    l'utilisateur) : dossier vise en surbrillance (l'element ira DEDANS), sinon UN SEUL emplacement, celui
+    qu'il occupera dans la colonne (meme trace que les deplacements, voir _ReorderOverlay). Pose sur la
+    liste, transparent a la souris."""
+
+    def __init__(self, view: QListWidget):
+        super().__init__(view)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.view = view
+        self.folder_row: int | None = None      # dossier vise
+        self.slot_y: int | None = None          # emplacement dans la colonne (y du viewport)
+        self.setGeometry(view.viewport().geometry())
+        self.show()
+        self.raise_()
+
+    def set_target(self, folder_row: int | None, slot_y: int | None):
+        if (folder_row, slot_y) != (self.folder_row, self.slot_y):
+            self.folder_row, self.slot_y = folder_row, slot_y
+            self.setGeometry(self.view.viewport().geometry())
+            self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        accent = QColor(C["accent"])
+        glow = QColor(accent)
+        glow.setAlpha(60)
+        if self.folder_row is not None:
+            rect = self.view.visualItemRect(self.view.item(self.folder_row)).adjusted(2, 1, -2, -1)
+            painter.setPen(QPen(accent, 2))
+            painter.setBrush(glow)
+            painter.drawRoundedRect(rect, 4, 4)
+        elif self.slot_y is not None:
+            y = max(2, min(self.height() - 2, self.slot_y))
+            left, right = 6, self.width() - 6
+            painter.fillRect(QRect(left, y - 6, right - left, 12), glow)
+            painter.setPen(QPen(accent, 3, Qt.SolidLine, Qt.RoundCap))
+            painter.drawLine(left, y, right, y)
+            painter.setBrush(accent)
+            painter.drawEllipse(QPoint(left, y), 3, 3)
+            painter.drawEllipse(QPoint(right, y), 3, 3)
+        painter.end()
+
+
 class FileListWidget(QListWidget):
     """QListWidget dont le glisser-deposer manipule des fichiers reels sur
     le disque : entre colonnes de l'app, mais aussi avec l'explorateur
-    Windows (et inversement)."""
+    Windows (et inversement).
+
+    Exception : dans toute colonne (reglage Colonnes > « Permettre le replacement des dossiers »),
+    Ctrl + tirer un element le DEPLACE dans la liste (ordre enregistre dans le .pipeline_layout.json du
+    dossier, `item_order` ; sans touche = glisser de fichiers, seul deplacement sans Ctrl) au lieu de lancer le glisser de fichiers
+    (qui, lache sur un autre dossier, deplacait reellement le dossier sur le disque). Geste suivi a
+    la main, comme le glisser d'entete du groupe IN/OVER/OUT (le glisser natif est peu fiable sur
+    cette fenetre sans bordure)."""
 
     def __init__(self, column: "Column", parent=None):
         super().__init__(parent)
@@ -80,6 +226,73 @@ class FileListWidget(QListWidget):
         self.setDragDropMode(QAbstractItemView.DragDrop)
         self.setDefaultDropAction(Qt.MoveAction)
         self._press_on_current = None
+        self._reorder_press: tuple[QPoint, int] | None = None     # (point d'appui, ligne)
+        self._reorder: _ReorderOverlay | None = None
+        self._drag_press: QPoint | None = None                   # point d'appui (image du curseur)
+        self._drop_preview: _DropPreview | None = None
+        self._drop_cache: dict = {}
+        self.setDropIndicatorShown(False)                         # un seul retour : _DropPreview
+
+    def indexAt(self, point):
+        # Le vide qui pousse les lignes « au bas de la colonne » (ROLE_BOTTOM_GAP, en haut de la 1re
+        # d'entre elles) est un espace VIDE de la colonne : ni clic, ni survol, ni menu de ligne.
+        index = super().indexAt(point)
+        if index.isValid():
+            gap = int(index.data(ROLE_BOTTOM_GAP) or 0)
+            if gap and point.y() < self.visualRect(index).top() + gap:
+                return QModelIndex()
+        return index
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if getattr(self.column, "list", None) is self:
+            self.column.sync_bottom_gap()
+
+    def reorderable(self) -> bool:
+        """Toutes les colonnes se reordonnent a la main (Ctrl + glisser), sauf si Colonnes > « Permettre le
+        replacement des dossiers » est coupe. Sans touche, tirer lance le glisser de fichiers habituel."""
+        return bool((ui_state.APPLIED_SETTINGS or {}).get("folder_reorder_enabled", True))
+
+    def mouseMoveEvent(self, event):
+        if self._reorder_press is not None and event.buttons() & Qt.LeftButton:
+            pos = event.position().toPoint()
+            if self._reorder is None:
+                start, row = self._reorder_press
+                if (pos - start).manhattanLength() < QApplication.startDragDistance() or self.count() < 2:
+                    return              # rien a Qt : il lancerait le glisser de fichiers
+                self._reorder = _ReorderOverlay(self, row)
+                self._reorder.begin(start.y())
+                self.viewport().setCursor(Qt.ClosedHandCursor)
+            self._autoscroll(pos.y())
+            self._reorder.follow(pos.y())
+            return
+        super().mouseMoveEvent(event)
+
+    def _autoscroll(self, y: int):
+        bar, margin = self.verticalScrollBar(), 18
+        if y < margin:
+            bar.setValue(bar.value() - bar.singleStep())
+        elif y > self.viewport().height() - margin:
+            bar.setValue(bar.value() + bar.singleStep())
+
+    def keyPressEvent(self, event):
+        if self._reorder is not None and event.key() == Qt.Key_Escape:
+            self._end_reorder(apply=False)
+            return
+        super().keyPressEvent(event)
+
+    def _end_reorder(self, apply: bool):
+        overlay, self._reorder, self._reorder_press = self._reorder, None, None
+        self.viewport().unsetCursor()
+        if overlay is None:
+            return
+        row, target = overlay.row, overlay.target
+        overlay.deleteLater()
+        if not apply or target is None:
+            return
+        paths = [Path(self.item(i).data(ROLE_PATH)) for i in range(self.count())]
+        paths.insert(target if target < row else target - 1, paths.pop(row))
+        self.column.save_item_order(paths)
 
     # Qt donne le focus a la 1re ligne quand une liste SANS ligne courante
     # recoit le focus (fermeture du menu contextuel, ouverture/fermeture de
@@ -105,10 +318,25 @@ class FileListWidget(QListWidget):
     def mousePressEvent(self, event):
         item = self.itemAt(event.position().toPoint())
         plain_left = event.button() == Qt.LeftButton and event.modifiers() == Qt.NoModifier
+        ctrl_left = event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier
         self._press_on_current = item if (plain_left and item is not None and item is self.currentItem()) else None
+        # Replacer une ligne = Ctrl + glisser (demande de l'utilisateur, pour tout deplacement de l'appli) ;
+        # glisser sans touche = glisser de fichiers. Ctrl + clic ne touche pas a la selection.
+        self._reorder_press = (event.position().toPoint(), self.row(item)) \
+            if ctrl_left and item is not None and self.reorderable() else None
+        if self._reorder_press is not None:
+            event.accept()
+            return
+        self._drag_press = event.position().toPoint() if event.button() == Qt.LeftButton else None
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if self._reorder is not None and event.button() == Qt.LeftButton:
+            self._press_on_current = None
+            self._end_reorder(apply=True)
+            super().mouseReleaseEvent(event)
+            return
+        self._reorder_press = None
         pressed, self._press_on_current = self._press_on_current, None
         super().mouseReleaseEvent(event)
         if (pressed is not None and event.button() == Qt.LeftButton
@@ -131,22 +359,113 @@ class FileListWidget(QListWidget):
             return
         drag = QDrag(self)
         drag.setMimeData(self.mimeData(items))
+        # La LIGNE en curseur (demande de l'utilisateur), a l'opacite des elements tires, tenue la ou on l'a prise.
+        rect = self.visualItemRect(items[0])
+        if rect.isValid():
+            drag.setPixmap(self.drag_pixmap(items[0]))
+            press = self._drag_press if self._drag_press is not None else rect.center()
+            drag.setHotSpot(QPoint(max(0, min(rect.width() - 1, press.x() - rect.left())),
+                                   max(0, min(rect.height() - 1, press.y() - rect.top()))))
         drag.exec(Qt.CopyAction | Qt.MoveAction, Qt.MoveAction)
         self.column.refresh_all()
 
+    def drag_pixmap(self, item) -> QPixmap:
+        """Image de la ligne `item` a l'opacite des elements tires (DRAG_GHOST_OPACITY)."""
+        source = self.viewport().grab(self.visualItemRect(item))
+        pixmap = QPixmap(source.size())
+        pixmap.setDevicePixelRatio(source.devicePixelRatio())
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setOpacity(DRAG_GHOST_OPACITY)
+        painter.drawPixmap(0, 0, source)
+        painter.end()
+        return pixmap
+
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
+            self._drop_cache = {}
             event.acceptProposedAction()
+            self._update_drop_preview(event.position().toPoint(), list(event.mimeData().urls()))
         else:
             event.ignore()
 
     def dragMoveEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
+            self._update_drop_preview(event.position().toPoint(), list(event.mimeData().urls()))
         else:
             event.ignore()
 
+    def dragLeaveEvent(self, event):
+        self._clear_drop_preview()
+        super().dragLeaveEvent(event)
+
+    def _clear_drop_preview(self):
+        if self._drop_preview is not None:
+            self._drop_preview.deleteLater()
+            self._drop_preview = None
+
+    def _drop_target(self, pos: QPoint) -> Path:
+        """Dossier ou irait un depot a `pos` (viewport) : le dossier sous le curseur, sinon celui de la colonne."""
+        item = self.itemAt(pos)
+        if item is not None and item.data(ROLE_ISDIR):
+            return Path(item.data(ROLE_PATH))
+        return self.column.directory
+
+    def _cached_sources(self, urls, dest_dir: Path) -> list:
+        key = str(dest_dir)
+        if key not in self._drop_cache:                  # une fois par dossier vise et par glisser (stat)
+            self._drop_cache[key] = self.drop_sources(urls, dest_dir)
+        return self._drop_cache[key]
+
+    def _update_drop_preview(self, pos: QPoint, urls: list):
+        """Apercu en direct de l'emplacement (voir _DropPreview) : rien quand le depot ne ferait rien."""
+        dest = self._drop_target(pos)
+        if dest != self.column.directory and self._cached_sources(urls, dest):
+            folder_row, slot_y = self.row(self.itemAt(pos)), None
+        else:
+            sources = self._cached_sources(urls, self.column.directory)
+            if not sources:
+                self._clear_drop_preview()
+                return
+            folder_row, slot_y = None, self._predicted_slot_y(sources[0])
+        if self._drop_preview is None:
+            self._drop_preview = _DropPreview(self)
+        self._drop_preview.set_target(folder_row, slot_y)
+
+    def predicted_row(self, src: Path) -> int:
+        """Rang qu'aurait `src` dans cette colonne une fois depose (tri de Column.refresh : dossiers puis
+        fichiers, par nom ; un element inconnu de l'ordre choisi a la main va apres ceux qui y sont, dans
+        l'ordre par defaut ; jamais apres les lignes positionnees au bas de la colonne)."""
+        def key(path: Path, is_dir: bool):
+            return (not is_dir, path.name.lower())
+        new_key = key(src, src.is_dir())
+        order = load_layout_settings(self.column.directory).get("item_order") or []
+        ranked = set(order) if isinstance(order, list) else set()
+        count = self.count()
+        for i in range(count):
+            it = self.item(i)
+            if it.data(ROLE_BOTTOM_GAP):
+                return i
+            path = Path(it.data(ROLE_PATH) or "")
+            if item_order_key(self.column.directory, path) in ranked:
+                continue
+            if key(path, bool(it.data(ROLE_ISDIR))) > new_key:
+                return i
+        return count
+
+    def _predicted_slot_y(self, src: Path) -> int:
+        row, count = self.predicted_row(src), self.count()
+        if count == 0:
+            return 2
+        if row >= count:
+            return self.visualItemRect(self.item(count - 1)).bottom() + 1
+        top = self.visualItemRect(self.item(row)).top()
+        above = self.visualItemRect(self.item(row - 1)).bottom() + 1 if row else top
+        return (top + above) // 2
+
     def dropEvent(self, event):
+        self._clear_drop_preview()
         mime = event.mimeData()
         if not mime.hasUrls():
             event.ignore()
@@ -162,31 +481,44 @@ class FileListWidget(QListWidget):
         else:
             action = Qt.CopyAction
 
-        target_item = self.itemAt(event.position().toPoint())
-        dest_dir = self.column.directory
-        if target_item and target_item.data(ROLE_ISDIR):
-            dest_dir = Path(target_item.data(ROLE_PATH))
+        dest_dir = self._drop_target(event.position().toPoint())
+        if dest_dir != self.column.directory and not self._cached_sources(list(mime.urls()), dest_dir):
+            dest_dir = self.column.directory           # dossier vise sans effet (lui-meme...) : la colonne
 
-        last_dest = self.apply_drop(mime.urls(), action, dest_dir)
-
-        event.setDropAction(action)
+        # Confirmation (demande de l'utilisateur) APRES le depot, hors de l'operation de glisser du
+        # systeme ; la source apprend toujours une COPIE : glisse depuis l'explorateur Windows en
+        # « deplacer », c'est lui qui effacerait les originaux — meme si on annule ensuite. Le
+        # deplacement est fait ici, seulement une fois confirme.
+        urls = list(mime.urls())
+        event.setDropAction(Qt.CopyAction)
         event.accept()
+        QTimer.singleShot(0, lambda: self.confirm_drop(urls, action, dest_dir))
+
+    def confirm_drop(self, urls, action, dest_dir: Path) -> Path | None:
+        """Fenetre de confirmation (settings_dialogs.confirm) puis copie / deplacement ; rien a faire
+        (elements deja dans ce dossier...) : pas de fenetre. Retourne le dernier chemin depose."""
+        from settings_dialogs import confirm
+        sources = self.drop_sources(urls, dest_dir)
+        if not sources:
+            return None
+        verb = "Déplacer" if action == Qt.MoveAction else "Copier"
+        count = f"{len(sources)} éléments" if len(sources) > 1 else "cet élément"
+        if not confirm(self, verb, dest_dir.name, f"{verb} {count} dans le dossier :\n{dest_dir}",
+                       [s.name for s in sources], verb):
+            return None
+        last_dest = self.apply_drop(urls, action, dest_dir)
         if last_dest:
             for i in range(self.count()):
                 it = self.item(i)
                 if it.data(ROLE_PATH) == str(last_dest):
                     self.setCurrentItem(it)
                     break
+        return last_dest
 
-    def apply_drop(self, urls, action, dest_dir: Path | None = None) -> Path | None:
-        """Copie ou deplace les fichiers/dossiers de `urls` dans `dest_dir`
-        (par defaut le dossier de cette colonne ; peut aussi etre un
-        sous-dossier vise directement, cf. dropEvent). Retourne le dernier
-        chemin depose (ou None). Separe de dropEvent() pour rester testable
-        sans QDropEvent reel."""
-        dest_dir = dest_dir if dest_dir is not None else self.column.directory
-        errors = []
-        last_dest = None
+    def drop_sources(self, urls, dest_dir: Path) -> list:
+        """Fichiers / dossiers de `urls` reellement a copier / deplacer dans `dest_dir` (pas ceux qui y
+        sont deja, ni un dossier depose dans lui-meme ou un de ses sous-dossiers)."""
+        out = []
         for url in urls:
             if not url.isLocalFile():
                 continue
@@ -206,6 +538,19 @@ class FileListWidget(QListWidget):
                         pass
             except OSError:
                 continue
+            out.append(src)
+        return out
+
+    def apply_drop(self, urls, action, dest_dir: Path | None = None) -> Path | None:
+        """Copie ou deplace les fichiers/dossiers de `urls` dans `dest_dir`
+        (par defaut le dossier de cette colonne ; peut aussi etre un
+        sous-dossier vise directement, cf. dropEvent). Retourne le dernier
+        chemin depose (ou None). Separe de dropEvent() pour rester testable
+        sans QDropEvent reel. Sans confirmation : voir confirm_drop."""
+        dest_dir = dest_dir if dest_dir is not None else self.column.directory
+        errors = []
+        last_dest = None
+        for src in self.drop_sources(urls, dest_dir):
             dest = self.column._unique_dest_path(src, dest_dir)
             try:
                 if action == Qt.MoveAction:
@@ -274,6 +619,13 @@ class _SquarePreviewImage(QLabel):
     def set_source_pixmap(self, pixmap: QPixmap):
         self._raw = pixmap
         self._refresh()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Focus > Image > Ombres : l'ombre deborde de l'image (dans le padding du bloc), peinte par une
+        # sous-couche voisine (settings_widgets.ShadowUnderlay).
+        attach_shadow(self, lambda: ui_state.PREVIEW_IMAGE_SHADOW,
+                      lambda: {k: scaled(v, 0) for k, v in _radius_dict(ui_state.PREVIEW_IMAGE_RADIUS).items()})
 
     def set_side(self, side: int):
         """Alias retro-compatible de set_rect(side, side) — carre."""
@@ -747,7 +1099,7 @@ class _PreviewBlock(QWidget):
         PROJET, exactement celle affichee ici, voir
         project_thumbnail_pixmap) + Copier/Copier le chemin."""
         path = self._path
-        menu = QMenu(self)
+        menu = Menu(self)
         menu.setFont(font(11, 400))
         act_rename = menu.addAction("Renommer") if self._source_column is not None else None
         act_reveal = menu.addAction("Afficher dans l'explorateur")
@@ -759,8 +1111,13 @@ class _PreviewBlock(QWidget):
         menu.addSeparator()
         act_copy_file = menu.addAction("Copier")
         act_copy_path = menu.addAction("Copier le chemin")
+        # « Supprimer » : comme une ligne (confirmation, corbeille), par la vraie colonne source.
+        act_delete = menu.addAction("Supprimer") if self._source_column is not None else None
         chosen = menu.exec(global_pos)
-        if act_rename is not None and chosen is act_rename:
+        if act_delete is not None and chosen is act_delete:
+            source = self._source_column
+            QTimer.singleShot(0, lambda p=path, c=source: c.delete_path(p))
+        elif act_rename is not None and chosen is act_rename:
             self._rename()
         elif chosen is act_reveal:
             reveal_in_file_manager(path)

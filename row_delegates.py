@@ -42,6 +42,11 @@ from browser_core import (
     ROLE_ISDIR,
     ROLE_IS_SHORTCUT,
     ROLE_PATH,
+    ROLE_SPACE_ABOVE,
+    ROLE_SPACE_BELOW,
+    ROLE_BOTTOM_GAP,
+    ROLE_TITLE_ABOVE,
+    paint_item_title,
     ROLE_SOURCE_LABEL,
     ROLE_SOURCE_STEP,
     _paint_row_border,
@@ -56,9 +61,15 @@ from browser_core import (
     col_spacing,
     load_project_columns,
     project_step_count,
+    has_project_thumbnail,
     project_thumbnail_path,
     project_thumbnail_pixmap,
 )
+
+
+# Place (repere du viewport de la liste) ou _paint_unified_row vient de poser l'apercu d'une ligne,
+# relevee par RowDelegate.paint (Column._preview_slots) : depart du vol vers la visionneuse.
+_LAST_PREVIEW_SLOT: list = [None]
 
 
 class RowDelegate(QStyledItemDelegate):
@@ -114,7 +125,10 @@ class RowDelegate(QStyledItemDelegate):
         # l'utilisateur, "reformate toutes les autres colonnes exactement
         # de la meme maniere que la colonne type".
         title = self.column.style_title
-        return QSize(self.column.width(), self.column.effective_row_height() + col_spacing(title))
+        # Espaces au-dessus / en dessous choisis par clic droit.
+        space = (int(index.data(ROLE_SPACE_ABOVE) or 0) + int(index.data(ROLE_SPACE_BELOW) or 0)
+                 + int(index.data(ROLE_BOTTOM_GAP) or 0))      # vide qui pousse en bas (« bas de la colonne »)
+        return QSize(self.column.width(), self.column.effective_row_height() + col_spacing(title) + space)
 
     def paint(self, painter: QPainter, option, index):
         # Rendu UNIQUE, PARTAGE par toutes les colonnes (voir
@@ -128,7 +142,12 @@ class RowDelegate(QStyledItemDelegate):
         # les".
         title = self.column.style_title
         spacing = col_spacing(title)
-        rect = option.rect.adjusted(0, 0, 0, -spacing)
+        gap = int(index.data(ROLE_BOTTOM_GAP) or 0)
+        space_above = int(index.data(ROLE_SPACE_ABOVE) or 0)
+        rect = option.rect.adjusted(0, gap + space_above, 0, -spacing - int(index.data(ROLE_SPACE_BELOW) or 0))
+        # Titre pose dans l'espace au-dessus (clic droit > « Ajouter un titre au-dessus »).
+        paint_item_title(painter, QRect(option.rect.x(), option.rect.y() + gap, option.rect.width(), space_above),
+                         index.data(ROLE_TITLE_ABOVE))
         is_dir = bool(index.data(ROLE_ISDIR))
         path_str = index.data(ROLE_PATH)
 
@@ -166,7 +185,7 @@ class RowDelegate(QStyledItemDelegate):
         # path existait bien sur le disque, mais RowDelegate.paint ne le
         # consultait que sur "Type").
         preview_pixmap = None
-        if path_str and is_dir and project_thumbnail_path(Path(path_str)).is_file():
+        if path_str and is_dir and has_project_thumbnail(Path(path_str)):
             preview_pixmap = project_thumbnail_pixmap(Path(path_str))
         elif title != "Type":
             preview_pixmap = self._image_pixmap(index)
@@ -179,6 +198,7 @@ class RowDelegate(QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
+        _LAST_PREVIEW_SLOT[0] = None
         _paint_unified_row(
             painter, rect, option, column_style_for(title),
             index.data(Qt.DisplayRole), icon_pixmap, preview_pixmap, row_font, row_color,
@@ -189,8 +209,35 @@ class RowDelegate(QStyledItemDelegate):
             icon_size_override=self.column._icon_size_override,
             icon_padding_left_override=self.column._icon_padding_left_override,
             text_padding_left_override=self.column._text_padding_left_override,
+            is_file=bool(path_str) and not is_dir,
         )
         painter.restore()
+        if path_str:
+            # Place de l'apercu de la ligne : depart du vol vers la visionneuse (Column.preview_source).
+            slots = getattr(self.column, "_preview_slots", None)
+            if slots is None:
+                slots = self.column._preview_slots = {}
+            if _LAST_PREVIEW_SLOT[0] is not None and preview_pixmap is not None:
+                slots[path_str] = (_LAST_PREVIEW_SLOT[0], preview_pixmap)
+            else:
+                slots.pop(path_str, None)
+
+def _draw_row_name(painter: QPainter, rect: QRect, name: str, shown: str, color: str, is_file: bool):
+    """Nom d'une ligne (deja elide : `shown`) ; fichier avec une extension et Colonnes > Lignes > Texte >
+    « Couleur des extensions » allumee : l'extension (« .jpg ») dans sa couleur, juste apres le nom."""
+    ext_color = ui_state.ITEM_EXT_COLOR
+    base, dot, ext = name.rpartition(".")
+    suffix = dot + ext
+    if not (ext_color and is_file and base and ext and shown.endswith(suffix) and len(shown) > len(suffix)):
+        painter.drawText(rect, Qt.AlignLeft | Qt.AlignVCenter, shown)
+        return
+    head = shown[:-len(suffix)]
+    painter.drawText(rect, Qt.AlignLeft | Qt.AlignVCenter, head)
+    advance = painter.fontMetrics().horizontalAdvance(head)
+    painter.setPen(QColor(ext_color))
+    painter.drawText(rect.adjusted(advance, 0, 0, 0), Qt.AlignLeft | Qt.AlignVCenter, suffix)
+    painter.setPen(QColor(color))
+
 
 def _paint_unified_row(
     painter: QPainter, rect, option, style: dict, name: str,
@@ -200,6 +247,7 @@ def _paint_unified_row(
     icon_visible_override: bool | None = None, preview_visible_override: bool | None = None,
     icon_size_override: int | None = None, icon_padding_left_override: int | None = None,
     text_padding_left_override: int | None = None,
+    is_file: bool = False,
 ):
     """Ligne UNIQUE, PARTAGEE par toutes les colonnes (Type/Projets/Sous-
     projet/Logiciels/Contenu) : icone toggle optionnelle, icone de
@@ -239,7 +287,8 @@ def _paint_unified_row(
     # teinte — voir la remarque de l'utilisateur, "je veux que la
     # couleur sous l'entete/sous les textes non selectionnes soient
     # Skin - niveau 2".
-    painter.fillRect(rect, QColor(C["void"]))
+    # Reglable : Colonnes > Lignes > Couleur de fond (item_row_bg_color, "@skinN2" = C["void"]).
+    painter.fillRect(rect, QColor(resolve_color_ref(s.get("item_row_bg_color"), C["void"])))
 
     # Filet horizontal ENTRE les lignes — AVANT la selection (pas apres) :
     # voir sa docstring.
@@ -264,13 +313,15 @@ def _paint_unified_row(
     has_icon = icon_pixmap is not None and icon_visible
     has_preview = preview_pixmap is not None and preview_visible
 
+    # resolve_color_ref partout : toutes les couleurs de la fenetre de reglages v2 peuvent stocker une
+    # reference "@slot" (choix app/sys), pas seulement un hex direct.
     if selected:
         state = "focus" if active else "unfocus"
-        sel_color = s.get("item_selection_focus_color", C["accent"]) if active \
-            else s.get("item_selection_unfocus_color", C["sel_idle"])
+        sel_color = resolve_color_ref(s.get("item_selection_focus_color"), C["accent"]) if active \
+            else resolve_color_ref(s.get("item_selection_unfocus_color"), C["sel_idle"])
     elif hovered:
         state = "hover"
-        sel_color = s.get("item_hover_color", C["hover"])
+        sel_color = resolve_color_ref(s.get("item_hover_color"), C["hover"])
     else:
         # Boite "non selectionnee" (voir DEFAULT_SETTINGS.
         # item_idle_color) : MEME forme (padding/bordure/rayon) que les
@@ -450,6 +501,10 @@ def _paint_unified_row(
         # jamais lie a la presence/absence d'une icone a gauche.
         preview_img_x = (sel_rect.right() - img_width + 1) if sel_rect.width() > 0 else (rect.right() - img_width)
         _paint_row_image(painter, QRect(preview_img_x, img_y, img_width, img_size), preview_pixmap, s)
+        slot_pad = s.get("item_image_padding") or {}
+        _LAST_PREVIEW_SLOT[0] = QRect(preview_img_x, img_y, img_width, img_size).adjusted(
+            max(0, int(slot_pad.get("left", 0))), max(0, int(slot_pad.get("top", 0))),
+            -max(0, int(slot_pad.get("right", 0))), -max(0, int(slot_pad.get("bottom", 0))))
         img_left_pad = max(0, int(img_pad.get("left", 0)))
         text_right_limit = preview_img_x + img_left_pad - text_padding
 
@@ -480,7 +535,7 @@ def _paint_unified_row(
         painter.setPen(QColor(final_text_color))
         name_width = max(0, text_rect.width() - ann_width)
         elided_name = painter.fontMetrics().elidedText(name, Qt.ElideMiddle, name_width)
-        painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, elided_name)
+        _draw_row_name(painter, text_rect, name, elided_name, final_text_color, is_file)
 
         name_actual_width = painter.fontMetrics().horizontalAdvance(elided_name)
         ann_rect = QRect(
@@ -501,7 +556,7 @@ def _paint_unified_row(
         painter.setFont(text_font)
         painter.setPen(QColor(final_text_color))
         elided = painter.fontMetrics().elidedText(name, Qt.ElideMiddle, max(0, text_rect.width()))
-        painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, elided)
+        _draw_row_name(painter, text_rect, name, elided, final_text_color, is_file)
 
     if badge_rect is not None:
         # Style REGLABLE (voir apply_all_settings/STEP_BADGE_STYLE, Settings
@@ -558,7 +613,10 @@ class ProjectTileDelegate(QStyledItemDelegate):
         # L'espacement est ajoute ici, retranche au dessin (voir paint) :
         # voir la remarque sur QListView.setSpacing dans Column.__init__.
         title = self.column.style_title
-        return QSize(self.column.width(), self.column.effective_row_height() + col_spacing(title))
+        # Espaces au-dessus / en dessous choisis par clic droit.
+        space = (int(index.data(ROLE_SPACE_ABOVE) or 0) + int(index.data(ROLE_SPACE_BELOW) or 0)
+                 + int(index.data(ROLE_BOTTOM_GAP) or 0))      # vide qui pousse en bas (« bas de la colonne »)
+        return QSize(self.column.width(), self.column.effective_row_height() + col_spacing(title) + space)
 
     def paint(self, painter: QPainter, option, index):
         # Rendu UNIQUE, PARTAGE avec RowDelegate (voir _paint_unified_row) —
@@ -574,7 +632,11 @@ class ProjectTileDelegate(QStyledItemDelegate):
         painter.setRenderHint(QPainter.TextAntialiasing, True)
         path = Path(index.data(ROLE_PATH))
         title = self.column.style_title
-        rect = option.rect.adjusted(0, 0, 0, -col_spacing(title))
+        gap = int(index.data(ROLE_BOTTOM_GAP) or 0)
+        space_above = int(index.data(ROLE_SPACE_ABOVE) or 0)
+        rect = option.rect.adjusted(0, gap + space_above, 0, -col_spacing(title) - int(index.data(ROLE_SPACE_BELOW) or 0))
+        paint_item_title(painter, QRect(option.rect.x(), option.rect.y() + gap, option.rect.width(), space_above),
+                         index.data(ROLE_TITLE_ABOVE))
         step_badge = None
         if title == "Projets" and bool(index.data(ROLE_ISDIR)):
             step_badge = project_step_count(load_project_columns(path))
@@ -602,6 +664,7 @@ class ProjectTileDelegate(QStyledItemDelegate):
             icon_size_override=self.column._icon_size_override,
             icon_padding_left_override=self.column._icon_padding_left_override,
             text_padding_left_override=self.column._text_padding_left_override,
+            is_file=not is_dir_entry,
         )
         painter.restore()
 

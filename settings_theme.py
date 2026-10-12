@@ -49,7 +49,8 @@ TEXT_ROLES: dict[str, tuple[int, int, str, bool, float]] = {
     "dash": (10, 400, "dash", True, 0.0),                 # tiret de cellule vide
     # --- Etiquettes ---
     "tag": (9, 600, "label_dim", False, 0.7),             # etiquette en capitales (« PRESET »...)
-    "tag_accent": (9, 600, "toggle_on_fg", False, 0.7),   # etiquette en capitales mise en avant
+    "tag_accent": (9, 600, "toggle_on_fg", False, 0.7),
+    "width_badge": (9, 600, "accent_fg", True, 0.0),      # encart « N px » pendant un redimensionnement   # etiquette en capitales mise en avant
     "side_letter": (9, 600, "label_dim", False, 0.5),     # lettre d'un cote ou d'un coin (H, B, G, D...)
     "hex_tag": (9, 400, "label_dim", True, 0.0),          # « HEX »
     "edge_hint": (9, 400, "edge_hint", True, 0.0),        # libelle au centre du schema des bordures
@@ -70,11 +71,50 @@ def _text_color(role: str) -> str:
 
 def _set_text_role(label: QWidget, role: str, color: str | None = None) -> QWidget:
     """Applique police + couleur du role. `color` remplace la couleur du role
-    (cas dynamique, ex. libelle grise quand son toggle est coupe)."""
-    label.setFont(_text_font(role))
-    label.setStyleSheet(f"color: {color or _text_color(role)}; background: transparent;")
+    (cas dynamique, ex. libelle grise quand son toggle est coupe). Dans une cellule / un tableau
+    qui a sa propre police (« Override settings », `_text_look`), celle-ci passe par-dessus."""
+    font, text_color = _text_font(role), color or _text_color(role)
+    look = text_look_of(label)
+    if look:
+        font = text_look_font(font, look)
+        if color is None and look.get("color"):
+            text_color = look["color"]
+    label.setFont(font)
+    label.setStyleSheet(f"color: {text_color}; background: transparent;")
     label.setProperty("textRole", role)
     return label
+
+
+def text_look_of(widget: QWidget) -> dict | None:
+    """Police propre la plus proche (`_text_look` d'une cellule ou d'un tableau, voir
+    settings_layout.apply_part_looks) au-dessus de `widget`."""
+    node = widget.parentWidget()
+    while node is not None:
+        look = getattr(node, "_text_look", None)
+        if look:
+            return look
+        if getattr(node, "_text_look_barrier", False):    # entete d'un tableau : pas la police du tableau
+            return None
+        node = node.parentWidget()
+    return None
+
+
+def text_look_font(font: QFont, look: dict) -> QFont:
+    """`font` avec seulement ce que `look` change (police, gras, italique, hauteur en px, lissage)."""
+    out = QFont(font)
+    if look.get("family"):
+        out.setFamily(look["family"])
+    if "bold" in look:
+        out.setWeight(QFont.DemiBold if look["bold"] else QFont.Normal)
+    if "italic" in look:
+        out.setItalic(bool(look["italic"]))
+    if look.get("size"):
+        out.setPixelSize(max(4, int(look["size"])))
+    if look.get("smoothing") == "none":
+        out.setStyleStrategy(QFont.NoAntialias)
+    elif look.get("smoothing") == "previous":
+        out.setHintingPreference(QFont.PreferDefaultHinting)
+    return out
 
 
 def _text_label(text: str, role: str, parent: QWidget | None = None) -> QLabel:
