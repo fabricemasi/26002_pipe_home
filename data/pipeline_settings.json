@@ -20,7 +20,7 @@
   ],
   "application_omit_extensions": [],
   "application_omit_dir_names": [],
-  "window_radius": 12,
+  "window_radius": 0,
   "header_visible": true,
   "header_height": 26,
   "header_padding": 2,
@@ -594,15 +594,40 @@
   "extra_window_title_text_font_color": "#8d949a",
   "quick_style_positions": {
     "Filtres": [
-      902,
-      262
+      193,
+      110
+    ],
+    "Mode édition": [
+      702,
+      208
     ],
     "Override Colonne": [
-      1151,
-      0
+      132,
+      472
+    ],
+    "Override Tableau": [
+      849,
+      490
+    ],
+    "Override Texte": [
+      837,
+      326
+    ],
+    "Override Ligne": [
+      985,
+      200
+    ],
+    "Override Cellule": [
+      719,
+      370
     ]
   },
-  "viewer_button_order": [],
+  "viewer_button_order": [
+    "hide",
+    "gallery",
+    "pur:main.pur",
+    "filter"
+  ],
   "viewer_focus_image_border": {
     "top": "#989898",
     "right": "#989898",
@@ -750,15 +775,1373 @@
         "table_row": "#1b1e21"
       }
     },
-    "table:Inspecteur/Informations#0": {
-      "table_text_font_color": "#6dcdd2d6"
-    },
-    "text:PipelineBrowser:QWidget#0/QScrollArea#0/QWidget#0/QWidget#0/Column#2/_ColumnCard#0/QWidget#0/QWidget#0/QWidget#0/QLabel#0": {
-      "text_font_color": "#337ab7",
-      "text_font_size": 16
-    },
     "table:Changement de style à la volée/Filtres#0": {
       "table_inner_v_enabled": false
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\143.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\144.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\145.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\146.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\147.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\148.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\149.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\150.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\151.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\152.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\153.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\154.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\155.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\156.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\157.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\158.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\159.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\160.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\161.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\162.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\163.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\164.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\165.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\166.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\167.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\168.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\169.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\170.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\171.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\172.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\173.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\174.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\175.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\176.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\177.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\178.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\179.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\180.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\181.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\182.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\183.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\184.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\185.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\186.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\187.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\188.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\189.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\190.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\191.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\192.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\193.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\194.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\195.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\196.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\197.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\198.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\199.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\200.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\201.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\202.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\203.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\204.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\205.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\206.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\207.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\208.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\209.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\210.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\211.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\212.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\213.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\214.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\215.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\216.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\217.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\218.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\219.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\220.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\221.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\222.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\223.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\224.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\225.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\226.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\227.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\228.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\229.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\230.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\231.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\232.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\233.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\234.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\235.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\236.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\237.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\238.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\239.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\240.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\241.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\242.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\243.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\244.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\245.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\246.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\247.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\248.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\249.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\250.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\251.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\252.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\253.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\254.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\255.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\256.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\257.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\258.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\259.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\260.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\261.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\262.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\263.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\264.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\265.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\266.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\267.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\268.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\269.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\270.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\271.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\272.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\273.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\274.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\275.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\276.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\277.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\278.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\279.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\280.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\281.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\282.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\283.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\284.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\285.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\286.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\287.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\288.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\289.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\290.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\291.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\292.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\293.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\294.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\295.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\296.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\297.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\298.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\299.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\300.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\301.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\302.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\303.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\304.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\305.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\306.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\307.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\308.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\309.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\310.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\311.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\312.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\313.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\314.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\315.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\316.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\317.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\318.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\319.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\320.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\321.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\322.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\323.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\324.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\325.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\326.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\327.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\328.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\329.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\330.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\331.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\332.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\333.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\334.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\335.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\336.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\337.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\338.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\339.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\340.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\341.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\342.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\343.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\344.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\345.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\346.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\347.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\348.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\349.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\350.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\351.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\352.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\353.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\354.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\355.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\356.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\357.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\358.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\359.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\360.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\361.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\362.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\363.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\364.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\365.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\366.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\367.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\368.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\369.png": {
+      "text_font_color": "#946dcc"
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\143.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\144.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\145.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\146.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\147.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\148.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\149.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\150.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\151.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\152.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\153.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\154.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\155.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\156.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\157.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\158.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\159.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\160.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\161.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\162.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\163.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\164.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\165.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\166.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\167.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\168.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\169.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\170.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\171.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\172.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\173.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\174.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\175.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\176.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\177.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\178.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\179.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\180.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\181.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\182.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\183.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\184.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\185.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\186.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\187.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\188.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\189.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\190.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\191.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\192.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\193.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\194.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\195.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\196.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\197.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\198.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\199.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\200.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\201.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\202.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\203.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\204.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\205.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\206.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\207.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\208.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\209.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\210.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\211.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\212.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\213.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\214.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\215.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\216.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\217.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\218.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\219.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\220.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\221.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\222.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\223.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\224.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\225.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\226.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\227.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\228.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\229.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\230.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\231.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\232.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\233.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\234.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\235.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\236.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\237.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\238.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\239.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\240.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\241.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\242.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\243.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\244.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\245.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\246.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\247.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\248.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\249.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\250.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\251.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\252.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\253.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\254.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\255.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\256.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\257.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\258.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\259.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\260.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\261.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\262.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\263.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\264.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\265.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\266.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\267.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\268.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\269.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\270.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\271.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\272.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\273.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\274.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\275.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\276.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\277.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\278.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\279.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\280.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\281.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\282.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\283.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\284.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\285.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\286.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\287.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\288.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\289.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\290.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\291.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\292.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\293.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\294.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\295.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\296.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\297.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\298.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\299.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\300.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\301.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\302.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\303.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\304.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\305.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\306.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\307.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\308.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\309.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\310.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\311.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\312.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\313.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\314.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\315.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\316.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\317.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\318.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\319.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\320.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\321.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\322.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\323.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\324.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\325.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\326.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\327.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\328.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\329.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\330.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\331.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\332.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\333.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\334.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\335.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\336.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\337.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\338.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\339.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\340.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\341.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\342.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\343.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\344.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\345.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\346.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\347.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\348.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\349.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\350.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\351.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\352.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\353.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\354.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\355.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\356.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\357.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\358.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\359.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\360.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\361.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\362.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\363.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\364.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\365.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\366.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\367.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\368.png": {
+      "text_font_size": 31
+    },
+    "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\369.png": {
+      "text_font_size": 31
+    },
+    "text:PipelineBrowser:QWidget#0/QScrollArea#0/QWidget#0/QWidget#0/DetailPanel#0/_ColumnCard#0/QWidget#0/QWidget#0/QWidget#0/QLabel#1": {
+      "text_font_family": "Police code"
     }
   },
   "ui_spaces": {},
@@ -4051,7 +5434,62 @@
       }
     },
     "TITRES/Paragraphes#0": {
-      "width": 58
+      "width": 933,
+      "cols": [
+        149,
+        782
+      ],
+      "split": {
+        "r0c1": [
+          0,
+          0
+        ],
+        "r1c1": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "r2c1": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "r3c1": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "r4c1": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "r5c1": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "r6c1": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
     },
     "TITRES/Padding (titre seulement)#0": {
       "width": 1141,
@@ -4516,10 +5954,10 @@
       }
     },
     "v2:Application#0": {
-      "width": 711,
+      "width": 781,
       "cols": [
         350,
-        359
+        429
       ],
       "align": {
         "r3c1": "left,center",
@@ -4720,7 +6158,7 @@
       ],
       "split": {
         "r0c1": [
-          295,
+          0,
           0,
           0,
           0,
@@ -4733,8 +6171,31 @@
           0,
           0,
           0
+        ],
+        "r2c1": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "r3c1": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "r4c1": [
+          0,
+          0
         ]
-      }
+      },
+      "row_splits": {
+        "5": 38
+      },
+      "head_hidden": true
     },
     "Changement de style à la volée/Override Tableau#0": {
       "width": 1220,
@@ -4767,7 +6228,15 @@
           0,
           0
         ],
-        "r9c1": [
+        "r8c1": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "r10c1": [
           0,
           0,
           0,
@@ -4778,6 +6247,7 @@
       },
       "row_heights": [
         81,
+        0,
         0,
         0,
         0,
@@ -4803,147 +6273,8 @@
           0,
           0
         ],
-        "r3c1": [
+        "r2c1": [
           0,
-          0,
-          0,
-          0,
-          0
-        ],
-        "r5c1": [
-          0,
-          0,
-          0,
-          0,
-          0
-        ],
-        "r10c1": [
-          0,
-          0,
-          0,
-          0,
-          0
-        ],
-        "r11c1": [
-          0,
-          0,
-          0,
-          0,
-          0
-        ],
-        "r27c1": [
-          0,
-          0,
-          0
-        ],
-        "r28c1": [
-          0,
-          0,
-          0,
-          0,
-          0
-        ],
-        "r29c1": [
-          0,
-          0,
-          0,
-          0,
-          0
-        ],
-        "r31c1": [
-          0,
-          0,
-          0,
-          0,
-          0,
-          0,
-          0
-        ],
-        "r32c1": [
-          0,
-          0,
-          0,
-          0,
-          0
-        ],
-        "r35c1": [
-          0,
-          0,
-          0,
-          0,
-          0
-        ],
-        "r36c1": [
-          0,
-          0,
-          0,
-          0,
-          0
-        ],
-        "r37c1": [
-          0,
-          0,
-          0,
-          0,
-          0
-        ],
-        "r40c1": [
-          0,
-          0,
-          0,
-          0,
-          0
-        ],
-        "r41c1": [
-          0,
-          0,
-          0,
-          0,
-          0
-        ],
-        "r42c1": [
-          0,
-          0,
-          0,
-          0,
-          0
-        ],
-        "r45c1": [
-          0,
-          0,
-          0,
-          0,
-          0
-        ],
-        "r46c1": [
-          0,
-          0,
-          0,
-          0,
-          0
-        ],
-        "r47c1": [
-          0,
-          0,
-          0,
-          0,
-          0
-        ],
-        "r50c1": [
-          0,
-          0,
-          0,
-          0,
-          0
-        ],
-        "r51c1": [
-          0,
-          0,
-          0,
-          0,
-          0
-        ],
-        "r52c1": [
           0,
           0,
           0,
@@ -4970,6 +6301,14 @@
         "r1c1": "left,center",
         "r2c1": "left,center",
         "r3c1": "left,center"
+      },
+      "objects": {
+        "r0c0|0": [
+          0,
+          -1,
+          0,
+          0
+        ]
       }
     },
     "Changement de style à la volée/Override Ligne#0": {
@@ -5681,6 +7020,45 @@
     },
     "Fenêtres additionnelles#4": {
       "width": 58
+    },
+    "Changement de style à la volée/Mode édition#0": {
+      "width": 1082,
+      "cols": [
+        230,
+        850
+      ],
+      "split": {
+        "r0c1": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "r2c1": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "r3c1": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "r5c1": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
     }
   },
   "slider_ranges": {
@@ -5983,6 +7361,7 @@
     "row_idle": "#1b1d20",
     "hover": "#232729",
     "accent": "#ff00eb",
+    "sel_focus": "#ff00eb",
     "accent_text": "#eef2f5",
     "btn": "#282c30",
     "btn_border": "#383d42",
@@ -6720,5 +8099,48 @@
   "toggle3_icon_on": "",
   "toggle3_icon_off": "",
   "toggle3_icon_frames": [],
-  "toggle3_anim_ms": 600
+  "toggle3_anim_ms": 600,
+  "interface_move_positions": {
+    "SettingsWindowV2:|_PanelFrame#0/QStackedWidget#0/QWidget#9/_WideScrollArea#0/QWidget#0/QWidget#0/_LazyNode#11/_Section#0/QWidget#0/_TableFrame#0/_TableRow#0/_Cell#1/QWidget#0/SplitCell#0/QWidget#1/_Toggle#0": {
+      "offset": [
+        924,
+        447
+      ]
+    }
+  },
+  "interface_edit_appearance": {
+    "edit_secondary_windows": true,
+    "selection_background": "#1fff0000",
+    "selection_border": "#80ff0000",
+    "selection_border_enabled": {
+      "top": true,
+      "right": true,
+      "bottom": true,
+      "left": true
+    },
+    "selection_border_colors": {
+      "bottom": "#80ff0000",
+      "left": "#80ff0000",
+      "right": "#80ff0000",
+      "top": "#80ff0000"
+    },
+    "selection_border_width": 2,
+    "selection_radius": 2,
+    "debug_background": "#28ffbe00",
+    "debug_border": "#b4ffbe00",
+    "debug_border_enabled": {
+      "top": true,
+      "right": true,
+      "bottom": true,
+      "left": true
+    },
+    "debug_border_colors": {
+      "bottom": "#b4ffbe00",
+      "left": "#b4ffbe00",
+      "right": "#b4ffbe00",
+      "top": "#b4ffbe00"
+    },
+    "debug_border_width": 2,
+    "debug_radius": 0
+  }
 }

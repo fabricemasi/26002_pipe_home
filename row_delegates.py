@@ -1,9 +1,11 @@
 from pathlib import Path
+from interface_edit_targets import prepare_row, part_rect
 from PySide6.QtCore import (
     QRect, QSize, Qt,
 )
 from PySide6.QtGui import (
     QColor,
+    QFont,
     QPainter,
     QPen,
     QPixmap,
@@ -83,6 +85,8 @@ class RowDelegate(QStyledItemDelegate):
     def __init__(self, column):
         super().__init__(column)
         self.column = column
+        from settings_element_style import ensure_row_text_overrides
+        ensure_row_text_overrides()
         self.refresh_fonts()
 
     def refresh_fonts(self):
@@ -194,11 +198,13 @@ class RowDelegate(QStyledItemDelegate):
         # STYLE, Settings > RACCOURCI) — GENERALE, pas par colonne : un
         # raccourci doit se reperer de la MEME facon partout.
         row_font, row_color = _resolve_shortcut_font_color() if is_shortcut else (self.type_font, self.type_color)
+        text_look = _row_text_look(self.column, index, row_font, row_color)
 
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
         _LAST_PREVIEW_SLOT[0] = None
+        rect = prepare_row(self.column.list, index, rect, option)
         _paint_unified_row(
             painter, rect, option, column_style_for(title),
             index.data(Qt.DisplayRole), icon_pixmap, preview_pixmap, row_font, row_color,
@@ -209,6 +215,7 @@ class RowDelegate(QStyledItemDelegate):
             icon_size_override=self.column._icon_size_override,
             icon_padding_left_override=self.column._icon_padding_left_override,
             text_padding_left_override=self.column._text_padding_left_override,
+            text_look=text_look,
             is_file=bool(path_str) and not is_dir,
         )
         painter.restore()
@@ -247,6 +254,7 @@ def _paint_unified_row(
     icon_visible_override: bool | None = None, preview_visible_override: bool | None = None,
     icon_size_override: int | None = None, icon_padding_left_override: int | None = None,
     text_padding_left_override: int | None = None,
+    text_look: dict | None = None,
     is_file: bool = False,
 ):
     """Ligne UNIQUE, PARTAGEE par toutes les colonnes (Type/Projets/Sous-
@@ -471,7 +479,7 @@ def _paint_unified_row(
         # "les parametres images ... sont pour controler les apercus
         # que l'on trouve sur les differentes lignes". item_image_radius
         # est un reglage INDEPENDANT du rayon de selection (0 = carre).
-        _paint_row_image(painter, QRect(icon_img_x, icon_img_y, icon_box_width, icon_box_size), icon_pixmap, s)
+        _paint_row_image(painter, part_rect(option, "icon", QRect(icon_img_x, icon_img_y, icon_box_width, icon_box_size)), icon_pixmap, s)
         # Distance texte<->icone PILOTEE par "Padding du texte" (item_
         # text_padding), PAS un ecart fixe — voir la remarque de
         # l'utilisateur, "je veux que le padding du texte ... controle
@@ -491,7 +499,7 @@ def _paint_unified_row(
         box_y = rect.center().y() - 14 // 2
         painter.setPen(QPen(QColor(role_color("dim", C["label"])), 1))
         painter.setBrush(Qt.NoBrush)
-        painter.drawRect(icon_x, box_y, 14 - 1, 14 - 1)
+        painter.drawRect(part_rect(option, "icon", QRect(icon_x, box_y, 14 - 1, 14 - 1)))
         text_x = icon_x + 14 + 8
 
     preview_img_x = None
@@ -500,9 +508,10 @@ def _paint_unified_row(
         # zone de selection (QRect.right() = left+width-1, voir Qt) —
         # jamais lie a la presence/absence d'une icone a gauche.
         preview_img_x = (sel_rect.right() - img_width + 1) if sel_rect.width() > 0 else (rect.right() - img_width)
-        _paint_row_image(painter, QRect(preview_img_x, img_y, img_width, img_size), preview_pixmap, s)
+        preview_rect = part_rect(option, "preview", QRect(preview_img_x, img_y, img_width, img_size))
+        _paint_row_image(painter, preview_rect, preview_pixmap, s)
         slot_pad = s.get("item_image_padding") or {}
-        _LAST_PREVIEW_SLOT[0] = QRect(preview_img_x, img_y, img_width, img_size).adjusted(
+        _LAST_PREVIEW_SLOT[0] = preview_rect.adjusted(
             max(0, int(slot_pad.get("left", 0))), max(0, int(slot_pad.get("top", 0))),
             -max(0, int(slot_pad.get("right", 0))), -max(0, int(slot_pad.get("bottom", 0))))
         img_left_pad = max(0, int(img_pad.get("left", 0)))
@@ -520,7 +529,16 @@ def _paint_unified_row(
         text_right_limit = min(text_right_limit, badge_rect.left() - text_padding)
 
     final_text_color = C["accent_text"] if (selected and active) else text_color
+    if text_look:
+        text_font = text_look.get("_font", text_font)
+        final_text_color = text_look.get("_color", final_text_color)
     text_rect = QRect(text_x, rect.top(), max(0, text_right_limit - text_x), rect.height())
+    edit_parts = getattr(option, "_edit_parts", None)
+    if edit_parts is not None:
+        painter.setFont(text_font)
+        content = painter.fontMetrics().boundingRect(text_rect, Qt.AlignLeft | Qt.AlignVCenter, str(name))
+        edit_parts["text"] = content.intersected(text_rect)
+        text_rect.translate(option._edit_text_offset)
     if annotation:
         # Largeur de l'annotation d'ABORD (police "info", voir sa remarque
         # de tete) : le nom n'a droit qu'au RESTE de text_rect, elide en
@@ -535,6 +553,7 @@ def _paint_unified_row(
         painter.setPen(QColor(final_text_color))
         name_width = max(0, text_rect.width() - ann_width)
         elided_name = painter.fontMetrics().elidedText(name, Qt.ElideMiddle, name_width)
+        _paint_text_look(painter, text_rect, elided_name, text_look)
         _draw_row_name(painter, text_rect, name, elided_name, final_text_color, is_file)
 
         name_actual_width = painter.fontMetrics().horizontalAdvance(elided_name)
@@ -556,6 +575,7 @@ def _paint_unified_row(
         painter.setFont(text_font)
         painter.setPen(QColor(final_text_color))
         elided = painter.fontMetrics().elidedText(name, Qt.ElideMiddle, max(0, text_rect.width()))
+        _paint_text_look(painter, text_rect, elided, text_look)
         _draw_row_name(painter, text_rect, name, elided, final_text_color, is_file)
 
     if badge_rect is not None:
@@ -595,6 +615,53 @@ def _paint_unified_row(
         painter.setFont(font(10, badge_font_weight, family=badge_font_family, smoothing=badge_smoothing))
         painter.drawText(badge_rect, Qt.AlignCenter, str(step_badge))
 
+
+def _paint_text_look(painter, text_rect, text, look):
+    if not look:
+        return
+    padding = look.get("text_padding") or {}
+    left, top = max(0, int(padding.get("left", 0))), max(0, int(padding.get("top", 0)))
+    right, bottom = max(0, int(padding.get("right", 0))), max(0, int(padding.get("bottom", 0)))
+    metrics = painter.fontMetrics()
+    width = min(text_rect.width(), metrics.horizontalAdvance(text))
+    bounds = QRect(text_rect.left() - left, text_rect.center().y() - metrics.height() // 2 - top,
+                   width + left + right, metrics.height() + top + bottom)
+    fill = resolve_color_ref(look.get("text_background_color", ""), "transparent") \
+        if look.get("text_background_enabled") else None
+    sides = look.get("text_border_enabled") or {}
+    if fill or any(sides.values()):
+        colors = {side: resolve_color_ref(color, "transparent")
+                  for side, color in (look.get("text_border") or {}).items()}
+        _paint_bordered_rect(painter, bounds, look.get("text_border_radius") or 0,
+                             sides, max(0, int(look.get("text_border_thickness", 1) or 0)), colors, fill)
+
+
+def _row_text_look(column, index, base_font, base_color):
+    # Les noms peints dans une colonne n'ont pas de QLabel à restyler : leur
+    # apparence vient exclusivement de ce cache. Toujours relire le chemin et
+    # la clé de colonne de la ligne effectivement dessinée (y compris pour les
+    # colonnes de projet), puis reconstruire la police depuis ses valeurs
+    # complètes plutôt que de réutiliser la police globale du délégué.
+    path = str(index.data(ROLE_PATH) or "")
+    if not path:
+        return None
+    overrides = getattr(ui_state, "ROW_TEXT_OVERRIDES", {}) or {}
+    values = overrides.get(f"row-text:{column.style_title}:{path}")
+    if values is None:
+        # Les premières éditions ont été enregistrées avant la correction
+        # du parent de la liste, avec un titre de colonne vide.
+        values = overrides.get(f"row-text::{path}")
+    if not values:
+        return None
+    size = int(values.get("text_font_size") or 10)
+    weight = QFont.DemiBold if values.get("text_font_bold") else QFont.Normal
+    smoothing = values.get("text_font_smoothing", "current") if values.get("text_font_smoothing_enabled") else "current"
+    family = (values.get("text_font_family") or "").strip() or base_font.family()
+    text_font = font(size, int(weight), family=family, italic=bool(values.get("text_font_italic")),
+                     smoothing=smoothing)
+    text_color = resolve_color_ref(values.get("text_font_color", ""), base_color)
+    return {**values, "_font": text_font, "_color": text_color}
+
 class ProjectTileDelegate(QStyledItemDelegate):
     """Colonne "Projets" : meme rendu PARTAGE que RowDelegate
     (voir _paint_unified_row), avec la vignette de projet (perso si
@@ -604,6 +671,8 @@ class ProjectTileDelegate(QStyledItemDelegate):
     def __init__(self, column):
         super().__init__(column)
         self.column = column
+        from settings_element_style import ensure_row_text_overrides
+        ensure_row_text_overrides()
         self.refresh_fonts()
 
     def refresh_fonts(self):
@@ -655,6 +724,8 @@ class ProjectTileDelegate(QStyledItemDelegate):
             if shortcut_icon is not None:
                 icon_pixmap = shortcut_icon
         row_font, row_color = _resolve_shortcut_font_color() if is_shortcut else (self.font_name, self.color_name)
+        text_look = _row_text_look(self.column, index, row_font, row_color)
+        rect = prepare_row(self.column.list, index, rect, option)
         _paint_unified_row(
             painter, rect, option, column_style_for(title),
             path.name, icon_pixmap, project_thumbnail_pixmap(path), row_font, row_color,
@@ -664,6 +735,7 @@ class ProjectTileDelegate(QStyledItemDelegate):
             icon_size_override=self.column._icon_size_override,
             icon_padding_left_override=self.column._icon_padding_left_override,
             text_padding_left_override=self.column._text_padding_left_override,
+            text_look=text_look,
             is_file=not is_dir_entry,
         )
         painter.restore()

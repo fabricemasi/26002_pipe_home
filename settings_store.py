@@ -1285,7 +1285,8 @@ _LIVE_STATE_KEYS = ("table_dims", "slider_ranges", "toggle_custom_styles", "togg
                     "toggle_style_overrides", "element_spaces", "ui_spaces",
                     "element_spaces_below", "ui_spaces_below", "title_order", "element_style_overrides",
                     "viewer_film_text_ratio", "viewer_gallery_text_height", "context_menu_layouts",
-                    "viewer_button_order", "quick_style_positions")
+                    "viewer_button_order", "quick_style_positions", "interface_move_positions",
+                    "interface_edit_appearance")
 
 
 def toggle_style_list(settings: dict) -> list[dict]:

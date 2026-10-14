@@ -2174,9 +2174,19 @@ def apply_part_looks(frame: QWidget) -> None:
         look: dict = {}
         for part in (("table",), ("col", c), ("row", r), ("cell", r, c)):
             for field, value in (parts.get(part) or {}).items():
-                look[field] = {**look.get(field, {}), **value} if field == "font" else value
+                if field in {"font", "border"}:
+                    merged_field = dict(look.get(field) or {})
+                    merged_field.update(value)
+                    look[field] = merged_field
+                else:
+                    look[field] = value
         cell._part_look = look or None
         cell._text_look = look.get("font") or None
+    padding_hook = getattr(frame, "_flat_cell_padding", None)
+    if padding_hook is not None:
+        import settings_window_v2 as v2
+        from settings_store import load_settings
+        padding_hook(v2._padding_tuple(load_settings().get("table_cell_padding") or {}))
     _refresh_text_roles(frame)
     # Textes sans role (QLabel simples) : police propre posee sur leur apparence d'origine.
     from settings_theme import TEXT_ROLES, text_look_font, text_look_of

@@ -315,6 +315,14 @@ class PlancheTest(unittest.TestCase):
         self.assertTrue(chips.isVisible())
         self.assertEqual(chips._items, ["★★★★★", "1 fichier"])
         self.assertGreater(chips.x(), button.geometry().right())
+        # Le filtre reste signalé dans la rangée d'icônes en mode image seule;
+        # les libellés détaillés ne sont utiles que sur la planche.
+        win._close_focus_gallery(animate=False)
+        APP.processEvents()
+        self.assertTrue(button.isVisible())
+        self.assertFalse(chips.isVisible())
+        win._open_focus_gallery()
+        APP.processEvents()
         # Portee = le projet : tout ce qui est sous projA (parcours en fond).
         scopes = dict(win._filter_scopes())
         self.assertEqual(scopes["level:1"].lower(), "projets : proja")

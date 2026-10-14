@@ -141,6 +141,70 @@ class GalleryCellsTest(unittest.TestCase):
         self.assertTrue(self.heights and self.heights[-1][1])
         self.assertGreater(gallery.label_height(), start)
 
+    def test_image_override_border_paints_without_crashing(self):
+        import settings_element_style as styles
+        from interface_edit_targets import PaintedTarget
+        from PySide6.QtCore import QRect
+        gallery = self.gallery
+        path = str(gallery.item(0).data(Qt.UserRole))
+        old = getattr(ui_state, "GALLERY_STYLE_OVERRIDES", None)
+        self.addCleanup(setattr, ui_state, "GALLERY_STYLE_OVERRIDES", old)
+        ui_state.GALLERY_STYLE_OVERRIDES = {}
+        widget = PaintedTarget(gallery, path, "gallery-image", QRect(0, 0, 50, 50))
+        target = styles.GalleryStyleTarget(widget, path, "image")
+        values = target.general(ui_state.APPLIED_SETTINGS)
+        values.update({"viewer_film_image_border_enabled": {
+                           "top": True, "right": True, "bottom": False, "left": False},
+                       "viewer_film_image_border": {
+                           "top": "#ffff0000", "right": "#ff00ff00",
+                           "bottom": "#ff0000ff", "left": "#ff000000"},
+                       "viewer_film_image_border_thickness": 3,
+                       "viewer_film_image_border_radius": {corner: 4 for corner in
+                                                           ("top_left", "top_right", "bottom_right", "bottom_left")}})
+        target.apply(values)
+        look = gallery.film_look_for(path)["image"]
+        self.assertEqual(look["thick"], 3)
+        self.assertEqual(look["colors"]["top"], "#ffff0000")
+        # Meme trajet que la fenetre d'override ouverte pendant le mode edition.
+        with mock.patch.object(styles, "load_settings", return_value=copy.deepcopy(ui_state.APPLIED_SETTINGS)), \
+             mock.patch.object(styles, "save_settings"):
+            window = styles.open_override(target, parent=gallery)
+            edited = window.style()
+            edited.update({key: values[key] for key in (
+                "viewer_film_image_border_enabled", "viewer_film_image_border",
+                "viewer_film_image_border_thickness", "viewer_film_image_border_radius")})
+            window.styleChanged.emit(edited)
+            window.close()
+        image = gallery.viewport().grab().toImage()
+        self.assertFalse(image.isNull())
+
+    def test_cell_override_background_padding_and_border(self):
+        import settings_element_style as styles
+        from interface_edit_targets import PaintedTarget
+        from PySide6.QtCore import QRect
+        gallery = self.gallery
+        path = str(gallery.item(0).data(Qt.UserRole))
+        old = getattr(ui_state, "GALLERY_STYLE_OVERRIDES", None)
+        self.addCleanup(setattr, ui_state, "GALLERY_STYLE_OVERRIDES", old)
+        ui_state.GALLERY_STYLE_OVERRIDES = {}
+        widget = PaintedTarget(gallery, path, "gallery-cell", QRect(0, 0, 80, 80))
+        target = styles.GalleryStyleTarget(widget, path, "cell")
+        values = target.general(ui_state.APPLIED_SETTINGS)
+        values.update({"gallery_cell_bg": "#ff203040",
+                       "gallery_cell_padding": {side: 5 for side in ("left", "top", "right", "bottom")},
+                       "gallery_cell_border_enabled": {side: True for side in
+                                                       ("top", "right", "bottom", "left")},
+                       "gallery_cell_border": {side: "#ffff0000" for side in
+                                               ("top", "right", "bottom", "left")},
+                       "gallery_cell_border_thickness": 2})
+        target.apply(values)
+        look = gallery.film_look_for(path)
+        self.assertEqual(look["cell"]["fill"], "#ff203040")
+        rect = gallery.visualItemRect(gallery.item(0))
+        outer, inner, _image = gallery.edited_cell_boxes(rect, look)
+        self.assertEqual(inner.left() - outer.left(), 7)
+        self.assertFalse(gallery.viewport().grab().toImage().isNull())
+
     def test_text_style_changes_the_cells(self):
         before = self.gallery.viewport().grab().toImage()
         ui_state.APPLIED_SETTINGS["viewer_film_text_cell_bg"] = "#ffaa2020"

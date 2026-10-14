@@ -46,6 +46,40 @@ def _blender_config_dir(blender: str) -> Path | None:
 
 _SEPARATORS = "/" + chr(92)      # / et \ en fin de chemin
 
+# Panneaux du navigateur de fichiers Blender à replier dès leur première
+# création. Le script est volontairement autonome : il est injecté par
+# --python-expr et ne dépend d'aucun fichier de configuration Blender.
+_BLENDER_FILE_BROWSER_UI_SCRIPT = """\
+def _pipeline_fold_file_panels():
+    names = (
+        'FILEBROWSER_PT_bookmarks_system',
+        'FILEBROWSER_PT_bookmarks_volumes',
+        'FILEBROWSER_PT_bookmarks_recents',
+    )
+    for name in names:
+        cls = getattr(bpy.types, name, None)
+        if cls is None or getattr(cls, '_pipeline_folded', False):
+            continue
+        try:
+            attrs = {k: getattr(cls, k) for k in (
+                'bl_idname', 'bl_label', 'bl_space_type', 'bl_region_type',
+                'bl_category', 'bl_translation_context', 'bl_parent_id', 'bl_order'
+            ) if hasattr(cls, k)}
+            attrs.update({
+                '__module__': __name__,
+                'bl_options': set(getattr(cls, 'bl_options', ())) | {'DEFAULT_CLOSED'},
+                '_pipeline_folded': True,
+            })
+            bpy.utils.unregister_class(cls)
+            replacement = type(name, (cls,), attrs)
+            bpy.utils.register_class(replacement)
+        except Exception:
+            pass
+
+bpy.app.timers.register(_pipeline_fold_file_panels, first_interval=0.2)
+"""
+_BLENDER_FILE_BROWSER_UI_EXPRESSION = f"import bpy; exec({_BLENDER_FILE_BROWSER_UI_SCRIPT!r})"
+
 
 def add_blender_bookmark(config_dir: Path, folder: Path, name: str | None = None) -> bool:
     """Ajoute `folder` aux favoris (« Bookmarks ») de la fenetre de fichiers de Blender, sous le nom `name`
@@ -75,6 +109,32 @@ def add_blender_bookmark(config_dir: Path, folder: Path, name: str | None = None
         if (lines[found - 1:found] if named else []) == label:
             return True
         lines[found - 1 if named else found:found] = label
+    # Blender affiche les favoris dans l'ordre du fichier. Recompose chaque
+    # entree (libelle optionnel + chemin), puis trie par nom affiche ; pour
+    # une entree sans libelle, le nom du dossier sert de repli. La section
+    # [Recent] et tout ce qui la suit restent a leur place.
+    end = next((i for i in range(start, len(lines)) if lines[i].startswith("[")), len(lines))
+    blocks = []
+    i = start
+    while i < end:
+        block = []
+        if lines[i].startswith("!"):
+            block.append(lines[i])
+            i += 1
+        if i < end:
+            block.append(lines[i])
+            i += 1
+        if block:
+            blocks.append(block)
+
+    def bookmark_key(block):
+        label_line = block[0] if block and block[0].startswith("!") else ""
+        path_line = block[-1] if block else ""
+        display_name = label_line[1:].strip() if label_line else Path(path_line.rstrip(_SEPARATORS)).name
+        return (display_name.casefold(), path_line.casefold())
+
+    ordered = [line for block in sorted(blocks, key=bookmark_key) for line in block]
+    lines[start:end] = ordered
     try:
         config_dir.mkdir(parents=True, exist_ok=True)
         temp = path.with_name(path.name + ".tmp")
@@ -143,7 +203,8 @@ def _launch_blender(folder: Path, set_name: str | None = None) -> bool:
     if config_dir is not None:
         add_blender_bookmark(config_dir, folder, set_name)  # favori de sa fenetre de fichiers, nom du set
         add_blender_recent(config_dir, scene)               # File > Open dans ce dossier aussi
-    ok, _pid = QProcess.startDetached(blender, [str(scene)], str(folder))
+    ok, _pid = QProcess.startDetached(
+        blender, [str(scene), "--python-expr", _BLENDER_FILE_BROWSER_UI_EXPRESSION], str(folder))
     return bool(ok)
 
 

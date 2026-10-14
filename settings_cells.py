@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import Callable
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer, Signal
-from PySide6.QtGui import QActionGroup, QColor, QPainter
+from PySide6.QtGui import QActionGroup, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractButton, QAbstractSpinBox, QApplication, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout,
     QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMenu,
@@ -221,6 +221,30 @@ class _Cell(QWidget):
 
     def content(self) -> QWidget:
         return self._content
+
+    def paintEvent(self, event):
+        look = getattr(self, "_part_look", None) or {}
+        border = look.get("border") or {}
+        enabled = border.get("enabled") or {}
+        colors = border.get("colors") or {}
+        thickness = max(1, int(border.get("thickness", 1) or 1))
+        if not any(enabled.values()):
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        rect = self.rect().adjusted(thickness // 2, thickness // 2,
+                                    -(thickness - 1) // 2, -(thickness - 1) // 2)
+        for side, start, end in (
+            ("top", rect.topLeft(), rect.topRight()),
+            ("right", rect.topRight(), rect.bottomRight()),
+            ("bottom", rect.bottomLeft(), rect.bottomRight()),
+            ("left", rect.topLeft(), rect.bottomLeft()),
+        ):
+            if not enabled.get(side):
+                continue
+            painter.setPen(QPen(QColor(colors.get(side, "#ffffff")), thickness))
+            painter.drawLine(start, end)
+        painter.end()
 
     def align(self) -> tuple[str, str]:
         return self._h, self._v
@@ -851,12 +875,16 @@ class _SplitMenuControl(QWidget):
     def __init__(self, toggle: _Toggle, field: QWidget, parent=None):
         super().__init__(parent)
         self.toggle = toggle
+        self.label = QLabel(SPLIT_TEXT, self)
+        self.label.setStyleSheet("background: transparent;")
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
+        layout.addWidget(self.label)
         layout.addWidget(toggle)
         layout.addWidget(field)
         layout.addStretch(1)
+        self.setMinimumWidth(self.label.fontMetrics().horizontalAdvance(SPLIT_TEXT) + 220)
         self.setCursor(Qt.PointingHandCursor)
 
     def mousePressEvent(self, event):
@@ -1040,7 +1068,9 @@ def add_split_menu(widget: QWidget, menu: QMenu) -> None:
     box = _SplitMenuControl(toggle, field)
     if menu.actions():
         menu.addSeparator()
-    menu_row(menu, SPLIT_TEXT, box)
+    # Le libelle fait partie du controle : ainsi le layout du QMenu reserve
+    # explicitement sa largeur avant le toggle, qui ne peut plus le recouvrir.
+    menu_row(menu, "", box)
 
 
 class _RowMover:

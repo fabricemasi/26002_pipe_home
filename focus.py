@@ -1817,8 +1817,11 @@ class _GalleryDelegate(QStyledItemDelegate):
         il couvre la cellule, par-dessus quand il couvre les sous-cellules (jamais sur l'image ni le texte)."""
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        cell, box = gallery.tile_boxes(rect)
-        look = gallery.film_look
+        look = gallery.film_look_for(str(path))
+        cell_outer, cell, box = gallery.edited_cell_boxes(rect, look)
+        cell_style = look.get("cell")
+        if cell_style is not None:
+            _paint_film_box(painter, QRectF(cell_outer), cell_style)
         text_box = QRect(cell.x(), box.bottom() + 1, cell.width(), max(0, cell.bottom() - box.bottom()))
         # Marques (couleur attribuee au fichier, puis focus / survol par-dessus) : sous les fonds des
         # sous-cellules quand elles couvrent la cellule, par-dessus quand elles couvrent les sous-cellules.
@@ -1869,13 +1872,44 @@ class _GalleryDelegate(QStyledItemDelegate):
         painter.setFont(name_font)
         painter.setPen(name_color)
         name = name_m.elidedText(display_name(path), Qt.ElideMiddle, text_room.width())
-        painter.drawText(QRect(text_room.x(), top, text_room.width(), name_m.height()), Qt.AlignCenter, name)
+        offsets = getattr(gallery, "_edit_offsets", {}).get(str(path), {})
+        name_width = min(text_room.width(), name_m.horizontalAdvance(name))
+        name_rect = QRect(text_room.center().x() - name_width // 2, top, name_width, name_m.height())
+        name_rect.translate(offsets.get("gallery-name", QPoint()))
+        _paint_gallery_text_override(painter, name_rect, look.get("name_style"))
+        painter.drawText(name_rect, Qt.AlignCenter, name)
         if info:
             painter.setFont(info_font)
             painter.setPen(info_color)
-            painter.drawText(QRect(text_room.x(), top + name_m.height(), text_room.width(), info_m.height()),
-                             Qt.AlignCenter, info_m.elidedText(info, Qt.ElideRight, text_room.width()))
+            shown_info = info_m.elidedText(info, Qt.ElideRight, text_room.width())
+            info_width = min(text_room.width(), info_m.horizontalAdvance(shown_info))
+            info_rect = QRect(text_room.center().x() - info_width // 2,
+                              top + name_m.height(), info_width, info_m.height())
+            info_rect.translate(offsets.get("gallery-info", QPoint()))
+            _paint_gallery_text_override(painter, info_rect, look.get("info_style"))
+            painter.drawText(info_rect, Qt.AlignCenter, shown_info)
         painter.restore()
+
+
+def _paint_gallery_text_override(painter, rect: QRect, values: dict | None):
+    if not values:
+        return
+    from app_style import resolve_color_ref
+    from settings_store import _coerce_corner_radius
+    pad = values.get("text_padding") or {}
+    box = rect.adjusted(-max(0, int(pad.get("left", 0))), -max(0, int(pad.get("top", 0))),
+                        max(0, int(pad.get("right", 0))), max(0, int(pad.get("bottom", 0))))
+    fill = QColor(resolve_color_ref(values.get("text_background_color"), "#00000000")) \
+        if values.get("text_background_enabled") else QColor(0, 0, 0, 0)
+    enabled = values.get("text_border_enabled") or {}
+    if fill.alpha() or any(enabled.values()):
+        colors = {side: QColor(resolve_color_ref((values.get("text_border") or {}).get(side), "#00000000"))
+                  for side in _FILM_SIDES}
+        corners = _coerce_corner_radius(values.get("text_border_radius") or 0)
+        from settings_widgets import _paint_bordered_vector
+        _paint_bordered_vector(painter, box, corners, enabled,
+                               max(0, int(values.get("text_border_thickness", 1) or 0)), colors,
+                               fill.name(QColor.NameFormat.HexArgb) if fill.alpha() else None)
 
 
 class FocusGallery(QListWidget):
@@ -2390,6 +2424,184 @@ class FocusGallery(QListWidget):
         self._layout_table()
         self.viewport().update()
 
+    def film_look_for(self, path: str) -> dict:
+        """Habillage general complete par les overrides propres a cette cellule / image / texte."""
+        import ui_state
+        if not hasattr(ui_state, "GALLERY_STYLE_OVERRIDES"):
+            from settings_element_style import ensure_row_text_overrides
+            ensure_row_text_overrides()
+        from settings_store import _coerce_corner_radius, _coerce_side_enabled
+        from settings_element_style import _editable_font_size
+        # Ne pas deepcopy les QFont / QColor Qt du look de base : leur copie Python peut
+        # invalider des ressources C++ encore utilisees par les peintures de la planche.
+        look = dict(self.film_look)
+        for key in ("image_cell", "text_cell", "image"):
+            box = dict(self.film_look[key])
+            box["on"] = dict(box.get("on") or {})
+            box["colors"] = dict(box.get("colors") or {})
+            box["radius"] = dict(box.get("radius") or {})
+            look[key] = box
+        overrides = getattr(ui_state, "GALLERY_STYLE_OVERRIDES", {}) or {}
+        cell_values = {}
+        for part in ("cell", "name", "info"):
+            cell_values.update({key: value for key, value in
+                                (overrides.get(f"gallery-{part}:{path}") or {}).items()
+                                if key.startswith("gallery_cell_")})
+        if cell_values:
+            from app_style import resolve_color_ref
+            enabled = _coerce_side_enabled(cell_values.get("gallery_cell_border_enabled"), False)
+            raw_colors = cell_values.get("gallery_cell_border") or {}
+            colors = {side: resolve_color_ref(raw_colors.get(side) if isinstance(raw_colors, dict)
+                                               else raw_colors, "#2a2e32") for side in _FILM_SIDES}
+            thickness = max(0, int(cell_values.get("gallery_cell_border_thickness", 1) or 0))
+            fill = QColor(resolve_color_ref(cell_values.get("gallery_cell_bg"), "#00000000"))
+            look["cell"] = {"on": enabled, "colors": colors,
+                            "thick": thickness if any(enabled.values()) else 0,
+                            "radius": _coerce_corner_radius(cell_values.get("gallery_cell_border_radius", 0)),
+                            "fill": fill.name(QColor.NameFormat.HexArgb) if fill.alpha() else None}
+            look["cell_padding"] = cell_values.get("gallery_cell_padding") or {}
+        for part in ("cell", "image", "name", "info"):
+            saved = overrides.get(f"gallery-{part}:{path}") or {}
+            if not saved:
+                continue
+            values = dict(ui_state.APPLIED_SETTINGS or {})
+            values.update(saved)
+            if part in {"cell", "image"}:
+                boxes = (("image", "viewer_film_image"),) if part == "image" else (
+                    ("image_cell", "viewer_film_image_cell"),
+                    ("text_cell", "viewer_film_text_cell"),
+                    ("image", "viewer_film_image"),
+                )
+                for key, prefix in boxes:
+                    box = look[key]
+                    enabled = values.get(f"{prefix}_border_enabled")
+                    if enabled is not None:
+                        box["on"] = _coerce_side_enabled(enabled, False)
+                    colors = values.get(f"{prefix}_border")
+                    if colors is not None:
+                        from app_style import resolve_color_ref
+                        box["colors"] = {side: resolve_color_ref(colors.get(side) if isinstance(colors, dict)
+                                                                  else colors, "#2a2e32")
+                                          for side in _FILM_SIDES}
+                    thickness = values.get(f"{prefix}_border_thickness")
+                    if thickness is not None:
+                        box["thick"] = max(0, int(thickness)) if any(box["on"].values()) else 0
+                    radius = values.get(f"{prefix}_border_radius")
+                    if radius is not None:
+                        box["radius"] = _coerce_corner_radius(radius)
+                    bg = values.get(f"{prefix}_bg")
+                    if bg is not None and key != "image":
+                        from app_style import resolve_color_ref
+                        color = QColor(resolve_color_ref(bg, "#00000000"))
+                        box["fill"] = color.name(QColor.NameFormat.HexArgb) if color.alpha() else None
+                    if part == "cell" and key in {"image_cell", "text_cell"}:
+                        from app_style import font as app_font, resolve_color_ref
+                        family_key = f"{prefix}_font_family"
+                        if family_key in values:
+                            size = max(4, int(values.get(f"{prefix}_font_size", 11) or 11))
+                            weight = 700 if values.get(f"{prefix}_font_bold") else 400
+                            label = (values.get(family_key) or "").strip()
+                            family = None
+                            if label and label != "Systeme":
+                                from browser_core import _resolve_font_family
+                                family = _resolve_font_family(label, size, weight)
+                            qfont = app_font(size, weight, family=family,
+                                             italic=bool(values.get(f"{prefix}_font_italic")),
+                                             smoothing=values.get(f"{prefix}_font_smoothing", "current")
+                                             if values.get(f"{prefix}_font_smoothing_enabled") else "current")
+                            color = QColor(resolve_color_ref(values.get(f"{prefix}_font_color"), "#d6d9dc"))
+                            look["ext_font" if key == "image_cell" else "name_font"] = (qfont, color)
+                if part in {"cell", "image"} and any(k.startswith("viewer_film_image_shadow") for k in values):
+                    from app_style import resolve_color_ref
+                    from settings_widgets import shadow_look
+                    look["image_shadow"] = shadow_look(values, "viewer_film_image_shadow", resolve_color_ref)
+            else:
+                from app_style import font as app_font, resolve_color_ref
+                qfont, qcolor = look["name_font" if part == "name" else "rank_font"]
+                defaults = {"text_font_family": qfont.family(),
+                            "text_font_bold": qfont.weight() >= QFont.DemiBold,
+                            "text_font_italic": qfont.italic(),
+                            "text_font_size": _editable_font_size(qfont),
+                            "text_font_color": qcolor.name(QColor.NameFormat.HexArgb),
+                            "text_font_smoothing_enabled": False, "text_font_smoothing": "current",
+                            "text_padding": {s: 0 for s in ("left", "top", "right", "bottom")},
+                            "text_border_enabled": {s: False for s in _FILM_SIDES},
+                            "text_border": {s: "#00000000" for s in _FILM_SIDES},
+                            "text_border_thickness": 1, "text_border_radius": 0,
+                            "text_background_enabled": False, "text_background_color": "#00000000"}
+                defaults.update(saved)
+                values = defaults
+                size = max(1, int(values.get("text_font_size", qfont.pointSize() or 11) or 11))
+                weight = 600 if values.get("text_font_bold", qfont.weight() >= QFont.DemiBold) else 400
+                family = (values.get("text_font_family") or "").strip() or qfont.family()
+                smoothing = values.get("text_font_smoothing", "current") if values.get("text_font_smoothing_enabled") else "current"
+                look["name_font" if part == "name" else "rank_font"] = (app_font(size, weight, family=family,
+                                                   italic=bool(values.get("text_font_italic")), smoothing=smoothing),
+                                         QColor(resolve_color_ref(values.get("text_font_color"), qcolor.name())))
+                look[f"{part}_style"] = values
+        return look
+
+    def edit_target_at(self, point: QPoint):
+        """Retourne la partie peinte cliquée et les rectangles de sa cellule (repère viewport)."""
+        index = self.indexAt(point)
+        if not index.isValid():
+            return None
+        path = str(index.data(Qt.UserRole) or "")
+        rect = self.visualRect(index)
+        look = self.film_look_for(path)
+        cell_outer, cell, box = self.edited_cell_boxes(rect, look)
+        text_box = QRect(cell.x(), box.bottom() + 1, cell.width(), max(0, cell.bottom() - box.bottom()))
+        text_room = _film_inner(QRectF(text_box), look["text_cell"]).toRect()
+        info = str(index.data(Qt.UserRole + 2) or "")
+        name_font, info_font = look["name_font"][0], look["rank_font"][0]
+        name_metrics, info_metrics = QFontMetrics(name_font), QFontMetrics(info_font)
+        total = name_metrics.height() + (info_metrics.height() if info else 0)
+        top = text_room.y() + max(0, (text_room.height() - total) // 2)
+        name = name_metrics.elidedText(display_name(Path(path)), Qt.ElideMiddle, text_room.width())
+        name_width = min(text_room.width(), name_metrics.horizontalAdvance(name))
+        info_width = min(text_room.width(), info_metrics.horizontalAdvance(
+            info_metrics.elidedText(info, Qt.ElideRight, text_room.width())))
+        name_rect = QRect(text_room.center().x() - name_width // 2, top, name_width, name_metrics.height())
+        info_rect = QRect(text_room.center().x() - info_width // 2, top + name_metrics.height(),
+                          info_width, info_metrics.height())
+        offsets = getattr(self, "_edit_offsets", {}).get(path, {})
+        if name_rect.translated(offsets.get("gallery-name", QPoint())).contains(point):
+            part, leaf_rect = "gallery-name", name_rect
+        elif info and info_rect.translated(offsets.get("gallery-info", QPoint())).contains(point):
+            part, leaf_rect = "gallery-info", info_rect
+        elif box.contains(point):
+            part, leaf_rect = "gallery-image", box
+        else:
+            part, leaf_rect = "gallery-cell", cell
+        geometry = self.__dict__.setdefault("_edit_geometry", {}).setdefault(path, {})
+        geometry.update({part: QRect(leaf_rect), "gallery-cell": QRect(cell_outer),
+                         "gallery-text-bounds": QRect(text_room)})
+        return path, part, leaf_rect, cell_outer
+
+    def edited_cell_boxes(self, rect: QRect, look: dict):
+        """Geometrie commune a la peinture et a la selection du mode edition."""
+        outer, base_box = self.tile_boxes(rect)
+        cell = QRect(outer)
+        style = look.get("cell")
+        if style is not None:
+            pad = look.get("cell_padding") or {}
+            thick = style["thick"]
+            sides = style["on"]
+            inset = {side: max(0, int(pad.get(side, 0))) + (thick if sides.get(side) else 0)
+                     for side in _FILM_SIDES}
+            inner = outer.adjusted(inset["left"], inset["top"], -inset["right"], -inset["bottom"])
+            if inner.width() > 0 and inner.height() > 0:
+                cell = inner
+        box_height = max(1, min(cell.height(), base_box.height() - (cell.top() - outer.top())))
+        return outer, cell, QRect(cell.x(), cell.y(), cell.width(), box_height)
+
+    def invalidate_edited_cell(self, path: str, repaint: bool = True):
+        _CELLS.pop(str(path), None)
+        for key in [key for key in _MARKED if key[0] == str(path)]:
+            _MARKED.pop(key, None)
+        if repaint:
+            self.viewport().update()
+
     def _paint_ripple(self, painter: QPainter, clip: QRect):
         size = self.gridSize()
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
@@ -2436,8 +2648,14 @@ class FocusGallery(QListWidget):
         key = index.data(Qt.UserRole)
         hidden = key == self.hidden_path
         color = self.attr_color(key)
+        import ui_state
+        if not hasattr(ui_state, "GALLERY_STYLE_OVERRIDES"):
+            from settings_element_style import ensure_row_text_overrides
+            ensure_row_text_overrides()
+        styles = getattr(ui_state, "GALLERY_STYLE_OVERRIDES", {}) or {}
+        local_style = tuple(repr(styles.get(f"gallery-{part}:{key}")) for part in ("cell", "image", "name", "info"))
         base = (size.width(), size.height(), hidden, self._look_sig, self.devicePixelRatioF() or 1.0, color,
-                (self.table_corners(index.row()), self.mark_insets(index.row())) if color else None)
+                (self.table_corners(index.row()), self.mark_insets(index.row())) if color else None, local_style)
         cached = _CELLS.get(key)
         if cached is not None and cached[0] == base and (cached[2] or self._ripple_origin is not None):
             return cached[1]                 # (pendant l'apparition, meme une vignette provisoire reste)

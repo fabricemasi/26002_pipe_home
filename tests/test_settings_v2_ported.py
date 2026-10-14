@@ -110,18 +110,21 @@ class PortedSectionsTest(unittest.TestCase):
         self.assertNotIn("preview_title_zone_height", self.win.stores[label]["toggles"])
         slider.setValue(52)
 
-    def test_linked_palette_slots_stay_in_sync(self):
+    def test_skin_accent_and_focused_selection_are_independent(self):
         rows = [(spec, w) for spec, w in self.win.stores["General"]["specs"]
-                if not isinstance(spec, str) and spec.kind == "semantic_color" and spec.params["real_key"] == "accent"]
-        if len(rows) < 2:
-            self.skipTest("une seule pastille pour l'accent")
-        original = rows[0][1].value()
-        rows[0][1].field.setValue("#123456")
-        rows[0][1].field.changed.emit("#123456")
-        self.assertEqual(rows[1][1].value(), "#123456")
-        self.assertEqual(self.win.wired_values()["colors"]["accent"], "#123456")
-        rows[0][1].field.setValue(original)
-        rows[0][1].field.changed.emit(original)
+                if not isinstance(spec, str) and spec.kind == "semantic_color"]
+        by_slot = {spec.key: widget for spec, widget in rows}
+        original = by_slot["colors:skinAccent"].value()
+        self.assertEqual(original, by_slot["colors:selCur"].value())
+        by_slot["colors:skinAccent"].field.setValue("#123456")
+        by_slot["colors:skinAccent"].field.changed.emit("#123456")
+        self.assertEqual(by_slot["colors:skinAccent"].value(), "#123456")
+        self.assertNotEqual(by_slot["colors:selCur"].value(), "#123456")
+        colors = self.win.wired_values()["colors"]
+        self.assertEqual(colors["accent"], "#123456")
+        self.assertNotEqual(colors["sel_focus"], "#123456")
+        by_slot["colors:skinAccent"].field.setValue(original)
+        by_slot["colors:skinAccent"].field.changed.emit(original)
 
     def test_window_radius_is_a_toggle(self):
         toggle = field(self.win, "General", "window_radius")

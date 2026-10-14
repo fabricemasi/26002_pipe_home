@@ -55,6 +55,10 @@ class FreeScenePathTest(unittest.TestCase):
                          str(folder / "untitled.blend"))
         program, args, cwd = start.call_args.args
         self.assertEqual((program, Path(args[0]), Path(cwd)), ("blender.exe", folder / "untitled.blend", folder))
+        self.assertEqual(args[1], "--python-expr")
+        self.assertIn("FILEBROWSER_PT_bookmarks_system", args[2])
+        self.assertIn("FILEBROWSER_PT_bookmarks_volumes", args[2])
+        self.assertIn("FILEBROWSER_PT_bookmarks_recents", args[2])
         self.assertFalse((folder / "untitled.blend").exists())
         self.assertFalse(software_launch.launch("MAYA", folder))
 
@@ -77,6 +81,18 @@ class FreeScenePathTest(unittest.TestCase):
         self.assertTrue(software_launch.add_blender_bookmark(config, folder))      # deja present : rien
         raw = (config / "bookmarks.txt").read_bytes().decode("utf-8")
         self.assertEqual(raw, f"[Bookmarks]\r\nD:\\old\\\r\n{folder}\\\r\n[Recent]\r\nC:\\recent\\\r\n")
+
+    def test_new_bookmark_is_inserted_alphabetically(self):
+        config = Path(tempfile.mkdtemp())
+        folder = Path(tempfile.mkdtemp()) / "airplane"
+        folder.mkdir()
+        (config / "bookmarks.txt").write_bytes(
+            b"[Bookmarks]\r\n!zulu\r\nD:\\zulu\\\r\n!middle\r\nD:\\middle\\\r\n[Recent]\r\n")
+        self.assertTrue(software_launch.add_blender_bookmark(config, folder, "3d - _assets - airplane"))
+        self.assertEqual(
+            (config / "bookmarks.txt").read_bytes().decode("utf-8"),
+            f"[Bookmarks]\r\n!3d - _assets - airplane\r\n{folder}\\\r\n"
+            "!middle\r\nD:\\middle\\\r\n!zulu\r\nD:\\zulu\\\r\n[Recent]\r\n")
 
     def test_bookmark_is_named_after_the_set_and_renamed_in_place(self):
         config = Path(tempfile.mkdtemp())
@@ -161,7 +177,7 @@ class SoftwareButtonTest(unittest.TestCase):
                 self.assertEqual(header.indexOf(column._launch_btn) + 1, header.indexOf(column._pin_btn))
             with mock.patch.object(software_launch, "launch", return_value=True) as launch:
                 opened[1]._launch_btn.click()
-            launch.assert_called_once_with("BLENDER", opened[1].directory, "sp1")   # favori au nom du set
+            launch.assert_called_once_with("BLENDER", opened[1].directory, "3d - projA - sp1")   # favori au nom complet du set
             # Houdini a aussi son lanceur : son bouton, dans les colonnes sous son dossier.
             select(softs, "houdini")
             select(win.columns[-1], "hip")
@@ -171,7 +187,7 @@ class SoftwareButtonTest(unittest.TestCase):
                 self.assertFalse(column._launch_btn.isHidden(), column.directory)
             with mock.patch.object(software_launch, "launch", return_value=True) as launch:
                 houdini_cols[1]._launch_btn.click()
-            launch.assert_called_once_with("HOUDINI", houdini_cols[1].directory, "sp1")
+            launch.assert_called_once_with("HOUDINI", houdini_cols[1].directory, "3d - projA - sp1")
         finally:
             win.close()
             for _ in range(20):

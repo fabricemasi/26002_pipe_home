@@ -155,6 +155,31 @@ class TextOverrideTest(_Base):
         es.remove_override(target)
         self.assertNotIn("#ff8800", label.styleSheet())
 
+    def test_text_style_override_supports_border_radius_and_background(self):
+        host = QWidget()
+        label = QLabel("Texte", host)
+        label.setGeometry(0, 0, 100, 24)
+        host.show()
+        self.addCleanup(host.deleteLater)
+        target = self._of(es.targets_for(label), es.TextTarget)
+        window = es.open_override(target)
+        values = window.style()
+        values.update({
+            "text_border_enabled": {"top": True, "right": False, "bottom": True, "left": False},
+            "text_border": {"top": "#ff0000", "right": "#00000000",
+                            "bottom": "#00ff00", "left": "#00000000"},
+            "text_border_thickness": 2,
+            "text_border_radius": {"top_left": 3, "top_right": 4, "bottom_right": 5, "bottom_left": 6},
+            "text_background_enabled": True,
+            "text_background_color": "#203040",
+        })
+        window.styleChanged.emit(values)
+        app.processEvents()
+        self.assertIn("border-top: 2px solid #ff0000", label.styleSheet())
+        self.assertIn("border-top-left-radius: 3px", label.styleSheet())
+        self.assertIn("background: #203040", label.styleSheet())
+        self.assertEqual(self.disk["element_style_overrides"][target.element]["text_border_thickness"], 2)
+
 
 class ToggleOverrideTest(_Base):
     def test_toggle_gets_its_own_hidden_style(self):

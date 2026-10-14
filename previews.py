@@ -4736,6 +4736,9 @@ class _IdleFileScanTask(QRunnable):
 
 class _IdlePreviewScheduler(QObject):
     """Met a jour les apercus 2D/3D perimes apres 2 min d'inactivite."""
+    # visible, termines, total, libelle : signal destine a la barre superieure
+    # (le traitement reste entierement hors du fil d'interface).
+    cache_progress = Signal(bool, int, int, str)
     IDLE_DELAY_MS = 120_000
     RESCAN_INTERVAL_SECONDS = 60.0
     LOG_SEPARATOR = "-----------------------------------------"
@@ -4767,6 +4770,8 @@ class _IdlePreviewScheduler(QObject):
         self.last_scan = 0.0
         self.auto_render_count = 0
         self.active_log_path: Path | None = None
+        self.batch_total = 0
+        self.batch_completed = 0
         app = QApplication.instance()
         if app is not None:
             app.installEventFilter(self)
@@ -4817,6 +4822,8 @@ class _IdlePreviewScheduler(QObject):
                 self.cancel_event.set()
             if self.scan_cancel_event is not None:
                 self.scan_cancel_event.set()
+            if self.batch_total or self.scan_in_progress:
+                self.cache_progress.emit(False, 0, 0, "")
             return
         if not self.is_idle:
             self.is_idle = True
@@ -4852,6 +4859,9 @@ class _IdlePreviewScheduler(QObject):
             self.failure_counts.clear()
             self.retry_after.clear()
             self._batch_profile_signature = profile_signature
+        self.batch_total = 0
+        self.batch_completed = 0
+        self.cache_progress.emit(True, 0, 0, "Recherche des images à mettre en cache…")
         self.scan_in_progress = True
         self.scan_root = str(root)
         self.scan_cancel_event = threading.Event()
@@ -4870,8 +4880,10 @@ class _IdlePreviewScheduler(QObject):
         self.scan_cancel_event = None
         self.last_scan = time.monotonic()
         if canceled or not self.is_idle or not self._user_is_idle():
+            self.cache_progress.emit(False, 0, 0, "")
             return
         if str(Path(self.browser.root_field.text().strip())) != root_text:
+            self.cache_progress.emit(False, 0, 0, "")
             return
         found = []
         seen = set()
@@ -4892,6 +4904,12 @@ class _IdlePreviewScheduler(QObject):
                 continue
             found.append((path, mtime))
         self.queue.extend(found)
+        self.batch_total = len(self.queue)
+        self.batch_completed = 0
+        if not self.batch_total:
+            self.cache_progress.emit(False, 0, 0, "")
+            return
+        self.cache_progress.emit(True, 0, self.batch_total, "Mise en cache des images…")
         self._start_next()
 
     def _append_log(self, line: str):
@@ -4929,6 +4947,16 @@ class _IdlePreviewScheduler(QObject):
                 self.active_permanent_error = message
             self._append_log(f"[{percent:3d}%] {Path(path_str).name} — {message}")
 
+    def _report_batch_item(self):
+        """Compte un fichier qui n'a plus besoin d'etre traite (supprime ou deja cache)."""
+        if not self.batch_total:
+            return
+        self.batch_completed = min(self.batch_completed + 1, self.batch_total)
+        self.cache_progress.emit(
+            True, self.batch_completed, self.batch_total,
+            f"Mise en cache des images — {self.batch_completed}/{self.batch_total}",
+        )
+
     def _start_next(self):
         # Un essai par element de la file : les reprises differees ne doivent
         # jamais bloquer le thread GUI dans une boucle de re-enfilement.
@@ -4937,6 +4965,7 @@ class _IdlePreviewScheduler(QObject):
             try:
                 mtime = path.stat().st_mtime
             except OSError:
+                self._report_batch_item()
                 continue
             key = str(path)
             identity = (key, mtime)
@@ -4944,14 +4973,17 @@ class _IdlePreviewScheduler(QObject):
                 self.queue.append((path, mtime))
                 continue
             if identity in self.done or identity in self.failed or key in _PREVIEW_DECODE_MANAGER.active:
+                self._report_batch_item()
                 continue
             if _is_preview_protected(path):
                 self.done.add(identity)
+                self._report_batch_item()
                 continue
             if _file_image_cache_path(
                 path, mtime, profiles_snapshot=_AUTOMATIC_RENDER_PROFILES,
             ).is_file() and (path.suffix.lower() not in TURNTABLE_EXTENSIONS or _turntable_frames(path, mtime, _AUTOMATIC_RENDER_PROFILES)):
                 self.done.add(identity)
+                self._report_batch_item()
                 continue
             self.active_key = key
             self.active_permanent_error = ""
@@ -4970,6 +5002,10 @@ class _IdlePreviewScheduler(QObject):
                 self.active_identity = None
                 self.cancel_event = None
             return
+        if self.batch_total and self.batch_completed >= self.batch_total:
+            self.cache_progress.emit(False, self.batch_completed, self.batch_total, "")
+            self.batch_total = 0
+            self.batch_completed = 0
 
     def _on_preview_ready(self, path_str: str, mtime: float, image):
         if path_str != self.active_key:
@@ -5015,6 +5051,15 @@ class _IdlePreviewScheduler(QObject):
             if success:
                 self.failure_counts.pop((*identity, completed_media), None)
                 self.retry_after.pop(identity, None)
+            # Un turntable est d'abord converti, puis repasse dans la file pour
+            # son aperçu final : ne compter qu'à la fin de cette seconde étape.
+            final_step = not (completed_media == "image" and success and Path(path_str).suffix.lower() in TURNTABLE_EXTENSIONS)
+            if final_step and (success or not retry):
+                self.batch_completed = min(self.batch_completed + 1, self.batch_total)
+                self.cache_progress.emit(
+                    True, self.batch_completed, self.batch_total,
+                    f"Mise en cache des images — {self.batch_completed}/{self.batch_total}",
+                )
         if self.is_idle and self._user_is_idle():
             self._start_next()
 

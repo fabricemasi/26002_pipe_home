@@ -29,9 +29,11 @@ from __future__ import annotations
 import copy
 import weakref
 
-from PySide6.QtCore import QTimer
-from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QLabel, QMenu, QWidget
+from PySide6.QtCore import QTimer, Qt
+from PySide6.QtGui import QColor, QFont, QFontInfo
+from PySide6.QtWidgets import (
+    QAbstractButton, QAbstractSpinBox, QComboBox, QLabel, QLineEdit, QMenu, QPlainTextEdit, QTextEdit, QWidget,
+)
 
 from settings_layout import _flat_tables, set_table_look
 from settings_store import _coerce_side_enabled, _resolve_color_value, load_settings, save_settings
@@ -44,6 +46,90 @@ KEY = "element_style_overrides"
 SAVED_LISTENERS: list = []          # references (faibles) de rappels (cle, valeur), voir add_listener
 TARGET_RESOLVERS: list = []         # rappels (widget) -> [Target] fournis par l'appli (colonnes...)
 _SPACE_KEYS = ("__space_above", "__space_below")
+_ROW_TEXT_CACHE_READY = False
+_ROW_MODEL_CACHE = {}
+
+
+def _row_index(view, path: str):
+    """Index des chemins construit une fois par version de modèle, pas une fois par texte."""
+    from browser_core import ROLE_PATH
+    model = view.model()
+    count = model.rowCount()
+    key = id(view)
+    if getattr(view, "_row_text_cache_model", None) is not model:
+        invalidate = lambda *_args, cache_key=key: _ROW_MODEL_CACHE.pop(cache_key, None)
+        for signal_name in ("modelReset", "rowsInserted", "rowsRemoved", "dataChanged"):
+            signal = getattr(model, signal_name, None)
+            if signal is not None:
+                signal.connect(invalidate)
+        view._row_text_cache_model = model
+    entry = _ROW_MODEL_CACHE.get(key)
+    if entry is None or entry[0] != id(model) or entry[1] != count:
+        cached = {}
+        for row in range(count):
+            index = model.index(row, 0)
+            cached[str(index.data(ROLE_PATH) or index.row())] = index
+        _ROW_MODEL_CACHE[key] = (id(model), count, cached)
+    else:
+        cached = entry[2]
+    return cached.get(str(path))
+
+
+def _column_for_view(view):
+    """La liste est réhébergée sous la carte de la colonne après sa création."""
+    column = getattr(view.itemDelegate(), "column", None)
+    if column is not None and getattr(column, "style_title", None):
+        return column
+    node = view.parentWidget()
+    while node is not None and not getattr(node, "style_title", None):
+        node = node.parentWidget()
+    return node
+
+
+def text_of(widget: QWidget) -> str:
+    """Texte visible d'un contrôle, y compris l'invite d'un champ vide."""
+    if isinstance(widget, QLabel):
+        return widget.text().strip()
+    if isinstance(widget, (QAbstractButton, QComboBox, QAbstractSpinBox)):
+        if isinstance(widget, QAbstractSpinBox):
+            line = widget.lineEdit()
+            value = (line.text() or line.placeholderText()) if line is not None else ""
+        else:
+            value = widget.text() if hasattr(widget, "text") else widget.currentText()
+        return str(value or "").strip()
+    if isinstance(widget, QLineEdit):
+        return (widget.text() or widget.placeholderText() or "").strip()
+    if isinstance(widget, (QPlainTextEdit, QTextEdit)):
+        return (widget.toPlainText() or widget.placeholderText() or "").strip()
+    return ""
+
+
+def is_text_widget(widget) -> bool:
+    return isinstance(widget, (QLabel, QAbstractButton, QComboBox, QAbstractSpinBox,
+                               QLineEdit, QPlainTextEdit, QTextEdit)) and bool(text_of(widget))
+
+
+def _publish_row_text_overrides(overrides: dict | None) -> None:
+    global _ROW_TEXT_CACHE_READY
+    import ui_state
+    overrides = overrides or {}
+    ui_state.ROW_TEXT_OVERRIDES = {
+        key: value for key, value in overrides.items()
+        if key.startswith("row-text:") and value
+    }
+    ui_state.GALLERY_STYLE_OVERRIDES = {
+        key: value for key, value in overrides.items()
+        if key.startswith("gallery-") and value
+    }
+    _ROW_TEXT_CACHE_READY = True
+
+
+def ensure_row_text_overrides() -> None:
+    """Charge une seule fois le cache peint des libellés de colonnes."""
+    global _ROW_TEXT_CACHE_READY
+    if not _ROW_TEXT_CACHE_READY:
+        _publish_row_text_overrides(load_settings().get(KEY) or {})
+        _ROW_TEXT_CACHE_READY = True
 
 
 def add_listener(callback) -> None:
@@ -126,7 +212,37 @@ def save_override(element: str, override: dict | None) -> None:
         overrides.pop(element, None)
     settings[KEY] = overrides
     save_settings(settings)
+    _publish_row_text_overrides(overrides)
     _notify(KEY, overrides)
+
+
+def update_text_overrides(changes: list[tuple["TextTarget", dict | None]]) -> None:
+    """Enregistre en une fois des overrides de texte et restaure aussitot leur apparence visible."""
+    changes = [(target, copy.deepcopy(values) if values else None) for target, values in changes
+               if isinstance(target, TextTarget)]
+    if not changes:
+        return
+    settings = load_settings()
+    overrides = dict(settings.get(KEY) or {})
+    for target, values in changes:
+        if isinstance(target, RowTextTarget):
+            overrides.pop(target.legacy_element, None)
+        if values:
+            overrides[target.element] = values
+        else:
+            overrides.pop(target.element, None)
+    settings[KEY] = overrides
+    save_settings(settings)
+    _publish_row_text_overrides(overrides)
+    _notify(KEY, overrides)
+    for target, values in changes:
+        try:
+            if isinstance(target, GalleryStyleTarget):
+                target.apply(values)
+            else:
+                target.apply(merged(target.general(settings), values) if values else None)
+        except RuntimeError:
+            continue
 
 
 def _saved(element: str) -> dict:
@@ -279,6 +395,16 @@ def _font_spec():
     return font_padding_specs(TEXT_PREFIX, size=(6, 48), size_default=12, color_title="Couleur du texte")[0]
 
 
+def _cell_border_specs():
+    import settings_window_v2 as v2
+    return [v2.Spec(
+        "table_cell_border_enabled", "Bordures des cellules", "sides_thick", False,
+        {"colors_key": "table_cell_border", "thickness_key": "table_cell_border_thickness",
+         "width": 90, "box": 54},
+        extra_keys=("table_cell_border", "table_cell_border_thickness"),
+    )]
+
+
 def _font_seed() -> dict:
     """Valeurs « generales » de la police d'un tableau : celles des libelles (role row_label). Seul ce
     qui en DIFFERE est garde, et seul ce qui est garde change le texte (taille seule, gras seul...)."""
@@ -307,7 +433,7 @@ def font_look(override: dict, colors: dict) -> dict:
 
 
 def part_look(override: dict, colors: dict) -> dict:
-    """Fond, padding et police propres d'une cellule / ligne / colonne."""
+    """Fond, padding, bordures et police propres d'une cellule / ligne / colonne."""
     import settings_window_v2 as v2
     look = {}
     bg = (override.get("colors") or {}).get("table_row")
@@ -315,6 +441,13 @@ def part_look(override: dict, colors: dict) -> dict:
         look["bg"] = _resolve_color_value(bg, colors)
     if override.get("table_cell_padding"):
         look["padding"] = v2._padding_tuple(override["table_cell_padding"])
+    if override.get("table_cell_border_enabled"):
+        look["border"] = {
+            "enabled": _coerce_side_enabled(override["table_cell_border_enabled"]),
+            "colors": {side: _resolve_color_value(color, colors)
+                       for side, color in (override.get("table_cell_border") or {}).items()},
+            "thickness": max(1, int(override.get("table_cell_border_thickness", 1) or 1)),
+        }
     font = font_look(override, colors)
     if font:
         look["font"] = font
@@ -372,9 +505,12 @@ def _parts_of(settings: dict, dims_key: str) -> dict:
         if not override:
             continue
         if element == prefix:
+            look = part_look(override, colors)
             font = font_look(override, colors)
             if font:
-                out[("table",)] = {"font": font}
+                look["font"] = font
+            if look:
+                out[("table",)] = look
         elif element.startswith(prefix + PART_SEP):
             part = _parse_part(element[len(prefix) + len(PART_SEP):])
             if part == ("head",):                # entete : sa police seulement (son fond : table_state)
@@ -412,10 +548,21 @@ class TableTarget(Target):
         import settings_window_v2 as v2
         specs = [sp for sp in v2.CATALOG["Tableaux"] if sp.key not in _TABLE_BEHAVIOUR + _HEAD_KEYS]
         specs += [sp for sp in v2.CATALOG["Couleurs"] if sp.params.get("real_key") in _TABLE_COLOR_SLOTS]
+        specs += _cell_border_specs()
         return specs + [_font_spec()]
 
     def general(self, settings: dict) -> dict:
         return {**settings, **_font_seed()}
+
+    def cell_specs(self) -> list:
+        import settings_window_v2 as v2
+        bg = [sp for sp in v2.CATALOG["Couleurs"] if sp.params.get("real_key") == "table_row"]
+        padding = [sp for sp in v2.CATALOG["Tableaux"] if sp.key == "table_cell_padding"]
+        return [*bg, *padding, *_cell_border_specs()]
+
+    @property
+    def dims_key(self):
+        return self.element[len("table:"):]
 
     def apply(self, values):
         _refresh_table(self.element[len("table:"):])
@@ -478,7 +625,13 @@ class TablePartTarget(Target):
         import settings_window_v2 as v2
         bg = [sp for sp in v2.CATALOG["Couleurs"] if sp.params.get("real_key") == "table_row"]
         padding = [sp for sp in v2.CATALOG["Tableaux"] if sp.key == "table_cell_padding"]
-        return [*bg, *padding, _font_spec()]
+        return [*bg, *padding, *_cell_border_specs(), _font_spec()]
+
+    def cell_specs(self) -> list:
+        import settings_window_v2 as v2
+        bg = [sp for sp in v2.CATALOG["Couleurs"] if sp.params.get("real_key") == "table_row"]
+        padding = [sp for sp in v2.CATALOG["Tableaux"] if sp.key == "table_cell_padding"]
+        return [*bg, *padding, *_cell_border_specs()]
 
     def general(self, settings: dict) -> dict:
         table = f"table:{self.dims_key}"
@@ -564,7 +717,24 @@ def apply_title_look(title: QWidget, look: dict | None, level: int) -> None:
 
 def _text_specs() -> tuple:
     from settings_quick_style import font_padding_specs
-    return font_padding_specs("text", size=(6, 72))
+    import settings_window_v2 as v2
+    return (*font_padding_specs("text", size=(6, 72)),
+            v2.Spec("text_border_enabled", "Bordures", "sides_thick", False,
+                    {"colors_key": "text_border", "thickness_key": "text_border_thickness",
+                     "width": 90, "box": 54},
+                    extra_keys=("text_border", "text_border_thickness")),
+            v2.Spec("text_border_radius", "Border radius", "corners", 0, {"max": 30}),
+            v2.Spec("text_background_enabled", "Couleur de fond", "bg_fill", False,
+                    {"color_key": "text_background_color", "color_default": "#00000000",
+                     "width": 90, "box": 54},
+                    extra_keys=("text_background_color",)))
+
+
+def _editable_font_size(font: QFont) -> int:
+    """Taille en pixels logiques attendue par app_style.font, sans reduire les polices Qt en points."""
+    from app_style import ui_scale
+    pixels = font.pixelSize() if font.pixelSize() > 0 else QFontInfo(font).pixelSize()
+    return max(1, round(pixels * 100 / ui_scale()))
 
 
 class TextTarget(Target):
@@ -578,7 +748,7 @@ class TextTarget(Target):
         label = self.widget
         orig = getattr(label, "_look_orig", None)
         font = orig[0] if orig else label.font()
-        size = font.pointSize() if font.pointSize() > 0 else round(font.pixelSize() * 0.75)
+        size = _editable_font_size(font)
         color = label.palette().color(label.foregroundRole()).name()
         margins = orig[2] if orig else label.contentsMargins()
         out = dict(settings)
@@ -588,14 +758,462 @@ class TextTarget(Target):
                     "text_font_color": orig[3] if orig else color,
                     "text_padding": {"left": margins.left(), "top": margins.top(),
                                      "right": margins.right(), "bottom": margins.bottom()},
-                    "text_padding_linked": False})
+                    "text_padding_linked": False,
+                    "text_border_enabled": {side: False for side in ("top", "right", "bottom", "left")},
+                    "text_border": {side: "#00000000" for side in ("top", "right", "bottom", "left")},
+                    "text_border_enabled_linked": True, "text_border_thickness": 1,
+                    "text_border_radius": {corner: 0 for corner in ("top_left", "top_right", "bottom_right", "bottom_left")},
+                    "text_border_radius_linked": True,
+                    "text_background_enabled": False, "text_background_color": "#00000000"})
         return out
 
     def apply(self, values):
         apply_text_look(self.widget, values)
 
+    def preview(self, values: dict) -> None:
+        settings = load_settings()
+        general = self.general(settings)
+        override = _diff(_normalized(self.specs(), general), values)
+        self.apply(merged(general, override) if override else None)
 
-def apply_text_look(label: QLabel, values: dict | None) -> None:
+
+class TableTextTarget(TextTarget):
+    """Style du texte selectionne et de sa cellule/portee de tableau."""
+
+    def __init__(self, text_target: TextTarget, cell_target: Target):
+        self.text_target, self.cell_target = text_target, cell_target
+        super().__init__(text_target.element, text_target.widget, text_target.label)
+
+    def specs(self) -> list:
+        return [*self.text_target.specs(), *self.cell_target.cell_specs()]
+
+    def general(self, settings: dict) -> dict:
+        return {**self.text_target.general(settings), **self.cell_target.general(settings)}
+
+    def values(self, settings: dict) -> dict:
+        return {**self.text_target.values(settings),
+                **merged(self.cell_target.general(settings), _saved(self.cell_target.element))}
+
+    def has_override(self) -> bool:
+        return self.text_target.has_override() or self.cell_target.has_override()
+
+    def _split(self, values: dict) -> tuple[dict, dict]:
+        specs = self.cell_target.cell_specs()
+        cell_keys = {sp.key for sp in specs}
+        cell_keys.update(f"colors:{sp.params['real_key']}" for sp in specs
+                         if sp.params and sp.params.get("real_key"))
+        cell_keys.update(key for sp in specs for key in getattr(sp, "extra_keys", ()))
+        cell_keys.update(key for sp in specs for key in (sp.params or {}).values()
+                         if isinstance(key, str) and key not in cell_keys)
+        return ({key: value for key, value in values.items() if key not in cell_keys},
+                {key: value for key, value in values.items() if key in cell_keys})
+
+    def save(self, values: dict) -> None:
+        text_values, cell_values = self._split(values)
+        settings = load_settings()
+        overrides = dict(settings.get(KEY) or {})
+        for target, supplied, specs in (
+            (self.text_target, text_values, self.text_target.specs()),
+            (self.cell_target, cell_values, self.cell_target.cell_specs()),
+        ):
+            general = target.general(settings)
+            override = _diff(_normalized(specs, general), supplied)
+            if override:
+                overrides[target.element] = override
+            else:
+                overrides.pop(target.element, None)
+        settings[KEY] = overrides
+        save_settings(settings)
+        _publish_row_text_overrides(overrides)
+        _notify(KEY, overrides)
+        self.text_target.apply(merged(self.text_target.general(settings),
+                                      _saved(self.text_target.element))
+                               if _saved(self.text_target.element) else None)
+        _refresh_parts(self.cell_target.dims_key)
+
+    def preview(self, values: dict) -> None:
+        text_values, cell_values = self._split(values)
+        self.text_target.preview(text_values)
+        settings = load_settings()
+        overrides = dict(settings.get(KEY) or {})
+        general = self.cell_target.general(settings)
+        override = _diff(_normalized(self.cell_target.cell_specs(), general), cell_values)
+        if override:
+            overrides[self.cell_target.element] = override
+        else:
+            overrides.pop(self.cell_target.element, None)
+        settings[KEY] = overrides
+        _refresh_parts(self.cell_target.dims_key, settings)
+
+    def remove(self) -> None:
+        settings = load_settings()
+        overrides = dict(settings.get(KEY) or {})
+        overrides.pop(self.text_target.element, None)
+        overrides.pop(self.cell_target.element, None)
+        settings[KEY] = overrides
+        save_settings(settings)
+        _publish_row_text_overrides(overrides)
+        _notify(KEY, overrides)
+        self.text_target.apply(None)
+        _refresh_parts(self.cell_target.dims_key)
+
+    def snapshot_overrides(self) -> dict:
+        overrides = load_settings().get(KEY) or {}
+        return {"text": copy.deepcopy(overrides.get(self.text_target.element)),
+                "cell": copy.deepcopy(overrides.get(self.cell_target.element))}
+
+    def restore_overrides(self, snapshot: dict) -> None:
+        settings = load_settings()
+        overrides = dict(settings.get(KEY) or {})
+        for target, value in ((self.text_target, snapshot.get("text")),
+                              (self.cell_target, snapshot.get("cell"))):
+            if value:
+                overrides[target.element] = copy.deepcopy(value)
+            else:
+                overrides.pop(target.element, None)
+        settings[KEY] = overrides
+        save_settings(settings)
+        _publish_row_text_overrides(overrides)
+        _notify(KEY, overrides)
+        self.text_target.apply(merged(self.text_target.general(settings),
+                                      _saved(self.text_target.element))
+                               if _saved(self.text_target.element) else None)
+        _refresh_parts(self.cell_target.dims_key)
+
+    def apply(self, values):
+        text_values, _cell_values = self._split(values or {})
+        self.text_target.apply(text_values or None)
+        _refresh_parts(self.cell_target.dims_key)
+
+
+class RowTextTarget(TextTarget):
+    """Override d'un nom peint dans une ligne de colonne (plutôt qu'un QLabel)."""
+
+    def __init__(self, widget, path: str, column_title: str, label: str = ""):
+        self.view = widget.view
+        self.path = str(path)
+        self.column_title = str(column_title)
+        super().__init__(f"row-text:{self.column_title}:{self.path}", widget,
+                         label or self.path.rsplit("\\", 1)[-1])
+
+    @property
+    def legacy_element(self):
+        return f"row-text::{self.path}"
+
+    def values(self, settings: dict) -> dict:
+        return merged(self.general(settings), _saved(self.element) or _saved(self.legacy_element))
+
+    def has_override(self) -> bool:
+        return bool(_saved(self.element) or _saved(self.legacy_element))
+
+    def save(self, values: dict) -> None:
+        settings = load_settings()
+        general = self.general(settings)
+        override = _diff(_normalized(self.specs(), general), values)
+        overrides = dict(settings.get(KEY) or {})
+        overrides.pop(self.legacy_element, None)
+        if override:
+            overrides[self.element] = override
+        else:
+            overrides.pop(self.element, None)
+        settings[KEY] = overrides
+        save_settings(settings)
+        _publish_row_text_overrides(overrides)
+        _notify(KEY, overrides)
+        self.apply(merged(general, override) if override else None)
+
+    def remove(self) -> None:
+        settings = load_settings()
+        overrides = dict(settings.get(KEY) or {})
+        overrides.pop(self.element, None)
+        overrides.pop(self.legacy_element, None)
+        settings[KEY] = overrides
+        save_settings(settings)
+        _publish_row_text_overrides(overrides)
+        _notify(KEY, overrides)
+        self.apply(None)
+
+    def general(self, settings: dict) -> dict:
+        from browser_core import ROLE_IS_SHORTCUT, _resolve_shortcut_font_color
+        delegate = self.view.itemDelegate()
+        base_font = getattr(delegate, "type_font", getattr(delegate, "font_name", self.widget.font()))
+        base_color = getattr(delegate, "type_color", getattr(delegate, "color_name", "#d6d9dc"))
+        index = _row_index(self.view, self.path)
+        if index is not None and index.data(ROLE_IS_SHORTCUT):
+            base_font, base_color = _resolve_shortcut_font_color()
+        size = _editable_font_size(base_font)
+        out = dict(settings)
+        out.update({"text_font_family": base_font.family(), "text_font_bold": base_font.weight() >= QFont.DemiBold,
+                    "text_font_italic": base_font.italic(), "text_font_size": max(1, size),
+                    "text_font_smoothing_enabled": False, "text_font_smoothing": "current",
+                    "text_font_color": base_color,
+                    "text_padding": {s: 0 for s in ("left", "top", "right", "bottom")},
+                    "text_padding_linked": False,
+                    "text_border_enabled": {s: False for s in ("top", "right", "bottom", "left")},
+                    "text_border": {s: "#00000000" for s in ("top", "right", "bottom", "left")},
+                    "text_border_enabled_linked": True, "text_border_thickness": 1,
+                    "text_border_radius": {c: 0 for c in ("top_left", "top_right", "bottom_right", "bottom_left")},
+                    "text_border_radius_linked": True,
+                    "text_background_enabled": False, "text_background_color": "#00000000"})
+        return out
+
+    def apply(self, values):
+        import ui_state
+        row_looks = dict(getattr(ui_state, "ROW_TEXT_OVERRIDES", {}) or {})
+        if values:
+            row_looks[self.element] = copy.deepcopy(values)
+        else:
+            row_looks.pop(self.element, None)
+            row_looks.pop(self.legacy_element, None)
+        ui_state.ROW_TEXT_OVERRIDES = row_looks
+        self.view.viewport().update()
+
+
+class GalleryStyleTarget(TextTarget):
+    """Style local d'une cellule, d'une image ou d'un des textes de la planche."""
+
+    def __init__(self, widget, path: str, part: str, label: str = ""):
+        self.gallery = widget.view
+        self.path = str(path)
+        self.part = part
+        self._specs = self._make_specs()
+        super().__init__(f"gallery-{part}:{self.path}", widget, label or self.path.rsplit("/", 1)[-1])
+
+    def _make_specs(self):
+        import settings_window_v2 as v2
+        table_bg = next(spec for spec in v2.CATALOG["Couleurs"]
+                        if spec.key == "colors:tableRow")
+        cell = [v2.Spec("gallery_cell_bg", table_bg.label, table_bg.kind, table_bg.default,
+                        dict(table_bg.params or {})),
+                v2.Spec("gallery_cell_padding", "Cellule : padding", "padding", {}),
+                v2.Spec("gallery_cell_border_enabled", "Cellule : bordures", "sides_thick", False,
+                        {"colors_key": "gallery_cell_border", "thickness_key": "gallery_cell_border_thickness",
+                         "width": 90, "box": 54},
+                        extra_keys=("gallery_cell_border", "gallery_cell_border_thickness")),
+                v2.Spec("gallery_cell_border_radius", "Cellule : border radius", "corners", 0, {"max": 30})]
+        if self.part in {"name", "info"}:
+            return [*_text_specs(), *cell]
+        image = list(v2.CATALOG["Visionneuse : Cellule image"])
+        if self.part == "image":
+            return [spec for spec in image
+                    if spec.key.startswith("viewer_film_image_border_")
+                    or spec.key == "viewer_film_image_border_radius"
+                    or spec.key.startswith("viewer_film_image_shadow")]
+        return cell
+
+    def specs(self) -> list:
+        return self._specs
+
+    @staticmethod
+    def sparse_look(override: dict) -> dict:
+        """Ne garder que les champs modifiés; la couleur du tableau est une clé UI."""
+        saved = {key: copy.deepcopy(value) for key, value in override.items() if key != "colors"}
+        color = (override.get("colors") or {}).get("table_row")
+        if color is not None:
+            saved["gallery_cell_bg"] = color
+        return saved
+
+    def values(self, settings: dict) -> dict:
+        values = self.general(settings)
+        saved = _saved(self.element)
+        values.update(saved)
+        if "gallery_cell_bg" in saved:
+            values["colors"] = {**(values.get("colors") or {}),
+                                "table_row": saved["gallery_cell_bg"]}
+        return values
+
+    def general(self, settings: dict) -> dict:
+        if self.part not in {"name", "info"}:
+            return dict(settings)
+        look = self.gallery.film_look
+        qfont, qcolor = look["name_font" if self.part == "name" else "rank_font"]
+        size = _editable_font_size(qfont)
+        out = dict(settings)
+        out.update({"text_font_family": qfont.family(), "text_font_bold": qfont.weight() >= QFont.DemiBold,
+                    "text_font_italic": qfont.italic(), "text_font_size": max(1, size),
+                    "text_font_smoothing_enabled": False, "text_font_smoothing": "current",
+                    "text_font_color": qcolor.name(QColor.NameFormat.HexArgb),
+                    "text_padding": {s: 0 for s in ("left", "top", "right", "bottom")},
+                    "text_padding_linked": False,
+                    "text_border_enabled": {s: False for s in ("top", "right", "bottom", "left")},
+                    "text_border": {s: "#00000000" for s in ("top", "right", "bottom", "left")},
+                    "text_border_enabled_linked": True, "text_border_thickness": 1,
+                    "text_border_radius": {c: 0 for c in ("top_left", "top_right", "bottom_right", "bottom_left")},
+                    "text_border_radius_linked": True,
+                    "text_background_enabled": False, "text_background_color": "#00000000"})
+        return out
+
+    def save(self, values: dict) -> None:
+        settings = load_settings()
+        override = _diff(_normalized(self.specs(), self.general(settings)), values)
+        saved = self.sparse_look(override)
+        save_override(self.element, saved)
+        self.apply(saved)
+
+    def preview(self, values: dict) -> None:
+        settings = load_settings()
+        override = _diff(_normalized(self.specs(), self.general(settings)), values)
+        self.apply(self.sparse_look(override))
+
+    def apply(self, values):
+        import ui_state
+        overrides = dict(getattr(ui_state, "GALLERY_STYLE_OVERRIDES", {}) or {})
+        if values:
+            overrides[self.element] = copy.deepcopy(values)
+        else:
+            overrides.pop(self.element, None)
+        ui_state.GALLERY_STYLE_OVERRIDES = overrides
+        self.gallery.invalidate_edited_cell(self.path)
+
+
+class TextGroupTarget(TextTarget):
+    """Un même override de texte appliqué à un ensemble explicite de libellés."""
+
+    def __init__(self, targets: list[TextTarget], label: str):
+        self.targets = targets
+        self._gallery_initial = None
+        first = targets[0]
+        super().__init__(f"text-group:{label}", first.widget, label)
+
+    def general(self, settings: dict) -> dict:
+        return self.targets[0].general(settings)
+
+    def specs(self) -> list:
+        return list(self.targets[0].specs())
+
+    def values(self, settings: dict) -> dict:
+        values = self.targets[0].values(settings)
+        if all(isinstance(target, GalleryStyleTarget) for target in self.targets):
+            self._gallery_initial = _normalized(self.specs(), values)
+        return values
+
+    def _gallery_changes(self, values: dict, settings: dict) -> dict:
+        """Deux références au plus (nom/info), quel que soit le nombre de diapos."""
+        if self._gallery_initial is None:
+            self._gallery_initial = _normalized(self.specs(), self.targets[0].values(settings))
+        changed = {key: value for key, value in values.items()
+                   if key in self._gallery_initial and value != self._gallery_initial[key]}
+        normalized = {}
+        stored = settings.get(KEY) or {}
+        changes = {}
+        for target in self.targets:
+            part = target.part
+            if part not in normalized:
+                normalized[part] = _normalized(target.specs(), target.general(settings))
+            general = normalized[part]
+            saved = stored.get(target.element) or {}
+            current = {**general, **{key: value for key, value in saved.items()
+                                    if key not in {"gallery_cell_bg", "colors"}}}
+            if "gallery_cell_bg" in saved:
+                current["colors:table_row"] = saved["gallery_cell_bg"]
+            elif (saved.get("colors") or {}).get("table_row") is not None:
+                current["colors:table_row"] = saved["colors"]["table_row"]
+            desired = {**current, **changed}
+            changes[target.element] = target.sparse_look(_diff(general, desired))
+        return changes
+
+    def _gallery_refresh(self, changes: dict) -> None:
+        galleries = {}
+        for target in self.targets:
+            galleries.setdefault(target.gallery, set()).add(target.path)
+        for gallery, paths in galleries.items():
+            for path in paths:
+                gallery.invalidate_edited_cell(path, repaint=False)
+            gallery.viewport().update()
+
+    def save(self, values: dict) -> None:
+        if any(isinstance(target, TableTextTarget) for target in self.targets):
+            for target in self.targets:
+                if isinstance(target, TableTextTarget):
+                    target.save(values)
+                else:
+                    keys = {sp.key for sp in target.specs()}
+                    keys.update(key for sp in target.specs() for key in getattr(sp, "extra_keys", ()))
+                    target.save({key: value for key, value in values.items() if key in keys})
+            return
+        if all(isinstance(target, GalleryStyleTarget) for target in self.targets):
+            settings = load_settings()
+            overrides = dict(settings.get(KEY) or {})
+            changes = self._gallery_changes(values, settings)
+            for element, saved in changes.items():
+                if saved:
+                    overrides[element] = saved
+                else:
+                    overrides.pop(element, None)
+            settings[KEY] = overrides
+            save_settings(settings)
+            _publish_row_text_overrides(overrides)
+            _notify(KEY, overrides)
+            self._gallery_refresh(changes)
+            return
+        settings = load_settings()
+        overrides = dict(settings.get(KEY) or {})
+        applied = []
+        normalized_cache = {}
+        for target in self.targets:
+            general = target.general(settings)
+            signature = repr(sorted(general.items(), key=lambda item: item[0]))
+            normalized = normalized_cache.get(signature)
+            if normalized is None:
+                normalized = normalized_cache[signature] = _normalized(target.specs(), general)
+            override = _diff(normalized, values)
+            if isinstance(target, RowTextTarget):
+                overrides.pop(target.legacy_element, None)
+            if override:
+                overrides[target.element] = override
+            else:
+                overrides.pop(target.element, None)
+            applied.append((target, merged(general, override) if override else None))
+        settings[KEY] = overrides
+        save_settings(settings)
+        _publish_row_text_overrides(overrides)
+        _notify(KEY, overrides)
+        for target, look in applied:
+            try:
+                target.apply(look)
+            except RuntimeError:
+                continue
+
+    def preview(self, values: dict) -> None:
+        if all(isinstance(target, GalleryStyleTarget) for target in self.targets):
+            changes = self._gallery_changes(values, load_settings())
+            import ui_state
+            overrides = dict(getattr(ui_state, "GALLERY_STYLE_OVERRIDES", {}) or {})
+            for element, saved in changes.items():
+                if saved:
+                    overrides[element] = saved
+                else:
+                    overrides.pop(element, None)
+            ui_state.GALLERY_STYLE_OVERRIDES = overrides
+            self._gallery_refresh(changes)
+            return
+        settings = load_settings()
+        normalized_cache = {}
+        for target in self.targets:
+            general = target.general(settings)
+            signature = repr(sorted(general.items(), key=lambda item: item[0]))
+            normalized = normalized_cache.get(signature)
+            if normalized is None:
+                normalized = normalized_cache[signature] = _normalized(target.specs(), general)
+            override = _diff(normalized, values)
+            if isinstance(target, TableTextTarget):
+                target.preview(values)
+            else:
+                target.apply(merged(general, override) if override else None)
+
+    def apply(self, values):
+        for target in self.targets:
+            target.apply(values)
+
+    def has_override(self) -> bool:
+        return any(target.has_override() for target in self.targets)
+
+    def remove(self) -> None:
+        for target in self.targets:
+            target.remove()
+
+
+def apply_text_look(label: QWidget, values: dict | None) -> None:
     if getattr(label, "_look_orig", None) is None:
         color = label.palette().color(label.foregroundRole()).name()
         label._look_orig = (QFont(label.font()), label.styleSheet(), label.contentsMargins(), color)
@@ -614,7 +1232,22 @@ def apply_text_look(label: QLabel, values: dict | None) -> None:
     label.setFont(app_font(size, weight, family=family, italic=bool(values.get("text_font_italic")),
                            smoothing=smoothing))
     color = _resolve_color_value(values.get("text_font_color") or "", values.get("colors") or {})
-    label.setStyleSheet(f"color: {color}; background: transparent;" if color else sheet0)
+    bg = (_resolve_color_value(values.get("text_background_color") or "", values.get("colors") or {})
+          if values.get("text_background_enabled") else "transparent")
+    sides = values.get("text_border_enabled") or {}
+    border_colors = values.get("text_border") or {}
+    thickness = max(0, int(values.get("text_border_thickness", 1) or 0))
+    border_css = " ".join(
+        f"border-{side}: {thickness if sides.get(side) else 0}px solid "
+        f"{_resolve_color_value(border_colors.get(side, ""), values.get("colors") or {}) or "transparent"};"
+        for side in ("top", "right", "bottom", "left"))
+    radius = values.get("text_border_radius") or {}
+    corners = ("top_left", "top_right", "bottom_right", "bottom_left")
+    radii = [int(radius.get(corner, 0) or 0) for corner in corners]
+    radius_css = " ".join(f"border-{corner.replace('_', '-')}-radius: {value}px;"
+                          for corner, value in zip(corners, radii))
+    style = f"color: {color};" if color else ""
+    label.setStyleSheet(f"{style} background: {bg}; {border_css} {radius_css}" if style or bg != "transparent" or any(sides.values()) or any(radii) else sheet0)
     pad = values.get("text_padding") or {}
     label.setContentsMargins(*(int(pad.get(s, 0)) for s in ("left", "top", "right", "bottom")))
     label._look_values = values
@@ -775,10 +1408,32 @@ def targets_for(widget: QWidget) -> list:
         header = _ancestor(widget, _SectionHeader)
     except ImportError:
         pass
-    if isinstance(widget, QLabel) and header is None and toggle is None and widget.text().strip():
+    if getattr(widget, "part", None) == "text" and hasattr(widget, "view"):
+        from browser_core import ROLE_PATH
+        view = widget.view
+        column = _column_for_view(view)
+        model = view.model()
+        path, name = str(widget.key), ""
+        for row in range(model.rowCount()):
+            index = model.index(row, 0)
+            if str(index.data(ROLE_PATH) or index.row()) == path:
+                name = str(index.data(Qt.DisplayRole) or "")
+                break
+        if name and column is not None:
+            out.append(RowTextTarget(widget, path, getattr(column, "style_title", ""), name))
+    if getattr(widget, "part", "").startswith("gallery-") and hasattr(widget, "view"):
+        part = widget.part.removeprefix("gallery-")
+        label = str(widget.key)
+        for row in range(widget.view.count()):
+            item = widget.view.item(row)
+            if str(item.data(Qt.UserRole)) == str(widget.key):
+                label = item.text()
+                break
+        out.append(GalleryStyleTarget(widget, str(widget.key), part, label))
+    if is_text_widget(widget) and header is None and toggle is None:
         path = widget_path(widget, window)
         if path:
-            text = widget.text().strip().replace("\n", " ")
+            text = text_of(widget).replace("\n", " ")
             out.append(TextTarget(f"text:{_scope_of(window)}:{path}", widget,
                                   f"« {text[:40]}{'…' if len(text) > 40 else ''} »"))
     if header is not None:
@@ -862,9 +1517,34 @@ def open_override(target: Target, space: dict | None = None, parent=None):
                 if style.get(key) != last[key]:
                     last[key] = style.get(key)
                     setter(int(style.get(key) or 0))
-        target.save({k: v for k, v in style.items() if k not in _SPACE_KEYS})
+        values = {k: v for k, v in style.items() if k not in _SPACE_KEYS}
+        if isinstance(target, TextTarget):
+            target.preview(values)
+            window._pending_text_style = values
+            if not hasattr(window, "_text_save_timer"):
+                window._text_save_timer = QTimer(window)
+                window._text_save_timer.setSingleShot(True)
+                # La planche peut viser des centaines de cases : son aperçu
+                # est immédiat, mais l'écriture sur disque attend la fin du
+                # geste. Les autres textes gardent la sauvegarde au tour suivant.
+                gallery_scope = isinstance(target, GalleryStyleTarget) or (
+                    isinstance(target, TextGroupTarget)
+                    and all(isinstance(item, GalleryStyleTarget) for item in target.targets))
+                window._text_save_timer.setInterval(180 if gallery_scope else 0)
+                window._text_save_timer.timeout.connect(
+                    lambda w=window, t=target: t.save(getattr(w, "_pending_text_style", {})))
+            window._text_save_timer.start()
+        else:
+            target.save(values)
+
+    def flush_pending():
+        timer = getattr(window, "_text_save_timer", None)
+        if timer is not None and timer.isActive():
+            timer.stop()
+            target.save(getattr(window, "_pending_text_style", {}))
 
     window.styleChanged.connect(changed)
+    window.finished.connect(flush_pending)
     _OPEN[target.element] = window
     try:
         pos = target.widget.mapToGlobal(target.widget.rect().topRight())
@@ -872,6 +1552,8 @@ def open_override(target: Target, space: dict | None = None, parent=None):
     except RuntimeError:
         pass
     window.show()
+    window.raise_()
+    window.activateWindow()
     return window
 
 
@@ -948,6 +1630,7 @@ def load(settings: dict) -> None:
     for element in [k for k in ELEMENT_LOOKS if k.startswith("table:")]:
         ELEMENT_LOOKS.pop(element, None)
     PART_LOOKS.clear()
+    _publish_row_text_overrides(settings.get(KEY) or {})
     for element, override in (settings.get(KEY) or {}).items():
         if not element.startswith("table:") or not override:
             continue
@@ -977,7 +1660,7 @@ def apply_saved(window: QWidget, settings: dict | None = None) -> None:
         values = merged(settings, override)
         if element.startswith(f"text:{scope}:"):
             label = widget_at_path(window, element[len(f"text:{scope}:"):])
-            if isinstance(label, QLabel):
+            if is_text_widget(label):
                 target = TextTarget(element, label, "")
                 apply_text_look(label, merged(target.general(settings), override))
         elif element.startswith("title:"):

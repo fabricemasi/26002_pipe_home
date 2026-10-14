@@ -1403,7 +1403,8 @@ def _f_font_role(spec, v, colors):
 
 def _f_semantic_color(spec, v, colors):
     """Couleurs : une pastille de la palette. Deux pastilles peuvent piloter la meme cle (« Selection
-    en cours » et « Bouton » = accent) : elles restent synchronisees."""
+    en cours » et « Bouton » = accent) : elles restent synchronisees quand elles partagent encore une
+    cle, mais les couleurs « skin - accent » et « Item - sélectionné-focus » sont independantes."""
     real_key = spec.params["real_key"]
     field = SemanticColorField(colors.get(real_key, "#000000"), spec.label)
     siblings = v.hooks.setdefault("color_slots", {}).setdefault(real_key, [])

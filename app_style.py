@@ -43,6 +43,7 @@ C = {
     "row_idle":      "#0d0f11",
     "hover":         "#232729",
     "accent":        "#3f6f9f",
+    "sel_focus":     "#3f6f9f",
     "accent_text":   "#eef2f5",
     "btn":           "#282c30",
     "btn_border":    "#383d42",
@@ -380,7 +381,8 @@ COLOR_FIELDS: list[tuple[str, str, str]] = [
     ("sel_idle", "Selection (colonne inactive)", "Ligne selectionnee hors focus"),
     ("row_idle", "Ligne non selectionnee", "Fond des lignes Type/Projets/Sous-projet au repos"),
     ("hover", "Survol de ligne", "Retour au survol de la souris"),
-    ("accent", "Couleur d'accent", "Selection active, boutons principaux"),
+    ("accent", "Couleur d'accent", "Boutons principaux et accents de l'interface"),
+    ("sel_focus", "Sélection active", "Fond de l'item sélectionné-focus"),
     ("accent_text", "Texte sur accent", "Texte au-dessus de la couleur d'accent"),
     ("btn", "Fond des boutons", "Etat normal"),
     ("btn_border", "Bordure des boutons", "Etat normal"),
@@ -604,12 +606,9 @@ def removed_softwares() -> frozenset:
 # Palette semantique (11 cles), utilisee par la fenetre de parametres (page
 # "Couleurs", 2 colonnes) et par la resolution de la couleur d'entete
 # ci-dessous : chaque "slot" semantique renvoie vers UNE cle reelle de C.
-# "skinAccent" et "selCur" pointent tous deux vers "accent" — le reste de
-# l'appli n'a qu'une seule couleur d'accent, a la fois pour la selection
-# active ET les boutons principaux (voir la note de "accent" dans
-# COLOR_FIELDS ci-dessus) : les deux pastilles de la fenetre de parametres
-# restent donc volontairement synchronisees plutot que d'introduire une
-# distinction qui n'existe nulle part ailleurs dans l'appli. Pastille
+# "skinAccent" et "selCur" ont des couleurs reelles distinctes : la
+# selection active peut ainsi etre reglee independamment de l'accent des
+# boutons principaux et du reste de l'interface. Pastille
 # "Bouton" supprimee (remarque de l'utilisateur, capture annotee a
 # l'appui, "supprimer bouton ... sera : skin-accent") : "skinAccent"
 # reprend seule ce role, "accent" gardant une seule couleur d'accent pour
@@ -667,12 +666,12 @@ SEMANTIC_COLOR_SLOTS: list[tuple[str, str, str]] = [
     # fonction du sens de lecture") — tout le reste decale d'un cran dans CE
     # sens colonne-par-colonne, ce qui fait deborder l'ancien dernier de la
     # colonne de gauche ("navbar") en tete de la colonne de droite. Meme cle
-    # reelle "accent" que "Item - sélectionné-focus" (selCur) : voir la
-    # remarque de tete de liste.
+    # reelle "sel_focus" que "Item - sélectionné-focus" (selCur), afin que
+    # les deux pastilles restent independantes.
     ("skinAccent", "accent", "skin - accent"),
     ("navbar", "app_bg", "Barre de navigation"),
     ("skinN1", "topbar", "skin - niveau1"),
-    ("selCur", "accent", "Item - sélectionné-focus"),
+    ("selCur", "sel_focus", "Item - sélectionné-focus"),
     ("skinN2", "void", "skin - niveau2"),
     ("selDone", "sel_idle", "Item - sélectionné"),
     ("fond", "window", "skin - fond"),
