@@ -733,6 +733,13 @@ def default_thumbnail() -> QPixmap:
 # ==========================================================================
 
 PROJECT_COLUMNS_FILENAME = ".pipeline_columns.json"
+# Modele de configuration pose a la racine d'une liste de projets (par
+# exemple la cible d'un raccourci « PROG »). Les projets DIRECTEMENT dans
+# cette racine qui n'ont pas encore leur propre fichier l'heritent : un
+# nouveau dossier est donc configure des sa premiere ouverture, sans que
+# l'application ait a creer un fichier dans chaque projet. Une configuration
+# propre au projet garde toujours la priorite.
+PROJECT_COLUMNS_DEFAULTS_FILENAME = ".pipeline_project_defaults.json"
 
 # "Type" du repertoire de travail final (voir ColumnConfigDialog, menu
 # deroulant "Repertoire de travail > Type") : cle -> nom de DOSSIER fixe
@@ -773,6 +780,11 @@ DEFAULT_WORK_DIR_TYPE = "logiciel"
 def _project_columns_path(project_dir: Path) -> Path:
     return project_dir / PROJECT_COLUMNS_FILENAME
 
+
+def _project_columns_defaults_path(project_dir: Path) -> Path:
+    """Modele des projets enfants directs de ``project_dir``."""
+    return project_dir / PROJECT_COLUMNS_DEFAULTS_FILENAME
+
 def _coerce_project_column(raw: dict) -> dict:
     """Normalise UN niveau de la chaine configuree (voir load_project_
     columns) — repli sur des valeurs sures pour toute cle manquante/mal
@@ -800,7 +812,80 @@ def _coerce_work_dir(raw: dict) -> dict:
         "omit_files": [str(v) for v in (raw.get("omit_files") or []) if str(v).strip()],
     }
 
-_PROJECT_COLUMNS_CACHE: dict[Path, tuple[float | None, dict | None]] = {}
+_PROJECT_COLUMNS_CACHE: dict[Path, tuple[int | None, int | None, tuple | None, dict | None]] = {}
+_PROJECT_LIGHTROOM_CACHE: dict[Path, tuple[Path, int, int | None] | None] = {}
+
+
+def _lightroom_set_defaults(project_dir: Path) -> tuple | None:
+    """Reglages de set hérités du dossier Lightroom associé le plus proche."""
+    cached = _PROJECT_LIGHTROOM_CACHE.get(project_dir, ...)
+    if cached is not ...:
+        if cached is None:
+            return None
+        marker, marker_mtime, generation = cached
+        try:
+            if marker.stat().st_mtime_ns == marker_mtime:
+                return (str(marker), marker_mtime, generation)
+        except OSError:
+            pass
+    current = project_dir
+    while True:
+        marker = current / ".pipeline_lightroom.json"
+        try:
+            stat = marker.stat()
+            raw = json.loads(marker.read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and raw.get("catalog"):
+                generation = raw.get("set_defaults_at_ns")
+                try:
+                    generation = int(generation) if generation is not None else None
+                except (TypeError, ValueError):
+                    generation = None
+                _PROJECT_LIGHTROOM_CACHE[project_dir] = (marker, stat.st_mtime_ns, generation)
+                return (str(marker), stat.st_mtime_ns, generation)
+        except (OSError, ValueError):
+            pass
+        parent = current.parent
+        if parent == current:
+            _PROJECT_LIGHTROOM_CACHE[project_dir] = None
+            return None
+        current = parent
+
+
+def invalidate_project_columns_cache() -> None:
+    """Invalide les configs et associations Lightroom mémorisées après un lien."""
+    _PROJECT_COLUMNS_CACHE.clear()
+    _PROJECT_LIGHTROOM_CACHE.clear()
+
+
+def _lightroom_default_project_config() -> dict:
+    return {
+        "columns": [],
+        "work_dir": {
+            "type": "standard", "show_dirs": True, "show_files": True,
+            "omit_dirs": [], "omit_files": [],
+        },
+        "set_enabled": False,
+        "focus_enabled": False,
+        "in_over_out_enabled": False,
+    }
+
+
+def _read_project_columns(path: Path) -> dict | None:
+    """Lit et normalise un fichier de configuration de projet."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    columns = [_coerce_project_column(c) for c in (raw.get("columns") or []) if isinstance(c, dict)]
+    return {
+        "columns": [c for c in columns if c["name"]],
+        "work_dir": _coerce_work_dir(raw.get("work_dir") or {}),
+        "set_enabled": bool(raw.get("set_enabled", True)),
+        "focus_enabled": bool(raw.get("focus_enabled", True)),
+        "in_over_out_enabled": bool(raw.get("in_over_out_enabled", True)),
+    }
 
 def load_project_columns(project_dir: Path) -> dict | None:
     """Configuration de chaine de navigation propre a `project_dir` (voir
@@ -829,38 +914,51 @@ def load_project_columns(project_dir: Path) -> dict | None:
     l'utilisateur specifiquement sur cette colonne, "quand je veux
     redimensionner les lignes ... il y a de grosses lenteurs"."""
     path = _project_columns_path(project_dir)
+    defaults_path = _project_columns_defaults_path(project_dir.parent)
     try:
-        mtime = path.stat().st_mtime
+        mtime = path.stat().st_mtime_ns
     except OSError:
         mtime = None
+    try:
+        defaults_mtime = defaults_path.stat().st_mtime_ns
+    except OSError:
+        defaults_mtime = None
+    lightroom_defaults = _lightroom_set_defaults(project_dir)
     cached = _PROJECT_COLUMNS_CACHE.get(project_dir)
-    if cached is not None and cached[0] == mtime:
-        return cached[1]
+    if (cached is not None and cached[0] == mtime and cached[1] == defaults_mtime
+            and cached[2] == lightroom_defaults):
+        return cached[3]
     result: dict | None = None
-    if mtime is not None:
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            raw = None
-        if isinstance(raw, dict):
-            columns = [_coerce_project_column(c) for c in (raw.get("columns") or []) if isinstance(c, dict)]
-            columns = [c for c in columns if c["name"]]
-            result = {
-                "columns": columns, "work_dir": _coerce_work_dir(raw.get("work_dir") or {}),
-                # Toggles maitres (voir ColumnConfigDialog, la remarque de
-                # l'utilisateur, "j'aimerai ajouter trois toggles ... set /
-                # focus / logiciels" puis "in over et out") — defaut True
-                # partout : comportement INCHANGE pour un fichier ecrit
-                # AVANT ce reglage. Toggle "logiciels" SUPPRIME depuis (voir
-                # la remarque de l'utilisateur, "supprime le toggle
-                # logiciels") — la cle "logiciels_enabled" d'un fichier plus
-                # ancien est desormais simplement IGNOREE, jamais relue.
-                "set_enabled": bool(raw.get("set_enabled", True)),
-                "focus_enabled": bool(raw.get("focus_enabled", True)),
-                "in_over_out_enabled": bool(raw.get("in_over_out_enabled", True)),
-            }
-    _PROJECT_COLUMNS_CACHE[project_dir] = (mtime, result)
+    generation = lightroom_defaults[2] if lightroom_defaults is not None else None
+    use_lightroom_defaults = lightroom_defaults is not None and (
+        mtime is None or (generation is not None and mtime <= generation)
+    )
+    if use_lightroom_defaults:
+        result = _lightroom_default_project_config()
+    elif mtime is not None:
+        result = _read_project_columns(path)
+    # Un modele n'est consulte QUE lorsqu'il n'y a pas de configuration
+    # propre : les reglages explicites d'un projet restent independants.
+    elif defaults_mtime is not None:
+        result = _read_project_columns(defaults_path)
+    _PROJECT_COLUMNS_CACHE[project_dir] = (mtime, defaults_mtime, lightroom_defaults, result)
     return result
+
+
+def save_project_columns_defaults(project_root: Path, config: dict) -> None:
+    """Enregistre le modele herite par les futurs projets de ``project_root``."""
+    path = _project_columns_defaults_path(project_root)
+    payload = {
+        "columns": [_coerce_project_column(c) for c in config.get("columns", [])],
+        "work_dir": _coerce_work_dir(config.get("work_dir") or {}),
+        "set_enabled": bool(config.get("set_enabled", True)),
+        "focus_enabled": bool(config.get("focus_enabled", True)),
+        "in_over_out_enabled": bool(config.get("in_over_out_enabled", True)),
+    }
+    _clear_hidden(path)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    _set_hidden(path)
+    _PROJECT_COLUMNS_CACHE.clear()
 
 def save_project_columns(project_dir: Path, config: dict) -> None:
     """Ecrit `config` (MEME forme que load_project_columns) dans le dossier
@@ -1918,6 +2016,8 @@ ROLE_SOURCE_STEP = Qt.UserRole + 4
 # et le menu contextuel reduit ("Retirer le raccourci" au lieu de
 # Renommer/Supprimer, qui agirait par erreur sur la VRAIE cible).
 ROLE_IS_SHORTCUT = Qt.UserRole + 5
+ROLE_LIGHTROOM_SHORTCUT = Qt.UserRole + 95
+ROLE_MEDIA_COUNTS = Qt.UserRole + 96
 
 # Espace (px) au-dessus d'une ligne, choisi par clic droit > « Ajouter une espace au-dessus » ; retenu
 # dans le .pipeline_layout.json du dossier de la ligne (`item_spaces`, cle = son nom). Les delegues

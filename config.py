@@ -52,6 +52,7 @@ HIDDEN_PREFIXES = (".", "$", "~")
 
 IMAGE_EXTENSIONS = {
     ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".ico",
+    ".heic", ".heif",
 }
 
 # Fichiers 3D dont on peut generer un apercu (voir _decode_obj_image) : pas

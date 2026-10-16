@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 
 from app_style import C, scaled
 from browser_core import _fine_timer, _snappy_gil, human_size
-from config import IMAGE_EXTENSIONS
+from config import IMAGE_EXTENSIONS, RAW_EXTENSIONS
 import previews
 
 
@@ -66,7 +66,7 @@ def _quarter_turn(reader: QImageReader) -> bool:
 
 class _DecodeSignals(QObject):
     # cle, date, image pleine, image ajustee a l'ecran, taille reelle (QSizeF) ; None = echec
-    done = Signal(str, float, object, object, object)
+    done = Signal(str, float, object, object, object, str)
 
 
 class _DecodeTask(QRunnable):
@@ -77,21 +77,70 @@ class _DecodeTask(QRunnable):
 
     def run(self):
         full = fitted = natural = None
+        origin = "original"
         try:
-            reader = QImageReader(self._key)
-            reader.setAutoTransform(True)        # photos d'appareil : orientation EXIF appliquee
+            source_path = Path(self._key)
+            from lightroom_bridge import is_managed, orient_image, orientation, preview_origin, proxy_path
+            managed = is_managed(source_path)
+            large_proxy = proxy_path(source_path) if managed else None
+            reader_path = large_proxy if large_proxy is not None and large_proxy.is_file() else source_path
+            lightroom_proxy = (
+                managed and reader_path != source_path
+                and preview_origin(source_path) == "lightroom"
+            )
+            reader = QImageReader(str(reader_path))
+            reader.setAutoTransform(True)
             size = reader.size()
-            turned = _quarter_turn(reader)
-            if size.isValid() and max(size.width(), size.height()) > self._max_side:
-                reader.setScaledSize(size.scaled(self._max_side, self._max_side, Qt.KeepAspectRatio))
-            image = reader.read()
+            oriented_proxy_size = QSize(size) if reader_path != source_path else QSize()
+            source_transform = 0
+            # Un petit proxy Lightroom (parfois une vignette de quelques centaines de
+            # pixels) ne doit pas devenir l'image en focus. Garder le rendu Lightroom
+            # s'il suffit a la zone ; sinon decoder le fichier source.
+            use_original = managed and (not size.isValid() or min(
+                self._fit.width() / max(1, size.width()),
+                self._fit.height() / max(1, size.height()),
+            ) > 1.0)
+            if source_path.suffix.lower() in RAW_EXTENSIONS and (use_original or not size.isValid()):
+                image, source_transform = previews._decode_embedded_jpeg(
+                    source_path, self._max_side, include_transform=True)
+                if image is not None:
+                    natural = QSizeF(image.size())
+                    origin = "original"
+            else:
+                image = None
+            if image is None or image.isNull():
+                if use_original and source_path.suffix.lower() not in RAW_EXTENSIONS:
+                    original_reader = QImageReader(str(source_path))
+                    original_reader.setAutoTransform(True)
+                    original_size = original_reader.size()
+                    if original_size.isValid():
+                        reader, size, reader_path = original_reader, original_size, source_path
+                        source_transform = reader.transformation()
+                turned = _quarter_turn(reader)
+                if size.isValid() and max(size.width(), size.height()) > self._max_side:
+                    reader.setScaledSize(size.scaled(self._max_side, self._max_side, Qt.KeepAspectRatio))
+                image = reader.read()
+                origin = (preview_origin(source_path) or "lightroom") if managed and reader_path != source_path else "original"
+                if size.isValid():
+                    natural = QSizeF(size.height(), size.width()) if turned else QSizeF(size)
             if not image.isNull():
+                if managed and origin == "original":
+                    code = orientation(source_path)
+                    same_axis = (oriented_proxy_size.isValid()
+                                 and image.width() != image.height()
+                                 and oriented_proxy_size.width() != oriented_proxy_size.height()
+                                 and (image.width() > image.height()) ==
+                                 (oriented_proxy_size.width() > oriented_proxy_size.height()))
+                    # Le JPEG embarqué peut déjà être tourné physiquement ou par
+                    # EXIF. Lightroom ne doit appliquer que la rotation manquante.
+                    already_turned = code in ("BC", "DA", "CB", "AD") and same_axis
+                    if code and getattr(source_transform, "value", source_transform) == 0 and not already_turned:
+                        image = orient_image(image, code)
+                    natural = QSizeF(image.size())
                 fmt = QImage.Format_ARGB32_Premultiplied if image.hasAlphaChannel() else QImage.Format_RGB32
                 if image.format() != fmt:
                     image = image.convertToFormat(fmt)
-                if size.isValid():
-                    natural = QSizeF(size.height(), size.width()) if turned else QSizeF(size)
-                else:
+                if natural is None:
                     natural = QSizeF(image.size())
                 full = image
                 fit = self._fit
@@ -102,7 +151,7 @@ class _DecodeTask(QRunnable):
         except Exception:        # fichier illisible : rien, l'apercu du pipeline reste
             full = fitted = natural = None
         try:
-            self._signals.done.emit(self._key, self._mtime, full, fitted, natural)
+            self._signals.done.emit(self._key, self._mtime, full, fitted, natural, origin)
         except RuntimeError:     # appli en train de se fermer
             pass
 
@@ -128,6 +177,7 @@ class FocusImageLoader(QObject):
         # cle -> (date, pixmap ajuste, image pleine, taille reelle, octets)
         self._entries: OrderedDict = OrderedDict()
         self._pending: dict[str, float] = {}
+        self._refresh_after_pending: set[str] = set()
         self._tasks: dict[str, _DecodeTask] = {}      # decodages en file (annulables, voir retain)
         self._failed: dict[str, float] = {}
         self._naturals: dict[str, tuple[float, QSizeF]] = {}
@@ -137,7 +187,7 @@ class FocusImageLoader(QObject):
 
     @staticmethod
     def supports(path: Path) -> bool:
-        return path.suffix.lower() in IMAGE_EXTENSIONS
+        return path.suffix.lower() in IMAGE_EXTENSIONS | RAW_EXTENSIONS
 
     def set_fit(self, size: QSize, dpr: float = 1.0):
         """Zone (pixels PHYSIQUES) ou l'image est ajustee : taille des versions « ecran »."""
@@ -147,7 +197,18 @@ class FocusImageLoader(QObject):
 
     @staticmethod
     def _mtime(path: Path) -> float | None:
-        return previews.cached_mtime(path)
+        mtime = previews.cached_mtime(path)
+        if mtime is not None:
+            return mtime
+        # L'image courante peut etre choisie alors que les apercus tournent dans
+        # `memory_only()` : cached_mtime ne bloque alors pas sur le disque et renvoie
+        # None. Pour cette demande explicite de decodage, lire la date du seul fichier
+        # cible permet au chargeur plein format de demarrer.
+        try:
+            info = path.stat()
+            return info.st_mtime if _stat.S_ISREG(info.st_mode) else None
+        except OSError:
+            return None
 
     def get(self, path: Path):
         """(pixmap ajuste, image pleine, taille reelle) si l'image est prete, sinon None."""
@@ -161,8 +222,8 @@ class FocusImageLoader(QObject):
     def request(self, path: Path, urgent: bool = False):
         if not self.supports(path):
             return
-        mtime = self._mtime(path)
         key = str(path)
+        mtime = self._mtime(path)
         if mtime is None or self._pending.get(key) == mtime or self._failed.get(key) == mtime:
             return
         entry = self._entries.get(key)
@@ -190,7 +251,14 @@ class FocusImageLoader(QObject):
         known = self._naturals.get(key)
         if known is not None and known[0] == mtime:
             return known[1]
-        reader = QImageReader(key)
+        reader_path = path
+        try:
+            from lightroom_bridge import is_managed, proxy_path
+            if is_managed(path):
+                reader_path = proxy_path(path) or path
+        except (ImportError, OSError, ValueError):
+            pass
+        reader = QImageReader(str(reader_path))
         size = reader.size()
         if not size.isValid():
             return None
@@ -205,10 +273,14 @@ class FocusImageLoader(QObject):
         known = self._naturals.get(str(path))
         return known[1] if known is not None else None
 
-    def _on_done(self, key: str, mtime: float, full, fitted, natural):
+    def _on_done(self, key: str, mtime: float, full, fitted, natural, origin: str):
         self._tasks.pop(key, None)
         if self._pending.get(key) == mtime:
             del self._pending[key]
+        if key in self._refresh_after_pending:
+            self._refresh_after_pending.discard(key)
+            self.request(Path(key), urgent=True)
+            return
         if full is None:
             self._failed[key] = mtime
             return
@@ -217,7 +289,7 @@ class FocusImageLoader(QObject):
         old = self._entries.pop(key, None)
         if old is not None:
             self._bytes -= old[4]
-        self._entries[key] = (mtime, pixmap, full, natural, size)
+        self._entries[key] = (mtime, pixmap, full, natural, size, origin)
         self._naturals[key] = (mtime, natural)
         self._bytes += size
         while self._bytes > self.BUDGET and len(self._entries) > 1:
@@ -228,6 +300,20 @@ class FocusImageLoader(QObject):
     def clear(self):
         self._entries.clear()
         self._bytes = 0
+
+    def origin(self, path: Path) -> str | None:
+        entry = self._entries.get(str(path))
+        return entry[5] if entry is not None else None
+
+    def invalidate(self, path: Path):
+        key = str(path)
+        if key in self._pending:
+            self._refresh_after_pending.add(key)
+        entry = self._entries.pop(key, None)
+        if entry is not None:
+            self._bytes -= entry[4]
+        self._naturals.pop(key, None)
+        self._failed.pop(key, None)
 
 
 # Nom affiche d'un fichier de la visionneuse (pellicule, planche) : son nom, sauf pour les images
@@ -292,24 +378,46 @@ class _FilmTask(QRunnable):
         image = None
         try:
             digest, base = _film_base(self._key, self._mtime)
-            for ext in (".jpg", ".png"):
-                stored = base.with_name(base.name + ext)
-                if stored.is_file():
-                    read = QImage(str(stored))
-                    if not read.isNull():
-                        image = read
-                        break
-            if image is None:
+            managed = False
+            try:
+                from lightroom_bridge import is_managed
+                managed = is_managed(Path(self._key))
+            except (ImportError, OSError, ValueError):
+                pass
+            if not managed:
+                for ext in (".jpg", ".png"):
+                    stored = base.with_name(base.name + ext)
+                    if stored.is_file():
+                        read = QImage(str(stored))
+                        if not read.isNull():
+                            image = read
+                            break
+            persist = not managed
+            if managed and image is None:
+                source_path = None
+                try:
+                    from lightroom_bridge import proxy_path
+                    source_path = proxy_path(Path(self._key), max_dimension=640)
+                except (ImportError, OSError, ValueError):
+                    pass
+                if source_path is not None and source_path.is_file():
+                    image = previews._decode_2d_image(source_path, FILM_THUMB_MAX)
+                else:
+                    image = self._source
+            elif image is None:
                 image = self._source
                 if image is None or image.isNull():
-                    image = previews._decode_2d_image(Path(self._key), FILM_THUMB_MAX)
-                if image is not None and not image.isNull():
-                    if max(image.width(), image.height()) > FILM_THUMB_MAX:
-                        image = image.scaled(FILM_THUMB_MAX, FILM_THUMB_MAX, Qt.KeepAspectRatio,
-                                             Qt.SmoothTransformation)
+                    source_path = Path(self._key)
+                    if source_path is not None and source_path.is_file():
+                        image = previews._decode_2d_image(source_path, FILM_THUMB_MAX)
+            if image is not None and not image.isNull():
+                if max(image.width(), image.height()) > FILM_THUMB_MAX:
+                    image = image.scaled(FILM_THUMB_MAX, FILM_THUMB_MAX, Qt.KeepAspectRatio,
+                                         Qt.SmoothTransformation)
+                if persist:
                     self._store(image, digest, base)
-                else:
-                    image = None
+            else:
+                image = None
         except Exception:        # fichier illisible : la petite vignette des colonnes reste
             image = None
         try:
@@ -365,9 +473,18 @@ def _film_source(path: Path, mtime) -> QPixmap | None:
     film = _FILM.get(key)
     if film is not None and film[0] == mtime:
         return film[1]
+    managed = False
+    try:
+        from lightroom_bridge import is_managed, preview_pixmap
+        managed = is_managed(path)
+    except (ImportError, OSError, ValueError):
+        managed = False
     cached = previews._file_image_cache.get(key)
     preview = cached[1] if cached is not None and cached[0] == mtime and not cached[1].isNull() else None
-    if (path.suffix.lower() in previews.TWO_D_IMAGE_EXTENSIONS and key not in _FILM_PENDING
+    if managed and preview is None and mtime is not None and key not in _FILM_PENDING:
+        preview = preview_pixmap(path, mtime)
+    if ((managed or path.suffix.lower() in previews.TWO_D_IMAGE_EXTENSIONS)
+            and key not in _FILM_PENDING
             and _FILM_FAILED.get(key) != mtime and not previews.requests_held()):
         global _film_order
         _film_order += 1
@@ -453,6 +570,13 @@ def _store_proxy(key: str, entry: tuple) -> None:
         _proxy_bytes -= gone[2].sizeInBytes()
 
 
+def _drop_proxy(key: str) -> None:
+    global _proxy_bytes
+    old = _PROXIES.pop(key, None)
+    if old is not None:
+        _proxy_bytes -= old[2].sizeInBytes()
+
+
 class _ProxySignals(QObject):
     done = Signal(str, float, int, object, bool)      # cle, date, cote demande, image (None = echec), pleine def.
 
@@ -466,7 +590,13 @@ class _ProxyTask(QRunnable):
     def run(self):
         image, full = None, True
         try:
-            reader = QImageReader(self._key)
+            source_path = Path(self._key)
+            from lightroom_bridge import is_managed, proxy_path
+            if is_managed(source_path):
+                source_path = proxy_path(source_path, max_dimension=640)
+                if source_path is None or not source_path.is_file():
+                    raise FileNotFoundError("Proxy Lightroom indisponible")
+            reader = QImageReader(str(source_path))
             reader.setAutoTransform(True)
             size = reader.size()
             if size.isValid() and max(size.width(), size.height()) > self._side:
@@ -669,7 +799,7 @@ class FocusOverlay(QWidget):
             self._drag = None
             self._update_hit_area()
         if clicked and self._at_rest():
-            self._on_click()
+            self._on_click(QPointF(event.position()))
         if dragged or clicked or press is not None:
             event.accept()
             return
@@ -935,6 +1065,10 @@ class FocusOverlay(QWidget):
 
     def zoom_reset(self):
         self._zoom_to(1.0, None)
+
+    def zoom_actual(self, anchor: QPointF | None = None):
+        """Anime vers la taille reelle de l'image (1 pixel image = 1 pixel logique)."""
+        self._zoom_to(self._actual_zoom(), anchor)
 
     def zoom_toggle_actual(self, anchor: QPointF | None = None):
         """Ajustee <-> taille reelle (sans effet si l'image tient deja a sa taille reelle)."""
@@ -2684,16 +2818,26 @@ class FocusGallery(QListWidget):
 
     def attr_color(self, key: str) -> str | None:
         """Couleur attribuee au fichier (file_attributes, une des 5 de Visionneuse > Filtres) ou None ; lue
-        une fois par dossier, relue au plus toutes les 2 s (jamais un acces disque par peinture)."""
+        une fois par dossier, relue au plus toutes les 2 s, hors animation."""
         now = time.monotonic()
         memo = self.__dict__.setdefault("_attr_colors", {})
         hit = memo.get(key)
-        if hit is not None and now - hit[0] < 2.0:
+        if hit is not None and (now - hit[0] < 2.0 or self._busy()):
             return hit[1]
         import file_attributes
-        folder, name = file_attributes.location(Path(key))
-        own = file_attributes._load_dir(folder, max_age=2.0).get(name)
-        index = int(own.get("color") or 0) if isinstance(own, dict) else 0
+        path = Path(key)
+        try:
+            from lightroom_bridge import is_managed, attributes
+            managed = is_managed(path)
+            values = attributes(path) if managed else None
+        except (ImportError, OSError, ValueError):
+            managed, values = False, None
+        if managed:
+            index = int((values or {}).get("color") or 0)
+        else:
+            folder, name = file_attributes.location(path)
+            own = file_attributes._load_dir(folder, max_age=2.0).get(name)
+            index = int(own.get("color") or 0) if isinstance(own, dict) else 0
         palette = self.__dict__.get("_filter_palette")
         if palette is None:
             palette = self._filter_palette = [c for _n, c in filter_colors()]
@@ -2950,8 +3094,16 @@ class FocusGallery(QListWidget):
         """Un apercu du pipeline vient d'etre decode (detail_panel) : seule sa case est repeinte, et pas
         pendant l'apparition (elle le sera a la fin)."""
         if self._busy():
+            self._proxy_failed.discard(key)
+            _drop_proxy(key)
             self._late_proxies.add(key)
             return
+        self._tiles.pop(key, None)
+        self._proxy_failed.discard(key)
+        _drop_proxy(key)
+        _CELLS.pop(key, None)
+        for mark in ("focus", "hover"):
+            _MARKED.pop((key, mark), None)
         for row in range(self.count()):
             item = self.item(row)
             if item.data(Qt.UserRole) == key:
@@ -3085,6 +3237,14 @@ class FocusGallery(QListWidget):
         tile = self._tiles.get(key)
         if tile is not None:
             return tile
+        managed = False
+        try:
+            from lightroom_bridge import is_managed, preview_pixmap
+            managed = is_managed(path)
+            if managed and mtime is not None:
+                preview_pixmap(path, mtime)
+        except (ImportError, OSError, ValueError):
+            pass
         dpr = self.devicePixelRatioF() or 1.0
         side = round(self._box_side * dpr)
         need = math.ceil(side * PROXY_MARGIN)
@@ -3097,9 +3257,9 @@ class FocusGallery(QListWidget):
         if not enough and cached is not None and (mtime is None or cached[0] == mtime) and not cached[1].isNull():
             preview = cached[1]
             big = max(preview.width(), preview.height()) >= need
-            if big or source is None or max(preview.width(), preview.height()) > max(source.width(), source.height()):
-                source, enough = preview, big
-        if not enough and path.suffix.lower() in IMAGE_EXTENSIONS and key not in self._proxy_failed:
+            if source is None or (not managed and (big or max(preview.width(), preview.height()) > max(source.width(), source.height()))):
+                source, enough = preview, big and not managed
+        if not enough and (managed or path.suffix.lower() in IMAGE_EXTENSIONS) and key not in self._proxy_failed:
             self._request_proxy(key, need)
         elif source is not None:
             enough = True                    # rien de mieux a attendre (fichier 3D, image illisible...)
@@ -3121,6 +3281,12 @@ class FocusGallery(QListWidget):
         mtime = previews.cached_mtime(Path(key))
         if mtime is None:
             return
+        try:
+            from lightroom_bridge import is_managed, preview_pixmap
+            if is_managed(Path(key)):
+                preview_pixmap(Path(key), mtime)
+        except (ImportError, OSError, ValueError):
+            pass
         self._proxy_pending[key] = need
         self._proxy_pool.start(_ProxyTask(self._proxy_signals, key, mtime, need))
 
@@ -3284,9 +3450,20 @@ def image_info(path: Path) -> list:
     import datetime
     sections = []
     file_rows = [("Nom", display_name(path)), ("Dossier", str(path.parent)),
+                 ("Path de l'image", str(path.resolve())),
                  ("Type", path.suffix.lstrip(".").upper() or "?")]
     try:
         stat = path.stat()
+        from previews import _file_image_cache_path
+        try:
+            from lightroom_bridge import is_managed, proxy_path
+            managed = is_managed(path)
+            proxy = proxy_path(path) if managed else None
+        except (ImportError, OSError, ValueError):
+            managed, proxy = False, None
+        proxy_value = (str(proxy.resolve()) if proxy is not None else "Proxy Lightroom introuvable") \
+            if managed else str(_file_image_cache_path(path, stat.st_mtime).resolve())
+        file_rows.append(("Path du proxy", proxy_value))
 
         def stamp(t):
             return datetime.datetime.fromtimestamp(t).strftime("%d/%m/%Y %H:%M:%S")
@@ -3540,12 +3717,55 @@ class _ColorLabels(QWidget):
         p.end()
 
 
+class _StatusFlags(QWidget):
+    """Trois actions directes pour le statut Lightroom : neutre, garder, rejeter."""
+
+    changed = Signal(str)
+    ICONS = {
+        "keep": (r"F:\SYNC\Sync\IMAGES\ico\PNG\coche_01.png", "Marquée"),
+        "delete": (r"F:\SYNC\Sync\IMAGES\ico\PNG\croix_01.png", "Rejetée"),
+        "": (r"F:\SYNC\Sync\IMAGES\ico\PNG\moins_01.png", "Neutre"),
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from PySide6.QtGui import QIcon
+        from PySide6.QtWidgets import QButtonGroup, QHBoxLayout, QToolButton
+
+        self._buttons = {}
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(scaled(5))
+        for value, (path, label) in self.ICONS.items():
+            button = QToolButton(self)
+            button.setCheckable(True)
+            button.setAutoRaise(True)
+            button.setToolTip(label)
+            button.setIcon(QIcon(path))
+            button.setIconSize(QSize(scaled(24), scaled(24)))
+            button.setFixedSize(scaled(32), scaled(30))
+            button.setStyleSheet(
+                "QToolButton { border: 1px solid transparent; border-radius: 3px; padding: 2px; }"
+                "QToolButton:checked { border-color: #55aaff; background: rgba(85,170,255,45); }"
+            )
+            button.clicked.connect(lambda _checked=False, status=value: self.changed.emit(status))
+            self._group.addButton(button)
+            self._buttons[value] = button
+            layout.addWidget(button)
+        self.setValue("")
+
+    def setValue(self, value: str):
+        self._buttons.get(value, self._buttons[""]).setChecked(True)
+
+
 class FileAttributesEditor(QObject):
     """Lignes « Attributs » du tableau de la visionneuse (demande de l'utilisateur) : note, couleur,
     j'aime, mots cles, statut du fichier EN FOCUS ; chaque changement est enregistre aussitot
     (file_attributes). Champs = briques des reglages (toggle, zone de saisie, liste) + etoiles / pastilles."""
 
-    STATUS_LABELS = (("", "—"), ("keep", "À retenir"), ("delete", "À supprimer"))
+    STATUS_LABELS = (("", "Neutre"), ("keep", "Marquée"), ("delete", "Rejetée"))
     TITLE = "Attributs"
 
     def __init__(self, parent: QWidget):
@@ -3557,24 +3777,20 @@ class FileAttributesEditor(QObject):
     def build_rows(self) -> list:
         """(libelle, champ, None) pour _flat_cells_table — champs neufs (le tableau est reconstruit)."""
         from settings_cells import _WordsField
-        from settings_widgets import _SelectField, _Toggle
+        from settings_widgets import _Toggle
         self.stars = _StarRating()
         self.colors = _ColorLabels()
-        self.like = _Toggle(False, show_label=False)
         # Mots cles : saisis a la volee, separes par des espaces, autocompletion des mots deja employes.
         import file_attributes
         self.keywords = _WordsField(suggestions=file_attributes.known_keywords, width=scaled(150))
         self.keywords.setPlaceholderText("ciel nuit ville…")
-        self.status = _SelectField([label for _k, label in self.STATUS_LABELS], self.STATUS_LABELS[0][1],
-                                   width=scaled(150))
+        self.status = _StatusFlags()
         self.stars.changed.connect(lambda v: self._save(rating=v))
         self.colors.changed.connect(lambda v: self._save(color=v))
-        self.like.toggled.connect(lambda v: self._save(like=bool(v)))
         self.keywords.editingFinished.connect(self._save_keywords)      # Entree / sortie du champ
-        self.status.changed.connect(
-            lambda label: self._save(status=next(k for k, l in self.STATUS_LABELS if l == label)))
-        self.rows = [("Note", self.stars, None), ("Couleur", self.colors, None), ("J'aime", self.like, None),
-                     ("Mots clés", self.keywords, None), ("Statut", self.status, None)]
+        self.status.changed.connect(lambda value: self._save(status=value))
+        self.rows = [("Note (0–5)", self.stars, None), ("Libellé de couleur", self.colors, None),
+                     ("Drapeau", self.status, None), ("Mots clés", self.keywords, None)]
         self._load()
         return self.rows
 
@@ -3591,13 +3807,12 @@ class FileAttributesEditor(QObject):
         values = file_attributes.get(self._path) if file_attributes.eligible(self._path) else dict(file_attributes.DEFAULTS)
         self._loading = True
         try:
+            for control in (self.stars, self.colors, self.keywords, self.status):
+                control.setEnabled(True)
             self.stars.setValue(values["rating"])
             self.colors.setValue(values["color"])
-            self.like.blockSignals(True)
-            self.like.setChecked(bool(values["like"]))
-            self.like.blockSignals(False)
             self.keywords.set_words(values["keywords"])
-            self.status.setValue(next(l for k, l in self.STATUS_LABELS if k == values["status"]))
+            self.status.setValue(values["status"])
         except RuntimeError:                       # champs detruits (tableau reconstruit)
             pass
         finally:
@@ -3897,13 +4112,12 @@ def filter_window(spec: dict, scopes: list[tuple[str, str]], settings: dict | No
     row_layout.addWidget(rating.stars, 0, Qt.AlignVCenter)
     colors = _ColorLabels(multi=True)
     colors.setValues(spec["color"])
-    like = _Toggle(spec["like"], show_label=False)
     # Mots cles : comme dans les attributs, separes par des espaces, autocompletion des mots deja employes.
     import file_attributes
     from settings_cells import _WordsField
     keywords = _WordsField(spec["keywords"], suggestions=file_attributes.known_keywords, width=width)
     keywords.setPlaceholderText("ciel nuit…")
-    statuses = (("", "Tous"), ("keep", "À retenir"), ("delete", "À supprimer"), (ff.STATUS_NONE, "Sans statut"))
+    statuses = (("", "Tous"), ("keep", "Marquées"), ("delete", "Rejetées"), (ff.STATUS_NONE, "Neutres"))
     status = _SelectField([l for _k, l in statuses], dict(statuses)[spec["status"]], width=width)
     extensions = _TextField(" ".join(spec["extensions"]), width=width)
     extensions.setPlaceholderText("jpg png blend…")
@@ -3924,9 +4138,8 @@ def filter_window(spec: dict, scopes: list[tuple[str, str]], settings: dict | No
         ("Note", rating, lambda w: {"rating": w.stars.value(),
                                      "rating_mode": key_of(ff.RATING_MODES, w.mode.value())}),
         ("Couleurs", colors, lambda w: {"color": w.values()}),
-        ("J'aime", like, lambda w: {"like": w.isChecked()}),
         ("Mots clés", keywords, lambda w: {"keywords": w.words()}),
-        ("Statut", status, lambda w: {"status": key_of(statuses, w.value())}),
+        ("Drapeau", status, lambda w: {"status": key_of(statuses, w.value())}),
         ("Type de fichier", extensions, lambda w: {"extensions": ff.parse_extensions(w.text())}),
         ("Taille min (0 = aucune)", size_min, lambda w: {"size_min": w.value()}),
         ("Taille max (0 = aucune)", size_max, lambda w: {"size_max": w.value()}),

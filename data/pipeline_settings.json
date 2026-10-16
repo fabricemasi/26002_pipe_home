@@ -169,7 +169,7 @@
   "preview_toggle_x": 5,
   "preview_toggle_y": 1,
   "collapse_toggle_mode": "chevrons",
-  "detail_panel_width": 447,
+  "detail_panel_width": 731,
   "shortcut_font_family": "Police fichiers",
   "shortcut_font_bold": false,
   "shortcut_font_italic": false,
@@ -610,8 +610,8 @@
       490
     ],
     "Override Texte": [
-      837,
-      326
+      56,
+      816
     ],
     "Override Ligne": [
       985,
@@ -774,9 +774,6 @@
       "colors": {
         "table_row": "#1b1e21"
       }
-    },
-    "table:Changement de style à la volée/Filtres#0": {
-      "table_inner_v_enabled": false
     },
     "gallery-name:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\143.png": {
       "text_font_color": "#946dcc"
@@ -2139,9 +2136,6 @@
     },
     "gallery-info:F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\data\\.pipeline_preview_cache\\pureref_images\\38ce0912de128e6fc601b2ba63acbea30b7387366d7f20c5b9fd9f6c9f05e70e\\369.png": {
       "text_font_size": 31
-    },
-    "text:PipelineBrowser:QWidget#0/QScrollArea#0/QWidget#0/QWidget#0/DetailPanel#0/_ColumnCard#0/QWidget#0/QWidget#0/QWidget#0/QLabel#1": {
-      "text_font_family": "Police code"
     }
   },
   "ui_spaces": {},
@@ -2305,7 +2299,7 @@
     "item_selection_hover_padding_linked": false,
     "item_selection_idle_padding_linked": false,
     "item_selection_unfocus_padding_linked": false,
-    "item_column_width": 163,
+    "item_column_width": 164,
     "column_padding": {
       "left": 0,
       "top": 0,
@@ -6301,14 +6295,6 @@
         "r1c1": "left,center",
         "r2c1": "left,center",
         "r3c1": "left,center"
-      },
-      "objects": {
-        "r0c0|0": [
-          0,
-          -1,
-          0,
-          0
-        ]
       }
     },
     "Changement de style à la volée/Override Ligne#0": {
@@ -6447,10 +6433,10 @@
       }
     },
     "Paramètres de l'image/Prise de vue#0": {
-      "width": 235,
+      "width": 307,
       "cols": [
         85,
-        148
+        220
       ]
     },
     "Changement de style à la volée/Visionneuse : Sous cellule image#0": {
@@ -6822,65 +6808,23 @@
         "6": -15
       },
       "objects": {
-        "r5c1|0": [
-          -10,
+        "r2c1|0/0": [
+          10,
           0,
-          200,
-          0
+          80,
+          25
         ],
-        "r6c1|0": [
-          -10,
+        "r7c1|0/0": [
+          8,
           0,
-          200,
-          0
-        ],
-        "r7c1|0": [
-          -10,
-          0,
-          200,
-          0
+          112,
+          17
         ],
         "r8c1|0/0": [
-          2,
+          8,
           0,
-          118,
-          0
-        ],
-        "r9c1|0/0": [
-          2,
-          0,
-          118,
-          0
-        ],
-        "r10c1|0": [
-          -10,
-          0,
-          200,
-          0
-        ],
-        "r11c1|0": [
-          -10,
-          0,
-          200,
-          0
-        ],
-        "r12c1|0": [
-          -10,
-          0,
-          200,
-          0
-        ],
-        "r1c1|0": [
-          -10,
-          0,
-          200,
-          0
-        ],
-        "r0c1|0": [
-          -10,
-          0,
-          200,
-          0
+          112,
+          17
         ]
       }
     },
@@ -7059,6 +7003,13 @@
           0
         ]
       }
+    },
+    "Paramètres de l'image/Textes intégrés#0": {
+      "width": 335,
+      "cols": [
+        98,
+        235
+      ]
     }
   },
   "slider_ranges": {
@@ -8105,6 +8056,24 @@
       "offset": [
         924,
         447
+      ]
+    },
+    "main|QWidget#0/QScrollArea#0/QWidget#0/QWidget#0/Column#1/_ColumnCard#0/QWidget#0/FileListWidget#0|F:\\PHOTOS\\Photos\\2011|media-video": {
+      "offset": [
+        0,
+        12
+      ]
+    },
+    "main|QWidget#0/QScrollArea#0/QWidget#0/QWidget#0/Column#1/_ColumnCard#0/QWidget#0/FileListWidget#0|F:\\PHOTOS\\Photos\\2010|media-video": {
+      "offset": [
+        -6,
+        15
+      ]
+    },
+    "QuickStyleWindow:Filtres|_PanelFrame#0/QScrollArea#0/QWidget#0/QWidget#0/_TableFrame#0/_TableRow#7/_Cell#1/_SliderField#0/_MiniSlider#0": {
+      "offset": [
+        367,
+        492
       ]
     }
   },

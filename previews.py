@@ -3423,14 +3423,14 @@ def _decode_raw_image(path: Path, max_dim: int) -> QImage | None:
     return _decode_embedded_jpeg(path, max_dim)
 
 
-def _decode_embedded_jpeg(path: Path, max_dim: int) -> QImage | None:
+def _decode_embedded_jpeg(path: Path, max_dim: int, *, include_transform: bool = False):
     """Plus grande image JPEG embarquee dans `path` (apercu des RAW Sony/Fuji) :
     cherche les marqueurs SOI, compare les tailles sans decoder, ne decode que
     la meilleure (reduite a max_dim, orientation EXIF appliquee)."""
     try:
         data = path.read_bytes()
     except OSError:
-        return None
+        return (None, 0) if include_transform else None
     best, best_area, pos = None, 0, 0
     while True:
         pos = data.find(b"\xff\xd8\xff", pos)
@@ -3445,18 +3445,20 @@ def _decode_embedded_jpeg(path: Path, max_dim: int) -> QImage | None:
             best, best_area = pos, size.width() * size.height()
         pos += 3
     if best is None:
-        return None
+        return (None, 0) if include_transform else None
     buf = QBuffer()
     buf.setData(QByteArray(data[best:]))
     buf.open(QIODevice.ReadOnly)
     reader = QImageReader(buf, b"jpeg")
     reader.setAutoTransform(True)
+    transform = reader.transformation()
     size = reader.size()
     if size.isValid() and max(size.width(), size.height()) > max_dim:
         scale = max_dim / max(size.width(), size.height())
         reader.setScaledSize(QSize(max(1, round(size.width() * scale)), max(1, round(size.height() * scale))))
     image = reader.read()
-    return None if image.isNull() else image
+    result = None if image.isNull() else image
+    return (result, transform) if include_transform else result
 
 
 def _decode_hdr_image(path: Path, max_dim: int) -> QImage | None:
@@ -4207,6 +4209,18 @@ def file_image_pixmap(path: Path, asynchronous: bool = False) -> QPixmap | None:
             mtime = None
     if mtime is None:
         return None
+    # Un dossier associé à Lightroom ne décode jamais la photo originale : seul le JPEG demandé au SDK
+    # Lightroom peut alimenter son aperçu.
+    try:
+        import lightroom_bridge
+        managed = lightroom_bridge.is_managed(path)
+    except (ImportError, OSError, ValueError):
+        managed = False
+    if managed:
+        try:
+            return lightroom_bridge.preview_pixmap(path, mtime)
+        except (OSError, ValueError):
+            return None
     key = str(path)
     cache_path = _file_image_cache_path(path, mtime)
     if asynchronous:
@@ -4295,6 +4309,16 @@ def _cached_file_image_pixmap(path: Path, render_mode: str = "low") -> QPixmap |
         mtime = path.stat().st_mtime
     except OSError:
         return None
+    try:
+        import lightroom_bridge
+        managed = lightroom_bridge.is_managed(path)
+    except (ImportError, OSError, ValueError):
+        managed = False
+    if managed:
+        try:
+            return lightroom_bridge.preview_pixmap(path, mtime)
+        except (OSError, ValueError):
+            return None
     if render_mode == "high":
         cached = _file_image_high_cache.get(str(path))
         if cached and cached[0] == mtime:
@@ -4433,7 +4457,10 @@ class _PreviewDecodeTask(QRunnable):
                 report(99, f"Erreur de turntable : {exc}")
                 image = None
             report(100, "Turntable prêt" if image is not None else "Turntable indisponible")
-            self.signals.finished.emit(self, str(self.path), self.mtime, image)
+            try:
+                self.signals.finished.emit(self, str(self.path), self.mtime, image)
+            except RuntimeError:
+                pass  # l'application s'est fermee pendant le decodage
             return
         try:
             cache_path = _file_image_cache_path(
@@ -4481,7 +4508,10 @@ class _PreviewDecodeTask(QRunnable):
             report(100, "Image prête")
         else:
             report(100, "Aucun rendu exploitable")
-        self.signals.finished.emit(self, str(self.path), self.mtime, image)
+        try:
+            self.signals.finished.emit(self, str(self.path), self.mtime, image)
+        except RuntimeError:
+            pass  # l'application s'est fermee pendant le decodage
 
     def _decode_turntable(self):
         if self.path.suffix.lower() not in TURNTABLE_EXTENSIONS:
@@ -4613,6 +4643,17 @@ class _PreviewDecodeManager(QObject):
     def request(self, path: Path, mtime: float, quiet: bool = False, cancel_event=None, cache_only: bool = False, force_render: bool = False, render_mode: str = "low", automatic: bool = False, media_type: str = "image", log_directory: Path | None = None):
         key = str(path)
         if key in self.active:
+            return
+        try:
+            import lightroom_bridge
+            managed = lightroom_bridge.is_managed(path)
+        except (ImportError, OSError, ValueError):
+            managed = False
+        if managed:
+            try:
+                lightroom_bridge.preview_pixmap(path, mtime)
+            except (OSError, ValueError):
+                pass
             return
         global _AUTOMATIC_RENDER_PROFILE
         profile_override = None

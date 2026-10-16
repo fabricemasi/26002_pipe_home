@@ -169,7 +169,7 @@
     "preview_toggle_x": 5,
     "preview_toggle_y": 1,
     "collapse_toggle_mode": "chevrons",
-    "detail_panel_width": 447,
+    "detail_panel_width": 731,
     "shortcut_font_family": "Police fichiers",
     "shortcut_font_bold": false,
     "shortcut_font_italic": false,
@@ -680,7 +680,7 @@
       "item_selection_hover_padding_linked": false,
       "item_selection_idle_padding_linked": false,
       "item_selection_unfocus_padding_linked": false,
-      "item_column_width": 163,
+      "item_column_width": 164,
       "column_padding": {
         "left": 0,
         "top": 0,

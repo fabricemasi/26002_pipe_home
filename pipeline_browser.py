@@ -63,6 +63,7 @@ from config import (
     COLUMN_LABELS,
     SETTINGS_V1_ENABLED,
     IMAGE_EXTENSIONS,
+    RAW_EXTENSIONS,
     PREVIEWABLE_EXTENSIONS,
     RENDERABLE_3D_EXTENSIONS,
     SOFTWARE_COLUMN_LABEL,
@@ -98,6 +99,7 @@ from browser_core import (
     GROUP_COLUMN_MAX_HEIGHT,
     GROUP_COLUMN_MIN_HEIGHT,
     ROLE_ISDIR,
+    ROLE_MEDIA_COUNTS,
     ROLE_PATH,
     ROLE_SOURCE_LABEL,
     STATUS_FOLDERS,
@@ -191,9 +193,7 @@ def _set_qss(widget, qss: str) -> None:
 
 
 class _MouseBackFilter(QObject):
-    """Bouton « precedent » de la souris (sur le cote) dans la fenetre, visionneuse ouverte (planche
-    comprise) : on sort de la visionneuse, les colonnes reviennent. Filtre d'APPLICATION : l'image,
-    la planche, la pellicule recoivent le clic avant la fenetre."""
+    """Bouton « precedent » : de l'image en focus vers les diapositives, puis vers les colonnes."""
 
     def __init__(self, browser: "PipelineBrowser"):
         super().__init__(browser)
@@ -208,7 +208,10 @@ class _MouseBackFilter(QObject):
         if not (watched.isWidgetType() and watched.window() is self._browser):
             return False
         if kind == QEvent.MouseButtonPress:
-            self._browser._set_columns_hidden(False)
+            if self._browser._viewer_active():
+                self._browser._open_focus_gallery()
+            elif self._browser._focus_gallery is not None:
+                self._browser._set_columns_hidden(False)
         return True                       # avale aussi le relachement (rien d'autre ne le voit)
 
 
@@ -1530,7 +1533,7 @@ class _InterfaceMoveMode(QObject):
                 key = str(index.data(ROLE_PATH) or index.row())
                 parts = getattr(view, "_edit_geometry", {}).get(key, {})
                 point = view.viewport().mapFromGlobal(global_pos)
-                for part in ("text", "icon", "preview"):
+                for part in ("media-video", "media-photo", "text", "icon", "preview"):
                     rect = parts.get(part)
                     if rect is None:
                         continue
@@ -1575,7 +1578,7 @@ class _InterfaceMoveMode(QObject):
     def _has_display_text(widget):
         try:
             if isinstance(widget, PaintedTarget):
-                return widget.part in {"text", "gallery-name", "gallery-info"} \
+                return widget.part in {"text", "gallery-name", "gallery-info", "media-photo", "media-video"} \
                     and bool(_InterfaceMoveMode._painted_text(widget))
             import settings_element_style as styles
             return styles.is_text_widget(widget)
@@ -1644,6 +1647,13 @@ class _InterfaceMoveMode(QObject):
             return ""
         from settings_element_style import _row_index
         index = _row_index(target.view, str(target.key))
+        if index is not None and target.part in {"media-photo", "media-video"}:
+            counts = index.data(ROLE_MEDIA_COUNTS)
+            try:
+                count = max(0, int(counts[0 if target.part == "media-photo" else 1]))
+                return f"{'IMG' if target.part == 'media-photo' else 'VID'} {count}"
+            except (TypeError, ValueError, IndexError):
+                return ""
         return str(index.data(Qt.DisplayRole) or "").strip() if index is not None else ""
 
     def _object_context(self, widget, create=True):
@@ -1875,6 +1885,31 @@ class _InterfaceMoveMode(QObject):
             column = styles._column_for_view(widget.view)
             if column is None:
                 return []
+            if widget.part in {"media-photo", "media-video"}:
+                kind = "IMG" if widget.part == "media-photo" else "VID"
+                targets = []
+                model = widget.view.model()
+                for row in range(model.rowCount()):
+                    index = model.index(row, 0)
+                    counts = index.data(ROLE_MEDIA_COUNTS)
+                    path = str(index.data(ROLE_PATH) or "")
+                    try:
+                        count = max(0, int(counts[0 if widget.part == "media-photo" else 1]))
+                    except (TypeError, ValueError, IndexError):
+                        continue
+                    if path and counts is not None:
+                        targets.append(styles.RowMediaTextTarget(
+                            widget, path, getattr(column, "style_title", ""), widget.part,
+                            f"{kind} {count}"))
+                current = styles.RowMediaTextTarget(
+                    widget, str(widget.key), getattr(column, "style_title", ""), widget.part,
+                    self._painted_text(widget))
+                global_target = styles.RowMediaTextTarget(
+                    widget, str(widget.key), getattr(column, "style_title", ""), widget.part,
+                    self._painted_text(widget), all_columns=True)
+                return [("Cette indication seulement", [current]),
+                        (f"Toutes les indications {kind} de cette colonne", targets),
+                        (f"Toutes les indications {kind} pour toutes les colonnes", [global_target])]
             targets = []
             model = widget.view.model()
             for row in range(model.rowCount()):
@@ -2503,6 +2538,8 @@ class PipelineBrowser(QMainWindow):
         self._focus_gallery = None    # planche des images du dossier (voir _toggle_focus_gallery)
         self._viewer_entry_source = None   # double-clic sur une ligne : apercu de la ligne (depart du vol)
         self._floating_gallery_btn = None   # son bouton quand il n'y a pas de colonne Focus
+        self._lightroom_btn = None          # ouvrir la photo courante dans Lightroom Classic
+        self._viewer_100_btn = None         # afficher l'image a sa taille reelle
         self._viewer_purs: list = []        # planches PureRef du dossier de la visionneuse
         self._pur_buttons: list = []        # un bouton « ouvrir » par planche (en haut a droite)
         # Filtres de la planche (file_filters ; le temps de la session) : bouton filtre (planche ouverte),
@@ -2829,7 +2866,6 @@ class PipelineBrowser(QMainWindow):
         # Bouton « precedent » de la souris : sortie de la visionneuse (voir _MouseBackFilter).
         self._mouse_back = _MouseBackFilter(self)
         QApplication.instance().installEventFilter(self._mouse_back)
-        self._viewer_press = None
         self._focus_wheel = 0
         self._focus_path = None       # fichier montre au centre quand il attend son apercu (voir _focus_on_file)
         _previews._PREVIEW_DECODE_MANAGER.ready.connect(self._on_focus_preview_ready)
@@ -2839,12 +2875,21 @@ class PipelineBrowser(QMainWindow):
         self._viewer_paths: list = []
         self._viewer_index = -1
         self._viewer_previews: dict = {}      # apercus des voisines non-images (PSD, 3D...), pour le ruban
+        self._focus_origin_badge = QLabel(self.scroll.viewport())
+        self._focus_origin_badge.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._focus_origin_badge.setStyleSheet(
+            "color: #d7e0e8; background: #30363dcc; border-radius: 3px; padding: 3px 7px; font-size: 10px;"
+        )
+        self._focus_origin_badge.hide()
         self._focus_images = FocusImageLoader(self)
         self._focus_images.ready.connect(self._on_focus_image_ready)
         self._viewer_sync = QTimer(self)
         self._viewer_sync.setSingleShot(True)
         self._viewer_sync.setInterval(self._VIEWER_SYNC_MS)
         self._viewer_sync.timeout.connect(self._sync_viewer_selection)
+        self._large_lightroom_timer = QTimer(self)
+        self._large_lightroom_timer.setInterval(10000)
+        self._large_lightroom_timer.timeout.connect(self._request_current_lightroom_preview)
         # Capture des colonnes pour leur RETOUR, faite d'avance au repos dans la visionneuse (_pregrab_columns).
         self._return_grab = QTimer(self)
         self._return_grab.setSingleShot(True)
@@ -2867,6 +2912,10 @@ class PipelineBrowser(QMainWindow):
 
         # --- barre de statut ---
         self.path_label = QLabel("")
+        import lightroom_bridge
+        lightroom_bridge._signal_bus().failed.connect(self._on_lightroom_proxy_error)
+        lightroom_bridge._signal_bus().updated.connect(self._on_lightroom_attribute_written)
+        self._lightroom_error_connected = True
         self.path_label.setFont(role_font("info", 11, 400))
         self.path_label.setStyleSheet(f"color: {role_color('info', C['text_mono'])}; background: transparent;")
         self.status_right = QLabel("read-only")
@@ -2962,6 +3011,16 @@ class PipelineBrowser(QMainWindow):
             bar.setRange(0, total)
             bar.setValue(min(completed, total))
             bar.setToolTip(message or f"Mise en cache des images — {completed}/{total}")
+
+    def _on_lightroom_proxy_error(self, path: str, message: str):
+        self.path_label.setText(f"Lightroom · {Path(path).name} : {message}")
+
+    def _on_lightroom_attribute_written(self, path: str, field: str):
+        if field == "open":
+            self.path_label.setText(f"Lightroom · {Path(path).name} ouvert en mode Développement")
+            return
+        labels = {"rating": "note", "color": "couleur", "status": "drapeau", "keywords": "mots-clés"}
+        self.path_label.setText(f"Lightroom · {labels.get(field, field)} enregistré pour {Path(path).name}")
 
     def _preview_cache_started(self, path: str):
         """Affiche au moins un indicateur pendant un cache lancé par une colonne."""
@@ -4804,7 +4863,7 @@ class PipelineBrowser(QMainWindow):
 
     def _button_rects(self) -> list:
         rects = self._base_button_rects()
-        for widget in (self._filter_btn, self._filter_chips):
+        for widget in (self._filter_btn, self._filter_chips, self._lightroom_btn, self._viewer_100_btn):
             if widget is not None and widget.isVisible():
                 rects.append(widget.geometry())
         rects.extend(b.geometry() for b in self._pur_buttons if b.isVisible())
@@ -5064,6 +5123,7 @@ class PipelineBrowser(QMainWindow):
         overlay = self._focus_overlay
         if overlay is not None:
             overlay.set_geometry_target(self._viewer_area())
+        self._position_focus_origin_badge()
         if self._focus_gallery is not None:
             self._focus_gallery.setGeometry(self._gallery_rect())
         self._focus_images.set_fit(self._viewer_fit_size(), self.devicePixelRatioF())
@@ -5455,7 +5515,6 @@ class PipelineBrowser(QMainWindow):
         gallery.chosen.connect(self._on_gallery_chosen)
         gallery.zoomed_into.connect(self._on_gallery_chosen)
         gallery.closed.connect(self._close_focus_gallery)
-        gallery.outside_clicked.connect(lambda: self._set_columns_hidden(False))   # clic a cote du tableau
         self._gallery_list = [Path(p) for p in paths]
         return gallery
 
@@ -5571,29 +5630,26 @@ class PipelineBrowser(QMainWindow):
         self._viewer_go(index, 0, fallback)
 
     def _focus_pixmap(self, path: Path, fallback: QPixmap | None = None) -> QPixmap:
-        """Image a montrer au centre pour `path` en attendant mieux, SANS rien decoder ici :
-        son apercu deja en memoire ou en cache disque (rendu 3D, PSD, plan, video...), sinon la
-        petite vignette des colonnes ou `fallback` (vignette de la planche), sinon une carte « pas
-        d'apercu ». Les images courantes arrivent en pleine definition par FocusImageLoader, les
-        autres apercus par _on_focus_preview_ready."""
+        """Image a montrer au centre pour `path` en attendant mieux, SANS rien decoder ici.
+        Les formats image attendent le decodage plein format : ne jamais agrandir une vignette
+        au centre. Pour les autres fichiers, utiliser l'apercu en cache ou le fallback fourni."""
         self._focus_path = str(path)
+        if self._focus_images.supports(path):
+            return placeholder_pixmap(path, "Chargement de l’image…")
         mtime = _previews.cached_mtime(path)
         if mtime is not None:
             cached = _previews._file_image_cache.get(str(path))
             if cached is not None and cached[0] == mtime and not cached[1].isNull():
                 return cached[1]
-            if not self._focus_images.supports(path):
-                pixmap, _stale = _previews._read_preview_pixmap(path, mtime)
-                if pixmap is not None and not pixmap.isNull():
-                    return pixmap
+            pixmap, _stale = _previews._read_preview_pixmap(path, mtime)
+            if pixmap is not None and not pixmap.isNull():
+                return pixmap
             small = _previews.file_image_pixmap(path, asynchronous=True)     # demande l'apercu en fond
             if fallback is None and small is not None and not small.isNull():
                 fallback = small
         if fallback is not None and not fallback.isNull():
             return fallback
-        if self._focus_images.supports(path):
-            note = "Chargement…"
-        elif path.suffix.lower() in RENDERABLE_3D_EXTENSIONS:
+        if path.suffix.lower() in RENDERABLE_3D_EXTENSIONS:
             note = "Aperçu pas encore rendu (clic droit dans la colonne pour le rendre)"
         else:
             note = "Aperçu en cours de chargement…"
@@ -5602,10 +5658,25 @@ class PipelineBrowser(QMainWindow):
     def _on_focus_preview_ready(self, path_str: str, mtime: float, image):
         """Apercu du pipeline arrive : vignette de la pellicule, voisine du ruban, ou image au
         centre qui n'avait encore rien de mieux (il remplace la carte / la petite vignette)."""
+        import focus
+        focus._FILM.pop(path_str, None)
+        focus._FILM_FAILED.pop(path_str, None)
+        focus._CELLS.pop(path_str, None)
+        self._focus_images.invalidate(Path(path_str))
+        for mark in ("focus", "hover"):
+            focus._MARKED.pop((path_str, mark), None)
+        for key in [key for key in focus._THUMBS if key[0] == path_str]:
+            focus._THUMBS.pop(key, None)
         if not self._project_columns_hidden:
             return
         if self._filmstrip is not None and self._filmstrip.isVisible():
             self._filmstrip.update()
+        if self._focus_gallery is not None:
+            self._focus_gallery.preview_ready(path_str)
+        if image is not None and not image.isNull() and path_str in self._viewer_paths:
+            self._focus_images.request(Path(path_str), urgent=path_str == self._focus_path)
+            if path_str == self._focus_path and self._focus_images.get(Path(path_str)) is None:
+                self._set_focus_origin_badge(Path(path_str), application_preview=True)
         overlay = self._focus_overlay
         if overlay is None or image is None or image.isNull():
             return
@@ -5614,6 +5685,8 @@ class PipelineBrowser(QMainWindow):
                 overlay.update()
             return
         path = Path(path_str)
+        if self._focus_images.supports(path):
+            return  # le chargeur plein format remplacera l'image, jamais la vignette du pipeline
         if self._focus_images.get(path) is not None:
             return                                  # deja en pleine definition
         overlay.upgrade(QPixmap.fromImage(image), self._focus_images.known_natural(path))
@@ -5621,40 +5694,7 @@ class PipelineBrowser(QMainWindow):
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Wheel and watched is self.scroll.viewport() and self._on_focus_wheel(event):
             return True
-        if (event.type() in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease)
-                and watched in (self.scroll.viewport(), self.columns_host) and event.button() == Qt.LeftButton):
-            self._on_viewer_background_click(event)
         return super().eventFilter(watched, event)
-
-    # -- Visionneuse : clic a cote de l'image --
-    # Clic dans le vide a cote de l'image (ni sur elle, ni sur la pellicule, un bouton ou le tableau
-    # des parametres) : elle se replie dans la PLANCHE (`_open_focus_gallery`, elle vole dans sa case).
-
-    def _viewer_background_at(self, global_pos) -> bool:
-        if not self._viewer_active():
-            return False
-        return QApplication.widgetAt(global_pos) in (self.scroll.viewport(), self.columns_host)
-
-    def _gallery_background_at(self, global_pos) -> bool:
-        """Planche ouverte : le fond autour d'elle (entre elle et les bords de la zone)."""
-        if not (self._project_columns_hidden and self._focus_gallery is not None):
-            return False
-        return QApplication.widgetAt(global_pos) in (self.scroll.viewport(), self.columns_host)
-
-    def _on_viewer_background_click(self, event):
-        pos = event.globalPosition().toPoint()
-        if event.type() == QEvent.MouseButtonPress:
-            self._viewer_press = pos if (self._viewer_background_at(pos) or self._gallery_background_at(pos)) else None
-            return
-        press, self._viewer_press = self._viewer_press, None
-        if press is None or (pos - press).manhattanLength() >= QApplication.startDragDistance():
-            return
-        if self._viewer_background_at(pos):
-            # Demande de l'utilisateur : l'image se replie dans la PLANCHE (elle vole dans sa case,
-            # comme G), pas dans la pellicule — qui peut d'ailleurs etre coupee dans les reglages.
-            self._open_focus_gallery()
-        elif self._gallery_background_at(pos):
-            self._set_columns_hidden(False)        # planche : clic a cote du tableau = retour aux colonnes
 
     def _on_focus_wheel(self, event) -> bool:
         """Etat focus (image seule au centre) : la molette passe d'une image a l'autre du dossier,
@@ -5802,6 +5842,49 @@ class PipelineBrowser(QMainWindow):
         return (self._project_columns_hidden and self._focus_gallery is None
                 and 0 <= self._viewer_index < len(self._viewer_paths))
 
+    def _position_focus_origin_badge(self):
+        badge = getattr(self, "_focus_origin_badge", None)
+        if badge is not None:
+            badge.move(scaled(12, 0), scaled(48, 0))
+
+    def _set_focus_origin_badge(self, path: Path | None, *, decoded: bool = False,
+                                application_preview: bool = False):
+        """Indique la source du contenu visible au centre de la visionneuse."""
+        badge = getattr(self, "_focus_origin_badge", None)
+        if badge is None or not self._viewer_active() or path is None \
+                or path.suffix.casefold() not in (IMAGE_EXTENSIONS | RAW_EXTENSIONS):
+            if badge is not None:
+                badge.hide()
+            return
+        try:
+            import lightroom_bridge
+            if lightroom_bridge.is_managed(path):
+                origin = (self._focus_images.origin(path) if decoded else None) or lightroom_bridge.preview_origin(path)
+                entries = {
+                    "lightroom": ("APERÇU LIGHTROOM", "#9ed8ff", "#17364a"),
+                    "application": ("APERÇU CRÉÉ PAR L’APPLICATION", "#ffd28a", "#493515"),
+                    "original": ("IMAGE ORIGINALE", "#b9e6c7", "#183c2a"),
+                }
+                entry = entries.get(origin, ("SOURCE DE L’APERÇU INCONNUE", "#e3e8ed", "#343a40"))
+            elif decoded:
+                entry = ("IMAGE ORIGINALE", "#b9e6c7", "#183c2a")
+            elif application_preview:
+                entry = ("APERÇU CRÉÉ PAR L’APPLICATION", "#ffd28a", "#493515")
+            else:
+                entry = ("CHARGEMENT DE L’IMAGE ORIGINALE…", "#e3e8ed", "#343a40")
+        except (ImportError, OSError, ValueError):
+            entry = ("SOURCE DE L’APERÇU INCONNUE", "#e3e8ed", "#343a40")
+        title, foreground, background = entry
+        badge.setText(title)
+        badge.setStyleSheet(
+            f"color: {foreground}; background: {background}; border-radius: 3px; "
+            "padding: 3px 7px; font-size: 10px;"
+        )
+        badge.adjustSize()
+        self._position_focus_origin_badge()
+        badge.show()
+        badge.raise_()
+
     def _sync_viewer_chrome(self):
         """Pellicule, raccourcis clavier et suivi de la souris : actifs seulement colonnes
         masquees, image seule au centre (pas pendant la planche)."""
@@ -5810,8 +5893,18 @@ class PipelineBrowser(QMainWindow):
             self._viewer_paths, self._viewer_index = [], -1
             self._viewer_base = []
             self._viewer_purs = []
+            if hasattr(self, "_focus_origin_badge"):
+                self._focus_origin_badge.hide()
         self._sync_pur_buttons()
         active = self._viewer_active()
+        if active and not self._large_lightroom_timer.isActive():
+            self._large_lightroom_timer.start()
+        elif not active:
+            self._large_lightroom_timer.stop()
+        if not active and hasattr(self, "_focus_origin_badge"):
+            self._focus_origin_badge.hide()
+        self._sync_lightroom_button()
+        self._sync_viewer_100_button(active)
         if active and not self._viewer_keys:
             self._ensure_viewer_keys()
         for shortcut in self._viewer_keys:
@@ -5878,9 +5971,78 @@ class PipelineBrowser(QMainWindow):
             button.hide()
         self._layout_viewer_buttons()
 
+    def _sync_lightroom_button(self):
+        """Affiche le bouton uniquement pour une photo gérée par un catalogue Lightroom."""
+        button = self._lightroom_btn
+        path = (self._viewer_paths[self._viewer_index]
+                if self._viewer_active() else None)
+        try:
+            import lightroom_bridge
+            available = path is not None and path.suffix.casefold() in lightroom_bridge._PREFETCH_EXTENSIONS \
+                and lightroom_bridge.is_managed(path)
+        except (ImportError, OSError, ValueError):
+            available = False
+        if not available:
+            if button is not None:
+                button.hide()
+                self._layout_viewer_buttons()
+            return
+        if button is None:
+            button = self._lightroom_btn = IconButton(
+                "text", role_color("buttons", "#c4cacf"), C["text"], parent=self.scroll.viewport())
+            button.setCursor(Qt.ArrowCursor)
+            button.setFlat(True)
+            button.clicked.connect(self._open_current_in_lightroom)
+        style_focus_button(button)
+        button.set_text_label("Modifier dans Lightroom")
+        button.setToolTip("Ouvrir cette photo dans Lightroom Classic, en mode Développement")
+        button.setFixedWidth(button.fontMetrics().horizontalAdvance("Modifier dans Lightroom") + scaled(20))
+        button.show()
+        button.raise_()
+        self._layout_viewer_buttons()
+        if self._focus_overlay is not None:
+            button_rects = self._button_rects()
+            self._focus_overlay.set_holes(button_rects)
+
+    def _open_current_in_lightroom(self):
+        if not self._viewer_active():
+            return
+        import lightroom_bridge
+        path = self._viewer_paths[self._viewer_index]
+        self.path_label.setText(f"Lightroom · ouverture de {path.name}…")
+        lightroom_bridge.open_in_lightroom(path)
+
+    def _sync_viewer_100_button(self, active: bool):
+        """Bouton de taille reelle, visible uniquement dans la visionneuse d'image."""
+        if not active:
+            if self._viewer_100_btn is not None:
+                self._viewer_100_btn.hide()
+                self._layout_viewer_buttons()
+            return
+        button = self._viewer_100_btn
+        if button is None:
+            button = self._viewer_100_btn = IconButton(
+                "text", role_color("buttons", "#c4cacf"), C["text"], parent=self.scroll.viewport())
+            button.setCursor(Qt.ArrowCursor)
+            button.setFlat(True)
+            button.clicked.connect(self._viewer_show_actual_size)
+        style_focus_button(button)
+        button.set_text_label("100 %")
+        button.setToolTip("Afficher la photo a sa taille reelle (100 %)")
+        button.setFixedWidth(button.fontMetrics().horizontalAdvance("100 %") + scaled(20))
+        button.show()
+        button.raise_()
+        self._layout_viewer_buttons()
+        if self._focus_overlay is not None:
+            self._focus_overlay.set_holes(self._button_rects())
+
+    def _viewer_show_actual_size(self):
+        if self._viewer_active() and self._focus_overlay is not None:
+            self._focus_overlay.zoom_toggle_actual()
+
     # -- Rangee des boutons de la visionneuse / planche : ordre choisi a la main (Ctrl + glisser) --
 
-    _BUTTON_DEFAULT_ORDER = ("hide", "gallery", "filter", "pur")
+    _BUTTON_DEFAULT_ORDER = ("hide", "gallery", "zoom100", "lightroom", "filter", "pur")
 
     def _viewer_row_items(self) -> list:
         """(identifiant, bouton) des boutons deplacables de la rangee, dans l'ordre retenu
@@ -5892,7 +6054,9 @@ class PipelineBrowser(QMainWindow):
             for key, button in (("hide", pc.hide_btn), ("gallery", pc.gallery_btn)):
                 if button is not None and not button.isHidden():
                     items.append((key, button))
-        for key, button in (("gallery", self._floating_gallery_btn), ("filter", self._filter_btn)):
+        for key, button in (("gallery", self._floating_gallery_btn),
+                            ("zoom100", self._viewer_100_btn),
+                            ("lightroom", self._lightroom_btn), ("filter", self._filter_btn)):
             if button is not None and not button.isHidden():
                 items.append((key, button))
         items.extend((f"pur:{b._pur_path.name}", b) for b in self._pur_buttons if not b.isHidden())
@@ -6114,6 +6278,7 @@ class PipelineBrowser(QMainWindow):
     def _raise_viewer_chrome(self):
         """La pellicule et le bouton flottant restent au-dessus de l'image et des fondus."""
         for widget in (self._filmstrip, getattr(self, "_info_panel", None), self._floating_gallery_btn,
+                       self._lightroom_btn, self._viewer_100_btn, getattr(self, "_focus_origin_badge", None),
                        *self._pur_buttons):
             if widget is not None and widget.isVisible():
                 widget.raise_()
@@ -6185,10 +6350,10 @@ class PipelineBrowser(QMainWindow):
         overlay.set_viewer(self._viewer_neighbour, self._on_viewer_moved, self._button_rects(),
                            on_click=self._on_viewer_image_click)
 
-    def _on_viewer_image_click(self):
-        """Clic simple sur l'image en focus : comme a cote d'elle, elle se replie dans la PLANCHE."""
-        if self._viewer_active():
-            self._open_focus_gallery()
+    def _on_viewer_image_click(self, anchor=None):
+        """Clic simple sur l'image : bascule entre ajustement ecran et taille reelle (100 %)."""
+        if self._viewer_active() and self._focus_overlay is not None:
+            self._focus_overlay.zoom_toggle_actual(anchor)
 
     def _viewer_go(self, index: int, delta: int = 0, fallback: QPixmap | None = None):
         """Montre le fichier de rang `index` ; `delta` = son ecart avec le precedent (le ruban
@@ -6199,8 +6364,11 @@ class PipelineBrowser(QMainWindow):
             return
         self._viewer_index = index
         path = paths[index]
+        self._sync_lightroom_button()
         self._focus_path = str(path)
         pixmap, natural, full = self._viewer_image(path, fallback)
+        self._set_focus_origin_badge(path, decoded=self._focus_images.get(path) is not None,
+                                     application_preview=not pixmap.isNull())
         overlay = self._focus_overlay
         if overlay is None and self._project_columns_hidden and not pixmap.isNull():
             # Colonnes masquees sans objet au centre (fichier sans apercu au depart) : on le cree.
@@ -6276,6 +6444,8 @@ class PipelineBrowser(QMainWindow):
                 continue
             path = paths[i]
             if self._focus_images.supports(path):
+                if path.suffix.casefold() in RAW_EXTENSIONS and abs(k) > 1:
+                    continue  # grands JPEG embarqués : seulement les deux voisines immédiates
                 self._focus_images.natural_size(path)
                 self._focus_images.request(path)
             elif str(path) not in self._viewer_previews:
@@ -6320,6 +6490,7 @@ class PipelineBrowser(QMainWindow):
         if 0 <= self._viewer_index < len(self._viewer_paths) and key == str(self._viewer_paths[self._viewer_index]):
             hit = self._focus_images.get(Path(key))
             if hit is not None:
+                self._set_focus_origin_badge(Path(key), decoded=True)
                 overlay.upgrade(hit[0], hit[2], hit[1])
         elif overlay.animating():
             overlay.update()
@@ -6342,8 +6513,18 @@ class PipelineBrowser(QMainWindow):
         if overlay is not None and overlay.animating():
             self._viewer_sync.start()
             return
-        self._select_viewer_file(self._viewer_paths[self._viewer_index])
+        path = self._viewer_paths[self._viewer_index]
+        self._select_viewer_file(path)
+        self._request_current_lightroom_preview()
         self._return_grab.start()                # colonnes changees : leur capture de retour, au repos
+
+    def _request_current_lightroom_preview(self):
+        if not self._viewer_active():
+            return
+        import lightroom_bridge
+        fit = self._viewer_fit_size()
+        lightroom_bridge.ensure_large_preview(
+            self._viewer_paths[self._viewer_index], fit.width(), fit.height())
 
     def _settle_columns_layout(self):
         """Colonnes re-affichees le temps d'une capture : leurs mises en page en attente (inspecteur mis a

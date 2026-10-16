@@ -1,8 +1,10 @@
+import json
 import shutil
+import time
 from pathlib import Path
 from PySide6.QtCore import (
-    QEasingCurve, QEvent, QFile, QMimeData, QPoint, QRect, QSize, Qt, QTimer, QUrl,
-    QVariantAnimation, Signal,
+    QEasingCurve, QEvent, QFile, QMimeData, QObject, QPoint, QRect, QRunnable, QSize,
+    QThreadPool, Qt, QTimer, QUrl, QVariantAnimation, Signal,
 )
 from PySide6.QtGui import (
     QCursor,
@@ -75,12 +77,14 @@ from browser_core import (
     GROUP_COLUMN_MIN_HEIGHT,
     ROLE_ISDIR,
     ROLE_IS_SHORTCUT,
+    ROLE_LIGHTROOM_SHORTCUT,
     ROLE_SPACE_ABOVE,
     ROLE_SPACE_BELOW,
     ROLE_PIN_BOTTOM,
     ROLE_BOTTOM_GAP,
     ROLE_TITLE_ABOVE,
     ROLE_META,
+    ROLE_MEDIA_COUNTS,
     ROLE_PATH,
     ROLE_SOURCE_LABEL,
     ROLE_SOURCE_STEP,
@@ -155,6 +159,32 @@ def opens_in_viewer(path: Path) -> bool:
     return suffix in PREVIEWABLE_EXTENSIONS and file_image_pixmap(path, asynchronous=True) is not None
 
 
+class _MediaCountSignals(QObject):
+    finished = Signal(int, object)
+
+
+class _MediaCountTask(QRunnable):
+    """Parcours les médias sans bloquer le fil de l'interface."""
+
+    def __init__(self, generation: int, folders: list[Path]):
+        super().__init__()
+        self.generation = generation
+        self.folders = folders
+        self.signals = _MediaCountSignals()
+
+    def run(self):
+        try:
+            import lightroom_bridge
+            counts = lightroom_bridge.folder_media_counts(self.folders)
+        except (ImportError, OSError, ValueError):
+            counts = {}
+        self.signals.finished.emit(self.generation, counts)
+
+
+_MEDIA_COUNT_POOL = QThreadPool()
+_MEDIA_COUNT_POOL.setMaxThreadCount(2)
+
+
 class Column(QWidget):
 
     selected = Signal(object, object)   # (Column, Path | None)
@@ -175,6 +205,7 @@ class Column(QWidget):
                  only_recognized_software: bool = False,
                  on_group_maximize=None, on_group_equalize=None):
         super().__init__(parent)
+        self._media_counts_generation = 0
         self.directory = directory
         # Filtre "que des repertoires logiciel reconnus" (voir refresh()) —
         # remplace un test litteral `group_kind == "logiciels"` : un simple
@@ -1168,7 +1199,16 @@ class Column(QWidget):
                 if idx.isValid() and bool(idx.data(ROLE_ISDIR)):
                     row_rect = self.list.visualRect(idx)
                     preview_left = _row_preview_left_x(row_rect, column_style_for(self.style_title))
-                    if _step_badge_rect(row_rect, preview_left).contains(pos):
+                    badge_rect = _step_badge_rect(row_rect, preview_left)
+                    # Le badge reste petit visuellement, mais sa cible de clic
+                    # est portée à 36 px et limitée à la ligne. Cela évite de
+                    # devoir viser précisément le disque orange, sans empiéter
+                    # sur une autre ligne ni sortir de la colonne.
+                    hit_size = 36
+                    extra_x = max(0, (hit_size - badge_rect.width() + 1) // 2)
+                    extra_y = max(0, (hit_size - badge_rect.height() + 1) // 2)
+                    hit_rect = badge_rect.adjusted(-extra_x, -extra_y, extra_x, extra_y).intersected(row_rect)
+                    if hit_rect.contains(pos):
                         self._open_column_config(Path(idx.data(ROLE_PATH)))
                         return True
             if obj is self.list.viewport() and self._in_row_resize_zone(int(event.position().y())):
@@ -1422,6 +1462,9 @@ class Column(QWidget):
         bottom = self._item_bottom(space_store)
         if bottom:
             entries.sort(key=lambda e: item_order_key(space_store, e[0]) in bottom)
+        self._media_counts_generation += 1
+        media_generation = self._media_counts_generation
+        media_folders = [path for path, _label, _step, _shortcut in entries if path.is_dir()]
         for path, label, step, is_shortcut in entries:
             # Un raccourci peut porter un NOM D'AFFICHAGE (clic droit > Renommer le raccourci) : le
             # dossier cible garde le sien.
@@ -1432,6 +1475,9 @@ class Column(QWidget):
             item.setData(ROLE_SOURCE_LABEL, label)
             item.setData(ROLE_SOURCE_STEP, step)
             item.setData(ROLE_IS_SHORTCUT, is_shortcut)
+            item.setData(ROLE_LIGHTROOM_SHORTCUT,
+                         bool(is_shortcut and (path / ".pipeline_lightroom.json").is_file()))
+            item.setData(ROLE_MEDIA_COUNTS, None)
             if space_store is not None:
                 item.setData(ROLE_SPACE_ABOVE, int(spaces.get(item_order_key(space_store, path), 0) or 0))
                 item.setData(ROLE_SPACE_BELOW, int(spaces_below.get(item_order_key(space_store, path), 0) or 0))
@@ -1456,6 +1502,31 @@ class Column(QWidget):
         self.list.blockSignals(False)
         self.sync_uniform_sizes()
         self.sync_bottom_gap()
+        # Les lignes peintes à l'écran demandent leurs aperçus à la volée ;
+        # amorcer quelques fichiers évite cependant un dossier vide au premier affichage.
+        try:
+            import lightroom_bridge
+            lightroom_bridge.request_previews(path for path, _label, _step, _shortcut in entries)
+        except (ImportError, OSError, ValueError):
+            pass
+        if media_folders:
+            task = _MediaCountTask(media_generation, media_folders)
+            task.signals.finished.connect(self._apply_media_counts)
+            _MEDIA_COUNT_POOL.start(task)
+
+    def _apply_media_counts(self, generation: int, media_counts: dict):
+        """Applique uniquement les résultats de la dernière actualisation."""
+        if generation != self._media_counts_generation:
+            return
+        for index in range(self.list.count()):
+            item = self.list.item(index)
+            if not item.data(ROLE_ISDIR):
+                continue
+            try:
+                key = str(Path(item.data(ROLE_PATH)).resolve())
+            except (OSError, TypeError, ValueError):
+                continue
+            item.setData(ROLE_MEDIA_COUNTS, media_counts.get(key))
 
     def _order_store(self) -> tuple[Path | None, str]:
         """(dossier, cle) ou s'enregistre l'ordre choisi a la main : le dossier de la colonne
@@ -2344,6 +2415,7 @@ class Column(QWidget):
         # Meme menu qu'un dossier standard (renommer/image/copier agissent sur
         # le dossier CIBLE) ; "Retirer le raccourci" retire seulement l'ENTREE.
         act_remove_shortcut = menu.addAction("Retirer le raccourci") if is_shortcut else None
+        act_lightroom = menu.addAction("Associer ce dossier à Lightroom…") if is_shortcut and path.is_dir() else None
         act_add_shortcut = menu.addAction("Ajouter un raccourci...")
         chosen = menu.exec(self.list.mapToGlobal(pos))
         if chosen is act_bottom:
@@ -2400,8 +2472,69 @@ class Column(QWidget):
             for source in (self._source_dirs if self._source_dirs is not None else [self.directory]):
                 remove_shortcut(source, path)
             self.refresh()
+        elif act_lightroom is not None and chosen is act_lightroom:
+            self._configure_lightroom_folder(path)
         elif chosen is act_add_shortcut:
             QTimer.singleShot(150, self._add_shortcut)
+
+    def _configure_lightroom_folder(self, path: Path):
+        """Associe le dossier cible du raccourci à son catalogue Lightroom."""
+        current = {}
+        marker = path / ".pipeline_lightroom.json"
+        try:
+            current = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
+        chosen, _ = QFileDialog.getOpenFileName(
+            self, "Catalogue Lightroom Classic", str(current.get("catalog", path)), "Catalogue Lightroom (*.lrcat)"
+        )
+        if not chosen:
+            return
+        catalog = Path(chosen)
+        if not catalog.is_file():
+            QMessageBox.warning(self, "Association Lightroom", "Le fichier catalogue n’existe pas.")
+            return
+        temp = marker.with_name(marker.name + ".tmp")
+        try:
+            association = dict(current) if isinstance(current, dict) else {}
+            association.update({
+                "catalog": str(catalog.resolve()),
+                "set_defaults_at_ns": time.time_ns(),
+            })
+            temp.write_text(json.dumps(association, indent=2), encoding="utf-8")
+            temp.replace(marker)
+        except OSError as exc:
+            QMessageBox.warning(self, "Association Lightroom", f"Impossible d’enregistrer l’association :\n{exc}")
+            return
+        from previews import _set_hidden
+        _set_hidden(marker)
+        from browser_core import invalidate_project_columns_cache
+        invalidate_project_columns_cache()
+        import lightroom_bridge
+        lightroom_bridge._managed_directory.cache_clear()
+        lightroom_bridge._write_connection(lightroom_bridge._cache_root(catalog), catalog.resolve())
+        from PySide6.QtWidgets import QApplication
+        QApplication.clipboard().setText(str(lightroom_bridge.PLUGIN))
+        bus = lightroom_bridge._signal_bus()
+        owner = self.window()
+        if not getattr(owner, "_lightroom_error_connected", False):
+            bus.failed.connect(lambda _path, message: owner.path_label.setText("Lightroom : " + message))
+            owner._lightroom_error_connected = True
+        QMessageBox.information(
+            self, "Dossier associé à Lightroom",
+            "Le catalogue est associé à ce dossier. Les réglages de set de la capture sont appliqués à ses "
+            "dossiers existants et futurs. Les aperçus Lightroom déjà en cache seront lus directement.\n\n"
+            "Le chemin du module SDK a aussi été copié pour les échanges d'attributs avec Lightroom :\n\n"
+            f"{lightroom_bridge.PLUGIN}\n\n"
+            "Dans Lightroom Classic, ajoutez ce module via Fichier > Gestionnaire de modules externes > Ajouter."
+        )
+        for row in range(self.list.count()):
+            shortcut_item = self.list.item(row)
+            if shortcut_item.data(ROLE_PATH) == str(path):
+                shortcut_item.setData(ROLE_LIGHTROOM_SHORTCUT, True)
+                self.list.viewport().update(self.list.visualItemRect(shortcut_item))
+                break
+        self.list.viewport().update()
 
     def _add_context_slider(self, menu: QMenu, label_text: str, value: int, vmin: int, vmax: int, on_change):
         """Ligne "slider + valeur px en temps reel" du menu contextuel

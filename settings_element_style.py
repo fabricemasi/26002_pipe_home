@@ -117,6 +117,10 @@ def _publish_row_text_overrides(overrides: dict | None) -> None:
         key: value for key, value in overrides.items()
         if key.startswith("row-text:") and value
     }
+    ui_state.ROW_MEDIA_OVERRIDES = {
+        key: value for key, value in overrides.items()
+        if (key.startswith("row-media:") or key.startswith("row-media-global:")) and value
+    }
     ui_state.GALLERY_STYLE_OVERRIDES = {
         key: value for key, value in overrides.items()
         if key.startswith("gallery-") and value
@@ -969,6 +973,45 @@ class RowTextTarget(TextTarget):
         self.view.viewport().update()
 
 
+class RowMediaTextTarget(RowTextTarget):
+    """Style d'une indication IMG ou VID peinte dans une ligne."""
+
+    def __init__(self, widget, path: str, column_title: str, part: str, label: str = "",
+                 all_columns: bool = False):
+        self.media_part = part
+        self.all_columns = bool(all_columns)
+        self.media_key = (f"row-media-global:{part.removeprefix('media-')}" if self.all_columns
+                          else f"row-media:{part.removeprefix('media-')}:{column_title}:{path}")
+        super().__init__(widget, path, column_title, label or part.removeprefix("media-").upper())
+        self.element = self.media_key
+
+    @property
+    def legacy_element(self):
+        return self.element
+
+    def general(self, settings: dict) -> dict:
+        from app_style import role_font
+        from row_delegates import resolve_color_ref
+        base_font = role_font("info", 6, 600)
+        base_color = "#87CEFA" if self.media_part == "media-photo" else "#FFB347"
+        index = _row_index(self.view, self.path)
+        return {**super().general(settings),
+                "text_font_family": base_font.family(), "text_font_bold": True,
+                "text_font_italic": False, "text_font_size": _editable_font_size(base_font),
+                "text_font_smoothing_enabled": True, "text_font_smoothing": "previous",
+                "text_font_color": resolve_color_ref(base_color, base_color)}
+
+    def apply(self, values):
+        import ui_state
+        looks = dict(getattr(ui_state, "ROW_MEDIA_OVERRIDES", {}) or {})
+        if values:
+            looks[self.element] = copy.deepcopy(values)
+        else:
+            looks.pop(self.element, None)
+        ui_state.ROW_MEDIA_OVERRIDES = looks
+        self.view.viewport().update()
+
+
 class GalleryStyleTarget(TextTarget):
     """Style local d'une cellule, d'une image ou d'un des textes de la planche."""
 
@@ -1408,6 +1451,14 @@ def targets_for(widget: QWidget) -> list:
         header = _ancestor(widget, _SectionHeader)
     except ImportError:
         pass
+    if getattr(widget, "part", "") in {"media-photo", "media-video"} and hasattr(widget, "view"):
+        from browser_core import ROLE_PATH
+        view = widget.view
+        column = _column_for_view(view)
+        path = str(widget.key)
+        if column is not None:
+            out.append(RowMediaTextTarget(widget, path, getattr(column, "style_title", ""),
+                                          widget.part, widget.part.removeprefix("media-").upper()))
     if getattr(widget, "part", None) == "text" and hasattr(widget, "view"):
         from browser_core import ROLE_PATH
         view = widget.view

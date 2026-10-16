@@ -423,6 +423,11 @@ class DetailPanel(QWidget):
         _PREVIEW_DECODE_MANAGER.progress.connect(self._on_preview_generation_progress)
         _PREVIEW_DECODE_MANAGER.ready.connect(self._on_3d_preview_ready)
         _PREVIEW_DECODE_MANAGER.turntable_ready.connect(self._on_turntable_ready)
+        try:
+            import lightroom_bridge
+            lightroom_bridge._signal_bus().profile_ready.connect(self._on_lightroom_profile_ready)
+        except (ImportError, OSError, ValueError):
+            pass
 
         # Extrait de contenu pour les fichiers texte/code (voir
         # TEXT_PREVIEW_EXTENSIONS/read_text_preview) : remplace le "well"
@@ -475,12 +480,24 @@ class DetailPanel(QWidget):
             "color: #1d1608; background: #e5b85c; border-radius: 2px; padding: 1px 5px;"
         )
         self.preview_stale_badge.hide()
+        self.preview_origin_badge = QLabel("")
+        self.preview_origin_badge.setFont(role_font("info2", 8, 700))
+        self.preview_origin_badge.hide()
+        self.preview_profile_badge = QLabel("")
+        self.preview_profile_badge.setFont(role_font("info2", 8, 700))
+        self.preview_profile_badge.hide()
         # Tableau des informations = un VRAI tableau des reglages (style commun des tableaux, clic droit
         # > Override settings pour lui donner le sien) : Parametre | Valeur, une ligne par information
         # (Type, Taille, Modifie, Dimensions), puis la ligne des boutons d'apercu sur toute la largeur.
         self.preview_info_table = self._build_info_table()
         self.preview_controls_cell = QWidget()
         self.preview_controls_cell.setStyleSheet("background: transparent;")
+        self.preview_meta_badges = QWidget(self.preview_controls_cell)
+        meta_badges_layout = QHBoxLayout(self.preview_meta_badges)
+        meta_badges_layout.setContentsMargins(0, 0, 0, 0)
+        meta_badges_layout.setSpacing(3)
+        meta_badges_layout.addWidget(self.preview_origin_badge)
+        meta_badges_layout.addWidget(self.preview_profile_badge)
         # Cellule des boutons : UNE ligne compacte (voir _reflow_preview_controls : elle se range sur
         # plusieurs lignes seulement quand le tableau est trop etroit).
         controls_layout = QGridLayout(self.preview_controls_cell)
@@ -496,6 +513,9 @@ class DetailPanel(QWidget):
         self.preview_media_group.setExclusive(True)
         self.preview_image_button = QPushButton("Image")
         self.preview_turntable_button = QPushButton("Turntable")
+        self.lightroom_preview_button = QPushButton("Créer l’aperçu Lightroom")
+        self.lightroom_preview_button.setToolTip("Demander à Lightroom de recalculer l’aperçu de cette photo")
+        self.lightroom_preview_button.setCursor(Qt.PointingHandCursor)
         self.preview_media_buttons = {
             "image": self.preview_image_button,
             "turntable": self.preview_turntable_button,
@@ -513,6 +533,8 @@ class DetailPanel(QWidget):
             self.preview_media_group.addButton(button)
             button.clicked.connect(lambda _checked=False, selected=media: self._select_preview_media(selected))
             media_layout.addWidget(button)
+        self.lightroom_preview_button.setStyleSheet(media_button_style)
+        self.lightroom_preview_button.clicked.connect(self._request_lightroom_preview)
         self.preview_media_buttons["image"].setChecked(True)
         self.render_action_buttons = {}
         render_button_style = (
@@ -543,9 +565,10 @@ class DetailPanel(QWidget):
         self.preview_stale_badge.setParent(self.preview_controls_cell)
         self._preview_controls_items = [
             self.preview_media_row,
+            self.lightroom_preview_button,
             self.render_action_buttons[("image", "low")], self.render_action_buttons[("image", "high")],
             self.render_action_buttons[("turntable", "low")], self.render_action_buttons[("turntable", "high")],
-            self.preview_protection_widget, self.preview_stale_badge,
+            self.preview_protection_widget, self.preview_stale_badge, self.preview_meta_badges,
         ]
         self._preview_controls_wide = None
         self._reflow_preview_controls(True)
@@ -924,6 +947,19 @@ class DetailPanel(QWidget):
         row.setVisible(visible)
         self._restyle_info_table()
 
+    def _request_lightroom_preview(self):
+        if not self._current_path:
+            return
+        import lightroom_bridge
+        self.lightroom_preview_button.setEnabled(False)
+        self.lightroom_preview_button.setText("Demande envoyée…")
+        lightroom_bridge.create_preview(Path(self._current_path))
+        QTimer.singleShot(25000, self._restore_lightroom_preview_button)
+
+    def _restore_lightroom_preview_button(self):
+        self.lightroom_preview_button.setText("Créer l’aperçu Lightroom")
+        self.lightroom_preview_button.setEnabled(True)
+
     def _reflow_preview_controls(self, wide: bool):
         """Range les boutons sur UNE ligne (panneau large) ou sur plusieurs
         (panneau etroit)."""
@@ -933,7 +969,7 @@ class DetailPanel(QWidget):
         layout = self._preview_controls_layout
         for item in self._preview_controls_items:
             layout.removeWidget(item)
-        media, low_i, high_i, low_t, high_t, protection, badge = self._preview_controls_items
+        media, lr_preview, low_i, high_i, low_t, high_t, protection, badge, meta_badges = self._preview_controls_items
         if wide:
             for column, item in enumerate(self._preview_controls_items):
                 layout.addWidget(item, 0, column)
@@ -941,12 +977,14 @@ class DetailPanel(QWidget):
         else:
             layout.setColumnStretch(len(self._preview_controls_items), 0)
             layout.addWidget(media, 0, 0, 1, 2)
-            layout.addWidget(badge, 0, 2)
+            layout.addWidget(lr_preview, 0, 2, 1, 2)
+            layout.addWidget(badge, 0, 4)
+            layout.addWidget(meta_badges, 0, 5, 1, 2)
             layout.addWidget(low_i, 1, 0)
             layout.addWidget(high_i, 1, 1)
             layout.addWidget(low_t, 2, 0)
             layout.addWidget(high_t, 2, 1)
-            layout.addWidget(protection, 3, 0, 1, 3)
+            layout.addWidget(protection, 3, 0, 1, 6)
 
     def _show_preview_context_menu(self, global_pos):
         """Menu clic droit de l'apercu (image, turntable ou video) du fichier
@@ -1501,6 +1539,77 @@ class DetailPanel(QWidget):
             self.preview_stale_badge.setVisible(stale)
             return
         self.preview_stale_badge.setVisible(bool(key and self._preview_pixmap is not None and key in _STALE_PREVIEW_PATHS))
+        self._refresh_preview_origin_badge(key)
+
+    def _refresh_preview_origin_badge(self, path_key: str | None = None):
+        path_key = path_key or self._current_path
+        if not path_key:
+            self.preview_origin_badge.hide()
+            return
+        try:
+            import lightroom_bridge
+            origin = lightroom_bridge.preview_origin(Path(path_key))
+        except (ImportError, OSError, ValueError):
+            origin = None
+        labels = {
+            "lightroom": ("APERÇU LIGHTROOM", "#9ed8ff", "#17364a"),
+            "application": ("APERÇU APPLICATION", "#ffd28a", "#493515"),
+        }
+        entry = labels.get(origin)
+        if entry is None:
+            self.preview_origin_badge.hide()
+            return
+        title, foreground, background = entry
+        self.preview_origin_badge.setText(title)
+        self.preview_origin_badge.setToolTip("Source de l’aperçu actuellement affiché")
+        self.preview_origin_badge.setStyleSheet(
+            f"color: {foreground}; background: {background}; border-radius: 2px; padding: 1px 5px;"
+        )
+        self.preview_origin_badge.show()
+
+    def _on_lightroom_profile_ready(self, path_key: str, profile: str, base_profile: str, error: str):
+        if path_key != self._current_path:
+            return
+        if error:
+            self.preview_profile_badge.setText("PROFIL LR INDISPONIBLE")
+            self.preview_profile_badge.setToolTip(error)
+            foreground, background = "#ffd28a", "#493515"
+        elif profile:
+            self.preview_profile_badge.setText(f"PROFIL LR : {profile}")
+            details = f"Profil de développement Lightroom : {profile}"
+            if base_profile and base_profile != profile:
+                details += f" (profil caméra de base : {base_profile})"
+            self.preview_profile_badge.setToolTip(details)
+            foreground, background = "#9ed8ff", "#17364a"
+        else:
+            self.preview_profile_badge.setText("PROFIL LR NON IDENTIFIÉ")
+            self.preview_profile_badge.setToolTip(
+                "Lightroom n’a pas renvoyé de nom de profil pour cette photo."
+            )
+            foreground, background = "#ffd28a", "#493515"
+        self.preview_profile_badge.setStyleSheet(
+            f"color: {foreground}; background: {background}; border-radius: 2px; padding: 1px 5px;"
+        )
+        self.preview_profile_badge.show()
+
+    def _request_lightroom_profile(self, path: Path):
+        try:
+            import lightroom_bridge
+            cached = lightroom_bridge.develop_profile(path)
+            if cached:
+                self._on_lightroom_profile_ready(str(path), cached[0], cached[1], "")
+            else:
+                self.preview_profile_badge.setText("PROFIL LR : lecture…")
+                self.preview_profile_badge.setToolTip(
+                    "Lecture des paramètres de développement de cette photo dans Lightroom."
+                )
+                self.preview_profile_badge.setStyleSheet(
+                    "color: #9ed8ff; background: #17364a; border-radius: 2px; padding: 1px 5px;"
+                )
+                self.preview_profile_badge.show()
+            lightroom_bridge.request_develop_profile(path)
+        except (ImportError, OSError, ValueError):
+            self.preview_profile_badge.hide()
 
     def _selected_preview_media(self) -> str:
         return "turntable" if self.preview_turntable_button.isChecked() else "image"
@@ -2024,6 +2133,9 @@ class DetailPanel(QWidget):
 
     def _on_3d_preview_ready(self, path_str: str, mtime: float, image):
         """Met en cache le resultat du worker, puis l'affiche s'il est toujours selectionne."""
+        if path_str == self._current_path:
+            self._restore_lightroom_preview_button()
+            self._refresh_preview_origin_badge(path_str)
         self._refresh_render_action_buttons()
         was_requested = path_str == self._preview_request_path or path_str in self._preview_generation_paths
         self._preview_generation_paths.discard(path_str)
@@ -2063,8 +2175,16 @@ class DetailPanel(QWidget):
                 pix, _is_stale = _read_preview_pixmap(path, mtime)
             self._preview_request_path = None
             if pix is not None and path.suffix.lower() in IMAGE_EXTENSIONS:
-                source_pix = QPixmap(path_str)
-                self._preview_pixmap = source_pix if not source_pix.isNull() else pix
+                try:
+                    import lightroom_bridge
+                    managed = lightroom_bridge.is_managed(path)
+                except (ImportError, OSError, ValueError):
+                    managed = False
+                if managed:
+                    self._preview_pixmap = pix
+                else:
+                    source_pix = QPixmap(path_str)
+                    self._preview_pixmap = source_pix if not source_pix.isNull() else pix
             else:
                 self._preview_pixmap = pix
             self._update_preview()
@@ -2196,7 +2316,15 @@ class DetailPanel(QWidget):
         self._current_path = str(path)
         self._refresh_render_action_buttons()
         supports_turntable = not path.is_dir() and path.suffix.lower() in TURNTABLE_EXTENSIONS
-        self._set_preview_controls_visible(supports_turntable)
+        try:
+            import lightroom_bridge
+            lightroom_managed = not path.is_dir() and lightroom_bridge.is_managed(path)
+        except (ImportError, OSError, ValueError):
+            lightroom_managed = False
+        self.lightroom_preview_button.setVisible(lightroom_managed)
+        self.lightroom_preview_button.setText("Créer l’aperçu Lightroom")
+        self.lightroom_preview_button.setEnabled(True)
+        self._set_preview_controls_visible(supports_turntable or lightroom_managed)
         preferred_media = self._preview_media_preferences.get(str(path), "image")
         self.preview_media_buttons.get(preferred_media, self.preview_image_button).setChecked(True)
         self.turntable_controls.setVisible(supports_turntable and preferred_media == "turntable")
@@ -2225,6 +2353,10 @@ class DetailPanel(QWidget):
         self._preview_pixmap = None
         self._preview_request_path = None
         self.preview_stale_badge.hide()
+        self.preview_origin_badge.hide()
+        self.preview_profile_badge.hide()
+        if lightroom_managed:
+            self._request_lightroom_profile(path)
         self.preview_progress.hide()
         if self._preview_generation_paths:
             self.preview_log.show()
@@ -2266,18 +2398,23 @@ class DetailPanel(QWidget):
                         mtime = path.stat().st_mtime
                     except OSError:
                         mtime = None
-                    stale_pix = None
-                    is_stale = False
-                    if mtime is not None:
-                        stale_pix, is_stale = _read_preview_pixmap(path, mtime)
-                    if is_stale and stale_pix is not None:
-                        self._preview_pixmap = stale_pix
-                        file_image_pixmap(path)  # auto-régénère les caches 2D périmés
+                    if lightroom_managed:
+                        # Ne jamais afficher le fichier original à la place du proxy : le
+                        # pont fournit d'abord Lightroom, puis son aperçu de secours local.
+                        self._preview_pixmap = file_image_pixmap(path, asynchronous=True)
                     else:
-                        pix = QPixmap(str(path))
-                        if not pix.isNull():
-                            self._preview_pixmap = pix
-                        file_image_pixmap(path)  # crée le cache 2D manquant
+                        stale_pix = None
+                        is_stale = False
+                        if mtime is not None:
+                            stale_pix, is_stale = _read_preview_pixmap(path, mtime)
+                        if is_stale and stale_pix is not None:
+                            self._preview_pixmap = stale_pix
+                            file_image_pixmap(path)  # auto-régénère les caches 2D périmés
+                        else:
+                            pix = QPixmap(str(path))
+                            if not pix.isNull():
+                                self._preview_pixmap = pix
+                            file_image_pixmap(path)  # crée le cache 2D manquant
                 elif suffix in OBJ_EXTENSIONS | ABC_EXTENSIONS:
                     if str(path) in _MANUAL_3D_PREVIEW_REQUESTS:
                         _MANUAL_3D_PREVIEW_REQUESTS.discard(str(path))

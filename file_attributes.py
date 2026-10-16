@@ -1,6 +1,6 @@
 """Attributs des fichiers (demande de l'utilisateur, base du systeme de filtres des images / videos) : pour tout
-fichier qui a un apercu (jamais un dossier) — note de 1 a 5, une des 5 couleurs de Reglages > Visionneuse >
-Filtres, « j'aime », mots cles, statut « a retenir » / « a supprimer ».
+fichier qui a un apercu (jamais un dossier) — note de 0 a 5, une des 5 couleurs de Reglages > Visionneuse >
+Filtres, mots cles et drapeau « neutre / marquée / rejetée ».
 
 Rangement : un fichier cache par dossier, `.pipeline_attributes.json` (comme `.pipeline_layout.json`),
 `{nom du fichier: {attribut: valeur}}` — seules les valeurs non vides sont ecrites. Cache memoire par dossier
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import time
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from previews import _clear_hidden, _set_hidden
 FILENAME = ".pipeline_attributes.json"
 COLOR_COUNT = 5
 STATUS_KEEP, STATUS_DELETE = "keep", "delete"
-DEFAULTS = {"rating": 0, "color": 0, "like": False, "keywords": [], "status": ""}
+DEFAULTS = {"rating": 0, "color": 0, "keywords": [], "status": ""}
 
 _CACHE: dict[str, tuple[float, dict]] = {}       # dossier -> (date du fichier, contenu)
 # Mots cles deja employes (propose a la saisie, avec autocompletion) : {mot: nombre d'emplois}. Fichier de
@@ -99,8 +100,6 @@ def _clean(values: dict) -> dict:
     color = int(values.get("color") or 0)
     if 1 <= color <= COLOR_COUNT:
         out["color"] = color
-    if values.get("like"):
-        out["like"] = True
     keywords = [k.strip() for k in values.get("keywords") or [] if isinstance(k, str) and k.strip()]
     if keywords:
         out["keywords"] = list(dict.fromkeys(keywords))
@@ -117,12 +116,25 @@ def values_of(own: dict | None) -> dict:
 
 def get(path: Path) -> dict:
     """Attributs de `path` (toutes les cles, valeurs par defaut comprises)."""
+    try:
+        import lightroom_bridge
+        if lightroom_bridge.is_managed(Path(path)):
+            return values_of(lightroom_bridge.attributes(Path(path)) or {})
+    except (ImportError, OSError, ValueError, sqlite3.Error):
+        return values_of({})
     folder, key = location(path)
     return values_of(_load_dir(folder).get(key))
 
 
 def update(path: Path, **changes) -> dict:
     """Change des attributs de `path` et les enregistre aussitot ; retourne ses attributs."""
+    try:
+        import lightroom_bridge
+        if lightroom_bridge.is_managed(Path(path)):
+            lightroom_bridge.write_attributes(Path(path), changes)
+            return get(path)                 # Lightroom reste la source de vérité.
+    except (ImportError, OSError, ValueError):
+        return get(path)
     directory, key = location(path)
     data = dict(_load_dir(directory))
     before = {k.casefold() for k in get(path)["keywords"]}

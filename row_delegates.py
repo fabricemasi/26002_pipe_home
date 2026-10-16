@@ -43,6 +43,8 @@ from settings_widgets import (
 from browser_core import (
     ROLE_ISDIR,
     ROLE_IS_SHORTCUT,
+    ROLE_LIGHTROOM_SHORTCUT,
+    ROLE_MEDIA_COUNTS,
     ROLE_PATH,
     ROLE_SPACE_ABOVE,
     ROLE_SPACE_BELOW,
@@ -198,7 +200,13 @@ class RowDelegate(QStyledItemDelegate):
         # STYLE, Settings > RACCOURCI) — GENERALE, pas par colonne : un
         # raccourci doit se reperer de la MEME facon partout.
         row_font, row_color = _resolve_shortcut_font_color() if is_shortcut else (self.type_font, self.type_color)
+        if index.data(ROLE_LIGHTROOM_SHORTCUT):
+            row_color = QColor("#87CEFA")
         text_look = _row_text_look(self.column, index, row_font, row_color)
+        if _is_empty_lightroom_folder(index):
+            row_color = C["dim"]
+            if text_look:
+                text_look["_color"] = row_color
 
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing, True)
@@ -210,6 +218,8 @@ class RowDelegate(QStyledItemDelegate):
             index.data(Qt.DisplayRole), icon_pixmap, preview_pixmap, row_font, row_color,
             self.column.is_active, annotation=index.data(ROLE_SOURCE_LABEL),
             annotation_step=index.data(ROLE_SOURCE_STEP),
+            media_counts=index.data(ROLE_MEDIA_COUNTS),
+            media_looks=_row_media_looks(self.column, index),
             icon_visible_override=self.column._show_icon_override,
             preview_visible_override=self.column._show_preview_override,
             icon_size_override=self.column._icon_size_override,
@@ -256,6 +266,8 @@ def _paint_unified_row(
     text_padding_left_override: int | None = None,
     text_look: dict | None = None,
     is_file: bool = False,
+    media_counts: tuple[int, int] | None = None,
+    media_looks: dict | None = None,
 ):
     """Ligne UNIQUE, PARTAGEE par toutes les colonnes (Type/Projets/Sous-
     projet/Logiciels/Contenu) : icone toggle optionnelle, icone de
@@ -533,25 +545,44 @@ def _paint_unified_row(
         text_font = text_look.get("_font", text_font)
         final_text_color = text_look.get("_color", final_text_color)
     text_rect = QRect(text_x, rect.top(), max(0, text_right_limit - text_x), rect.height())
+    media_text_rect = QRect(text_rect)
     edit_parts = getattr(option, "_edit_parts", None)
     if edit_parts is not None:
         painter.setFont(text_font)
         content = painter.fontMetrics().boundingRect(text_rect, Qt.AlignLeft | Qt.AlignVCenter, str(name))
         edit_parts["text"] = content.intersected(text_rect)
         text_rect.translate(option._edit_text_offset)
-    if annotation:
+    media_labels = []
+    media_width = 0
+    media_font = role_font("info", 9, 600)
+    # Les deux compteurs gardent la famille/gras du role « info », mais leur
+    # hauteur visible est fixe : 9 px, independamment du DPI et du role global.
+    media_font.setPixelSize(9)
+    media_font.setHintingPreference(QFont.HintingPreference.PreferDefaultHinting)
+    if media_counts is not None:
+        try:
+            photo_count, video_count = max(0, int(media_counts[0])), max(0, int(media_counts[1]))
+            painter.setFont(media_font)
+            metrics = painter.fontMetrics()
+            media_labels = [(str(photo_count), "#87CEFA"), (str(video_count), "#FFB347")]
+            media_width = max(metrics.horizontalAdvance(label) for label, _color in media_labels) + 8
+        except (TypeError, ValueError, IndexError):
+            media_labels = []
+            media_width = 0
+
+    if annotation or media_labels:
         # Largeur de l'annotation d'ABORD (police "info", voir sa remarque
         # de tete) : le nom n'a droit qu'au RESTE de text_rect, elide en
         # consequence — sinon un nom long masquerait completement une
         # annotation qui tiendrait pourtant a cote.
-        ann_text = f" ({annotation})"
+        ann_text = f" ({annotation})" if annotation else ""
         ann_font = role_font("info", 10, 400)
         painter.setFont(ann_font)
-        ann_width = painter.fontMetrics().horizontalAdvance(ann_text)
+        ann_width = painter.fontMetrics().horizontalAdvance(ann_text) if ann_text else 0
 
         painter.setFont(text_font)
         painter.setPen(QColor(final_text_color))
-        name_width = max(0, text_rect.width() - ann_width)
+        name_width = max(0, text_rect.width() - ann_width - media_width)
         elided_name = painter.fontMetrics().elidedText(name, Qt.ElideMiddle, name_width)
         _paint_text_look(painter, text_rect, elided_name, text_look)
         _draw_row_name(painter, text_rect, name, elided_name, final_text_color, is_file)
@@ -559,8 +590,8 @@ def _paint_unified_row(
         name_actual_width = painter.fontMetrics().horizontalAdvance(elided_name)
         ann_rect = QRect(
             text_rect.left() + name_actual_width, text_rect.top(),
-            max(0, text_rect.width() - name_actual_width), text_rect.height())
-        if ann_rect.width() > 0:
+            min(ann_width, max(0, text_rect.width() - name_actual_width)), text_rect.height())
+        if ann_text and ann_rect.width() > 0:
             painter.setFont(ann_font)
             # Couleur par etape (voir ROLE_SOURCE_STEP/_step_badge_color,
             # Settings > Colonnes > Projets > Colonnes > "Icone de
@@ -571,6 +602,27 @@ def _paint_unified_row(
             painter.setPen(QColor(ann_color))
             elided_ann = painter.fontMetrics().elidedText(ann_text, Qt.ElideRight, ann_rect.width())
             painter.drawText(ann_rect, Qt.AlignLeft | Qt.AlignVCenter, elided_ann)
+        if media_labels:
+            painter.setFont(media_font)
+            line_h = 9
+            for i, (label, color) in enumerate(media_labels):
+                part = "media-photo" if i == 0 else "media-video"
+                look = (media_looks or {}).get(part) or {}
+                painter.setFont(look.get("_font", media_font))
+                painter.setPen(QColor(look.get("_color", color)))
+                base_line = QRect(media_text_rect.right() - media_width + 2,
+                                  media_text_rect.top() + 1 + (1 if i == 0 else 3) + i * line_h,
+                                  media_width - 4,
+                                  line_h)
+                # La zone de sélection du mode édition reste facile à viser,
+                # indépendamment de la petite taille du texte affiché.
+                hit_width = max(42, base_line.width() + 10)
+                hit_right = base_line.right() + 4
+                hit_rect = QRect(hit_right - hit_width + 1, base_line.top() - 2,
+                                 hit_width, max(12, line_h + 4))
+                moved_hit = part_rect(option, part, hit_rect)
+                line = base_line.translated(moved_hit.topLeft() - hit_rect.topLeft())
+                painter.drawText(line, Qt.AlignRight | Qt.AlignTop, label)
     else:
         painter.setFont(text_font)
         painter.setPen(QColor(final_text_color))
@@ -662,6 +714,41 @@ def _row_text_look(column, index, base_font, base_color):
     text_color = resolve_color_ref(values.get("text_font_color", ""), base_color)
     return {**values, "_font": text_font, "_color": text_color}
 
+
+def _row_media_looks(column, index):
+    """Apparence surchargee des compteurs IMG/VID de cette ligne."""
+    path = str(index.data(ROLE_PATH) or "")
+    if not path:
+        return {}
+    overrides = getattr(ui_state, "ROW_MEDIA_OVERRIDES", {}) or {}
+    result = {}
+    for part, kind, default in (("media-photo", "photo", "#87CEFA"),
+                                ("media-video", "video", "#FFB347")):
+        values = (overrides.get(f"row-media-global:{kind}")
+                  or overrides.get(f"row-media:{kind}:{column.style_title}:{path}"))
+        if not values:
+            continue
+        size = int(values.get("text_font_size") or 9)
+        weight = QFont.DemiBold if values.get("text_font_bold") else QFont.Normal
+        smoothing = values.get("text_font_smoothing", "previous") if values.get("text_font_smoothing_enabled") else "previous"
+        family = (values.get("text_font_family") or "").strip() or role_font("info", 9, 600).family()
+        result[part] = {**values,
+                        "_font": font(size, int(weight), family=family,
+                                      italic=bool(values.get("text_font_italic")), smoothing=smoothing),
+                        "_color": resolve_color_ref(values.get("text_font_color", ""), default)}
+    return result
+
+
+def _is_empty_lightroom_folder(index) -> bool:
+    """Le comptage Lightroom est absent pour les dossiers non gérés."""
+    if not bool(index.data(ROLE_ISDIR)) or index.data(ROLE_MEDIA_COUNTS) is None:
+        return False
+    counts = index.data(ROLE_MEDIA_COUNTS)
+    try:
+        return int(counts[0]) == 0 and int(counts[1]) == 0
+    except (IndexError, KeyError, TypeError, ValueError):
+        return False
+
 class ProjectTileDelegate(QStyledItemDelegate):
     """Colonne "Projets" : meme rendu PARTAGE que RowDelegate
     (voir _paint_unified_row), avec la vignette de projet (perso si
@@ -725,6 +812,10 @@ class ProjectTileDelegate(QStyledItemDelegate):
                 icon_pixmap = shortcut_icon
         row_font, row_color = _resolve_shortcut_font_color() if is_shortcut else (self.font_name, self.color_name)
         text_look = _row_text_look(self.column, index, row_font, row_color)
+        if _is_empty_lightroom_folder(index):
+            row_color = C["dim"]
+            if text_look:
+                text_look["_color"] = row_color
         rect = prepare_row(self.column.list, index, rect, option)
         _paint_unified_row(
             painter, rect, option, column_style_for(title),
@@ -737,6 +828,8 @@ class ProjectTileDelegate(QStyledItemDelegate):
             text_padding_left_override=self.column._text_padding_left_override,
             text_look=text_look,
             is_file=not is_dir_entry,
+            media_counts=index.data(ROLE_MEDIA_COUNTS),
+            media_looks=_row_media_looks(self.column, index),
         )
         painter.restore()
 

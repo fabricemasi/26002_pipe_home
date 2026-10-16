@@ -42,7 +42,7 @@ RATING_MODES = ((RATING_MIN, "au moins"), (RATING_EQ, "égal à"))
 MODIFIERS = ("rating_mode",)
 
 DEFAULT_FILTER = {
-    "scope": SCOPE_LOCAL, "rating": 0, "rating_mode": RATING_MIN, "color": [], "like": False, "keywords": [], "status": "",
+    "scope": SCOPE_LOCAL, "rating": 0, "rating_mode": RATING_MIN, "color": [], "keywords": [], "status": "",
     "extensions": [], "size_min": 0, "size_max": 0, "period": "", "date_from": "", "date_to": "",
     "provenance": "",
 }
@@ -183,7 +183,7 @@ def needs_stat(spec: dict) -> bool:
 
 def needs_attributes(spec: dict) -> bool:
     s = normalized(spec)
-    return bool(s["rating"] or s["color"] or s["like"] or s["keywords"] or s["status"])
+    return bool(s["rating"] or s["color"] or s["keywords"] or s["status"])
 
 
 def matches(path: Path, spec: dict, size: int | None = None, mtime: float | None = None,
@@ -260,11 +260,21 @@ def filter_entries(entries, spec: dict, root: Path | None = None) -> list[Path]:
                 if origin != wanted:
                     continue
             if with_attrs:
-                stored = per_dir.get(folder)
-                if stored is None:
-                    stored = per_dir[folder] = file_attributes._load_dir(folder, max_age=2.0)
-                own = stored.get(name)
-                if not (bare_pass if own is None else _attrs_pass(s, file_attributes.values_of(own))):
+                try:
+                    import lightroom_bridge
+                    managed = lightroom_bridge.is_managed(Path(path))
+                except (ImportError, OSError, ValueError):
+                    managed = False
+                if managed:
+                    values = file_attributes.get(Path(path))
+                    passes = _attrs_pass(s, values)
+                else:
+                    stored = per_dir.get(folder)
+                    if stored is None:
+                        stored = per_dir[folder] = file_attributes._load_dir(folder, max_age=2.0)
+                    own = stored.get(name)
+                    passes = bare_pass if own is None else _attrs_pass(s, file_attributes.values_of(own))
+                if not passes:
                     continue
         if with_stat:
             if size is None or mtime is None:
@@ -286,8 +296,6 @@ def _attrs_pass(s: dict, values: dict) -> bool:
                         else values["rating"] < s["rating"]):
         return False
     if s["color"] and values["color"] not in s["color"]:          # une des couleurs choisies
-        return False
-    if s["like"] and not values["like"]:
         return False
     if s["status"]:
         if values["status"] != ("" if s["status"] == STATUS_NONE else s["status"]):
@@ -426,11 +434,9 @@ def describe(spec: dict, color_names: list[str] | None = None, scope_label: str 
         names = color_names or []
         out.append(" / ".join(names[c - 1] if c - 1 < len(names) and names[c - 1] else f"couleur {c}"
                               for c in s["color"]))
-    if s["like"]:
-        out.append("♥ j'aime")
     out.extend(f"#{k}" for k in s["keywords"])
     if s["status"]:
-        out.append({"keep": "à retenir", "delete": "à supprimer", STATUS_NONE: "sans statut"}[s["status"]])
+        out.append({"keep": "marquée", "delete": "rejetée", STATUS_NONE: "neutre"}[s["status"]])
     if s["extensions"]:
         out.append(" ".join(f".{e}" for e in s["extensions"]))
     if s["size_min"] and s["size_max"]:

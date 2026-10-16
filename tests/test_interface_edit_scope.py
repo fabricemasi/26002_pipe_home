@@ -5,10 +5,12 @@ import unittest
 import copy
 from unittest.mock import ANY, patch
 from PySide6.QtCore import QPoint, QRect, Qt, QEvent
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QImage, QKeyEvent, QPainter, QFont
+from PySide6.QtWidgets import QStyleOptionViewItem
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget, QLabel, QListWidget, QListWidgetItem, QPushButton, QHBoxLayout, QLineEdit
 from pipeline_browser import _InterfaceMoveFrame, _InterfaceMoveMode, Column, ROLE_PATH
+from browser_core import ROLE_MEDIA_COUNTS
 from interface_edit_targets import PaintedTarget
 import settings_cells
 
@@ -67,6 +69,69 @@ class EditScopeTest(unittest.TestCase):
         self.assertEqual(selected.pos(), before + QPoint(1, 0))
         self.assertEqual(col.list._edit_offsets["exemple"]["text"], QPoint(1, 0))
         self.assertNotIn("row", col.list._edit_offsets["exemple"])
+
+    def test_lightroom_media_counts_are_selectable_above_row_text(self):
+        col = ColumnFixture(self.main)
+        col.setGeometry(30, 100, 240, 280)
+        col.list._edit_geometry["exemple"].update({
+            "text": QRect(15, 0, 220, 28),
+            "media-photo": QRect(190, 0, 42, 12),
+            "media-video": QRect(190, 10, 42, 12),
+        })
+        col.show()
+        app.processEvents()
+        QTest.mouseClick(col.list.viewport(), Qt.LeftButton, pos=QPoint(210, 5))
+        self.assertEqual(self.mode.selected[0].part, "media-photo")
+        QTest.mouseClick(col.list.viewport(), Qt.LeftButton, pos=QPoint(210, 11))
+        self.assertEqual(self.mode.selected[0].part, "media-video")
+        before = self.mode.selected[0].pos()
+        QTest.keyClick(col.list, Qt.Key_Left)
+        self.assertEqual(self.mode.selected[0].pos(), before + QPoint(-1, 0))
+
+    def test_media_count_edit_scope_targets_same_indicator_type_in_column(self):
+        import settings_element_style as styles
+        col = ColumnFixture(self.main)
+        col.setGeometry(30, 100, 240, 280)
+        col.list.item(0).setData(ROLE_MEDIA_COUNTS, (8, 2))
+        col.list.addItem(QListWidgetItem("autre"))
+        col.list.item(1).setData(ROLE_PATH, "autre")
+        col.list.item(1).setData(ROLE_MEDIA_COUNTS, (4, 1))
+        col.list._edit_geometry["exemple"]["media-photo"] = QRect(190, 0, 42, 12)
+        col.show()
+        app.processEvents()
+        target = PaintedTarget(col.list, "exemple", "media-photo", QRect(190, 0, 42, 12))
+        options = self.mode._text_scope_options(target)
+        self.assertEqual([title for title, _ in options], [
+            "Cette indication seulement", "Toutes les indications IMG de cette colonne",
+            "Toutes les indications IMG pour toutes les colonnes"])
+        self.assertEqual(len(options[1][1]), 2)
+        self.assertTrue(all(isinstance(item, styles.RowMediaTextTarget) for item in options[1][1]))
+        self.assertTrue(all(item.element.startswith("row-media:photo:Type:") for item in options[1][1]))
+        self.assertEqual(options[2][1][0].element, "row-media-global:photo")
+
+    def test_moving_row_name_does_not_move_photo_or_video_indicators(self):
+        from app_style import column_style_for
+        from row_delegates import _paint_unified_row
+
+        def paint(name_offset):
+            option = QStyleOptionViewItem()
+            option.rect = QRect(0, 0, 300, 30)
+            option._edit_parts = {}
+            option._edit_offsets = {}
+            option._edit_text_offset = QPoint(name_offset, 0)
+            image = QImage(320, 40, QImage.Format_ARGB32)
+            image.fill(Qt.transparent)
+            painter = QPainter(image)
+            _paint_unified_row(painter, option.rect, option, column_style_for("Type"),
+                               "Dossier", None, None, QFont(), "#ffffff", False,
+                               media_counts=(1322, 0))
+            painter.end()
+            return option._edit_parts
+
+        original = paint(0)
+        moved_name = paint(18)
+        self.assertEqual(original["media-photo"], moved_name["media-photo"])
+        self.assertEqual(original["media-video"], moved_name["media-video"])
 
     def test_shift_adds_and_middle_click_deselects_only_clicked_item(self):
         first = QLabel("Premier", self.main)

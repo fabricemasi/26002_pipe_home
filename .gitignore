@@ -13,6 +13,10 @@ data/render_profiles_snapshot.json
 data/blender_recent_added.json
 data/.pipeline_protected_previews.json
 data/file_keywords.json
+data/lightroom/
+plugins/PipelineLightroom.lrplugin/connection.txt
+plugins/PipelineLightroom.lrplugin/connection.tmp
+plugins/PipelineLightroom.lrplugin/last-error.txt
 pipeline_preview_render*.log
 pipeline_preview_render*.html
 *.blend1

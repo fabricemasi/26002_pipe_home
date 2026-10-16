@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -70,6 +71,47 @@ class LoaderTest(unittest.TestCase):
         self.assertLessEqual(pixmap.width(), 800)
         self.assertLessEqual(pixmap.height(), 600)
         self.assertAlmostEqual(pixmap.width() / pixmap.height(), 1.5, places=2)
+
+    def test_selected_image_decodes_when_mtime_cache_is_memory_only(self):
+        path = self._image("selection.png", 2400, 1600)
+        loader = focus.FocusImageLoader()
+        loader.set_fit(QSize(800, 600))
+        ready = []
+        loader.ready.connect(ready.append)
+        with previews.memory_only():
+            loader.request(path, urgent=True)
+        self.assertTrue(pump(10, lambda: str(path) in ready))
+        _fitted, full, _natural = loader.get(path)
+        self.assertEqual(full.size(), QSize(2400, 1600))
+
+    def test_small_lightroom_proxy_falls_back_to_original_photo(self):
+        path = self._image("source.jpg", 2400, 1600)
+        proxy = self._image("lightroom-small.jpg", 320, 213)
+        loader = focus.FocusImageLoader()
+        loader.set_fit(QSize(1200, 800))
+        ready = []
+        loader.ready.connect(ready.append)
+        with (patch("lightroom_bridge.is_managed", return_value=True),
+              patch("lightroom_bridge.proxy_path", return_value=proxy),
+              patch("lightroom_bridge.preview_origin", return_value="lightroom"),
+              patch("lightroom_bridge.orientation", return_value="AB")):
+            loader.request(path, urgent=True)
+            self.assertTrue(pump(10, lambda: str(path) in ready))
+        _fitted, full, _natural = loader.get(path)
+        self.assertEqual(full.size(), QSize(2400, 1600))
+        self.assertEqual(loader.origin(path), "original")
+
+    def test_new_preview_restarts_decode_that_was_already_pending(self):
+        path = self._image("pending.jpg", 800, 600)
+        key = str(path)
+        mtime = previews.cached_mtime(path)
+        loader = focus.FocusImageLoader()
+        loader._pending[key] = mtime
+        loader.invalidate(path)
+        with patch.object(loader, "request") as request:
+            loader._on_done(key, mtime, None, None, None, "original")
+        request.assert_called_once_with(path, urgent=True)
+        self.assertNotIn(key, loader._pending)
 
     def test_retain_cancels_queued_decodes(self):
         paths = [self._image(f"i{i}.png", 1200, 900) for i in range(12)]
