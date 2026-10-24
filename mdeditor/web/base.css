@@ -1,0 +1,325 @@
+/* Module Markdown / code : APPARENCE (couche « md-theme »). AUCUNE valeur ici : tout passe par les variables --md-*
+   posees par mdeditor/style.py (onglet « Markdown » des reglages) — elles-memes reprennent d'abord les variables
+   documentees d'Obsidian (--h1-color, --text-normal, --code-background…) quand une feuille chargee les definit.
+   La mecanique (CodeMirror, defilement, barres) est dans structure.css ; une feuille choisie dans
+   Reglages > Markdown > CSS (couche « md-user », posee apres) l'emporte sur ces regles pour ce qu'elle definit.
+
+   Le meme habillage vaut pour la lecture (.md-rendered = .markdown-rendered), l'edition (.md-edit = .markdown-source-view,
+   CodeMirror 5 avec les classes d'Obsidian : .cm-line, .HyperMD-header-N…) et les blocs rendus dans l'editeur.
+
+   (1) Editeur : couleurs. (2) Page. (3) Rendu (lecture + blocs). (4) Edition markdown. (5) Code. */
+
+/* -- (1) Editeur : couleurs ------------------------------------------------------------------------------------ */
+.CodeMirror-gutters { background: var(--md-gutter-bg); }
+.CodeMirror-linenumber { color: var(--md-gutter-color); }
+.CodeMirror-cursor { border-left: var(--md-caret-width) solid var(--md-caret); }
+.CodeMirror-selected, .CodeMirror-focused .CodeMirror-selected { background: var(--md-selection); }
+.CodeMirror-line::selection, .CodeMirror-line > span::selection, .CodeMirror-line > span > span::selection {
+  background: var(--md-selection); }
+.cm-searching { background-color: var(--md-highlight-bg); }
+
+/* -- (2) Page ------------------------------------------------------------------------------------------------ */
+html, body { background: var(--md-bg); }
+body { zoom: var(--md-zoom); color: var(--md-text-color); font-family: var(--md-text-font);
+  font-size: var(--md-text-size); font-weight: var(--md-text-weight); line-height: var(--md-line-height);
+  letter-spacing: var(--md-letter-spacing); -webkit-font-smoothing: antialiased; }
+::selection { background: var(--md-selection); }
+.md-read .md-sizer { box-sizing: border-box; max-width: var(--md-content-width); margin: 0 auto;
+  padding: var(--md-page-padding); }
+.md-title { display: var(--md-title-display); font-family: var(--md-title-font); font-size: var(--md-title-size);
+  color: var(--md-title-color); font-weight: var(--md-title-weight); font-style: var(--md-title-style);
+  line-height: 1.2; margin: 0 0 var(--md-title-spacing); letter-spacing: normal; overflow-wrap: anywhere;
+  user-select: text; }
+.md-empty { padding: 40px; opacity: 0.6; }
+
+/* -- (3) Rendu : lecture et blocs rendus dans l'editeur ------------------------------------------------------- */
+.md-rendered { overflow-wrap: break-word; }
+.md-rendered > :first-child { margin-top: 0; }
+.md-rendered p { margin: 0 0 var(--md-p-spacing); }
+.md-rendered h1, .md-rendered h2, .md-rendered h3, .md-rendered h4, .md-rendered h5, .md-rendered h6 {
+  letter-spacing: normal; }
+.md-rendered h1 { font: var(--md-h1-style) var(--md-h1-weight) var(--md-h1-size)/var(--md-h1-line-height) var(--md-h1-font);
+  color: var(--md-h1-color); margin: var(--md-h1-before) 0 var(--md-h1-after); }
+.md-rendered h2 { font: var(--md-h2-style) var(--md-h2-weight) var(--md-h2-size)/var(--md-h2-line-height) var(--md-h2-font);
+  color: var(--md-h2-color); margin: var(--md-h2-before) 0 var(--md-h2-after); }
+.md-rendered h3 { font: var(--md-h3-style) var(--md-h3-weight) var(--md-h3-size)/var(--md-h3-line-height) var(--md-h3-font);
+  color: var(--md-h3-color); margin: var(--md-h3-before) 0 var(--md-h3-after); }
+.md-rendered h4 { font: var(--md-h4-style) var(--md-h4-weight) var(--md-h4-size)/var(--md-h4-line-height) var(--md-h4-font);
+  color: var(--md-h4-color); margin: var(--md-h4-before) 0 var(--md-h4-after); }
+.md-rendered h5 { font: var(--md-h5-style) var(--md-h5-weight) var(--md-h5-size)/var(--md-h5-line-height) var(--md-h5-font);
+  color: var(--md-h5-color); margin: var(--md-h5-before) 0 var(--md-h5-after); }
+.md-rendered h6 { font: var(--md-h6-style) var(--md-h6-weight) var(--md-h6-size)/var(--md-h6-line-height) var(--md-h6-font);
+  color: var(--md-h6-color); margin: var(--md-h6-before) 0 var(--md-h6-after); }
+.md-rendered strong, .md-rendered b { color: var(--md-bold-color); font-weight: var(--md-bold-weight); }
+.md-rendered em, .md-rendered i { color: var(--md-italic-color); font-style: italic; }
+.md-rendered del, .md-rendered s { color: var(--md-strike-color); text-decoration: line-through;
+  text-decoration-color: var(--md-strike-line); background: var(--md-strike-bg); padding: 0 4px; border-radius: 3px; }
+.md-rendered mark { background: var(--md-highlight-bg); color: var(--md-highlight-color); padding: 0 2px;
+  border-radius: 2px; }
+.md-rendered a, .md-link { color: var(--md-link-color); font-family: var(--md-link-font);
+  font-size: var(--md-link-size); font-style: var(--md-link-style); letter-spacing: var(--md-link-letter-spacing);
+  text-decoration: var(--md-link-decoration); cursor: pointer; }
+.md-rendered a:hover, .md-link:hover { text-decoration: var(--md-link-hover-decoration); }
+.md-rendered a.is-unresolved, .md-link.is-unresolved { opacity: var(--md-link-unresolved-opacity); }
+.md-rendered a.tag, .md-tag { color: var(--md-tag-color); background: var(--md-tag-bg); border-radius: 1em;
+  padding: 0 0.5em; font-family: inherit; letter-spacing: normal; text-decoration: none; }
+.md-rendered ul, .md-rendered ol { margin: 0 0 var(--md-p-spacing); padding-left: var(--md-list-indent); }
+.md-rendered li { margin: var(--md-list-spacing) 0; }
+.md-rendered li > ul, .md-rendered li > ol { margin-bottom: 0; }
+.md-rendered ul { list-style: none; padding-inline-start: var(--md-list-indent); }
+.md-rendered ol { padding-inline-start: var(--md-list-indent); }
+/* Les listes de tâches / toggles commencent au bord du contenu, sans retrait de liste. */
+.md-rendered ul:has(> li.task-list-item), .md-rendered ol:has(> li.task-list-item) { padding-inline-start: 0; }
+.md-rendered ul > li { position: relative; }
+.md-rendered ul > li::before { content: var(--md-bullet-1-char); color: var(--md-bullet-1-color);
+  font-size: var(--md-bullet-1-size); position: absolute; right: calc(100% + 0.5 * var(--md-text-size));
+  top: calc(var(--md-line-height) * var(--md-text-size) / 2); transform: translateY(calc(-50% + var(--md-bullet-1-vertical-offset))); line-height: 1; }
+/* (comme Obsidian : puce finissant a 0,5 em avant le texte, centree sur la 1re ligne de l element) */
+.md-rendered ul ul > li::before { content: var(--md-bullet-2-char); color: var(--md-bullet-2-color);
+  font-size: var(--md-bullet-2-size); transform: translateY(calc(-50% + var(--md-bullet-2-vertical-offset))); }
+.md-rendered ul ul ul > li::before { content: var(--md-bullet-3-char); color: var(--md-bullet-3-color);
+  font-size: var(--md-bullet-3-size); transform: translateY(calc(-50% + var(--md-bullet-3-vertical-offset))); }
+/* Au-dela du 3e niveau, les puces reprennent au 1er (comme l edition). */
+.md-rendered ul ul ul ul > li::before { content: var(--md-bullet-1-char); color: var(--md-bullet-1-color);
+  font-size: var(--md-bullet-1-size); transform: translateY(calc(-50% + var(--md-bullet-1-vertical-offset))); }
+.md-rendered ul ul ul ul ul > li::before { content: var(--md-bullet-2-char); color: var(--md-bullet-2-color);
+  font-size: var(--md-bullet-2-size); transform: translateY(calc(-50% + var(--md-bullet-2-vertical-offset))); }
+.md-rendered ul ul ul ul ul ul > li::before { content: var(--md-bullet-3-char); color: var(--md-bullet-3-color);
+  font-size: var(--md-bullet-3-size); transform: translateY(calc(-50% + var(--md-bullet-3-vertical-offset))); }
+.md-rendered ul > li.task-list-item::before { content: none; }
+.md-rendered ol > li::marker { color: var(--md-number-color); }
+.md-rendered li.task-list-item { list-style: none; }
+.md-rendered ol > li.task-list-item { margin-left: 0; }
+.md-rendered li.task-list-item > input:first-child, .md-rendered li.task-list-item > p > input:first-child {
+  margin-inline-start: 0; }
+.md-rendered .task-list-item-checkbox { top: 0.2em; margin-inline-end: 0.6em; }
+.md-rendered li.task-list-item:has(> input:checked) { color: var(--md-task-done-color);
+  text-decoration: var(--md-task-done-decoration); }
+/* Cases a cocher : celles d'Obsidian (bord fin --text-faint, coins --radius-s, cochee = couleur des cases + coche
+   de la couleur du fond) ; ses variables (--checkbox-*) passent avant les reglages. */
+input.task-list-item-checkbox, .md-checkbox { appearance: none; -webkit-appearance: none; box-sizing: border-box;
+  width: var(--md-checkbox-size); height: var(--md-checkbox-size); padding: 0; margin: 0 6px 0 0; flex-shrink: 0;
+  border: 1px solid var(--checkbox-border-color, var(--md-markup-color)); border-radius: var(--checkbox-radius, 4px);
+  cursor: pointer; position: relative; background: transparent; }
+input.task-list-item-checkbox:hover, .md-checkbox:hover {
+  border-color: var(--checkbox-border-color-hover, var(--md-text-color)); }
+input.task-list-item-checkbox:checked, .md-checkbox:checked { background-color: var(--md-checkbox-color);
+  border-color: var(--md-checkbox-color); }
+input.task-list-item-checkbox:checked::after, .md-checkbox:checked::after { content: ""; position: absolute;
+  top: -1px; left: -1px; width: var(--md-checkbox-size); height: var(--md-checkbox-size); display: block;
+  background-color: var(--checkbox-marker-color, var(--md-bg)); -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'><path transform='translate(-4 -6)' d='M8.1043257,14.0367999 L4.52468714,10.5420499 C4.32525014,10.3497722 4.32525014,10.0368095 4.52468714,9.8424863 L5.24777413,9.1439454 C5.44721114,8.95166768 5.77142411,8.95166768 5.97086112,9.1439454 L8.46638057,11.5903727 L14.0291389,6.1442083 C14.2285759,5.95193057 14.5527889,5.95193057 14.7522259,6.1442083 L15.4753129,6.84377194 C15.6747499,7.03604967 15.6747499,7.35003511 15.4753129,7.54129009 L8.82741268,14.0367999 C8.62797568,14.2290777 8.3037627,14.2290777 8.1043257,14.0367999'/></svg>");
+  -webkit-mask-position: 52% 52%; -webkit-mask-size: 65%; -webkit-mask-repeat: no-repeat; }
+.md-rendered blockquote { margin: var(--md-quote-spacing) 0; padding: var(--md-quote-padding);
+  background: var(--md-quote-bg); border-radius: var(--md-quote-radius);
+  border-top: var(--md-quote-border-top); border-right: var(--md-quote-border-right);
+  border-bottom: var(--md-quote-border-bottom); border-left: var(--md-quote-border-left);
+  color: var(--md-quote-color); font-family: var(--md-quote-font); font-style: var(--md-quote-style); }
+.md-rendered blockquote > :last-child { margin-bottom: 0; }
+.md-rendered blockquote blockquote { margin: 8px 0; }
+.md-rendered .callout { --md-callout-type: var(--md-callout-title-color); margin: var(--md-quote-spacing) 0;
+  background: var(--md-callout-bg); border-left: var(--md-callout-border); border-radius: var(--md-callout-radius); overflow: hidden; }
+.md-rendered .callout[data-callout="info"], .md-rendered .callout[data-callout="note"] { --md-callout-type: #4bafff; }
+.md-rendered .callout[data-callout="tip"], .md-rendered .callout[data-callout="success"] { --md-callout-type: #49c37b; }
+.md-rendered .callout[data-callout="warning"], .md-rendered .callout[data-callout="caution"] { --md-callout-type: #e7a84b; }
+.md-rendered .callout[data-callout="danger"], .md-rendered .callout[data-callout="error"] { --md-callout-type: #e05d5d; }
+.md-rendered .callout-title { color: var(--md-callout-type); font-family: var(--md-text-font); padding: 8px 12px;
+  display: flex; gap: 8px; align-items: center; font-weight: 700; line-height: var(--md-line-height); }
+.md-rendered .callout-icon { width: 1.2em; text-align: center; font-weight: 700; flex: 0 0 auto; }
+.md-rendered .callout-title-inner { flex: 1 1 auto; }
+.md-rendered .callout-fold { flex: 0 0 auto; transition: transform 0.12s ease; }
+.md-rendered .callout-content { padding: 0 16px 14px; }
+.md-rendered .callout-content > :last-child { margin-bottom: 0; }
+.md-rendered .callout.is-collapsed .callout-content { display: none; }
+.md-rendered .callout.is-collapsed .callout-fold { transform: rotate(-90deg); }
+.md-rendered .callout.is-collapsible .callout-title { cursor: pointer; }
+.md-rendered code { font-family: var(--md-code-inline-font); font-size: var(--md-code-inline-size);
+  color: var(--md-code-inline-color); font-weight: var(--md-code-inline-weight); font-style: var(--md-code-inline-style);
+  background: var(--md-code-inline-bg); border-radius: var(--md-code-inline-radius);
+  padding: var(--md-code-inline-padding); letter-spacing: normal; }
+.md-rendered pre { margin: var(--md-codeblock-spacing) 0; padding: var(--md-codeblock-padding);
+  background: var(--md-codeblock-bg); border-radius: var(--md-codeblock-radius); overflow-x: auto;
+  border-top: var(--md-codeblock-border-top); border-right: var(--md-codeblock-border-right);
+  border-bottom: var(--md-codeblock-border-bottom); border-left: var(--md-codeblock-border-left); }
+.md-rendered pre code { font-family: var(--md-codeblock-font); font-size: var(--md-codeblock-size);
+  color: var(--md-codeblock-color); font-weight: var(--md-codeblock-weight); font-style: var(--md-codeblock-style);
+  line-height: var(--md-codeblock-line-height); background: none; padding: 0; border-radius: 0; white-space: pre; }
+.md-rendered table { border-collapse: separate; border-spacing: var(--md-table-grid-width);
+  background: var(--md-table-grid); border-radius: var(--md-table-radius); overflow: hidden;
+  margin: var(--md-table-spacing) 0; font-family: var(--md-table-font); font-size: var(--md-table-size);
+  font-style: var(--md-table-style); max-width: 100%; }
+.md-rendered th, .md-rendered td { padding: var(--md-table-cell-padding); text-align: left; vertical-align: top; }
+.md-rendered td { background: var(--md-table-cell-bg); color: var(--md-table-color); font-weight: var(--md-table-weight); }
+.md-rendered td:has(.pb-table-cell-bg), .md-rendered th:has(.pb-table-cell-bg) { overflow: hidden; padding: 0; }
+.md-rendered td .pb-table-cell-bg, .md-rendered th .pb-table-cell-bg { display: block; width: 100%; box-sizing: border-box; }
+.md-rendered tbody tr:nth-child(even) td { background: var(--md-table-alt-bg); }
+.md-rendered th { background: var(--md-table-head-bg); color: var(--md-table-head-color);
+  font-family: var(--md-table-head-font); font-size: var(--md-table-head-size);
+  font-weight: var(--md-table-head-weight); font-style: var(--md-table-head-style); }
+.md-rendered hr, .md-hr { border: none; border-top: var(--md-hr-thickness) solid var(--md-hr-color);
+  margin: var(--md-hr-spacing) 0; }
+.md-rendered img, .md-image img { display: block; max-width: var(--md-image-max-width); height: auto;
+  border-radius: var(--md-image-radius); margin: var(--md-image-spacing) var(--md-image-margin-right)
+  var(--md-image-spacing) var(--md-image-margin-left); }
+.md-rendered .md-image-missing, .md-image.is-unresolved { color: var(--md-markup-color); font-style: italic; }
+.md-rendered .md-properties { margin: 0 0 var(--md-p-spacing); font-size: 0.85em; }
+.md-rendered .md-properties table { margin: 0; }
+.md-rendered .footnotes { font-size: 0.9em; opacity: 0.85; }
+
+/* -- (4) Edition markdown (CodeMirror 5, mode « pfm ») ---------------------------------------------------------- */
+.md-edit .CodeMirror { font-family: var(--md-text-font); font-size: var(--md-text-size);
+  line-height: var(--md-line-height); color: var(--md-text-color); }
+.md-edit:not(.is-code) .CodeMirror-scroll { box-sizing: border-box; padding: var(--md-page-padding);
+  padding-bottom: 40vh; }
+.md-edit:not(.is-code) .CodeMirror-sizer > div { max-width: var(--md-content-width); margin: 0 auto; }
+.md-edit:not(.is-code) .md-above { max-width: var(--md-content-width); margin: 0 auto; }
+.md-edit .md-above .md-title { outline: none; }
+.md-edit:not(.is-code) :where(pre.CodeMirror-line) { padding: 0 2px; }   /* faible : les lignes typees (titres…) l'emportent */
+/* Paragraphes : l'espace entre deux paragraphes est celui de la lecture (ligne vide + son espacement). */
+.md-edit pre.md-line-blank { height: var(--md-p-spacing); line-height: var(--md-p-spacing); }
+.md-edit .md-line-active { background: var(--md-active-line); }
+.md-edit .cm-header { letter-spacing: normal; }
+.md-edit pre.md-h1 { line-height: var(--md-h1-line-height); color: var(--md-h1-color);
+  padding-top: var(--md-h1-before); padding-bottom: var(--md-h1-after); }
+.md-edit .cm-header-1, .md-edit pre.md-h1 .CodeMirror-widget { font: var(--md-h1-style) var(--md-h1-weight) var(--md-h1-size)/var(--md-h1-line-height) var(--md-h1-font);
+  color: var(--md-h1-color); }
+.md-edit pre.md-h2 { line-height: var(--md-h2-line-height); color: var(--md-h2-color);
+  padding-top: var(--md-h2-before); padding-bottom: var(--md-h2-after); }
+.md-edit .cm-header-2, .md-edit pre.md-h2 .CodeMirror-widget { font: var(--md-h2-style) var(--md-h2-weight) var(--md-h2-size)/var(--md-h2-line-height) var(--md-h2-font);
+  color: var(--md-h2-color); }
+.md-edit pre.md-h3 { line-height: var(--md-h3-line-height); color: var(--md-h3-color);
+  padding-top: var(--md-h3-before); padding-bottom: var(--md-h3-after); }
+.md-edit .cm-header-3, .md-edit pre.md-h3 .CodeMirror-widget { font: var(--md-h3-style) var(--md-h3-weight) var(--md-h3-size)/var(--md-h3-line-height) var(--md-h3-font);
+  color: var(--md-h3-color); }
+.md-edit pre.md-h4 { line-height: var(--md-h4-line-height); color: var(--md-h4-color);
+  padding-top: var(--md-h4-before); padding-bottom: var(--md-h4-after); }
+.md-edit .cm-header-4, .md-edit pre.md-h4 .CodeMirror-widget { font: var(--md-h4-style) var(--md-h4-weight) var(--md-h4-size)/var(--md-h4-line-height) var(--md-h4-font);
+  color: var(--md-h4-color); }
+.md-edit pre.md-h5 { line-height: var(--md-h5-line-height); color: var(--md-h5-color);
+  padding-top: var(--md-h5-before); padding-bottom: var(--md-h5-after); }
+.md-edit .cm-header-5, .md-edit pre.md-h5 .CodeMirror-widget { font: var(--md-h5-style) var(--md-h5-weight) var(--md-h5-size)/var(--md-h5-line-height) var(--md-h5-font);
+  color: var(--md-h5-color); }
+.md-edit pre.md-h6 { line-height: var(--md-h6-line-height); color: var(--md-h6-color);
+  padding-top: var(--md-h6-before); padding-bottom: var(--md-h6-after); }
+.md-edit .cm-header-6, .md-edit pre.md-h6 .CodeMirror-widget { font: var(--md-h6-style) var(--md-h6-weight) var(--md-h6-size)/var(--md-h6-line-height) var(--md-h6-font);
+  color: var(--md-h6-color); }
+.md-edit .cm-formatting, .md-edit .cm-formatting-list-ol, .md-edit .cm-formatting-task, .md-edit .cm-md-frontmatter,
+.md-edit .cm-formatting-link, .md-edit .cm-string.cm-url { color: var(--md-markup-color); }
+.md-edit .cm-formatting-header { color: var(--md-markup-color); font-weight: 400; }
+.md-edit .cm-strong { color: var(--md-bold-color); font-weight: var(--md-bold-weight); }
+.md-edit .cm-em { color: var(--md-italic-color); font-style: italic; }
+.md-edit .cm-strikethrough { color: var(--md-strike-color); text-decoration: line-through;
+  text-decoration-color: var(--md-strike-line); background: var(--md-strike-bg); }
+.md-edit .cm-highlight { background: var(--md-highlight-bg); color: var(--md-highlight-color); }
+.md-edit .cm-link, .md-edit .cm-md-wikilink { color: var(--md-link-color); font-family: var(--md-link-font);
+  font-size: var(--md-link-size); letter-spacing: var(--md-link-letter-spacing); }
+.md-edit .cm-md-tag { color: var(--md-tag-color); background: var(--md-tag-bg); }
+.md-edit .cm-md-comment { color: var(--md-markup-color); font-style: italic; }
+.md-edit .cm-inline-code:not(.cm-formatting) { font-family: var(--md-code-inline-font);
+  font-size: var(--md-code-inline-size); color: var(--md-code-inline-color);
+  font-weight: var(--md-code-inline-weight); background: var(--md-code-inline-bg); padding: 1px 0; }
+.md-edit .cm-inline-code.cm-formatting { font-family: var(--md-code-inline-font); font-size: var(--md-code-inline-size);
+  background: var(--md-code-inline-bg); }
+.md-edit .cm-formatting-code.cm-formatting-code-begin, .md-edit .md-code-open { border-radius: 4px 0 0 4px; }
+/* Citations, comme l'edition d'Obsidian : fond sur la ligne, barre dessinee par ::before (une feuille qui masque
+   « .cm-line::before » la masque, comme dans Obsidian), « > » garde sa place (transparent hors du curseur). */
+.md-edit pre.md-quote { background: var(--md-quote-bg); color: var(--md-quote-color);
+  font-family: var(--md-quote-font); font-style: var(--md-quote-style); }
+.md-edit pre.md-quote::before { content: "\200b"; position: absolute; left: 0; top: 0; bottom: 0; width: 0;
+  border-left: var(--md-quote-border-left); color: transparent; pointer-events: none; }
+.md-edit .md-quote-mark-hidden { color: transparent; }
+.md-edit pre.md-quote-first { border-top-left-radius: 4px; border-top-right-radius: 4px; }
+.md-edit pre.md-quote-last { border-bottom-left-radius: 4px; border-bottom-right-radius: 4px; }
+.md-edit pre.md-codeblock { font-family: var(--md-codeblock-font); font-size: var(--md-codeblock-size);
+  color: var(--md-codeblock-color); font-weight: var(--md-codeblock-weight);
+  line-height: var(--md-codeblock-line-height); background: var(--md-codeblock-bg);
+  padding-left: var(--md-codeblock-padding-x); padding-right: var(--md-codeblock-padding-right);
+  border-left: var(--md-codeblock-border-left); border-right: var(--md-codeblock-border-right); }
+.md-edit pre.md-codeblock-begin { border-top: var(--md-codeblock-border-top);
+  border-top-left-radius: var(--md-codeblock-radius); border-top-right-radius: var(--md-codeblock-radius);
+  padding-top: calc(var(--md-codeblock-padding-top) / 2); margin-top: 0; }
+.md-edit pre.md-codeblock-end { border-bottom: var(--md-codeblock-border-bottom);
+  border-bottom-left-radius: var(--md-codeblock-radius); border-bottom-right-radius: var(--md-codeblock-radius);
+  padding-bottom: calc(var(--md-codeblock-padding-bottom) / 2); }
+.md-edit pre.md-codeblock .cm-formatting-code-block { color: var(--md-markup-color); }
+.md-edit pre.md-frontmatter { font-family: var(--md-codeblock-font); font-size: 0.85em; color: var(--md-markup-color); }
+/* Listes, comme Obsidian : retrait = « Retrait des listes » par cran (tabulation ou espaces), marque decalee de
+   --list-indent-editing (0,75 em), tiret d'une tache invisible (sa place reste), espacement des elements. */
+.md-edit pre.md-list-line { padding-top: var(--md-list-spacing); padding-bottom: var(--md-list-spacing); }
+.md-edit pre.md-list-line .cm-tab, .md-edit .md-indent { display: inline-block; width: var(--md-list-indent);
+  overflow: hidden; text-indent: 0; vertical-align: top; }
+.md-edit .md-list-mark { padding-inline-start: var(--md-list-indent);
+  margin-inline-end: var(--list-marker-space, 0.25em); }
+.md-edit pre.CodeMirror-line.md-list-line span.md-task-dash.md-list-mark { color: transparent; }   /* meme sur une tache faite */
+.md-edit .md-checkbox { top: -0.1em; vertical-align: middle; margin-inline-start: 0.6em; margin-inline-end: 0.25em; }
+/* Repli des titres (comme Obsidian) : chevron a gauche du titre au survol, toujours visible quand c'est replie. */
+.md-edit .md-fold { position: absolute; left: -22px; width: 22px; display: inline-flex; justify-content: center;
+  align-items: center; height: 1lh; cursor: pointer; opacity: 0; color: var(--collapse-icon-color, var(--md-markup-color));
+  text-indent: 0; }
+.md-edit pre.CodeMirror-line:hover .md-fold, .md-edit .md-fold.is-collapsed { opacity: 1; }
+.md-edit .md-fold.is-collapsed svg { transform: rotate(-90deg); }
+.md-edit .md-fold-placeholder { color: var(--md-markup-color); margin-left: 8px; cursor: pointer; }
+.md-edit .md-bullet { display: inline-block; text-indent: 0; min-width: 1ch; text-align: center; vertical-align: baseline;
+  line-height: 0; }
+.md-edit .md-bullet::before { content: var(--md-bullet-1-char); color: var(--md-bullet-1-color);
+  display: inline-block; font-size: var(--md-bullet-1-size); transform: translateY(var(--md-bullet-1-vertical-offset)); }
+.md-edit .md-bullet.level-2::before { content: var(--md-bullet-2-char); color: var(--md-bullet-2-color);
+  display: inline-block; font-size: var(--md-bullet-2-size); transform: translateY(calc(-50% + var(--md-bullet-2-vertical-offset))); }
+.md-edit .md-bullet.level-3::before { content: var(--md-bullet-3-char); color: var(--md-bullet-3-color);
+  display: inline-block; font-size: var(--md-bullet-3-size); transform: translateY(calc(-50% + var(--md-bullet-3-vertical-offset))); }
+.md-edit .cm-formatting-list-ol { color: var(--md-number-color); }
+.md-edit pre.md-task-done .cm-md-task-text, .md-edit pre.md-task-done > span > span:not(.CodeMirror-widget) {
+  color: var(--md-task-done-color); text-decoration: var(--md-task-done-decoration); }
+.md-edit .md-hr { display: inline-block; width: 100%; vertical-align: middle; margin: 0; }
+.md-edit .md-image { display: block; }
+.md-edit .md-block { display: block; cursor: default; position: relative; white-space: normal;
+  font-family: var(--md-text-font); font-style: normal; }
+.md-edit .md-block .md-edit-block { position: absolute; top: 6px; right: 6px; opacity: 0; cursor: pointer;
+  padding: 2px 6px; border-radius: 4px; background: var(--md-bg-secondary); color: var(--md-markup-color);
+  font: 12px var(--md-code-inline-font); transition: opacity 0.1s; }
+.md-edit .md-block:hover .md-edit-block { opacity: 1; }
+/* Tableaux editables (table.js) : comme Obsidian — bloc entoure de la place des boutons, cellules en texte,
+   la cellule active montre sa source (petit editeur), boutons « + » sous le tableau et a sa droite au survol. */
+.md-edit .cm-table-widget { padding: 16px; margin: 0 -16px; overflow-x: auto; overflow-y: hidden; cursor: default; }
+.md-edit .cm-table-widget .table-wrapper { position: relative; width: fit-content; }
+.md-edit .cm-table-widget table { margin: 0; }
+.md-edit .cm-table-widget th, .md-edit .cm-table-widget td { cursor: text; position: relative; min-width: 6ch; }
+.md-edit .cm-table-widget th:has(.pb-table-cell-bg),
+.md-edit .cm-table-widget td:has(.pb-table-cell-bg) { overflow: hidden; padding: 0; }
+.md-edit .cm-table-widget .table-cell-wrapper:empty::before { content: "\200b"; }
+.md-edit .cm-table-widget .CodeMirror { font: inherit; line-height: inherit; color: inherit; letter-spacing: inherit;
+  background: transparent; }
+.md-edit .cm-table-widget .md-cell-editor pre.CodeMirror-line { padding: 0; }
+.md-edit .cm-table-widget .table-row-btn, .md-edit .cm-table-widget .table-col-btn { position: absolute;
+  display: flex; align-items: center; justify-content: center; box-sizing: border-box; cursor: pointer;
+  color: var(--md-markup-color); border: 1px solid var(--md-table-grid); opacity: 0; transition: opacity 0.15s; }
+.md-edit .cm-table-widget .table-row-btn { top: 100%; left: 0; width: 100%; height: 16px; border-top: none;
+  border-radius: 0 0 4px 4px; }
+.md-edit .cm-table-widget .table-col-btn { left: 100%; top: 0; height: 100%; width: 16px; border-left: none;
+  border-radius: 0 4px 4px 0; }
+.md-edit .cm-table-widget:hover .table-row-btn, .md-edit .cm-table-widget:hover .table-col-btn { opacity: 0.6; }
+.md-edit .cm-table-widget .table-row-btn:hover, .md-edit .cm-table-widget .table-col-btn:hover { opacity: 1; }
+
+/* -- (5) Code : fichiers de code et coloration syntaxique (edition, lecture, blocs) ----------------------------- */
+.md-edit.is-code .CodeMirror { font-family: var(--md-code-file-font); font-size: var(--md-code-file-size);
+  line-height: var(--md-code-file-line-height); color: var(--md-code-file-color); background: var(--md-code-file-bg);
+  font-style: var(--md-code-file-style); font-weight: var(--md-code-file-weight); letter-spacing: normal; }
+.md-edit.is-code .CodeMirror-lines { padding: 8px 0 40vh; }
+.md-edit.is-code pre.CodeMirror-line { padding: 0 12px; }
+.md-edit.is-code .CodeMirror-activeline-background, .md-edit.is-code .md-line-active { background: var(--md-active-line); }
+.cm-comment { color: var(--md-syntax-comment); font-style: var(--md-syntax-comment-style); }
+.cm-keyword { color: var(--md-syntax-keyword); }
+.cm-string, .cm-string-2 { color: var(--md-syntax-string); }
+.cm-number, .cm-atom { color: var(--md-syntax-number); }
+.cm-def { color: var(--md-syntax-def); }
+.cm-variable-2, .cm-variable-3 { color: var(--md-syntax-variable); }
+.cm-type { color: var(--md-syntax-type); }
+.cm-builtin, .cm-qualifier { color: var(--md-syntax-builtin); }
+.cm-operator { color: var(--md-syntax-operator); }
+.cm-property { color: var(--md-syntax-property); }
+.cm-tag, .cm-bracket.cm-tag { color: var(--md-syntax-tag); }
+.cm-attribute { color: var(--md-syntax-attribute); }
+.cm-meta { color: var(--md-syntax-meta); }
+.cm-error { color: var(--md-syntax-variable); text-decoration: underline wavy; }
+.CodeMirror-matchingbracket { outline: 1px solid var(--md-markup-color); }
+/* Dans une note, le texte « markdown » n'est pas du code : ces regles ne valent que dans les blocs et les fichiers. */
+.md-edit:not(.is-code) pre:not(.md-codeblock):not(.md-frontmatter) .cm-string.cm-url { color: var(--md-markup-color); }

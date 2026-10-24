@@ -1,0 +1,173 @@
+/* Module Markdown / code : STRUCTURE de la page (mecanique de CodeMirror 5, mise en page, barres du module).
+
+   Chargee dans la PREMIERE couche (« @layer md-structure, md-theme, md-user » : voir style.layer_order). Les
+   proprietes marquees !important ne peuvent etre changees par AUCUNE feuille posee apres (habillage des reglages,
+   feuille CSS choisie dans Reglages > Markdown > CSS, par exemple celle d'Obsidian) : pour les declarations
+   !important, la premiere couche l'emporte. Ce sont celles dont depend la saisie, le defilement, la selection et
+   les barres. JAMAIS de !important sur une propriete que CodeMirror pose lui-meme en style en ligne (marges et
+   tailles du « sizer », position des curseurs, hauteur des gouttieres…) : elle ecraserait ses calculs.
+
+   L'apparence (couleurs, polices, espacements) est dans base.css (couche md-theme), d'apres les variables --md-*. */
+
+/* -- Page ------------------------------------------------------------------------------------------------------ */
+html, body { margin: 0 !important; padding: 0 !important; height: 100% !important; overflow: hidden !important;
+  max-width: none !important; }
+.md-view { position: absolute !important; left: var(--md-page-margin-left, 0px) !important;
+  right: var(--md-page-margin-right, 0px) !important; bottom: var(--md-page-margin-bottom, 0px) !important;
+  top: calc(var(--md-toolbar-height, 0px) + var(--md-page-margin-top, 0px)) !important;
+  display: none !important; margin: 0 !important; box-sizing: border-box !important;
+  border: 0 none transparent !important; border-radius: 0 !important; background: transparent !important;
+  overflow: visible !important; isolation: isolate !important; transform: none !important; }
+/* Cadre et fond. Le curseur de la barre reste DANS ce fond ; son decalage le pousse vers la gauche. */
+.md-view::before { content: ""; position: absolute; inset: 0; z-index: -1;
+  background: var(--md-bg) !important; background-clip: padding-box !important;
+  border-top: var(--md-page-border-top) !important; border-right: var(--md-page-border-right) !important;
+  border-bottom: var(--md-page-border-bottom) !important; border-left: var(--md-page-border-left) !important;
+  border-radius: var(--md-page-radius) !important; pointer-events: none; }
+.md-view.is-shown { display: block !important; }
+.md-read { overflow-y: auto !important; overflow-x: hidden !important; }
+/* En edition, CodeMirror dessine sa propre barre : le decalage la pousse aussi vers l'interieur. */
+.md-edit .CodeMirror-vscrollbar { right: var(--md-scroll-offset) !important; }
+.md-notice { position: fixed !important; right: 16px !important; bottom: 16px !important; z-index: 50 !important;
+  max-width: 420px !important; padding: 8px 14px !important; border-radius: 6px !important;
+  background: var(--md-bg-secondary) !important; color: var(--md-text-color) !important; font-size: 13px !important;
+  font-family: var(--md-text-font) !important; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35) !important; opacity: 0;
+  transition: opacity 0.15s; pointer-events: none !important; }
+.md-notice.is-shown { opacity: 1; }
+::-webkit-scrollbar { width: calc(var(--md-scroll-width) + var(--md-scroll-offset)) !important; height: var(--md-scroll-width) !important; }
+::-webkit-scrollbar-thumb { background: var(--md-scroll-thumb-color) !important; border-radius: var(--md-scroll-radius) !important;
+  border: var(--md-scroll-padding) solid transparent !important;
+  border-right: calc(var(--md-scroll-padding) + var(--md-scroll-offset)) solid transparent !important;
+  background-clip: padding-box !important; }
+::-webkit-scrollbar-thumb:hover { background: var(--md-scroll-thumb-hover-color) !important; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: var(--md-scroll-track-color) !important; }
+
+/* -- CodeMirror 5 ------------------------------------------------------------------------------------------------ */
+.CodeMirror { position: relative !important; overflow: hidden !important; height: 100% !important;
+  background: transparent; color: inherit; direction: ltr !important; font-family: inherit; }
+.CodeMirror-lines { padding: 0; cursor: text; min-height: 1px; }
+/* Les lignes (aussi « .cm-line » pour les feuilles d'Obsidian) : leur police, leur couleur, leur padding se reglent ;
+   leur role dans la mesure de CodeMirror (blanc, marges, empilement) ne se change pas. */
+.CodeMirror pre.CodeMirror-line, .CodeMirror pre.CodeMirror-line-like { padding: 0; border-radius: 0;
+  border-width: 0; background: transparent; font-family: inherit; font-size: inherit; margin: 0 !important;
+  white-space: pre !important; word-wrap: normal !important; line-height: inherit; color: inherit;
+  z-index: 2 !important; position: relative !important; overflow: visible !important;
+  display: block !important; float: none !important; -webkit-tap-highlight-color: transparent;
+  font-variant-ligatures: contextual; }
+.CodeMirror-wrap pre.CodeMirror-line, .CodeMirror-wrap pre.CodeMirror-line-like {
+  word-wrap: break-word !important; white-space: pre-wrap !important; word-break: normal !important; }
+.CodeMirror-code { outline: none !important; padding: 0 !important; margin: 0 !important; border: 0 !important;
+  position: static !important; max-width: none !important; width: auto !important; }
+.CodeMirror-scrollbar-filler, .CodeMirror-gutter-filler { background-color: transparent; }
+.CodeMirror-gutters { white-space: nowrap; position: absolute !important; left: 0; top: 0; min-height: 100%;
+  z-index: 3 !important; }
+.CodeMirror-linenumber { padding: 0 12px 0 8px; min-width: 24px; text-align: right; white-space: nowrap; }
+.CodeMirror-cursor { border-right: none !important; width: 0 !important; position: absolute !important;
+  pointer-events: none !important; }
+@keyframes cm-blink { 0% {} 50% { background-color: transparent; } 100% {} }
+.CodeMirror-scroll { overflow: scroll !important; margin-bottom: -50px; margin-right: -50px; padding-bottom: 50px;
+  height: 100% !important; outline: none !important; position: relative !important; z-index: 0 !important; }
+.CodeMirror-sizer { position: relative !important; border-right: 50px solid transparent; }
+.CodeMirror-vscrollbar, .CodeMirror-hscrollbar, .CodeMirror-scrollbar-filler, .CodeMirror-gutter-filler {
+  position: absolute !important; z-index: 6 !important; display: none; outline: none; }
+.CodeMirror-vscrollbar { right: 0; top: 0; overflow-x: hidden !important; overflow-y: scroll !important; }
+.CodeMirror-hscrollbar { bottom: 0; left: 0; overflow-y: hidden !important; overflow-x: scroll !important; }
+.CodeMirror-scrollbar-filler { right: 0; bottom: 0; }
+.CodeMirror-gutter-filler { left: 0; bottom: 0; }
+.CodeMirror-gutter { white-space: normal; height: 100%; display: inline-block; vertical-align: top;
+  margin-bottom: -50px; }
+.CodeMirror-gutter-wrapper { position: absolute !important; z-index: 4 !important; background: none !important;
+  border: none !important; }
+.CodeMirror-gutter-background { position: absolute !important; top: 0; bottom: 0; z-index: 4; }
+.CodeMirror-gutter-elt { position: absolute !important; cursor: default; z-index: 4; }
+.CodeMirror-gutter-wrapper ::selection { background-color: transparent; }
+.CodeMirror-linebackground { position: absolute !important; left: 0; right: 0; top: 0; bottom: 0; z-index: 0; }
+.CodeMirror-linewidget { position: relative !important; z-index: 2 !important; padding: 0.1px; }
+.CodeMirror-scroll, .CodeMirror-sizer, .CodeMirror-gutter, .CodeMirror-gutters, .CodeMirror-linenumber {
+  box-sizing: content-box !important; }
+.CodeMirror-measure { position: absolute !important; width: 100% !important; height: 0 !important;
+  overflow: hidden !important; visibility: hidden !important; }
+.CodeMirror-measure pre { position: static !important; }
+div.CodeMirror-cursors { visibility: hidden; position: relative !important; z-index: 3 !important; }
+div.CodeMirror-dragcursors { visibility: visible; }
+.CodeMirror-focused div.CodeMirror-cursors { visibility: visible; }
+.CodeMirror-selected { position: absolute; }
+/* Tableaux de l'edition (table.js) : bloc en texte normal dans la ligne de l'editeur ; l'editeur de la cellule
+   active prend la hauteur de son contenu (aucun defilement propre). */
+.cm-table-widget { white-space: normal !important; }
+.CodeMirror.md-cell-editor { height: auto !important; overflow: visible !important; }
+.md-cell-editor .CodeMirror-scroll { height: auto !important; overflow: visible !important; margin: 0 !important;
+  padding: 0 !important; }
+.md-cell-editor .CodeMirror-sizer { border-right: none !important; }
+.md-cell-editor .CodeMirror-vscrollbar, .md-cell-editor .CodeMirror-hscrollbar { display: none !important; }
+.cm-force-border { padding-right: .1px; }
+.cm-tab { display: inline-block; text-decoration: inherit; }
+.CodeMirror-widget { display: inline; }
+span.CodeMirror-selectedtext { background: none; }
+.CodeMirror-dialog { position: absolute !important; left: 0 !important; right: 0 !important; top: 0 !important;
+  z-index: 15 !important; padding: 6px 12px !important; overflow: hidden !important;
+  background: var(--md-bg-secondary) !important; color: var(--md-text-color) !important;
+  font-family: var(--md-text-font) !important; font-size: 13px !important; }
+.CodeMirror-dialog input { border: none !important; outline: none !important; background: transparent !important;
+  width: 24em !important; color: inherit !important; font-family: var(--md-code-file-font) !important;
+  font-size: 13px !important; }
+
+/* -- Barre d'outils (reprise du plugin Editing Toolbar) et saisies : immunes aux feuilles chargees -------------- */
+.md-toolbar { position: absolute !important; left: 0 !important; right: 0 !important; top: 0 !important;
+  z-index: 10 !important; display: none !important; box-sizing: border-box !important;
+  background: var(--md-toolbar-bg) !important; padding: var(--md-toolbar-padding) !important;
+  gap: var(--md-toolbar-gap) !important; flex-wrap: wrap !important; align-items: center !important;
+  justify-content: var(--md-toolbar-justify) !important; margin: var(--md-toolbar-margin) !important;
+  border-top: var(--md-toolbar-border-top) !important; border-right: var(--md-toolbar-border-right) !important;
+  border-bottom: var(--md-toolbar-border-bottom) !important; border-left: var(--md-toolbar-border-left) !important;
+  border-radius: var(--md-toolbar-radius) !important;
+  box-shadow: var(--md-toolbar-shadow) !important;
+  font-family: var(--md-text-font) !important; font-size: 13px !important; letter-spacing: normal !important;
+  line-height: normal !important; }
+.md-toolbar.is-shown { display: flex !important; }
+.md-toolbar .md-tool { position: relative !important; display: inline-flex !important; align-items: center !important;
+  justify-content: center !important; width: var(--md-toolbar-button-size) !important;
+  height: var(--md-toolbar-button-size) !important; padding: 0 !important; margin: 0 !important;
+  border: none !important; border-radius: var(--md-toolbar-button-radius) !important;
+  background: transparent !important; color: var(--md-toolbar-icon-color) !important; cursor: pointer !important;
+  outline: none !important; box-shadow: none !important; }
+.md-toolbar .md-tool:hover, .md-toolbar .md-tool.is-open { background: var(--md-toolbar-hover-bg) !important; }
+.md-toolbar .md-tool.is-active { background: var(--md-toolbar-active-bg) !important; }
+.md-toolbar .md-color-split { display: inline-flex !important; align-items: center !important;
+  height: var(--md-toolbar-button-size) !important; border: none !important;
+  border-radius: var(--md-toolbar-button-radius) !important; background: transparent !important; }
+.md-toolbar .md-color-split:hover { background: var(--md-toolbar-hover-bg) !important; }
+.md-toolbar .md-color-split .md-color-main { border-radius: 0 !important; background: transparent !important; }
+.md-toolbar .md-color-caret { display: grid !important; place-items: center !important; flex: 0 0 22px !important;
+  width: 22px !important; height: 100% !important; margin: 0 !important; padding: 0 !important;
+  border: none !important; border-radius: 0 var(--md-toolbar-button-radius) var(--md-toolbar-button-radius) 0 !important;
+  background: transparent !important; color: var(--md-toolbar-icon-color) !important; cursor: pointer !important;
+  outline: none !important; box-shadow: none !important; }
+.md-toolbar .md-color-caret::after { content: "" !important; width: 0 !important; height: 0 !important;
+  border-left: 4px solid transparent !important; border-right: 4px solid transparent !important;
+  border-top: 4px solid currentColor !important; }
+.md-toolbar .md-tool svg { width: var(--md-toolbar-icon-size) !important; height: var(--md-toolbar-icon-size) !important;
+  display: block !important; }
+.md-toolbar .md-tool .md-caret { position: absolute !important; right: 0 !important; bottom: 0 !important;
+  width: 18px !important; height: 18px !important; display: grid !important; place-items: center !important;
+  cursor: pointer !important; opacity: 0.78 !important; }
+.md-toolbar .md-tool .md-caret::after { content: "" !important; width: 0 !important; height: 0 !important;
+  border-left: 4px solid transparent !important; border-right: 4px solid transparent !important;
+  border-top: 4px solid currentColor !important; }
+.md-toolbar .md-sep { width: 1px !important; align-self: stretch !important; margin: 4px 2px !important;
+  background: var(--md-toolbar-hover-bg) !important; }
+.md-toolbar .md-sub { position: absolute !important; left: 0 !important; top: 100% !important; display: none !important;
+  flex-direction: column !important; padding: var(--md-toolbar-padding) !important;
+  gap: var(--md-toolbar-gap) !important; background: var(--md-bg-secondary) !important;
+  border-radius: var(--md-toolbar-button-radius) !important; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4) !important;
+  z-index: 20 !important; }
+.md-toolbar .md-tool:hover > .md-sub { display: flex !important; }
+.md-prompt { position: fixed !important; left: 50% !important; top: 20% !important; transform: translateX(-50%) !important;
+  z-index: 60 !important; min-width: 340px !important; padding: 14px 16px !important; border-radius: 8px !important;
+  background: var(--md-bg-secondary) !important; color: var(--md-text-color) !important;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5) !important; font-size: 13px !important;
+  font-family: var(--md-text-font) !important; letter-spacing: normal !important; }
+.md-prompt input { display: block !important; width: 100% !important; box-sizing: border-box !important;
+  margin-top: 8px !important; padding: 6px 8px !important; border: 1px solid var(--md-toolbar-hover-bg) !important;
+  border-radius: 4px !important; background: var(--md-bg) !important; color: inherit !important;
+  font: 13px var(--md-code-inline-font) !important; outline: none !important; }

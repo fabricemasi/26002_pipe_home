@@ -5,7 +5,7 @@ import unittest
 import copy
 from unittest.mock import ANY, patch
 from PySide6.QtCore import QPoint, QRect, Qt, QEvent
-from PySide6.QtGui import QImage, QKeyEvent, QPainter, QFont
+from PySide6.QtGui import QImage, QKeyEvent, QPainter, QFont, QPixmap
 from PySide6.QtWidgets import QStyleOptionViewItem
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget, QLabel, QListWidget, QListWidgetItem, QPushButton, QHBoxLayout, QLineEdit
@@ -132,6 +132,34 @@ class EditScopeTest(unittest.TestCase):
         moved_name = paint(18)
         self.assertEqual(original["media-photo"], moved_name["media-photo"])
         self.assertEqual(original["media-video"], moved_name["media-video"])
+
+    def test_shortcut_media_counts_use_the_right_edge_and_make_room_for_preview(self):
+        import row_delegates as rd
+        from app_style import column_style_for
+
+        def paint(counts_right):
+            option = QStyleOptionViewItem()
+            option.rect = QRect(0, 0, 300, 30)
+            option._edit_parts = {}
+            option._edit_offsets = {}
+            option._edit_text_offset = QPoint(0, 0)
+            image = QImage(300, 30, QImage.Format_ARGB32)
+            image.fill(Qt.transparent)
+            preview = QPixmap(24, 24)
+            preview.fill(Qt.white)
+            painter = QPainter(image)
+            rd._LAST_PREVIEW_SLOT[0] = None
+            rd._paint_unified_row(painter, option.rect, option, column_style_for("Type"), "Raccourci",
+                                  None, preview, QFont(), "#ffffff", False,
+                                  media_counts=(1322, 47), media_counts_right=counts_right)
+            painter.end()
+            return QRect(rd._LAST_PREVIEW_SLOT[0]), option._edit_parts
+
+        normal_preview, _ = paint(False)
+        shortcut_preview, parts = paint(True)
+        self.assertLess(shortcut_preview.right(), normal_preview.right())
+        self.assertGreater(parts["media-photo"].right(), shortcut_preview.right())
+        self.assertLessEqual(parts["media-photo"].right(), 299)
 
     def test_shift_adds_and_middle_click_deselects_only_clicked_item(self):
         first = QLabel("Premier", self.main)
@@ -819,3 +847,55 @@ class EditScopeTest(unittest.TestCase):
         self.assertNotIn(key, self.mode.position_overrides)
         other.close()
         other.deleteLater()
+
+
+class StartupRestoreTest(unittest.TestCase):
+    """Positions modifiees en mode edition : reappliquees au DEMARRAGE, sans entrer dans le mode edition
+    (signale : « au redemarrage la position n'est pas celle modifiee, mais en entrant dans le mode edition tout se
+    met au bon endroit » — `editable_windows` est vide hors de ce mode)."""
+
+    @staticmethod
+    def _window():
+        window = QWidget()
+        window.setWindowTitle("Fenetre de demarrage")
+        window.setGeometry(800, 50, 300, 200)
+        label = QLabel("Texte", window)
+        label.setGeometry(30, 40, 80, 20)
+        window.show()
+        app.processEvents()
+        return window, label
+
+    def _mode(self, saved):
+        patcher = patch("pipeline_browser.load_settings", return_value={"interface_move_positions": saved})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        mode = _InterfaceMoveMode(QWidget())
+        mode._edit_sync.stop()
+        self.addCleanup(app.removeEventFilter, mode)
+        self.addCleanup(app.aboutToQuit.disconnect, mode._flush_positions)
+        return mode
+
+    def test_saved_positions_apply_without_entering_edit_mode(self):
+        window, label = self._window()
+        first = self._mode({})
+        first._toggle()
+        first._include_open_windows()
+        first._select(label)
+        first._move_selected(QPoint(11, 5))
+        key = first._position_key(label)
+        saved = dict(first.position_overrides)
+        first._deactivate()
+        first._position_save_timer.stop()
+        window.close()
+        window.deleteLater()
+        app.sendPostedEvents(None, QEvent.DeferredDelete)
+
+        window, label = self._window()                     # « redemarrage » : meme fenetre, position d'origine
+        self.assertEqual(label.pos(), QPoint(30, 40))
+        second = self._mode(saved)
+        self.assertFalse(second.active)                      # mode edition JAMAIS active
+        self.assertIn(key, second.position_overrides)
+        second._sync_windows()
+        self.assertEqual(label.pos(), QPoint(41, 45))
+        window.close()
+        window.deleteLater()

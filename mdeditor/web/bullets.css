@@ -1,0 +1,8 @@
+/* Les feuilles Obsidian peuvent imposer aussi text-fill-color et text-shadow sur les puces. */
+.md-edit .md-bullet.level-1::before { color: var(--md-bullet-1-color) !important; -webkit-text-fill-color: var(--md-bullet-1-color) !important; text-shadow: none !important; }
+.md-edit .md-bullet.level-2::before { color: var(--md-bullet-2-color) !important; -webkit-text-fill-color: var(--md-bullet-2-color) !important; text-shadow: none !important; }
+.md-edit .md-bullet.level-3::before { color: var(--md-bullet-3-color) !important; -webkit-text-fill-color: var(--md-bullet-3-color) !important; text-shadow: none !important; }
+.md-rendered ul > li::before, .md-rendered ul ul ul ul > li::before { color: var(--md-bullet-1-color) !important; -webkit-text-fill-color: var(--md-bullet-1-color) !important; }
+.md-rendered ul ul > li::before, .md-rendered ul ul ul ul ul > li::before { color: var(--md-bullet-2-color) !important; -webkit-text-fill-color: var(--md-bullet-2-color) !important; }
+.md-rendered ul ul ul > li::before, .md-rendered ul ul ul ul ul ul > li::before { color: var(--md-bullet-3-color) !important; -webkit-text-fill-color: var(--md-bullet-3-color) !important; }
+

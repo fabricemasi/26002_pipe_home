@@ -230,8 +230,37 @@ UI_ICON_PIN_ACTIVE = "ui_pin_active"
 UI_ICON_SETTINGS_GEAR = "ui_settings_gear"
 UI_ICON_SETTINGS_STYLE = "ui_settings_style"
 UI_ICON_APP_LOGO = "ui_app_logo"
+UI_ICON_NAVBAR_MIN = "ui_navbar_min"
+UI_ICON_NAVBAR_MAX = "ui_navbar_max"
+UI_ICON_NAVBAR_CLOSE = "ui_navbar_close"
+UI_ICON_NAVBAR_BROWSE = "ui_navbar_browse"       # parcourir (choix de la racine)
+UI_ICON_NAVBAR_PRESETS = "ui_navbar_presets"     # gerer les presets
+UI_ICON_NAVBAR_CRUMB_SEPARATOR = "ui_navbar_crumb_separator"   # separateur du cheminement (mode « icone »)
+UI_ICON_NAVBAR_VIEWER = "ui_navbar_viewer"             # entrer dans la visionneuse
+UI_ICON_NAVBAR_TEXT_EDITOR = "ui_navbar_text_editor"   # ouvrir l'editeur Markdown / code (paquet mdeditor/)
+UI_ICON_NAVBAR_BOARD = "ui_navbar_board"   # ouvrir le board (.mro) selectionne
 UI_ICON_COLLAPSE_TOGGLE = "ui_collapse_toggle"
 UI_ICON_SHORTCUT = "ui_shortcut"
+# Icones de la VISIONNEUSE (Reglages > Visionneuse > Icones) : boutons de la rangee du haut et attributs des
+# diapositives. Absente = le glyphe peint par defaut.
+UI_ICON_VIEWER_HIDE = "ui_viewer_hide"            # masquer les colonnes
+UI_ICON_VIEWER_SHOW = "ui_viewer_show"            # reafficher les colonnes
+UI_ICON_VIEWER_GALLERY = "ui_viewer_gallery"      # ouvrir la planche
+UI_ICON_VIEWER_SINGLE = "ui_viewer_single"        # revenir a l'image en cours
+UI_ICON_VIEWER_FILTER = "ui_viewer_filter"        # filtres de la planche
+UI_ICON_VIEWER_STAR_ON = "ui_viewer_star_on"      # etoile de la note allumee
+UI_ICON_VIEWER_STAR_OFF = "ui_viewer_star_off"    # etoile vide
+UI_ICON_VIEWER_FLAG_KEEP = "ui_viewer_flag_keep"  # drapeau « marquee »
+UI_ICON_VIEWER_FLAG_DELETE = "ui_viewer_flag_delete"  # drapeau « rejetee »
+UI_ICON_VIEWER_PLUS = "ui_viewer_plus"            # « + » des mots cles
+UI_ICON_VIEWER_RECURSIVE = "ui_viewer_recursive"  # « Recursif » : photos des sous-dossiers
+VIEWER_BUTTON_ICONS = {"fade_columns": UI_ICON_VIEWER_HIDE, "show_columns": UI_ICON_VIEWER_SHOW,
+                       "gallery": UI_ICON_VIEWER_GALLERY, "single_image": UI_ICON_VIEWER_SINGLE,
+                       "filter": UI_ICON_VIEWER_FILTER, "recursive": UI_ICON_VIEWER_RECURSIVE}
+VIEWER_ICON_KEYS = (UI_ICON_VIEWER_HIDE, UI_ICON_VIEWER_SHOW, UI_ICON_VIEWER_GALLERY, UI_ICON_VIEWER_SINGLE,
+                    UI_ICON_VIEWER_FILTER, UI_ICON_VIEWER_STAR_ON, UI_ICON_VIEWER_STAR_OFF,
+                    UI_ICON_VIEWER_FLAG_KEEP, UI_ICON_VIEWER_FLAG_DELETE, UI_ICON_VIEWER_PLUS,
+                    UI_ICON_VIEWER_RECURSIVE)
 
 _UI_ICON_CACHE: dict[tuple[str, int], tuple[float, QPixmap]] = {}
 
@@ -313,15 +342,39 @@ def _queue_mtime(key: str) -> None:
         threading.Thread(target=_refresh_mtimes, name="mtime-refresh", daemon=True).start()
 
 
+_REMOTE_DRIVES: dict[str, bool] = {}
+
+
+def is_remote_path(path) -> bool:
+    """Chemin sur un partage RESEAU (UNC « \\\\serveur\\partage » ou lecteur reseau) : chaque acces y est un
+    aller-retour (ou une attente de plusieurs secondes si le serveur ne repond pas) — jamais sur le fil de
+    l'interface quand on peut l'eviter. Type des lecteurs memorise (GetDriveTypeW, appel local)."""
+    text = str(path)
+    if text.startswith(("\\\\", "//")):
+        return True
+    if os.name == "nt" and len(text) >= 2 and text[1] == ":":
+        drive = text[0].upper()
+        hit = _REMOTE_DRIVES.get(drive)
+        if hit is None:
+            try:
+                hit = ctypes.windll.kernel32.GetDriveTypeW(f"{drive}:\\") == 4      # DRIVE_REMOTE
+            except Exception:                                # noqa: BLE001
+                hit = False
+            _REMOTE_DRIVES[drive] = hit
+        return hit
+    return False
+
+
 def cached_mtime(path) -> float | None:
     """Date de modification du FICHIER `path` (None s'il n'existe pas ou est un dossier). Dans
-    `memory_only()` : jamais de disque (valeur memorisee, ou None et relue en fond)."""
+    `memory_only()`, et toujours pour un chemin RESEAU : jamais de disque sur le fil appelant (valeur
+    memorisee, ou None et relue en fond ; `MTIME_SIGNALS.refreshed` fait repeindre)."""
     key = str(path)
     now = time.monotonic()
     hit = _MTIME_CACHE.get(key)
     if hit is not None and now - hit[0] < _MTIME_TTL:
         return hit[1]
-    if getattr(_MEMORY_ONLY, "on", 0):
+    if getattr(_MEMORY_ONLY, "on", 0) or is_remote_path(key):
         _queue_mtime(key)
         return hit[1] if hit is not None else None
     try:
@@ -520,6 +573,124 @@ def _cache_glob(digest: str) -> str:
     return f"*{digest[:16]}*_*.png"
 
 
+class _CacheDirIndex:
+    """Noms du dossier du cache disque, lus UNE fois et tenus à jour. Le dossier compte des dizaines de milliers
+    d'entrées : chaque `glob` / `iterdir` y coûtait ~100 ms de Python (GIL tenu par tranches de ~16 ms), et un
+    aperçu absent en déclenchait jusqu'à une dizaine (aperçus périmés, nettoyage) — de quoi faire saccader la
+    lecture vidéo et ralentir les colonnes pendant que les aperçus d'un dossier se calculent. Fraîcheur : date de
+    modification du dossier (changée par toute création / suppression d'entrée), relue à chaque demande ; nos
+    propres écritures mettent l'index à jour (`added` / `removed`) sans tout relire."""
+
+    MAX_AGE = 300.0
+    MIN_REBUILD_GAP = 30.0
+
+    def __init__(self):
+        self._lock = threading.RLock()
+        self._dir = None
+        self._stamp = None
+        self._built = 0.0
+        self._names: list[str] = []          # triés (recherche par préfixe)
+        self._by_digest: dict[str, list[str]] = {}
+
+    @staticmethod
+    def _digest(name: str) -> str | None:
+        if not name.endswith(".png"):
+            return None
+        return name[:-4].rsplit("__", 1)[-1].split("_", 1)[0][:16]
+
+    def _dir_stamp(self, directory: Path):
+        try:
+            return os.stat(directory).st_mtime_ns
+        except OSError:
+            return None
+
+    def _ensure(self) -> Path:
+        directory = FILE_IMAGE_DISK_CACHE_DIR
+        stamp = self._dir_stamp(directory)
+        age = time.monotonic() - self._built
+        if directory == self._dir and stamp is not None and (
+                (stamp == self._stamp and age < self.MAX_AGE) or age < self.MIN_REBUILD_GAP):
+            # Dossier changé depuis la lecture (fiches JSON, images temporaires… écrites par les aperçus) : les
+            # images et dossiers qui comptent sont tenus à jour par `added` / `removed` ; une relecture complète
+            # pour le reste (autre programme) au plus toutes les MIN_REBUILD_GAP secondes.
+            return directory
+        names = []
+        if stamp is not None:
+            try:
+                with os.scandir(directory) as entries:
+                    names = [entry.name for entry in entries]
+            except OSError:
+                names = []
+        names.sort()
+        by_digest = {}
+        for name in names:
+            digest = self._digest(name)
+            if digest:
+                by_digest.setdefault(digest, []).append(name)
+        self._dir, self._stamp, self._built = directory, stamp, time.monotonic()
+        self._names, self._by_digest = names, by_digest
+        return directory
+
+    def warm(self):
+        with self._lock:
+            self._ensure()
+
+    def has_png(self) -> bool:
+        with self._lock:
+            self._ensure()
+            return bool(self._by_digest)
+
+    def with_prefix(self, prefix: str) -> list[Path]:
+        import bisect
+        with self._lock:
+            directory = self._ensure()
+            i = bisect.bisect_left(self._names, prefix)
+            out = []
+            while i < len(self._names) and self._names[i].startswith(prefix):
+                out.append(directory / self._names[i])
+                i += 1
+            return out
+
+    def with_digest(self, digest: str) -> list[Path]:
+        """Équivalent de `glob(_cache_glob(digest))` (images PNG de ce code de rendu)."""
+        with self._lock:
+            directory = self._ensure()
+            return [directory / name for name in self._by_digest.get(digest[:16], ())]
+
+    def _touched(self, path: Path, add: bool):
+        import bisect
+        with self._lock:
+            if self._dir is None or Path(path).parent != self._dir:
+                return
+            name = Path(path).name
+            i = bisect.bisect_left(self._names, name)
+            present = i < len(self._names) and self._names[i] == name
+            digest = self._digest(name)
+            if add and not present:
+                self._names.insert(i, name)
+                if digest:
+                    self._by_digest.setdefault(digest, []).append(name)
+            elif not add and present:
+                del self._names[i]
+                if digest and name in self._by_digest.get(digest, ()):
+                    self._by_digest[digest].remove(name)
+            self._stamp = self._dir_stamp(self._dir)
+
+    def added(self, path: Path):
+        self._touched(path, True)
+
+    def removed(self, path: Path):
+        self._touched(path, False)
+
+
+_CACHE_INDEX = _CacheDirIndex()
+
+
+def warm_cache_index():
+    """Lit le dossier du cache une fois (appelé en fond au démarrage)."""
+    _CACHE_INDEX.warm()
+
+
 def _turntable_cache_path(path: Path, mtime: float, profiles_snapshot=None, render_mode: str = "low") -> Path:
     signature = _file_image_cache_signature(path, render_mode=render_mode, profiles_snapshot=profiles_snapshot)
     digest = hashlib.sha1(f"turntable:{_TURNTABLE_CACHE_VERSION}:{_PREVIEW_CACHE_VERSION}:{path.resolve()}:{mtime}:{signature}".encode()).hexdigest()
@@ -664,7 +835,7 @@ def delete_preview_cache(path: Path) -> int:
     _PREVIEW_STALE_LOOKUP_MISSES.difference_update({item for item in _PREVIEW_STALE_LOOKUP_MISSES if item[0] == key})
     prefix = _cache_label(path) + "__"
     try:
-        entries = [entry for entry in FILE_IMAGE_DISK_CACHE_DIR.iterdir() if entry.name.startswith(prefix)]
+        entries = _CACHE_INDEX.with_prefix(prefix)
     except OSError:
         return 0
     for entry in entries:
@@ -673,6 +844,7 @@ def delete_preview_cache(path: Path) -> int:
                 shutil.rmtree(entry)
             else:
                 entry.unlink()
+            _CACHE_INDEX.removed(entry)
             removed += 1
         except OSError:
             pass
@@ -702,7 +874,7 @@ def prune_unused_previews(path: Path, mtime: float | None = None, entries: list 
     prefix = _cache_label(path) + "__"
     try:
         mtime = path.stat().st_mtime if mtime is None else mtime
-        names = entries if entries is not None else [e for e in cache.iterdir() if e.name.startswith(prefix)]
+        names = entries if entries is not None else _CACHE_INDEX.with_prefix(prefix)
     except OSError:
         return 0
     image_codes, turntable_codes = _keep_cache_digests(path, mtime)
@@ -730,15 +902,18 @@ def prune_unused_previews(path: Path, mtime: float | None = None, entries: list 
                 code = rest[len("turntable_"):][:16]
                 if has_current_turntable and code not in turntable_codes:
                     shutil.rmtree(entry)
+                    _CACHE_INDEX.removed(entry)
                     removed += 1
             elif entry.suffix == ".png" and not entry.name.endswith(".tmp.png"):
                 if has_current_image and _cache_digest_of(entry) not in image_codes:
                     entry.unlink()
+                    _CACHE_INDEX.removed(entry)
                     removed += 1
                 elif has_current_image and not entry.stem.endswith(f"_{int(mtime)}") and any(
                         other is not entry and other.suffix == ".png" and other.stem.endswith(f"_{int(mtime)}")
                         and _cache_digest_of(other) == _cache_digest_of(entry) for other in own):
                     entry.unlink()   # meme reglage, ancienne date : le rendu a jour existe deja
+                    _CACHE_INDEX.removed(entry)
                     removed += 1
         except OSError:
             pass
@@ -752,34 +927,59 @@ def sweep_preview_cache(dry_run: bool = False) -> dict:
     dossier est introuvable (disque debranche) ne sont jamais touchees."""
     result = {"inutiles": 0, "orphelins": 0}
     cache = FILE_IMAGE_DISK_CACHE_DIR
-    try:
-        listing = list(cache.iterdir())
-    except OSError:
+    listing = _CACHE_INDEX.with_prefix("")
+    if not listing:
         return result
     by_label = {}
     for entry in listing:
         by_label.setdefault(entry.name.rsplit("__", 1)[0], []).append(entry)
     sidecars = [e for e in listing if "__preview_" in e.name and e.suffix == ".json"]
     for sidecar in sidecars:
+        # Travail de fond PUR PYTHON (des dizaines de milliers de fiches) : on rend la main à chaque fiche,
+        # sinon il garde le GIL par tranches et fait saccader l'interface (lecture vidéo, colonnes).
+        time.sleep(_SWEEP_YIELD_S)
         try:
             source = Path(json.loads(sidecar.read_text(encoding="utf-8"))["source"])
+            if source.exists():
+                if dry_run:
+                    continue
+                # La fiche garde le chemin en MINUSCULES (normcase) : les codes de cache sont
+                # calcules sur le chemin tel que l'appli le manipule, donc on retablit la casse.
+                real = source.resolve()
+                result["inutiles"] += prune_unused_previews(real, entries=by_label.get(_cache_label(real), []))
+            elif source.parent.exists():
+                for entry in by_label.get(_cache_label(source), []):
+                    result["orphelins"] += 1
+                    if not dry_run:
+                        try:
+                            shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
+                            _CACHE_INDEX.removed(entry)
+                        except OSError:
+                            pass
         except (OSError, ValueError, KeyError, TypeError):
-            continue
-        if source.exists():
-            if dry_run:
-                continue
-            # La fiche garde le chemin en MINUSCULES (normcase) : les codes de cache sont
-            # calcules sur le chemin tel que l'appli le manipule, donc on retablit la casse.
-            real = source.resolve()
-            result["inutiles"] += prune_unused_previews(real, entries=by_label.get(_cache_label(real), []))
-        elif source.parent.exists():
-            for entry in by_label.get(_cache_label(source), []):
-                result["orphelins"] += 1
-                if not dry_run:
-                    try:
-                        shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
-                    except OSError:
-                        pass
+            continue                      # fiche illisible, source inaccessible (accès refusé…) : on passe
+    return result
+
+
+_SWEEP_YIELD_S = 0.002
+SWEEP_INTERVAL_S = 24 * 3600
+
+
+def sweep_preview_cache_if_due() -> dict | None:
+    """Ménage du cache au plus une fois par jour (il relit chaque fiche et chaque source : ~35 s de calcul
+    pour ~10 000 fiches) ; date du dernier passage dans `<cache>/.last_sweep`."""
+    stamp = FILE_IMAGE_DISK_CACHE_DIR / ".last_sweep"
+    try:
+        if time.time() - stamp.stat().st_mtime < SWEEP_INTERVAL_S:
+            return None
+    except OSError:
+        pass
+    result = sweep_preview_cache()
+    try:
+        stamp.write_text(json.dumps(result), encoding="utf-8")
+        _CACHE_INDEX.added(stamp)
+    except OSError:
+        pass
     return result
 
 
@@ -791,7 +991,7 @@ def migrate_cache_names() -> int:
     if not cache.is_dir():
         return 0
     renamed = 0
-    for meta in list(cache.glob("preview_*.json")):
+    for meta in [m for m in _CACHE_INDEX.with_prefix("preview_") if m.suffix == ".json"]:
         try:
             payload = json.loads(meta.read_text(encoding="utf-8"))
             source = Path(payload["source"])
@@ -809,14 +1009,14 @@ def migrate_cache_names() -> int:
             meta.unlink()
         except (OSError, ValueError, KeyError, TypeError):
             continue
-    for directory in [p for p in cache.glob("turntable_*") if p.is_dir() and "__" not in p.name]:
+    for directory in [p for p in _CACHE_INDEX.with_prefix("turntable_") if "__" not in p.name and p.is_dir()]:
         try:
             manifest = json.loads((directory / "complete.json").read_text(encoding="utf-8"))
             label = _cache_label(Path(manifest["source"]))
             new_dir = cache / f"{label}__turntable_{directory.name.split('_')[1][:16]}{directory.name[directory.name.find('_partial_'):] if '_partial_' in directory.name else ''}"
             directory.replace(new_dir)
             renamed += 1
-            for latest in cache.glob("turntable_latest_*.json"):
+            for latest in [m for m in _CACHE_INDEX.with_prefix("turntable_latest_") if m.suffix == ".json"]:
                 data = json.loads(latest.read_text(encoding="utf-8"))
                 if Path(data.get("cache", "")).name == directory.name:
                     data["cache"] = str(new_dir)
@@ -878,7 +1078,7 @@ def _find_stale_preview_cache(path: Path, mtime: float, current_path: Path) -> P
     global _PREVIEW_CACHE_HAS_PNG
     if _PREVIEW_CACHE_HAS_PNG is None:
         try:
-            _PREVIEW_CACHE_HAS_PNG = next(FILE_IMAGE_DISK_CACHE_DIR.glob("*.png"), None) is not None
+            _PREVIEW_CACHE_HAS_PNG = _CACHE_INDEX.has_png()
         except OSError:
             _PREVIEW_CACHE_HAS_PNG = False
     if not _PREVIEW_CACHE_HAS_PNG:
@@ -911,7 +1111,7 @@ def _find_stale_preview_cache(path: Path, mtime: float, current_path: Path) -> P
         for signature in signatures:
             digests.add(hashlib.sha1(f"{old_version}:{path}{signature}".encode("utf-8")).hexdigest())
     for digest in digests:
-        candidates = list(FILE_IMAGE_DISK_CACHE_DIR.glob(_cache_glob(digest)))
+        candidates = [c for c in _CACHE_INDEX.with_digest(digest) if c.is_file()]
         if candidates:
             candidates.sort(key=lambda candidate: candidate.stat().st_mtime, reverse=True)
             return candidates[0]
@@ -920,8 +1120,8 @@ def _find_stale_preview_cache(path: Path, mtime: float, current_path: Path) -> P
     # suffix remains available until a replacement is written.
     digest = _cache_digest_of(current_path)
     try:
-        candidates = [candidate for candidate in FILE_IMAGE_DISK_CACHE_DIR.glob(_cache_glob(digest))
-                      if candidate != current_path]
+        candidates = [candidate for candidate in _CACHE_INDEX.with_digest(digest)
+                      if candidate != current_path and candidate.is_file()]
         if candidates:
             candidates.sort(key=lambda candidate: candidate.stat().st_mtime, reverse=True)
             return candidates[0]
@@ -936,10 +1136,11 @@ def _prune_stale_disk_cache(cache_path: Path) -> None:
     perimes suite a une modification du fichier source."""
     digest = _cache_digest_of(cache_path)
     try:
-        for stale in FILE_IMAGE_DISK_CACHE_DIR.glob(_cache_glob(digest)):
+        for stale in _CACHE_INDEX.with_digest(digest):
             if stale != cache_path:
                 try:
                     stale.unlink()
+                    _CACHE_INDEX.removed(stale)
                 except OSError:
                     pass
     except OSError:
@@ -3564,7 +3765,7 @@ VIDEO_PREVIEW_SEEK_FRACTION = 0.1   # position dans la video (evite les frames n
 VIDEO_PREVIEW_TIMEOUT_MS = 6000     # securite : fichier corrompu, codec manquant, partage reseau lent...
 
 
-def _decode_video_frame(path: Path, max_dim: int) -> QImage | None:
+def _decode_video_frame(path: Path, max_dim: int, cancel_event=None) -> QImage | None:
     """Extrait une frame a ~10% de la duree d'une video via QtMultimedia
     (QMediaPlayer + QVideoSink, module fourni avec PySide6 — ffmpeg deja
     embarque, aucune dependance externe). L'API est asynchrone (chargement
@@ -3611,8 +3812,19 @@ def _decode_video_frame(path: Path, max_dim: int) -> QImage | None:
     timer.timeout.connect(loop.quit)
     timer.start(VIDEO_PREVIEW_TIMEOUT_MS)
 
+    cancel_timer = QTimer()
+    if cancel_event is not None:
+        cancel_timer.setInterval(25)
+        cancel_timer.timeout.connect(lambda: loop.quit() if cancel_event.is_set() else None)
+        cancel_timer.start()
     loop.exec()
+    cancel_timer.stop()
     player.stop()
+    player.setSource(QUrl())
+    sink.videoFrameChanged.disconnect(on_frame)
+    player.mediaStatusChanged.disconnect(on_status)
+    player.errorOccurred.disconnect(on_error)
+    player.setVideoSink(None)
 
     image = result.get("image")
     if image is None or image.isNull():
@@ -3860,7 +4072,7 @@ def _read_preview_pixmap(path: Path, mtime: float) -> tuple[QPixmap | None, bool
     global _PREVIEW_CACHE_HAS_PNG
     if _PREVIEW_CACHE_HAS_PNG is None:
         try:
-            _PREVIEW_CACHE_HAS_PNG = next(FILE_IMAGE_DISK_CACHE_DIR.glob("*.png"), None) is not None
+            _PREVIEW_CACHE_HAS_PNG = _CACHE_INDEX.has_png()
         except OSError:
             _PREVIEW_CACHE_HAS_PNG = False
     if not _PREVIEW_CACHE_HAS_PNG:
@@ -4277,6 +4489,9 @@ def file_image_pixmap(path: Path, asynchronous: bool = False) -> QPixmap | None:
         if image is None or image.isNull():
             return None
     elif suffix in VIDEO_EXTENSIONS:
+        if suffix == ".mkv":
+            # Les MKV ne sont décodés que sur demande explicite ; le cache reste lisible.
+            return None
         image = _decode_video_frame(path, FILE_IMAGE_CACHE_MAX_DIM)
         if image is None or image.isNull():
             return None
@@ -4491,6 +4706,7 @@ class _PreviewDecodeTask(QRunnable):
                     temp_path = cache_path.with_name(cache_path.stem + ".tmp.png")
                     if image.save(str(temp_path), "PNG"):
                         os.replace(temp_path, cache_path)
+                        _CACHE_INDEX.added(cache_path)
                         global _PREVIEW_CACHE_HAS_PNG
                         _PREVIEW_CACHE_HAS_PNG = True
                         _set_hidden(cache_path)
@@ -4576,6 +4792,7 @@ class _PreviewDecodeTask(QRunnable):
                 _rename_render_directory(destination, previous)
             try:
                 _rename_render_directory(staging, destination)
+                _CACHE_INDEX.added(destination)
             except OSError:
                 if previous.exists():
                     _rename_render_directory(previous, destination)
@@ -4638,11 +4855,20 @@ class _PreviewDecodeManager(QObject):
     def __init__(self):
         super().__init__()
         self.active: dict[str, _PreviewDecodeTask] = {}
+        self._pending_manual_requests: dict[str, tuple] = {}
         self.last_completed_mode: dict[str, str] = {}
 
     def request(self, path: Path, mtime: float, quiet: bool = False, cancel_event=None, cache_only: bool = False, force_render: bool = False, render_mode: str = "low", automatic: bool = False, media_type: str = "image", log_directory: Path | None = None):
+        if path.suffix.lower() == ".mkv" and (not force_render or automatic):
+            cache_only = True
+            force_render = False
         key = str(path)
         if key in self.active:
+            if force_render and not automatic and self.active[key].cache_only:
+                # Un clic pendant la lecture du cache doit quand même produire son aperçu.
+                self._pending_manual_requests[key] = (path, mtime, dict(
+                    quiet=quiet, cancel_event=cancel_event, force_render=True,
+                    render_mode=render_mode, media_type=media_type, log_directory=log_directory))
             return
         try:
             import lightroom_bridge
@@ -4658,7 +4884,7 @@ class _PreviewDecodeManager(QObject):
         global _AUTOMATIC_RENDER_PROFILE
         profile_override = None
         profiles_snapshot = None
-        if force_render:
+        if force_render and path.suffix.lower() in RENDERABLE_3D_EXTENSIONS:
             if automatic:
                 if _AUTOMATIC_RENDER_PROFILE is None:
                     _begin_automatic_render_batch()
@@ -4709,6 +4935,10 @@ class _PreviewDecodeManager(QObject):
                     _FILE_IMAGE_COLUMN_LOOKUP_MISSES.clear()
                 _FILE_IMAGE_COLUMN_LOOKUP_MISSES.add(miss_key)
             self.ready.emit(path_str, mtime, image)
+        pending = self._pending_manual_requests.pop(path_str, None)
+        if pending is not None:
+            path, stamp, options = pending
+            self.request(path, stamp, **options)
 
     def _on_task_progress(self, path_str: str, percent: int, message: str):
         task = self.active.get(path_str)

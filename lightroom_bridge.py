@@ -61,6 +61,7 @@ class _Signals(QObject):
     failed = Signal(str, str)
     updated = Signal(str, str)
     profile_ready = Signal(str, str, str, str)
+    sources_ready = Signal(str, str, str)      # chemin, source du proxy, source du plein écran
 
     @Slot(str, float, object)
     def deliver(self, path, mtime, image):
@@ -77,26 +78,36 @@ def _signal_bus():
 
 @lru_cache(maxsize=4096)
 def _managed_directory(directory: str, epoch: int) -> tuple[Path, Path] | None:
-    """Mémorise l'association par dossier, jamais par photo ni par peinture."""
+    """Mémorise l'association par dossier, jamais par photo ni par peinture. Chaque dossier ne teste QUE son
+    propre marqueur puis demande à son parent (mémorisé lui aussi) : les dossiers frères d'une colonne
+    partagent la remontée. Avant, chaque sous-dossier remontait toute la chaîne (un `stat` par ancêtre et
+    un `resolve`) : coût proportionnel à la profondeur, un aller-retour réseau par ancêtre sur un partage."""
     try:
-        current = Path(directory).resolve()
-        while True:
-            marker = current / MARKER
-            if marker.is_file():
-                data = json.loads(marker.read_text(encoding="utf-8"))
-                catalog = Path(data["catalog"]).resolve()
-                return current, catalog
-            parent = current.parent
-            if parent == current:
-                return None
-            current = parent
-    except (OSError, ValueError, KeyError, TypeError):
+        current = Path(directory)
+        marker = current / MARKER
+        import browser_core
+        if browser_core._remote_gui(marker):
+            text = browser_core.read_config_text(marker)
+            if text is not None:
+                data = json.loads(text)
+                return current, Path(os.path.abspath(data["catalog"]))
+        elif marker.is_file():
+            data = json.loads(marker.read_text(encoding="utf-8"))
+            return current.resolve(), Path(data["catalog"]).resolve()
+        parent = os.path.dirname(directory)
+        if not parent or parent == directory:
+            return None
+        return _managed_directory(parent, epoch)
+    except (OSError, ValueError, KeyError, TypeError, RecursionError):
         return None
 
 
 def managed_folder(path: Path) -> tuple[Path, Path] | None:
     """Retourne (dossier Lightroom, catalogue) pour un fichier sous un dossier associé."""
-    directory = os.path.dirname(os.path.abspath(str(path)))
+    from config import THUMBNAIL_FILENAME
+    if Path(path).name == THUMBNAIL_FILENAME:
+        return None                      # vignette interne du pipeline, pas une photo du catalogue
+    directory = os.path.normcase(os.path.dirname(os.path.abspath(str(path))))
     return _managed_directory(directory, int(time.monotonic() // 30))
 
 
@@ -157,8 +168,18 @@ def _catalog_photo(catalog: Path, path: Path) -> dict | None:
         return photo
 
     try:
-        with closing(sqlite3.connect(catalog.resolve().as_uri() + "?mode=ro", uri=True, timeout=3)) as db:
+        # Connexion gardée par fil (la rouvrir coûtait ~16 ms par photo) ; en mode WAL elle voit
+        # les écritures de Lightroom.
+        conns = _db_local.__dict__.setdefault("catalogs", {})
+        db = conns.get(catalog)
+        if db is None:
+            db = conns[catalog] = sqlite3.connect(catalog.resolve().as_uri() + "?mode=ro", uri=True, timeout=3)
+        try:
             photo = read_photo(db)
+        except sqlite3.Error:
+            conns.pop(catalog, None)
+            db.close()
+            raise
     except sqlite3.OperationalError:
         # Un catalogue fermé peut rester en mode WAL sans fichier -shm. Sur un
         # emplacement en lecture seule, SQLite ne peut alors pas créer ce fichier.
@@ -317,9 +338,61 @@ def orient_image(image: QImage, code: str | None) -> QImage:
     return image
 
 
+def _open_previews_db(database: Path) -> sqlite3.Connection:
+    """Ouvre previews.db en lecture seule. Lightroom la tient en mode journal : un fichier
+    `previews.db-journal` présent (Lightroom ouvert, ou fermé brutalement) fait échouer TOUTE
+    lecture en `mode=ro` (« attempt to write a readonly database ») — les aperçus de Lightroom
+    n'étaient alors jamais lus. Repli : `immutable=1` (lecture directe, rien n'est écrit)."""
+    uri = database.resolve().as_uri()
+    db = sqlite3.connect(uri + "?mode=ro", uri=True, timeout=1)
+    try:
+        db.execute("PRAGMA query_only=ON")
+        db.execute("SELECT 1 FROM ImageCacheEntry LIMIT 1").fetchall()
+        return db
+    except sqlite3.OperationalError:
+        db.close()
+    db = sqlite3.connect(uri + "?mode=ro&immutable=1", uri=True, timeout=1)
+    db.execute("PRAGMA query_only=ON")
+    return db
+
+
+_db_local = threading.local()
+
+
+def _previews_conn(database: Path, stamp: tuple) -> sqlite3.Connection:
+    """Connexion à previews.db gardée ouverte PAR FIL (sqlite3 l'impose) et rouverte quand le
+    fichier change (`immutable=1` ne voit pas les écritures de Lightroom) : l'ouvrir à chaque
+    photo coûtait 40-200 ms sur le disque des photos."""
+    conns = _db_local.__dict__.setdefault("conns", {})
+    held = conns.get(database)
+    if held is not None and held[0] == stamp:
+        return held[1]
+    if held is not None:
+        held[1].close()
+        del conns[database]
+    db = _open_previews_db(database)
+    conns[database] = (stamp, db)
+    return db
+
+
+def _drop_previews_conn(database: Path) -> None:
+    held = _db_local.__dict__.get("conns", {}).pop(database, None)
+    if held is not None:
+        held[1].close()
+
+
+# Aperçu Lightroom assez grand pour l'image en plein écran (côté long, px) : en dessous, c'est
+# une vignette (240-640 px), jamais montrée en focus.
+LARGE_MIN = 1000
+# Proxy des colonnes / de l'inspecteur / des diapositives (= previews.FILE_IMAGE_CACHE_MAX_DIM).
+PROXY_SIDE = 640
+
+
 def _lightroom_preview_path(catalog: Path, image_id: int, max_dimension: int | None = None
                             ) -> tuple[Path, str, str, str] | None:
-    """Retrouve le niveau d'aperçu Lightroom demandé et son orientation."""
+    """Retrouve un niveau de la pyramide d'aperçus Lightroom (rendus AVEC les réglages de
+    Développement) et son orientation. `max_dimension` = taille voulue : le plus petit niveau qui
+    l'atteint, sinon le plus grand ; None = le plus grand niveau (1:1 ou standard)."""
     store = catalog.parent / f"{catalog.stem} Previews.lrdata"
     database = store / "previews.db"
     stamp = []
@@ -338,30 +411,28 @@ def _lightroom_preview_path(catalog: Path, image_id: int, max_dimension: int | N
         return entry if entry is not None and entry[0].is_file() else None
     result = None
     try:
-        db = sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)
-        try:
-            db.execute("PRAGMA query_only=ON")
-            entry = db.execute("SELECT uuid,digest,orientation FROM ImageCacheEntry WHERE imageId=?",
-                               (image_id,)).fetchone()
-            if entry is not None:
-                uuid, digest, orientation = entry
-                if (re.fullmatch(r"[0-9a-fA-F-]{36}", uuid or "")
-                        and re.fullmatch(r"[0-9a-fA-F]{32}", digest or "")):
-                    dimensions = [int(row[0]) for row in db.execute(
-                        """SELECT longDimension FROM PyramidLevel
-                        WHERE uuid=? AND digest=? ORDER BY longDimension DESC""", (uuid, digest))]
-                    if max_dimension is not None:
-                        suitable = [size for size in dimensions if size <= max_dimension]
-                        dimensions = sorted(suitable, reverse=True) if suitable else sorted(dimensions)
-                    folder = store / uuid[0] / uuid[:4]
-                    for dimension in dimensions:
-                        candidate = folder / f"{uuid}-{digest}_{dimension}"
-                        if candidate.is_file():
-                            result = (candidate, str(orientation or "AB"), uuid, digest)
-                            break
-        finally:
-            db.close()
+        db = _previews_conn(database, tuple(stamp))
+        entry = db.execute("SELECT uuid,digest,orientation FROM ImageCacheEntry WHERE imageId=?",
+                           (image_id,)).fetchone()
+        if entry is not None:
+            uuid, digest, orientation = entry
+            if (re.fullmatch(r"[0-9a-fA-F-]{36}", uuid or "")
+                    and re.fullmatch(r"[0-9a-fA-F]{32}", digest or "")):
+                dimensions = [int(row[0]) for row in db.execute(
+                    """SELECT longDimension FROM PyramidLevel
+                    WHERE uuid=? AND digest=? ORDER BY longDimension DESC""", (uuid, digest))]
+                if max_dimension is not None:
+                    # Du plus petit niveau qui suffit au plus grand, puis les plus petits.
+                    enough = sorted(size for size in dimensions if size >= max_dimension)
+                    dimensions = enough + [size for size in dimensions if size < max_dimension]
+                folder = store / uuid[0] / uuid[:4]
+                for dimension in dimensions:
+                    candidate = folder / f"{uuid}-{digest}_{dimension}"
+                    if candidate.is_file():
+                        result = (candidate, str(orientation or "AB"), uuid, digest)
+                        break
     except (OSError, sqlite3.Error, ValueError, TypeError):
+        _drop_previews_conn(database)
         return None
     _preview_path_cache[key] = (tuple(stamp), result)
     return result
@@ -398,45 +469,164 @@ def _oriented_preview_path(source: Path, orientation: str, uuid: str, digest: st
     return source
 
 
-def proxy_path(path: Path, max_dimension: int | None = None) -> Path | None:
+def _long_side(path: Path) -> int:
+    """Côté long d'une image lu dans son entête (sans décoder) ; 0 si illisible."""
+    size = QImageReader(str(path)).size()
+    return max(size.width(), size.height()) if size.isValid() else 0
+
+
+def _level_side(source: Path) -> int:
+    """Côté long d'un niveau de la pyramide : suffixe `_<taille>` de son nom, sinon son entête."""
+    try:
+        return int(source.name.rsplit("_", 1)[-1])
+    except ValueError:
+        return _long_side(source)
+
+
+def _pyramid_text(source: Path) -> str:
+    return f"Lightroom · aperçu développé {_level_side(source)} px (Previews.lrdata)"
+
+
+def proxy_file(path: Path) -> tuple[Path, str] | None:
+    """Proxy des colonnes, de l'inspecteur et des diapositives : (fichier, source lisible).
+    Ordre : aperçu de la pyramide Lightroom d'au moins PROXY_SIDE px (le plus petit qui suffit),
+    sinon le JPEG rendu par le module SDK (révision de développement actuelle), sinon le plus
+    grand niveau de la pyramide, sinon le proxy créé par l'application ; None = aucun encore."""
     association = managed_folder(path)
     if association is None:
         return None
-    photo = _catalog_photo(association[1], path)
+    catalog = association[1]
+    photo = _catalog_photo(catalog, path)
+    if photo is not None:
+        entry = _lightroom_preview_path(catalog, photo["local_id"], PROXY_SIDE)
+        rendered = _lightroom_request_path(path, photo, catalog)
+        rendered_ok = rendered.is_file() and _long_side(rendered) > 0
+        if entry is not None:
+            source, orientation, uuid, digest = entry
+            if not rendered_ok or _level_side(source) >= PROXY_SIDE:
+                return (_oriented_preview_path(source, orientation, uuid, digest, catalog),
+                        _pyramid_text(source))
+        if rendered_ok:
+            return rendered, f"Lightroom · rendu du module SDK {_long_side(rendered)} px"
+    try:
+        app_proxy = _application_preview_path(path, path.stat().st_mtime, catalog)
+    except OSError:
+        return None
+    if app_proxy.is_file():
+        reason = "photo absente du catalogue" if photo is None else "aucun aperçu Lightroom"
+        return app_proxy, f"Application · proxy créé par l'application ({reason})"
+    return None
+
+
+def large_file(path: Path, orient: bool = True) -> tuple | None:
+    """Aperçu Lightroom pour l'image EN FOCUS (plein écran), rendu avec les réglages de
+    Développement : le plus grand entre la pyramide (standard / 1:1) et le JPEG du module SDK,
+    à condition de faire au moins LARGE_MIN px (jamais la petite vignette) ; à taille égale, le
+    rendu SDK (révision actuelle). None = pas d'aperçu Lightroom assez grand : image originale."""
+    association = managed_folder(path)
+    if association is None:
+        return None
+    catalog = association[1]
+    photo = _catalog_photo(catalog, path)
     if photo is None:
         return None
-    lightroom_preview = _lightroom_preview_path(association[1], photo["local_id"], max_dimension)
-    # Le SDK peut avoir produit un JPEG retouche bien plus grand que le seul
-    # niveau present dans Previews.lrdata (parfois 242 px). La visionneuse doit
-    # retrouver ce rendu, meme si la base de pyramide contient encore sa vignette.
-    rendered = _lightroom_request_path(path, photo, association[1])
-    rendered_size = QImageReader(str(rendered)).size() if rendered.is_file() else None
-    if rendered_size is not None and rendered_size.isValid():
-        # Ce nom contient la révision de développement actuelle. Une pyramide
-        # plus grande peut dater d'avant la retouche ; la couleur prime.
-        with _lock:
-            _preview_origins[str(path)] = "lightroom"
-        return rendered
-    if lightroom_preview is not None:
-        source, orientation, uuid, digest = lightroom_preview
-        proxy = _oriented_preview_path(source, orientation, uuid, digest, association[1])
-        # Le proxy peut être consulté directement par l'inspecteur ou la
-        # visionneuse, sans passer par _fetch. Enregistrer aussi cette origine
-        # pour que l'interface puisse identifier l'image réellement affichée.
-        with _lock:
-            _preview_origins[str(path)] = "lightroom"
-        return proxy
-    revision = hashlib.sha256(photo["revision"].encode("utf-8")).hexdigest()[:10]
-    identity = os.path.normcase(os.path.abspath(str(path))) + ":" + revision
-    name = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:28] + ".jpg"
-    proxy = _cache_root(association[1]) / "images" / name
+    candidates = []
+    rendered = _lightroom_request_path(path, photo, catalog)
+    if rendered.is_file():
+        side = _long_side(rendered)
+        if side >= LARGE_MIN:
+            candidates.append((side, 1, rendered, f"Lightroom · rendu du module SDK {side} px"))
+    entry = _lightroom_preview_path(catalog, photo["local_id"])
+    if entry is not None:
+        source, orientation, uuid, digest = entry
+        side = _level_side(source)
+        if side >= LARGE_MIN:
+            candidates.append((side, 0, (source, orientation, uuid, digest), _pyramid_text(source)))
+    if not candidates:
+        return None
+    _side, _rank, chosen, text = max(candidates, key=lambda item: (item[0], item[1]))
+    if isinstance(chosen, tuple):
+        if not orient:
+            return chosen, text
+        chosen = _oriented_preview_path(*chosen, catalog)
+    return chosen, text
+
+
+def original_text(path: Path) -> str:
+    """Source quand l'image en focus est le fichier lui-même."""
+    from config import RAW_EXTENSIONS as _RAW
+    if Path(path).suffix.casefold() in _RAW:
+        return "Image originale (JPEG intégré au RAW, sans les réglages Lightroom)"
+    return "Image originale"
+
+
+def proxy_source(path: Path) -> str:
+    """« Source du proxy » lisible (inspecteur, diapositives, paramètres de l'image)."""
     try:
-        if proxy.is_file():
-            with _lock:
-                _preview_origins[str(path)] = "application"
-    except OSError:
-        pass
-    return proxy
+        found = proxy_file(path)
+    except (OSError, sqlite3.Error, ValueError):
+        found = None
+    if found is not None:
+        return found[1]
+    error = _preview_errors.get(str(path))
+    return "En attente (Lightroom puis application)" + (f" — {error}" if error else "")
+
+
+def fullscreen_source(path: Path) -> str:
+    """« Source de l'aperçu plein écran » : ce que la visionneuse montre en focus."""
+    try:
+        found = large_file(path)
+    except (OSError, sqlite3.Error, ValueError):
+        found = None
+    return found[1] if found is not None else original_text(path)
+
+
+def request_sources(path: Path) -> None:
+    """Lit en fond les deux sources (proxy, plein écran) ; réponse par `sources_ready`."""
+    _pool.submit(_read_sources, Path(path))
+
+
+def _read_sources(path: Path) -> None:
+    try:
+        texts = (proxy_source(path), fullscreen_source(path))
+    except Exception as exc:              # catalogue illisible : le dire plutôt que rien
+        texts = (f"Inconnue ({exc})",) * 2
+    _signal_bus().sources_ready.emit(str(path), *texts)
+
+
+def ensure_proxy_path(path: Path) -> Path | None:
+    """Proxy de la photo, CREE s'il n'existe pas (demande de l'utilisateur : sans aperçu Lightroom,
+    l'application fait son propre proxy). Décode l'original : à appeler EN FOND (vignettes de la planche
+    et de la pellicule)."""
+    found = proxy_path(path)
+    if found is not None:
+        return found
+    association = managed_folder(path)
+    if association is None:
+        return None
+    try:
+        mtime = path.stat().st_mtime
+        image = _load_or_create_application_preview(path, mtime, association[1])
+    except (OSError, ValueError):
+        return None
+    if image.isNull():
+        return None
+    with _lock:
+        _preview_origins[str(path)] = "application"
+    return _application_preview_path(path, mtime, association[1])
+
+
+def proxy_path(path: Path, max_dimension: int | None = None) -> Path | None:
+    """Fichier du proxy (voir proxy_file) ; `max_dimension` gardé pour les appelants."""
+    try:
+        found = proxy_file(path)
+    except (OSError, sqlite3.Error, ValueError):
+        return None
+    if found is None:
+        return None
+    with _lock:
+        _preview_origins[str(path)] = "application" if found[1].startswith("Application") else "lightroom"
+    return found[0]
 
 
 def ensure_large_preview(path: Path, width: int, height: int) -> None:
@@ -466,14 +656,9 @@ def _check_large_preview(path: Path, width: int, height: int, key: str) -> None:
                 return
         # Le SDK ne peut pas fournir davantage que le JPEG qu'il a deja rendu
         # pour cette revision : ne pas lui redemander la meme photo toutes les 10 s.
-        rendered = _lightroom_request_path(path, photo, association[1])
-        if rendered.is_file() and QImageReader(str(rendered)).size().isValid():
-            return
-        proxy = proxy_path(path)
-        size = QImageReader(str(proxy)).size() if proxy is not None else None
-        if size is not None and size.isValid() and min(
-            width / max(1, size.width()), height / max(1, size.height())
-        ) <= 1.0:
+        # Un aperçu Lightroom assez grand pour le plein écran existe déjà (pyramide standard / 1:1
+        # ou rendu SDK) : rien à demander.
+        if large_file(path, orient=False) is not None:
             return
         request_key = (os.path.normcase(str(path.resolve())), os.path.normcase(str(association[1])))
         with _lock:
@@ -727,7 +912,8 @@ def _request(path: Path, mtime: float, catalog: Path):
 
 def request_previews(paths, limit: int = 36) -> None:
     """Amorce les premières lignes visibles, sans parcourir tout le dossier."""
-    candidates = tuple(dict.fromkeys(Path(path) for path in paths
+    from itertools import islice
+    candidates = tuple(dict.fromkeys(Path(path) for path in islice(paths, max(0, limit))
                                      if Path(path).suffix.casefold() in _PREFETCH_EXTENSIONS))[:limit]
     if candidates:
         _pool.submit(_prefetch_batch, candidates)
@@ -959,14 +1145,13 @@ def _fetch(path: Path, mtime: float, catalog: Path, key: tuple[str, str], force:
             _ensure_preview_monitor()
             _emit_preview(str(path), mtime, image)
             return
-        preview_entry = None if force else _lightroom_preview_path(catalog, photo["local_id"])
         rendered = _lightroom_request_path(path, photo, catalog)
         proxy = None
-        if preview_entry is not None:
-            source, orientation, uuid, digest = preview_entry
-            proxy = _oriented_preview_path(source, orientation, uuid, digest, catalog)
-        if not force and rendered.is_file() and QImageReader(str(rendered)).size().isValid():
-            proxy = rendered
+        if not force:
+            # Le niveau de la pyramide adapté aux colonnes (~640 px), pas le 1:1 entier.
+            found = proxy_file(path)
+            if found is not None and not found[1].startswith("Application"):
+                proxy = found[0]
         if proxy is not None:
             image = QImage(str(proxy))
             if not image.isNull():

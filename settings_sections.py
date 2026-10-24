@@ -34,6 +34,8 @@ from app_style import (
 from settings_theme import _input_radius, _register_input, _set_text_role, _text_label  # noqa: F401
 from settings_store import (
     M,
+    input_bg,
+    input_border_decl,
     _SLOT_REAL,
     _resolve_color_value,
 )
@@ -734,7 +736,7 @@ class _HeaderColorField(QWidget):
         Zones de saisie sans redemander la couleur courante (voir
         setRadius)."""
         self.hex_box.setStyleSheet(
-            f"#HeaderHexBox {{ background: {M['field_bg']}; border: 1px solid {M['field_border']}; "
+            f"#HeaderHexBox {{ background: {input_bg()}; {input_border_decl()} "
             f"border-radius: {self._radius}px; }}"
         )
 
@@ -1124,7 +1126,12 @@ class _CompactAppOrCustomColorField(QWidget):
             # alphabetique (MEME liste que _open_menu).
             self._last_custom = self._value
             slot = getattr(self, "_last_slot", None) or sorted(SEMANTIC_COLOR_SLOTS, key=lambda t: t[2])[0][0]
-            self._select_slot(slot)
+            # L'opacite de la couleur quittee est gardee : une couleur transparente ne devient pas opaque
+            # (un aller-retour « app » / « sys » faisait passer un fond transparent au noir).
+            alpha = round(QColor(self._last_custom).alpha() * 100 / 255) if QColor(self._last_custom).isValid() else 100
+            self._value = join_color_ref(f"@{slot}", alpha)
+            self._refresh()
+            self.changed.emit(self._value)
 
     def _use_system(self):
         self._sync_mode_toggles(False)

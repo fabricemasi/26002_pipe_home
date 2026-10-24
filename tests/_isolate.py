@@ -29,3 +29,15 @@ for _name in ("_PER_USER_PATH", "_PRESETS_PATH", "_WINDOW_STATE_PATH"):
     setattr(settings_store, _name, _copy)
 
 REAL_DATA_UNTOUCHED = True
+
+# État de la FENÊTRE PRINCIPALE (distinct de celui des réglages ci-dessus).
+# Les sondes de navigation ferment des fenêtres hors écran : ne jamais
+# enregistrer leur géométrie / dernier chemin dans la vraie session.
+os.environ["PIPELINE_MAIN_WINDOW_STATE_FILE"] = str(_TMP / "pipeline_window_state.json")
+
+# La fenetre de reglages construit ses sections en fond a l'ouverture (~20 s) : inutile et lent en test.
+os.environ.setdefault("PIPELINE_NO_PREBUILD", "1")
+# Feuille CSS partagee avec Obsidian (Reglages > Markdown > CSS, par defaut celle du coffre de l'utilisateur) : la
+# synchronisation ne lit ni n'ecrit jamais ce fichier en test ; seuls les tests de mdeditor/css_sync.py l'allument,
+# sur des copies temporaires.
+os.environ["PIPELINE_NO_CSS_SYNC"] = "1"

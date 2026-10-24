@@ -15,6 +15,7 @@ from PySide6.QtGui import (
     QImage,
     QImageReader,
     QPainter,
+    QPainterPath,
     QPen,
     QPixmap,
     QPolygonF,
@@ -52,6 +53,7 @@ from previews import (
     UI_ICON_COLLAPSE_TOGGLE,
     UI_ICON_SETTINGS_GEAR,
     UI_ICON_SETTINGS_STYLE,
+    VIEWER_BUTTON_ICONS,
     _bounded_cache_set,
     custom_ui_icon_pixmap,
 )
@@ -288,7 +290,7 @@ class PreviewColumn(QWidget):
         # Rangee des boutons de la visionneuse reordonnee par l'appli (Ctrl + glisser, voir
         # PipelineBrowser._layout_viewer_buttons) : appele apres chaque placement par defaut.
         self.on_buttons_placed = None
-        if on_gallery is not None and self.hide_btn is not None:
+        if on_gallery is not None:
             self.gallery_btn = IconButton(
                 "gallery", role_color("buttons", "#c4cacf"), C["text"], parent=self
             )
@@ -630,8 +632,6 @@ class PreviewColumn(QWidget):
         "supprime police ou icone ... supprime image personnalisee") — la
         position (voir refresh_header) est, elle, EXPLICITE (X/Y depuis le
         coin superieur gauche de la colonne), plus un padding implicite."""
-        if self.toggle_btn is None:
-            return
         for button in (self.toggle_btn, self.hide_btn, self.gallery_btn):
             if button is not None:
                 style_focus_button(button, self.column_title)
@@ -639,11 +639,18 @@ class PreviewColumn(QWidget):
 
     def _place_hide_btn(self):
         """A droite du bouton de repliement (et le bouton de la planche a droite de celui-ci)."""
-        if self.hide_btn is None or self.toggle_btn is None:
-            return
-        self.hide_btn.move(self.toggle_btn.x() + self.toggle_btn.width() + scaled(4, 0), self.toggle_btn.y())
+        anchor = self.toggle_btn
+        if self.hide_btn is not None:
+            if anchor is not None:
+                self.hide_btn.move(anchor.x() + anchor.width() + scaled(4, 0), anchor.y())
+            anchor = self.hide_btn
         if self.gallery_btn is not None:
-            self.gallery_btn.move(self.hide_btn.x() + self.hide_btn.width() + scaled(4, 0), self.hide_btn.y())
+            if anchor is not None:
+                self.gallery_btn.move(anchor.x() + anchor.width() + scaled(4, 0), anchor.y())
+            else:
+                style = column_style_for(self.column_title)
+                self.gallery_btn.move(scaled(int(style.get("preview_toggle_x", 8)), 0),
+                                      scaled(int(style.get("preview_toggle_y", 34)), 0))
         if self.on_buttons_placed is not None:
             self.on_buttons_placed()
 
@@ -651,7 +658,13 @@ class PreviewColumn(QWidget):
         """Mode « colonnes masquees » : la colonne couvre ses boutons, ou que la rangee les ait places."""
         if not getattr(self, "_buttons_only", False):
             return
-        buttons = [b for b in (self.toggle_btn, self.hide_btn, self.gallery_btn) if b is not None and not b.isHidden()]
+        # Boutons partis dans le cadre « Visionneuse » de la barre de navigation : plus rien a couvrir.
+        buttons = [b for b in (self.toggle_btn, self.hide_btn, self.gallery_btn)
+                   if b is not None and not b.isHidden() and b.parentWidget() is self]
+        if not buttons:
+            if (self.width(), self.height()) != (0, 0):
+                self.setFixedSize(0, 0)
+            return
         right = max((b.geometry().right() for b in buttons), default=0) + scaled(10, 0)
         bottom = max((b.geometry().bottom() for b in buttons), default=0) + scaled(8, 0)
         if (right, bottom) != (self.width(), self.height()):
@@ -1279,6 +1292,191 @@ class IconButton(QPushButton):
                                   QPointF(cx + s * 0.35, cy + s * 0.35),
                                   QPointF(cx + s * 0.75, cy),
                                   QPointF(frame.right() - s * 0.35, frame.bottom() - s * 0.35)]))
+        elif self._kind == "browse":
+            # Parcourir : un dossier (onglet en haut a gauche).
+            x0, x1, y0, y1 = cx - s * 1.5, cx + s * 1.5, cy - s * 1.1, cy + s * 1.1
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPolygon(QPolygonF([QPointF(x0, y1), QPointF(x0, y0), QPointF(x0 + s * 1.1, y0),
+                                           QPointF(x0 + s * 1.5, y0 + s * 0.5), QPointF(x1, y0 + s * 0.5),
+                                           QPointF(x1, y1)]))
+        elif self._kind == "presets":
+            # Presets : trois lignes, chacune avec sa pastille (liste de reglages).
+            painter.setBrush(QColor(color))
+            for i in (-1, 0, 1):
+                y = cy + i * s * 0.95
+                painter.drawLine(QPointF(cx - s * 0.5, y), QPointF(cx + s * 1.6, y))
+                painter.drawEllipse(QPointF(cx - s * 1.3, y), s * 0.28, s * 0.28)
+            painter.setBrush(Qt.NoBrush)
+        elif self._kind == "recursive":
+            # Recursif : un dossier et, sous lui, deux sous-dossiers relies par une arborescence.
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(QRectF(cx - s * 1.6, cy - s * 1.6, s * 1.4, s * 1.0))
+            painter.drawPolyline(QPolygonF([QPointF(cx - s * 0.9, cy - s * 0.6), QPointF(cx - s * 0.9, cy + s * 1.15),
+                                            QPointF(cx + s * 0.2, cy + s * 1.15)]))
+            painter.drawLine(QPointF(cx - s * 0.9, cy + s * 0.25), QPointF(cx + s * 0.2, cy + s * 0.25))
+            painter.setBrush(QColor(color))
+            painter.drawRect(QRectF(cx + s * 0.2, cy - s * 0.05, s * 1.3, s * 0.6))
+            painter.drawRect(QRectF(cx + s * 0.2, cy + s * 0.85, s * 1.3, s * 0.6))
+            painter.setBrush(Qt.NoBrush)
+        elif self._kind == "viewer":
+            # Visionneuse : un cadre d'image (montagne + soleil).
+            painter.setBrush(Qt.NoBrush)
+            frame = QRectF(cx - s * 1.6, cy - s * 1.25, s * 3.2, s * 2.5)
+            painter.drawRoundedRect(frame, s * 0.3, s * 0.3)
+            painter.drawPolyline(QPolygonF([QPointF(frame.left() + s * 0.3, frame.bottom() - s * 0.3),
+                                            QPointF(cx - s * 0.35, cy - s * 0.1), QPointF(cx + s * 0.3, cy + s * 0.55),
+                                            QPointF(cx + s * 0.75, cy + s * 0.15),
+                                            QPointF(frame.right() - s * 0.3, frame.bottom() - s * 0.3)]))
+            painter.drawEllipse(QPointF(cx + s * 0.8, cy - s * 0.55), s * 0.28, s * 0.28)
+        elif self._kind == "text_editor":
+            # Editeur de texte : une page au coin plie et ses lignes.
+            painter.setBrush(Qt.NoBrush)
+            x0, x1, y0, y1, fold = cx - s * 1.25, cx + s * 1.25, cy - s * 1.6, cy + s * 1.6, s * 0.7
+            painter.drawPolygon(QPolygonF([QPointF(x0, y0), QPointF(x1 - fold, y0), QPointF(x1, y0 + fold),
+                                           QPointF(x1, y1), QPointF(x0, y1)]))
+            for i in range(3):
+                y = cy - s * 0.35 + i * s * 0.6
+                painter.drawLine(QPointF(x0 + s * 0.45, y), QPointF(x1 - s * (0.45 if i < 2 else 1.0), y))
+        elif self._kind == "save":
+            # Enregistrer : une disquette.
+            painter.setBrush(Qt.NoBrush)
+            x0, x1, y0, y1 = cx - s * 1.5, cx + s * 1.5, cy - s * 1.5, cy + s * 1.5
+            painter.drawPolygon(QPolygonF([QPointF(x0, y0), QPointF(x1 - s * 0.6, y0), QPointF(x1, y0 + s * 0.6),
+                                           QPointF(x1, y1), QPointF(x0, y1)]))
+            painter.drawRect(QRectF(cx - s * 0.8, y0, s * 1.4, s * 0.9))
+            painter.drawRect(QRectF(cx - s * 0.95, cy + s * 0.3, s * 1.9, s * 1.2))
+        elif self._kind == "reload":
+            # Recharger : un cercle ouvert et sa pointe.
+            painter.setBrush(Qt.NoBrush)
+            r = s * 1.35
+            painter.drawArc(QRectF(cx - r, cy - r, 2 * r, 2 * r), 60 * 16, 290 * 16)
+            tip = QPointF(cx + r * 0.5, cy - r * 0.87)
+            painter.drawPolyline(QPolygonF([QPointF(tip.x() - s * 0.75, tip.y() - s * 0.35), tip,
+                                            QPointF(tip.x() - s * 0.15, tip.y() + s * 0.8)]))
+        elif self._kind == "wrap":
+            # Retour a la ligne : deux lignes, la seconde revient a gauche par une fleche.
+            painter.setBrush(Qt.NoBrush)
+            painter.drawLine(QPointF(cx - s * 1.6, cy - s * 1.1), QPointF(cx + s * 1.6, cy - s * 1.1))
+            painter.drawPolyline(QPolygonF([QPointF(cx - s * 1.6, cy), QPointF(cx + s * 1.1, cy),
+                                            QPointF(cx + s * 1.1 + s * 0.5, cy + s * 0.55),
+                                            QPointF(cx + s * 1.1, cy + s * 1.1), QPointF(cx - s * 0.2, cy + s * 1.1)]))
+            painter.drawPolyline(QPolygonF([QPointF(cx + s * 0.25, cy + s * 0.7), QPointF(cx - s * 0.2, cy + s * 1.1),
+                                            QPointF(cx + s * 0.25, cy + s * 1.5)]))
+        elif self._kind == "line_numbers":
+            # Numeros de ligne : une colonne de points devant trois lignes.
+            painter.setBrush(QColor(color))
+            for i in (-1, 0, 1):
+                y = cy + i * s * 1.0
+                painter.drawEllipse(QPointF(cx - s * 1.4, y), s * 0.22, s * 0.22)
+                painter.drawLine(QPointF(cx - s * 0.6, y), QPointF(cx + s * 1.6, y))
+            painter.setBrush(Qt.NoBrush)
+        elif self._kind == "find":
+            # Rechercher : une loupe.
+            painter.setBrush(Qt.NoBrush)
+            r = s * 1.0
+            centre = QPointF(cx - s * 0.35, cy - s * 0.35)
+            painter.drawEllipse(centre, r, r)
+            painter.drawLine(QPointF(centre.x() + r * 0.72, centre.y() + r * 0.72),
+                             QPointF(cx + s * 1.5, cy + s * 1.5))
+        elif self._kind == "board":
+            # Board : une feuille et trois post-it relies.
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(QRectF(cx - s * 1.7, cy - s * 1.35, s * 3.4, s * 2.7), s * 0.3, s * 0.3)
+            painter.setBrush(QColor(color))
+            for px, py in ((-0.95, -0.55), (0.35, -0.55), (-0.3, 0.45)):
+                painter.drawRect(QRectF(cx + px * s, cy + py * s, s * 0.65, s * 0.65))
+            painter.setBrush(Qt.NoBrush)
+        elif self._kind in ("nav_back", "nav_forward"):
+            # Precedent / suivant (editeur Markdown) : une fleche.
+            sign = -1 if self._kind == "nav_back" else 1
+            painter.drawLine(QPointF(cx - sign * s * 1.4, cy), QPointF(cx + sign * s * 1.4, cy))
+            painter.drawPolyline(QPolygonF([QPointF(cx + sign * s * 0.3, cy - s * 1.1), QPointF(cx + sign * s * 1.4, cy),
+                                            QPointF(cx + sign * s * 0.3, cy + s * 1.1)]))
+        elif self._kind == "reading":
+            # Lecture / edition : un livre ouvert.
+            painter.setBrush(Qt.NoBrush)
+            path = QPainterPath(QPointF(cx, cy - s * 0.9))
+            path.cubicTo(QPointF(cx - s * 0.6, cy - s * 1.4), QPointF(cx - s * 1.3, cy - s * 1.3), QPointF(cx - s * 1.7, cy - s * 1.1))
+            path.lineTo(QPointF(cx - s * 1.7, cy + s * 1.2))
+            path.cubicTo(QPointF(cx - s * 1.2, cy + s * 1.0), QPointF(cx - s * 0.5, cy + s * 1.0), QPointF(cx, cy + s * 1.5))
+            path.cubicTo(QPointF(cx + s * 0.5, cy + s * 1.0), QPointF(cx + s * 1.2, cy + s * 1.0), QPointF(cx + s * 1.7, cy + s * 1.2))
+            path.lineTo(QPointF(cx + s * 1.7, cy - s * 1.1))
+            path.cubicTo(QPointF(cx + s * 1.3, cy - s * 1.3), QPointF(cx + s * 0.6, cy - s * 1.4), QPointF(cx, cy - s * 0.9))
+            painter.drawPath(path)
+            painter.drawLine(QPointF(cx, cy - s * 0.9), QPointF(cx, cy + s * 1.5))
+        elif self._kind == "sidebar":
+            # Explorateur de fichiers : un panneau et sa colonne de gauche.
+            painter.setBrush(Qt.NoBrush)
+            frame = QRectF(cx - s * 1.7, cy - s * 1.35, s * 3.4, s * 2.7)
+            painter.drawRoundedRect(frame, s * 0.3, s * 0.3)
+            painter.drawLine(QPointF(cx - s * 0.6, frame.top()), QPointF(cx - s * 0.6, frame.bottom()))
+        elif self._kind == "external":
+            # Ouvrir dans l'application : une fleche qui sort d'une boite.
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPolyline(QPolygonF([QPointF(cx + s * 0.2, cy - s * 1.5), QPointF(cx - s * 1.5, cy - s * 1.5),
+                                            QPointF(cx - s * 1.5, cy + s * 1.5), QPointF(cx + s * 1.5, cy + s * 1.5),
+                                            QPointF(cx + s * 1.5, cy - s * 0.2)]))
+            painter.drawLine(QPointF(cx - s * 0.2, cy + s * 0.2), QPointF(cx + s * 1.5, cy - s * 1.5))
+            painter.drawPolyline(QPolygonF([QPointF(cx + s * 0.5, cy - s * 1.5), QPointF(cx + s * 1.5, cy - s * 1.5),
+                                            QPointF(cx + s * 1.5, cy - s * 0.5)]))
+        elif self._kind in ("undo", "redo"):
+            # Annuler / retablir : un arc et sa pointe.
+            sign = -1 if self._kind == "undo" else 1
+            painter.setBrush(Qt.NoBrush)
+            path = QPainterPath(QPointF(cx - sign * s * 1.3, cy + s * 1.1))
+            path.cubicTo(QPointF(cx - sign * s * 1.5, cy - s * 0.9), QPointF(cx + sign * s * 0.6, cy - s * 1.0),
+                         QPointF(cx + sign * s * 1.4, cy - s * 0.1))
+            painter.drawPath(path)
+            tip = QPointF(cx + sign * s * 1.4, cy - s * 0.1)
+            painter.drawPolyline(QPolygonF([QPointF(tip.x() - sign * s * 0.2, tip.y() - s * 0.9), tip,
+                                            QPointF(tip.x() - sign * s * 0.95, tip.y() + s * 0.2)]))
+        elif self._kind == "export":
+            # Exporter : une fleche qui sort d'un plateau.
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPolyline(QPolygonF([QPointF(cx - s * 1.5, cy + s * 0.3), QPointF(cx - s * 1.5, cy + s * 1.5),
+                                            QPointF(cx + s * 1.5, cy + s * 1.5), QPointF(cx + s * 1.5, cy + s * 0.3)]))
+            painter.drawLine(QPointF(cx, cy + s * 0.7), QPointF(cx, cy - s * 1.5))
+            painter.drawPolyline(QPolygonF([QPointF(cx - s * 0.7, cy - s * 0.8), QPointF(cx, cy - s * 1.5),
+                                            QPointF(cx + s * 0.7, cy - s * 0.8)]))
+        elif self._kind == "fit":
+            # Tout voir : quatre coins.
+            for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+                corner = QPointF(cx + sx * s * 1.4, cy + sy * s * 1.4)
+                painter.drawLine(corner, QPointF(corner.x() - sx * s * 0.8, corner.y()))
+                painter.drawLine(corner, QPointF(corner.x(), corner.y() - sy * s * 0.8))
+        elif self._kind == "video":
+            # Module video : une pellicule et son triangle de lecture.
+            painter.setBrush(Qt.NoBrush)
+            frame = QRectF(cx - s * 1.7, cy - s * 1.25, s * 3.4, s * 2.5)
+            painter.drawRoundedRect(frame, s * 0.3, s * 0.3)
+            painter.setBrush(QColor(color))
+            painter.setPen(Qt.NoPen)
+            painter.drawPolygon(QPolygonF([QPointF(cx - s * 0.5, cy - s * 0.75), QPointF(cx + s * 0.85, cy),
+                                           QPointF(cx - s * 0.5, cy + s * 0.75)]))
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
+        elif self._kind == "grade":
+            # Corrections colorimetriques : trois cercles qui se chevauchent (R, V, B).
+            painter.setBrush(Qt.NoBrush)
+            r = s * 0.85
+            for ang in (-90, 30, 150):
+                a = math.radians(ang)
+                painter.drawEllipse(QPointF(cx + math.cos(a) * s * 0.6, cy + math.sin(a) * s * 0.6), r, r)
+        elif self._kind == "info":
+            # Informations : un « i » dans un cercle.
+            painter.setBrush(Qt.NoBrush)
+            painter.drawEllipse(QPointF(cx, cy), s * 1.5, s * 1.5)
+            painter.drawLine(QPointF(cx, cy - s * 0.2), QPointF(cx, cy + s * 0.85))
+            painter.setBrush(QColor(color))
+            painter.drawEllipse(QPointF(cx, cy - s * 0.75), s * 0.12, s * 0.12)
+            painter.setBrush(Qt.NoBrush)
+        elif self._kind == "fullscreen":
+            # Plein ecran : quatre coins tournes vers l'exterieur.
+            for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+                corner = QPointF(cx + sx * s * 1.5, cy + sy * s * 1.5)
+                painter.drawLine(corner, QPointF(corner.x() - sx * s * 0.9, corner.y()))
+                painter.drawLine(corner, QPointF(corner.x(), corner.y() - sy * s * 0.9))
+                painter.drawLine(corner, QPointF(cx + sx * s * 0.5, cy + sy * s * 0.5))
         elif self._kind in ("dchevron_left", "dchevron_right"):
             # Repli/depli de Type/Projets/Sous-projet (voir
             # Column.set_collapsed) : double chevron ("«"/"»") pointant vers
@@ -1307,6 +1505,11 @@ class IconButton(QPushButton):
             return custom_ui_icon_pixmap(UI_ICON_SETTINGS_GEAR, size)
         if self._kind == "sliders":
             return custom_ui_icon_pixmap(UI_ICON_SETTINGS_STYLE, size)
+        if self._kind in ("min", "max", "close", "browse", "presets", "viewer", "text_editor", "board", "video"):
+            return custom_ui_icon_pixmap(f"ui_navbar_{self._kind}", size)
+        viewer_key = VIEWER_BUTTON_ICONS.get(self._kind)
+        if viewer_key is not None:
+            return custom_ui_icon_pixmap(viewer_key, size)      # Reglages > Visionneuse > Icones
         if self._kind in ("dchevron_left", "dchevron_right") and ui_state.COLLAPSE_TOGGLE_MODE == "icone":
             return custom_ui_icon_pixmap(UI_ICON_COLLAPSE_TOGGLE, size)
         return None

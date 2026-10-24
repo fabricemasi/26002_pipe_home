@@ -122,14 +122,44 @@ def _font(v: dict, pre: str, default_size: int):
     return app_font(size, weight, family=family, smoothing=smooth, italic=bool(v.get(f"{pre}_font_italic")))
 
 
-def menu_look() -> dict:
-    """Habillage des menus : Reglages > Menu contextuel (cles `ctx_menu_*`)."""
-    v = _values()
+# Portees d'habillage (ex. « board » : Reglages > MRO > Menus contextuels) : un menu dont la cle commence par
+# « <portee>: » prend, pour chaque cle dont l'interrupteur d'override est allume, la valeur propre a la portee.
+SCOPES: dict[str, tuple[str, dict]] = {}
+
+
+def register_scope(scope: str, value_prefix: str, toggles: dict) -> None:
+    """`toggles` : {cle des menus (ctx_menu_*): cle de l'interrupteur d'override}."""
+    SCOPES[scope] = (value_prefix, dict(toggles))
+
+
+def menu_scope(menu) -> str | None:
+    key = menu_key(menu)
+    scope = key.split(":", 1)[0] if ":" in key else None
+    return scope if scope in SCOPES else None
+
+
+def scoped_values(values: dict, scope: str | None) -> dict:
+    if scope not in SCOPES:
+        return values
+    prefix, toggles = SCOPES[scope]
+    merged = dict(values)
+    for key, toggle in toggles.items():
+        if values.get(toggle):
+            merged[key] = values.get(prefix + key, values.get(key))
+    return merged
+
+
+def menu_look(scope: str | None = None) -> dict:
+    """Habillage des menus : Reglages > Menu contextuel (cles `ctx_menu_*`), et les overrides d'une portee."""
+    v = scoped_values(_values(), scope)
 
     def color(key, fallback):
         return resolve_color_ref(v.get(key), fallback)
 
     border, border_colors = _border(v, "ctx_menu_border", "#2c3034")
+    if _single_border_color(v, scope):
+        one = color("ctx_menu_border_color", "#2c3034")
+        border_colors = {s: one for s in _SIDES}
     hover_border, hover_border_colors = _border(v, "ctx_menu_hover_border", "#5f9bd0")
     return {
         "bg": color("ctx_menu_bg", "#202326"),
@@ -161,6 +191,15 @@ def menu_look() -> dict:
         "editable": bool(v.get("ctx_menu_editable", True)),
         "shadow": _shadow(v),
     }
+
+
+def _single_border_color(values: dict, scope: str | None) -> bool:
+    """Portee dont SEULE la « Couleur des bordures » est en override (pas la ligne Bordures) : cette couleur
+    vaut pour les 4 cotes (dans l'appli, elle est deja recopiee sur chaque cote par la fenetre de reglages)."""
+    if scope not in SCOPES:
+        return False
+    toggles = SCOPES[scope][1]
+    return bool(values.get(toggles.get("ctx_menu_border_color", ""))) and         not values.get(toggles.get("ctx_menu_border", ""))
 
 
 def _border(v: dict, prefix: str, default_color: str) -> tuple:
@@ -530,7 +569,7 @@ class Menu(QMenu):
 
 
 def prepare_menu(menu: QMenu) -> None:
-    lk = menu_look()
+    lk = menu_look(menu_scope(menu))
     layout = _layouts().get(menu_key(menu)) or {}
     if layout.get("order") and not menu.property("ctxNoEdit"):
         _apply_order(menu, layout["order"])
@@ -901,7 +940,7 @@ class _MenuEditor(QObject):
         ghost = self.menu.grab(rect)
         spans = _Spans(self.menu, self._actions)
         overlay = _ReorderOverlay(self.menu, spans, source, ghost, 0, self._press.y() - rect.top(), axis="y")
-        overlay.veil_color = menu_look()["bg"]
+        overlay.veil_color = menu_look(menu_scope(self.menu))["bg"]
         overlay.setGeometry(QRect(rect.left(), 0, rect.width(), self.menu.height()))
         overlay.offset = 0
         self._overlay = overlay

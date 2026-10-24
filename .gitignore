@@ -9,6 +9,7 @@ __pycache__/
 data/.pipeline_preview_cache/
 # CSS et polices d'Obsidian extraits de SON installation (voir markdown_preview.py)
 data/obsidian_cache/
+data/obsidian_module/
 data/render_profiles_snapshot.json
 data/blender_recent_added.json
 data/.pipeline_protected_previews.json
@@ -39,3 +40,12 @@ files/alembic_conversion_*/
 # Captures de comparaison de la fenetre de reglages (tests/_probe_compare.sh)
 tests/_shots_before/
 tests/_shots_after/
+tools/rife/
+
+# Fichiers produits a l execution / restes de sondes
+data/background_tasks.html
+data/background_tasks.log
+data/mdeditor/
+video_checks_*/
+_o[0-9]*.txt
+p.out

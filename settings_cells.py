@@ -22,17 +22,17 @@ from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QActionGroup, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractButton, QAbstractSpinBox, QApplication, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout,
-    QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMenu,
+    QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMenu, QPlainTextEdit,
     QSizePolicy, QSpacerItem, QSpinBox, QVBoxLayout, QWidget,
 )
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QKeySequence, QShortcut, QTextCursor
 
 from settings_layout import (
     _ReorderOverlay,
     _TABLE_HEAD, _lock_min_height, _prestyle_flat_frame, _prestyle_flat_row, _register_cells_table,
     _ResizableTableHeader, _reflow_ancestors, _style_flat_table, _table_row, _wire_resizable_columns,
 )
-from settings_store import M
+from settings_store import M, input_bg, input_border_decl, input_height
 from settings_theme import _input_radius, _register_input, _set_text_role
 from settings_widgets import (
     Menu, menu_row,
@@ -59,14 +59,14 @@ class _TextField(QLineEdit):
 
     def __init__(self, text: str, width: int = 170):
         super().__init__(text)
-        self.setFixedSize(width, 25)
+        self.setFixedSize(width, input_height() or 25)
         self._radius = _input_radius()
         _register_input(self)
         self._restyle()
 
     def _restyle(self):
         self.setStyleSheet(
-            f"QLineEdit {{ background: {M['field_bg']}; border: 1px solid {M['field_border']}; "
+            f"QLineEdit {{ background: {input_bg()}; {input_border_decl()} "
             f"border-radius: {self._radius}px; color: {M['value_fg']}; padding: 0 8px; }}")
 
     def setRadius(self, radius: int):
@@ -142,6 +142,107 @@ class _WordsField(_TextField):
         self.setText(text[:start] + word + " " + rest)
         self.setCursorPosition(start + len(word) + 1)
 
+
+
+class _LinesField(QPlainTextEdit):
+    """Zone de saisie de plusieurs entrées, UNE PAR LIGNE (mots clés des fenêtres de la planche : un mot
+    clé par ligne, il peut contenir des espaces), habillée comme les autres champs, avec autocomplétion de
+    la ligne EN COURS : propositions = `suggestions()` moins les lignes déjà saisies, sur une partie du
+    mot, sans tenir compte des majuscules ; choisir une proposition la met à la place de la ligne.
+    Ctrl + Entrée = `submitted` (Entrée ajoute une ligne)."""
+
+    submitted = Signal()
+
+    def __init__(self, lines=(), suggestions: Callable | None = None, width: int = 300, rows: int = 6):
+        super().__init__(chr(10).join(lines))
+        from PySide6.QtCore import QStringListModel
+        from PySide6.QtWidgets import QCompleter
+        self._suggestions = suggestions
+        self._rows = rows
+        self._radius = _input_radius()
+        _register_input(self)
+        self.setFixedWidth(width)
+        self.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self._model = QStringListModel(self)
+        self.completer_ = QCompleter(self._model, self)
+        self.completer_.setWidget(self)
+        self.completer_.setCaseSensitivity(Qt.CaseInsensitive)
+        self.completer_.setFilterMode(Qt.MatchContains)
+        self.completer_.setCompletionMode(QCompleter.PopupCompletion)
+        self.completer_.activated[str].connect(self._insert)
+        self._restyle()
+        self.fit_rows()
+
+    def _restyle(self):
+        self.setStyleSheet(
+            f"QPlainTextEdit {{ background: {input_bg()}; {input_border_decl()} "
+            f"border-radius: {self._radius}px; color: {M['value_fg']}; padding: 4px 8px; }}")
+
+    def setRadius(self, radius: int):
+        self._radius = max(0, int(radius))
+        self._restyle()
+
+    def fit_rows(self, minimum: int = 4, maximum: int = 12):
+        """Hauteur = le nombre de lignes (entre `minimum` et `maximum`, puis défilement)."""
+        count = max(minimum, min(maximum, self.document().blockCount() + 1))
+        line = self.fontMetrics().lineSpacing()
+        self.setFixedHeight(count * line + 2 * int(self.document().documentMargin()) + 14)
+
+    def lines(self) -> list[str]:
+        out, seen = [], set()
+        for line in self.toPlainText().splitlines():
+            line = line.strip()
+            if line and line.casefold() not in seen:
+                seen.add(line.casefold())
+                out.append(line)
+        return out
+
+    def set_lines(self, lines):
+        self.setPlainText(chr(10).join(lines))
+        self.fit_rows()
+
+    def _line_prefix(self) -> str:
+        cursor = self.textCursor()
+        return cursor.block().text()[:cursor.positionInBlock()]
+
+    def keyPressEvent(self, event):
+        popup = self.completer_.popup()
+        if popup.isVisible() and event.key() in (Qt.Key_Enter, Qt.Key_Return, Qt.Key_Tab, Qt.Key_Backtab,
+                                                 Qt.Key_Escape):
+            event.ignore()                              # la liste de propositions les prend
+            return
+        if event.key() in (Qt.Key_Enter, Qt.Key_Return) and event.modifiers() & Qt.ControlModifier:
+            self.submitted.emit()
+            return
+        super().keyPressEvent(event)
+        self.fit_rows()
+        if event.text() or event.key() in (Qt.Key_Backspace, Qt.Key_Delete):
+            self._update_completion()
+
+    def _update_completion(self):
+        popup = self.completer_.popup()
+        token = self._line_prefix().strip()
+        if self._suggestions is None or not token:
+            popup.hide()
+            return
+        current = self.textCursor().block().text().strip().casefold()
+        others = {w.casefold() for w in self.lines()} - {current}
+        self._model.setStringList([w for w in self._suggestions() if w.casefold() not in others])
+        self.completer_.setCompletionPrefix(token)
+        if self.completer_.completionCount() == 0 or (
+                self.completer_.completionCount() == 1 and self.completer_.currentCompletion().casefold() == token.casefold()):
+            popup.hide()
+            return
+        rect = self.cursorRect()
+        rect.setWidth(max(self.width() // 2, popup.sizeHintForColumn(0) + 24))
+        self.completer_.complete(rect)
+
+    def _insert(self, word: str):
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.StartOfBlock)
+        cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
+        cursor.insertText(word)                          # la ligne entière est remplacée
+        self.setTextCursor(cursor)
 
 
 def rename_inline(label: QLabel, on_done: Callable[[str], None]) -> QLineEdit:

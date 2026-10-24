@@ -21,7 +21,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QBrush, QColor, QCursor, QFont, QFontMetrics, QImage, QImageIOHandler, QImageReader, QLinearGradient, QPainter, QPen,
-    QPixmap, QRegion, QTransform,
+    QPixmap, QRegion, QTextCursor, QTransform,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QGraphicsOpacityEffect, QHBoxLayout, QListView, QListWidget, QListWidgetItem, QStyle,
@@ -77,54 +77,44 @@ class _DecodeTask(QRunnable):
 
     def run(self):
         full = fitted = natural = None
-        origin = "original"
+        origin = "Image originale"
         try:
             source_path = Path(self._key)
-            from lightroom_bridge import is_managed, orient_image, orientation, preview_origin, proxy_path
+            from lightroom_bridge import (is_managed, large_file, orient_image, orientation,
+                                          original_text, proxy_path)
             managed = is_managed(source_path)
-            large_proxy = proxy_path(source_path) if managed else None
-            reader_path = large_proxy if large_proxy is not None and large_proxy.is_file() else source_path
-            lightroom_proxy = (
-                managed and reader_path != source_path
-                and preview_origin(source_path) == "lightroom"
-            )
+            # Image en focus d'une photo Lightroom : son GRAND aperçu développé (pyramide standard /
+            # 1:1, ou rendu du module SDK), jamais le petit proxy des colonnes ; sans lui, l'original.
+            large = large_file(source_path) if managed else None
+            reader_path = large[0] if large is not None else source_path
+            use_original = large is None
+            small = proxy_path(source_path) if managed and use_original else None
             reader = QImageReader(str(reader_path))
             reader.setAutoTransform(True)
             size = reader.size()
-            oriented_proxy_size = QSize(size) if reader_path != source_path else QSize()
-            source_transform = 0
-            # Un petit proxy Lightroom (parfois une vignette de quelques centaines de
-            # pixels) ne doit pas devenir l'image en focus. Garder le rendu Lightroom
-            # s'il suffit a la zone ; sinon decoder le fichier source.
-            use_original = managed and (not size.isValid() or min(
-                self._fit.width() / max(1, size.width()),
-                self._fit.height() / max(1, size.height()),
-            ) > 1.0)
-            if source_path.suffix.lower() in RAW_EXTENSIONS and (use_original or not size.isValid()):
+            # Taille du proxy Lightroom (déjà orienté) : dit si l'original est déjà tourné.
+            oriented_proxy_size = QImageReader(str(small)).size() if small is not None else QSize()
+            source_transform = reader.transformation() if use_original else 0
+            if large is not None:
+                origin = large[1]
+            elif managed or source_path.suffix.lower() in RAW_EXTENSIONS:
+                origin = original_text(source_path)
+            if source_path.suffix.lower() in RAW_EXTENSIONS and use_original:
                 image, source_transform = previews._decode_embedded_jpeg(
                     source_path, self._max_side, include_transform=True)
                 if image is not None:
                     natural = QSizeF(image.size())
-                    origin = "original"
             else:
                 image = None
             if image is None or image.isNull():
-                if use_original and source_path.suffix.lower() not in RAW_EXTENSIONS:
-                    original_reader = QImageReader(str(source_path))
-                    original_reader.setAutoTransform(True)
-                    original_size = original_reader.size()
-                    if original_size.isValid():
-                        reader, size, reader_path = original_reader, original_size, source_path
-                        source_transform = reader.transformation()
                 turned = _quarter_turn(reader)
                 if size.isValid() and max(size.width(), size.height()) > self._max_side:
                     reader.setScaledSize(size.scaled(self._max_side, self._max_side, Qt.KeepAspectRatio))
                 image = reader.read()
-                origin = (preview_origin(source_path) or "lightroom") if managed and reader_path != source_path else "original"
                 if size.isValid():
                     natural = QSizeF(size.height(), size.width()) if turned else QSizeF(size)
             if not image.isNull():
-                if managed and origin == "original":
+                if managed and use_original:
                     code = orientation(source_path)
                     same_axis = (oriented_proxy_size.isValid()
                                  and image.width() != image.height()
@@ -251,14 +241,17 @@ class FocusImageLoader(QObject):
         known = self._naturals.get(key)
         if known is not None and known[0] == mtime:
             return known[1]
-        reader_path = path
         try:
-            from lightroom_bridge import is_managed, proxy_path
-            if is_managed(path):
-                reader_path = proxy_path(path) or path
+            from lightroom_bridge import is_managed
+            managed = is_managed(path)
         except (ImportError, OSError, ValueError):
-            pass
-        reader = QImageReader(str(reader_path))
+            managed = False
+        if managed:
+            # Photo Lightroom : l'image en focus est son grand apercu developpe (recadrage compris),
+            # pas l'original ; sa taille arrive avec son decodage EN FOND (_DecodeTask -> _naturals).
+            # Jamais de lecture du catalogue ni de Previews.lrdata ici : fil de l'interface.
+            return None
+        reader = QImageReader(str(path))
         size = reader.size()
         if not size.isValid():
             return None
@@ -396,8 +389,8 @@ class _FilmTask(QRunnable):
             if managed and image is None:
                 source_path = None
                 try:
-                    from lightroom_bridge import proxy_path
-                    source_path = proxy_path(Path(self._key), max_dimension=640)
+                    from lightroom_bridge import ensure_proxy_path
+                    source_path = ensure_proxy_path(Path(self._key))
                 except (ImportError, OSError, ValueError):
                     pass
                 if source_path is not None and source_path.is_file():
@@ -555,6 +548,8 @@ def _film_look_signature() -> str:
     applied = ui_state.APPLIED_SETTINGS or {}
     subset = {k: v for k, v in applied.items()
               if k.startswith(("viewer_film_", "viewer_gallery_text", "viewer_filter_")) or k == "table_cell_padding"}
+    subset["icons"] = [previews.cached_mtime(previews.custom_software_icon_path(k))
+                       for k in previews.VIEWER_ICON_KEYS]        # icones perso des attributs
     return json.dumps(subset, sort_keys=True, default=str)
 
 
@@ -591,9 +586,9 @@ class _ProxyTask(QRunnable):
         image, full = None, True
         try:
             source_path = Path(self._key)
-            from lightroom_bridge import is_managed, proxy_path
+            from lightroom_bridge import ensure_proxy_path, is_managed
             if is_managed(source_path):
-                source_path = proxy_path(source_path, max_dimension=640)
+                source_path = ensure_proxy_path(source_path)
                 if source_path is None or not source_path.is_file():
                     raise FileNotFoundError("Proxy Lightroom indisponible")
             reader = QImageReader(str(source_path))
@@ -1326,7 +1321,22 @@ def _film_look() -> dict:
             thick = 1
         return bool(values.get(f"{pre}_enabled")), mark(f"{pre}_color", "#2a2e32"), thick
 
+    def pad(key: str) -> dict:
+        raw = values.get(key)
+        raw = raw if isinstance(raw, dict) else {}
+        out = {}
+        for side in _FILM_SIDES:
+            try:
+                out[side] = max(0, int(raw.get(side, 0) or 0))
+            except (TypeError, ValueError):
+                out[side] = 0
+        return out
+
     return {"table": box("viewer_film_table"), "image_cell": box("viewer_film_image_cell"),
+            "bg_padding": pad("viewer_film_bg_padding"),            # fond de la cellule dans la case
+            "image_padding": pad("viewer_film_image_padding"),      # image dans le fond
+            "attr_padding": pad("viewer_film_attr_padding"),        # icones d'attribut : calque a part
+
             "image": box("viewer_film_image", bg=False), "text_cell": box("viewer_film_text_cell"),
             "rank_font": text("viewer_film_table"), "ext_font": text("viewer_film_image_cell"),
             "name_font": text("viewer_film_text_cell"),
@@ -1368,6 +1378,11 @@ def _gallery_mark_on_sub_cells(look: dict) -> bool:
     un border radius que rien ne dessine (ni fond ni bordure) compte comme absent ; sinon (au moins
     un fond de sous-cellule absent) sur toute la cellule du tableau."""
     table = look["table"]
+    if not look.get("split"):
+        # Case non divisee (demande de l'utilisateur) : focus / survol / couleur suivent le FOND DE LA CELLULE
+        # quand le fond du tableau est 100 % transparent, sinon la cellule du tableau (4 coins de la cellule
+        # = seulement ceux du tableau, `corners`).
+        return table["fill"] is None
     if look["image_cell"]["fill"] is not None and look["text_cell"]["fill"] is not None:
         return True
     return table["fill"] is None and (not table["thick"] or not any(table["radius"].values()))
@@ -1430,10 +1445,99 @@ def _paint_color_mark(painter: QPainter, look: dict, rect: QRect, color: str, co
 def _gallery_mark_radius(look: dict, corners: frozenset) -> dict:
     """Coins des marques d'une case (focus, survol, couleur attribuee) : voir _paint_gallery_mark."""
     if _gallery_mark_on_sub_cells(look):
+        if not look.get("split"):
+            return dict(look["image_cell"]["radius"])        # les 4 coins du fond de la cellule
         top, bottom = look["image_cell"]["radius"], look["text_cell"]["radius"]
         return {"top_left": top["top_left"], "top_right": top["top_right"],
                 "bottom_right": bottom["bottom_right"], "bottom_left": bottom["bottom_left"]}
     return {k: (v if k in corners else 0) for k, v in look["table"]["radius"].items()}
+
+
+# -- Encart « Source du proxy » (Maj + survol d'une diapositive) ------------------------------------
+
+_PROXY_SOURCES: dict[str, str] = {}      # chemin -> source du proxy (lue en fond, voir ProxySourceTip)
+
+
+class ProxySourceTip(QObject):
+    """Encart « Source du proxy » sous le curseur quand on survole une diapositive (planche,
+    pellicule) avec Maj enfonce (demande de l'utilisateur). Habillage = l'encart des reglages
+    (`settings_widgets._WidthBadge`, role width_badge), jamais un style a part. Source lue EN FOND
+    (`lightroom_bridge.request_sources`, catalogue et Previews.lrdata), gardee par fichier ; Maj
+    enfoncee / relachee sans bouger la souris : filtre d'application (touches seulement)."""
+
+    def __init__(self, host: QWidget, path_at):
+        super().__init__(host)
+        self._host, self._path_at = host, path_at
+        self._badge = None
+        self._path: str | None = None
+        self._pos = QPoint()
+        QApplication.instance().installEventFilter(self)
+        try:
+            import lightroom_bridge
+            lightroom_bridge._signal_bus().sources_ready.connect(self._on_sources)
+        except (ImportError, OSError, ValueError):
+            pass
+
+    def update_at(self, global_pos: QPoint | None = None, shift: bool | None = None):
+        if shift is None:
+            shift = bool(QApplication.queryKeyboardModifiers() & Qt.ShiftModifier)
+        host = self._host
+        pos = host.mapFromGlobal(global_pos if global_pos is not None else QCursor.pos())
+        path = None
+        if shift and host.isVisible() and host.rect().contains(pos):
+            path = self._path_at(pos)
+        if not path:
+            self.hide()
+            return
+        self._path, self._pos = str(path), pos
+        text = _PROXY_SOURCES.get(self._path)
+        if text is None:
+            text = self._ask(Path(path))
+        self._show(text)
+
+    def _ask(self, path: Path) -> str:
+        try:
+            import lightroom_bridge
+            if lightroom_bridge.is_managed(path):
+                lightroom_bridge.request_sources(path)
+                return "lecture…"
+        except (ImportError, OSError, ValueError):
+            pass
+        text = _PROXY_SOURCES[str(path)] = "Application · aperçu créé par l'application"
+        return text
+
+    def _on_sources(self, path: str, proxy: str, _full: str):
+        _PROXY_SOURCES[path] = proxy
+        if path == self._path and self._badge is not None and self._badge.isVisible():
+            self._show(proxy)
+
+    def _show(self, text: str):
+        from settings_widgets import _WidthBadge
+        if self._badge is None:
+            self._badge = _WidthBadge(self._host)
+        badge = self._badge
+        badge.setText(f"Source du proxy : {text}")
+        badge.adjustSize()
+        gap = scaled(14)
+        room = self._host.rect()
+        x = min(self._pos.x() + gap, room.right() - badge.width())
+        y = self._pos.y() + gap
+        if y + badge.height() > room.bottom():
+            y = self._pos.y() - gap - badge.height()
+        badge.move(max(0, x), max(0, y))
+        badge.raise_()
+        badge.show()
+
+    def hide(self):
+        self._path = None
+        if self._badge is not None:
+            self._badge.hide()
+
+    def eventFilter(self, obj, event):
+        kind = event.type()
+        if kind in (QEvent.KeyPress, QEvent.KeyRelease) and event.key() == Qt.Key_Shift                 and not event.isAutoRepeat():
+            self.update_at(shift=kind == QEvent.KeyPress)
+        return False
 
 
 class FocusFilmstrip(QWidget):
@@ -1480,6 +1584,8 @@ class FocusFilmstrip(QWidget):
         self._index = 0
         self._pos = 0.0
         self._hover = -1
+        self.source_tip = ProxySourceTip(self, lambda pos: (
+            str(self._paths[i]) if (i := self._index_at(QPointF(pos))) >= 0 else None))
         self._alpha = 0.0
         self._alpha_goal = 0.0
         self._th = scaled(60)
@@ -1814,6 +1920,7 @@ class FocusFilmstrip(QWidget):
         if event.modifiers() & Qt.ControlModifier and self._split_at(pos) is not None:
             self.setCursor(Qt.SplitVCursor)
             return
+        self.source_tip.update_at(event.globalPosition().toPoint(), bool(event.modifiers() & Qt.ShiftModifier))
         hover = self._index_at(pos)
         if hover != self._hover or self.cursor().shape() == Qt.SplitVCursor:
             self._hover = hover
@@ -1823,6 +1930,7 @@ class FocusFilmstrip(QWidget):
         super().mouseMoveEvent(event)
 
     def leaveEvent(self, event):
+        self.source_tip.hide()
         if self._hover != -1:
             self._hover = -1
             self.update()
@@ -1900,11 +2008,12 @@ def _gallery_look() -> dict:
         return {side: (raw.get(side, fallback) if isinstance(raw, dict) else raw if raw is not None else fallback)
                 for side in ("left", "top", "right", "bottom")}
 
-    # Seul le padding des cellules vient encore de Reglages > Tableaux : fond, bordures et border radius
-    # du tableau sont ceux de Visionneuse > Tableau, et la planche n'a PLUS de filets interieurs (ceux des
-    # tableaux des reglages restaient visibles tableau sans fond ni bordure : demande de l'utilisateur).
-    pad = side_dict("table_cell_padding", 8)
-    return {"padding": {k: max(0, int(v or 0)) for k, v in pad.items()}}
+    # Fond, bordures et border radius du tableau sont ceux de Visionneuse > Tableau, et la planche n'a PLUS de
+    # filets interieurs (ceux des tableaux des reglages restaient visibles tableau sans fond ni bordure :
+    # demande de l'utilisateur). Elle n'a PLUS non plus le padding des cellules de Reglages > Tableaux (8 / 14 px
+    # qui laissaient un espace autour de l'image, signale malgre des paddings a 0) : seuls comptent Visionneuse >
+    # Cellules > « Padding de l'image » et « Padding des icônes d'attribut ».
+    return {"padding": {side: 0 for side in ("left", "top", "right", "bottom")}}
 
 
 class _GalleryDelegate(QStyledItemDelegate):
@@ -1927,6 +2036,7 @@ class _GalleryDelegate(QStyledItemDelegate):
         opacity, scale = gallery.ripple_state(option.rect)
         if opacity <= 0.0:
             return
+        hovered = bool(option.state & QStyle.State_MouseOver) and gallery.attr_editing_allowed()
         mark = "focus" if is_current else "hover" if option.state & QStyle.State_MouseOver else None
         painter.save()
         if opacity < 1.0 or scale != 1.0:
@@ -1938,13 +2048,20 @@ class _GalleryDelegate(QStyledItemDelegate):
             painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
         # Toute la case (sous-cellules, image, textes) est une image gardee : une peinture ne fait que
         # la poser (la vague et le vol de l'image repeignent la planche a chaque image).
-        painter.drawPixmap(option.rect.topLeft(), gallery.cell_pixmap(index, option.rect.size(), mark))
+        painter.drawPixmap(option.rect.topLeft(), gallery.cell_pixmap(index, option.rect.size(), mark, hovered))
+        if hovered and opacity >= 1.0:
+            # Controles des attributs de la case survolee, directement sur la photo.
+            room = gallery.photo_room(key, option.rect)
+            hover = gallery._attr_hover[1:] if gallery._attr_hover and gallery._attr_hover[0] == key else None
+            painter.translate(option.rect.topLeft())
+            _paint_attr_controls(painter, room, gallery.attr_values(key), hover)
         painter.restore()
 
     @staticmethod
     def paint_content(painter: QPainter, gallery: "FocusGallery", rect: QRect, path: Path, info: str,
                       pix: QPixmap | None, hidden: bool, mark: str | None = None,
-                      corners: frozenset = frozenset(), color: str | None = None, insets: tuple | None = None):
+                      corners: frozenset = frozenset(), color: str | None = None, insets: tuple | None = None,
+                      attrs: dict | None = None, hovered: bool = False):
         """Contenu d'une case dans `rect` : sous-cellule image puis sous-cellule texte dessous
         (Reglages > Visionneuse > Sous cellule image / Sous cellule texte, _film_look). `mark` = "focus" /
         "hover" : case en cours / survolee (_paint_gallery_mark) : sous les fonds des sous-cellules quand
@@ -1967,16 +2084,29 @@ class _GalleryDelegate(QStyledItemDelegate):
                 _paint_color_mark(painter, look, rect.adjusted(left, top, -right, -bottom), color, corners)
             if mark is not None:
                 _paint_gallery_mark(painter, look, rect, mark, corners)
-        _paint_film_box(painter, QRectF(box), look["image_cell"])
-        _paint_film_box(painter, QRectF(text_box), look["text_cell"])
+        bg_pad = look["bg_padding"]                  # fond de la cellule : retrait dans la case, images et icones suivent
+        bg_box = QRect(box).adjusted(bg_pad["left"], bg_pad["top"], -bg_pad["right"], -bg_pad["bottom"])
+        _paint_film_box(painter, QRectF(bg_box), look["image_cell"])
+        if text_box.height() > 0:
+            _paint_film_box(painter, QRectF(text_box), look["text_cell"])
         if on_cells:
+            target = cell if look.get("split") else bg_box          # fond de la cellule (padding du fond compris)
             if color:
-                _paint_color_mark(painter, look, cell, color)
+                _paint_color_mark(painter, look, target, color)
             if mark is not None:
-                _paint_gallery_mark(painter, look, cell, mark)
-        room = _film_inner(QRectF(box), look["image_cell"]).toRect()
+                _paint_gallery_mark(painter, look, target, mark)
+        attr_pad = look["attr_padding"]                                    # calque des icones d'attribut
+        frame = QRect(bg_box).adjusted(attr_pad["left"], attr_pad["top"], -attr_pad["right"], -attr_pad["bottom"])
+        room = _film_inner(QRectF(bg_box), look["image_cell"]).toRect()    # calque de l'image : son propre padding
+        image_pad = look["image_padding"]
+        room = room.adjusted(image_pad["left"], image_pad["top"], -image_pad["right"], -image_pad["bottom"])
+        band = gallery.photo_band(look)
+        if room.height() > 2 * band + 20:
+            room = room.adjusted(0, band, 0, -band)      # place des attributs, au-dessus et au-dessous
+        strip_room = room
         if pix is not None and not pix.isNull():
             target = gallery.fit_in_box(pix, room)
+            strip_room = target              # attributs poses SUR la photo
             image = look["image"]
             if look["image_shadow"] is not None:
                 from settings_widgets import paint_shadow
@@ -1994,6 +2124,12 @@ class _GalleryDelegate(QStyledItemDelegate):
             painter.setFont(ext_font)
             painter.setPen(ext_color)
             painter.drawText(room, Qt.AlignCenter, path.suffix.lstrip(".").upper())
+        if hasattr(gallery, "_photo_rects"):
+            gallery._photo_rects[str(path)] = QRect(frame)           # coins de la diapo (controles du survol)
+        if attrs:
+            _paint_attrs(painter, frame, attrs, look, hovered, SHOW_KEYWORDS, strip_room)
+        if text_box.height() <= 0:
+            return                           # case non divisee : pas de sous-cellule texte
         # Nom (police de la sous-cellule texte) puis type et poids (police du tableau), centres ensemble.
         text_room = _film_inner(QRectF(text_box), look["text_cell"]).toRect()
         name_font, name_color = look["name_font"]
@@ -2023,6 +2159,261 @@ class _GalleryDelegate(QStyledItemDelegate):
             _paint_gallery_text_override(painter, info_rect, look.get("info_style"))
             painter.drawText(info_rect, Qt.AlignCenter, shown_info)
         painter.restore()
+
+
+_FLAG_PIXMAPS: dict = {}       # (statut, cote px) -> icone du drapeau (fichiers PNG lourds : lus une fois)
+
+
+def _flag_pixmap(status: str, side: int) -> QPixmap | None:
+    custom_key = {"keep": previews.UI_ICON_VIEWER_FLAG_KEEP, "delete": previews.UI_ICON_VIEWER_FLAG_DELETE}.get(status)
+    if custom_key is not None:
+        custom = previews.custom_ui_icon_pixmap(custom_key, side)       # Reglages > Visionneuse > Icones
+        if custom is not None:
+            return custom
+    key = (status, side)
+    if key not in _FLAG_PIXMAPS:
+        icon_path = _StatusFlags.ICONS.get(status, ("", ""))[0]
+        pix = QPixmap(icon_path) if icon_path else QPixmap()
+        _FLAG_PIXMAPS[key] = None if pix.isNull() else pix.scaled(side, side, Qt.KeepAspectRatio,
+                                                                   Qt.SmoothTransformation)
+    return _FLAG_PIXMAPS[key]
+
+
+def _star_polygon(cx: float, cy: float, radius: float):
+    from PySide6.QtGui import QPolygonF
+    return QPolygonF([QPointF(cx + (radius if k % 2 == 0 else radius * 0.45) * math.sin(k * math.pi / 5),
+                              cy - (radius if k % 2 == 0 else radius * 0.45) * math.cos(k * math.pi / 5))
+                      for k in range(10)])
+
+
+SHOW_KEYWORDS = False          # touche I dans la planche : mots cles ecrits sur les photos (session)
+
+
+def attr_unit() -> int:
+    return scaled(14)
+
+
+def attr_gap() -> int:
+    """Espace entre la photo et ses attributs."""
+    return scaled(5)
+
+
+def attr_band() -> int:
+    """Hauteur reservee au-dessus et au-dessous de la photo pour ses attributs."""
+    return attr_unit() + attr_gap() + scaled(2)
+
+
+def attr_inset() -> int:
+    """Retrait des attributs par rapport au calque des icones (0 : leur padding, Reglages > Visionneuse >
+    Cellules > « Padding des icônes d'attribut », fait le reste)."""
+    return 0
+
+
+def attr_layout(frame: QRect) -> dict:
+    """Place des controles d'attributs, dans les COINS de la diapo `frame` (sa zone image, demande de
+    l'utilisateur : plus collés à la photo), a `attr_gap` des bords : couleurs en haut a gauche, drapeaux en
+    haut a droite, note en bas a gauche, « + » (mots cles) en bas a droite. Memes places pour ce qui est
+    dessine (attributs appliques) et pour ce qui se manipule au survol. La bande au-dessus / au-dessous de la
+    photo est reservee dans la case (`FocusGallery.photo_band`), la photo ne les recouvre jamais."""
+    u = attr_unit()
+    gap = scaled(2)
+    inset = attr_inset()
+    left, right = frame.left() + inset, frame.right() - inset
+    above, below = frame.top() + inset, frame.bottom() + 1 - inset - u
+    colors = [QRect(left + i * (u + gap), above, u, u) for i in range(COLOR_SLOTS)]
+    flags = {"delete": QRect(right - u + 1, above, u, u), "keep": QRect(right - 2 * u - gap + 1, above, u, u)}
+    stars = [QRect(left + i * u, below, u, u) for i in range(5)]
+    plus = QRect(right - u + 1, below, u, u)
+    return {"colors": colors, "flags": flags, "stars": stars, "plus": plus, "unit": u, "pad": scaled(5)}
+
+
+COLOR_SLOTS = 5
+
+
+def _backdrop(painter: QPainter, rect: QRectF, strength: int = 185):
+    from settings_store import M
+    back = QColor(M["panel_bg"])
+    back.setAlpha(strength)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(back)
+    painter.drawRoundedRect(rect, rect.height() / 2 if rect.width() <= rect.height() * 1.2 else scaled(5),
+                            rect.height() / 2 if rect.width() <= rect.height() * 1.2 else scaled(5))
+
+
+def _paint_star(painter: QPainter, rect: QRect, lit: bool, preview: bool = False):
+    from settings_store import M
+    from settings_widgets import _selection_color
+    side = rect.height()
+    on = previews.custom_ui_icon_pixmap(previews.UI_ICON_VIEWER_STAR_ON, side)
+    off = previews.custom_ui_icon_pixmap(previews.UI_ICON_VIEWER_STAR_OFF, side)
+    if on is not None or off is not None:               # icones perso (Reglages > Visionneuse > Icones)
+        pix, opacity = (on or off) if lit else (off or on), 1.0
+        if not lit and off is None:
+            opacity = 0.3                               # pas d'etoile vide choisie : l'allumee, estompee
+        if preview:
+            opacity *= 0.6
+        painter.save()
+        painter.setOpacity(painter.opacity() * opacity)
+        target = QRect(0, 0, pix.width(), pix.height())
+        target.moveCenter(rect.center())
+        painter.drawPixmap(target, pix)
+        painter.restore()
+        return
+    color = QColor(_selection_color(255) if lit else M["value_fg"])
+    if not lit:
+        color.setAlpha(120)                 # etoile vide : contour discret mais visible sur la photo
+    if preview:
+        color.setAlpha(150)
+    painter.setPen(QPen(color, 1.2))
+    painter.setBrush(color if lit else Qt.NoBrush)
+    painter.drawPolygon(_star_polygon(rect.center().x() + 0.5, rect.center().y() + 0.5, rect.height() * 0.4))
+
+
+def _paint_flag(painter: QPainter, rect: QRect, status: str, dim: bool = False):
+    from settings_store import M
+    side = rect.width() - scaled(2)
+    pix = _flag_pixmap(status, side)
+    painter.save()
+    if dim:
+        painter.setOpacity(0.45)
+    if pix is not None:
+        painter.drawPixmap(rect.adjusted(scaled(1), scaled(1), -scaled(1), -scaled(1)), pix)
+    else:
+        painter.setPen(QColor(M["value_fg"]))
+        painter.drawText(rect, Qt.AlignCenter, "✓" if status == "keep" else "✕")
+    painter.restore()
+
+
+def _paint_attrs(painter: QPainter, room: QRect, attrs: dict, look: dict, hovered: bool = False,
+                 show_keywords: bool = False, photo: QRect | None = None):
+    """Attributs APPLIQUES d'une case de la planche, directement sur la photo (demande de l'utilisateur :
+    seulement ceux qui sont appliques ; manipulables au survol, `_paint_attr_controls`). Note en bas a
+    gauche, couleur en haut a gauche, drapeau en haut a droite ; mots cles (un par ligne, a partir du haut
+    a gauche, sous la rangee des couleurs) seulement quand la touche I les affiche. Au survol, note /
+    couleur / drapeau sont repris par les controles (`hovered`) : les mots cles restent dessines ici."""
+    layout = attr_layout(room)
+    painter.save()
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    if not hovered:
+        rating = int(attrs.get("rating") or 0)
+        if rating:
+            lit = layout["stars"][:rating]
+            group = lit[0].united(lit[-1])
+            for rect in lit:
+                _paint_star(painter, rect, True)
+        color = int(attrs.get("color") or 0)
+        palette = filter_colors()
+        if 1 <= color <= min(len(palette), COLOR_SLOTS):
+            slot = layout["colors"][0]          # coin haut gauche (au survol : sa pastille, parmi les 5)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(palette[color - 1][1]))
+            painter.drawEllipse(QRectF(slot).adjusted(scaled(2), scaled(2), -scaled(2), -scaled(2)))
+        status = attrs.get("status") or ""
+        if status in layout["flags"]:
+            slot = layout["flags"]["delete"]         # collé au coin de la photo, quel que soit le drapeau
+            _paint_flag(painter, slot, status)
+    words = attrs.get("keywords") or []
+    if show_keywords and words:
+        font, text_color = look["rank_font"]
+        metrics = QFontMetrics(font)
+        line = metrics.height() + scaled(3)
+        photo = photo or room                 # mots cles DANS la photo, a partir de son coin haut gauche
+        x = photo.left() + layout["pad"]
+        y = photo.top() + layout["pad"]
+        limit = photo.bottom() - layout["pad"]
+        painter.setFont(font)
+        for index, word in enumerate(words):
+            if y + line > limit:
+                more = f"+{len(words) - index}"
+                painter.setPen(text_color)
+                painter.drawText(QRect(x, y, photo.width(), line), Qt.AlignVCenter | Qt.AlignLeft, more)
+                break
+            text = metrics.elidedText(word, Qt.ElideRight, max(10, photo.width() - 2 * layout["pad"] - scaled(8)))
+            box = QRectF(x, y, metrics.horizontalAdvance(text) + scaled(8), line - scaled(1))
+            _backdrop(painter, box, 200)
+            painter.setPen(text_color)
+            painter.drawText(box, Qt.AlignCenter, text)
+            y += line
+    painter.restore()
+
+
+def _paint_attr_controls(painter: QPainter, room: QRect, attrs: dict, hover: tuple | None):
+    """Controles d'attributs de la case SURVOLEE, sur la photo : 5 etoiles (la note, apercu de la note
+    visee), 5 pastilles de couleur, drapeaux « marquee » / « rejetee », « + » des mots cles. `hover` =
+    (genre, valeur) de l'element sous le curseur."""
+    from settings_store import M
+    layout = attr_layout(room)
+    rating = int(attrs.get("rating") or 0)
+    color = int(attrs.get("color") or 0)
+    status = attrs.get("status") or ""
+    painter.save()
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    # Note
+    shown = rating
+    if hover and hover[0] == "star":
+        shown = hover[1]
+    group = layout["stars"][0].united(layout["stars"][-1])
+    for i, rect in enumerate(layout["stars"]):
+        _paint_star(painter, rect, i < shown, preview=bool(hover and hover[0] == "star" and i >= rating))
+    # Couleurs
+    palette = filter_colors()
+    swatches = layout["colors"][:len(palette)]
+    group = swatches[0].united(swatches[-1])
+    for i, slot in enumerate(swatches):
+        inner = QRectF(slot).adjusted(scaled(2.5), scaled(2.5), -scaled(2.5), -scaled(2.5))
+        if hover and hover[0] == "color" and hover[1] == i + 1:
+            inner = inner.adjusted(-scaled(1), -scaled(1), scaled(1), scaled(1))
+        fill = QColor(palette[i][1])
+        if color and color != i + 1:
+            fill.setAlphaF(fill.alphaF() * 0.45)
+        if color == i + 1:
+            painter.setPen(QPen(QColor(M["value_fg"]), 1.6))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawEllipse(inner.adjusted(-scaled(1.5), -scaled(1.5), scaled(1.5), scaled(1.5)))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(fill)
+        painter.drawEllipse(inner)
+    # Drapeaux
+    for name, slot in layout["flags"].items():
+        active = status == name
+        if active or (hover and hover[0] == "flag" and hover[1] == name):
+            painter.setPen(QPen(QColor("#55aaff"), 1.4))
+            painter.setBrush(QColor(85, 170, 255, 45))
+            painter.drawRoundedRect(QRectF(slot).adjusted(0.5, 0.5, -0.5, -0.5), scaled(3), scaled(3))
+        _paint_flag(painter, slot, name, dim=bool(status) and not active)
+    # « + » : mots cles
+    plus = layout["plus"]
+    hot = bool(hover and hover[0] == "plus")
+    custom_plus = previews.custom_ui_icon_pixmap(previews.UI_ICON_VIEWER_PLUS, plus.height())
+    if custom_plus is not None:
+        target = QRect(0, 0, custom_plus.width(), custom_plus.height())
+        target.moveCenter(plus.center())
+        painter.setOpacity(1.0 if hot else 0.75)
+        painter.drawPixmap(target, custom_plus)
+        painter.restore()
+        return
+    painter.setPen(QPen(QColor(M["value_fg"] if hot else M["row_label"]), 1.6, Qt.SolidLine, Qt.RoundCap))
+    cx, cy, arm = plus.center().x() + 0.5, plus.center().y() + 0.5, plus.width() * 0.3
+    painter.drawLine(QPointF(cx - arm, cy), QPointF(cx + arm, cy))
+    painter.drawLine(QPointF(cx, cy - arm), QPointF(cx, cy + arm))
+    painter.restore()
+
+
+def attr_hit(room: QRect, pos: QPoint) -> tuple | None:
+    """Element de `attr_layout` sous `pos` : ("star", n) / ("color", n) / ("flag", nom) / ("plus", 0)."""
+    layout = attr_layout(room)
+    for i, rect in enumerate(layout["stars"]):
+        if rect.contains(pos):
+            return ("star", i + 1)
+    for i, rect in enumerate(layout["colors"][:len(filter_colors())]):
+        if rect.contains(pos):
+            return ("color", i + 1)
+    for name, rect in layout["flags"].items():
+        if rect.contains(pos):
+            return ("flag", name)
+    if layout["plus"].contains(pos):
+        return ("plus", 0)
+    return None
 
 
 def _paint_gallery_text_override(painter, rect: QRect, values: dict | None):
@@ -2172,6 +2563,11 @@ class FocusGallery(QListWidget):
         self._outside_press = None
         self.installEventFilter(self)
         self.viewport().installEventFilter(self)
+        self.source_tip = ProxySourceTip(self.viewport(), lambda pos: self.indexAt(pos).data(Qt.UserRole))
+        self._photo_rects: dict = {}         # chemin -> place de la photo dans sa case (peinte)
+        self._attr_hover = None              # (chemin, genre, valeur) de l'element d'attribut sous le curseur
+        self._attr_press = False
+        self._keywords_window = None
         self.hidden_path: str | None = None    # image en vol (voir _GalleryDelegate.paint)
         self._fade_anim = None
         if current_item is not None:
@@ -2378,6 +2774,103 @@ class FocusGallery(QListWidget):
                 self._schedule_warm()
         self._scroll_goal = None
 
+    def attr_editing_allowed(self) -> bool:
+        """Attributs manipulables au survol : pas pendant une animation, ni le vol d'une image."""
+        return not self._busy() and self._ripple_origin is None and self._split_drag is None
+
+    def photo_band(self, look: dict | None = None) -> int:
+        """Bande reservee a la photo pour les attributs : AUCUNE (demande de l'utilisateur : le calque de l'image
+        et celui des icones d'attribut sont PARALLELES, chacun avec son padding, sans influence de l'un sur
+        l'autre ; les icones sont peintes par-dessus la photo)."""
+        return 0
+
+    def photo_room(self, key: str, cell: QRect) -> QRect:
+        """Zone image (coins de la diapo, ou se posent les attributs) de la case `key` (cellule de grille
+        `cell`, repere de la case)."""
+        rel = self._photo_rects.get(key)
+        if rel is None:
+            look = self.film_look_for(key)
+            _outer, _cell, box = self.edited_cell_boxes(QRect(QPoint(0, 0), cell.size()), look)
+            bg, pad = look["bg_padding"], look["attr_padding"]
+            rel = box.adjusted(bg["left"] + pad["left"], bg["top"] + pad["top"],
+                               -bg["right"] - pad["right"], -bg["bottom"] - pad["bottom"])
+        return QRect(rel)
+
+    def _attr_at(self, pos: QPoint):
+        """(chemin, genre, valeur, case) de l'element d'attribut sous `pos` (repere du viewport) ; None."""
+        if not self.attr_editing_allowed() or not self.viewport().rect().contains(pos):
+            return None
+        index = self.indexAt(pos)
+        if not index.isValid():
+            return None
+        import file_attributes
+        key = index.data(Qt.UserRole)
+        if key == self.hidden_path or not file_attributes.eligible(Path(key)):
+            return None
+        cell = self.visualRect(index)
+        hit = attr_hit(self.photo_room(key, cell), pos - cell.topLeft())
+        return (key, hit[0], hit[1], cell) if hit else None
+
+    def _set_attr_hover(self, hit, cell_pos: QPoint | None = None):
+        new = (hit[0], hit[1], hit[2]) if hit else None
+        if new == self._attr_hover:
+            return
+        old, self._attr_hover = self._attr_hover, new
+        for key in {old[0] if old else None, new[0] if new else None} - {None}:
+            self.viewport().update()
+        self.viewport().setCursor(Qt.PointingHandCursor if new else Qt.ArrowCursor)
+        if not new:
+            self.viewport().unsetCursor()
+
+    def _apply_attr(self, key: str, kind: str, value):
+        """Clic sur un element d'attribut : note, couleur, drapeau (re-clic = aucun) ou fenetre des mots cles."""
+        import file_attributes
+        path = Path(key)
+        current = self.attr_values(key)
+        if kind == "star":
+            changes = {"rating": 0 if int(current.get("rating") or 0) == value else value}
+        elif kind == "color":
+            changes = {"color": 0 if int(current.get("color") or 0) == value else value}
+        elif kind == "flag":
+            changes = {"status": "" if current.get("status") == value else value}
+        else:
+            self.open_keywords_window(key)
+            return
+        file_attributes.update(path, **changes)
+        merged = dict(current)
+        merged.update(changes)
+        self.hold_attrs(key, merged)
+
+    def open_keywords_window(self, key: str):
+        """Fenetre des mots cles de `key` ; une deja ouverte est fermee (enregistree). La reference est
+        lachee a la fermeture (`closed`) : la fenetre se detruit d'elle-meme et une reference restee sur un
+        objet detruit faisait echouer toute reouverture (signale : « il ne se passe rien »)."""
+        previous, self._keywords_window = self._keywords_window, None
+        if previous is not None:
+            try:
+                previous._accept()
+            except RuntimeError:                      # deja detruite
+                pass
+        window = KeywordsWindow(self, key, self.attr_values(key).get("keywords") or [])
+        self._keywords_window = window
+        window.saved.connect(lambda words, k=key: self._keywords_saved(k, words))
+        window.closed.connect(self._keywords_window_closed)
+        window.popup_near(QCursor.pos())
+
+    def _keywords_window_closed(self, window):
+        if self._keywords_window is window:
+            self._keywords_window = None
+
+    def _keywords_saved(self, key: str, words: list):
+        import file_attributes
+        file_attributes.update(Path(key), keywords=words)
+        merged = dict(self.attr_values(key))
+        if words:
+            merged["keywords"] = words
+        else:
+            merged.pop("keywords", None)
+        self.hold_attrs(key, merged)
+
     def _busy(self) -> bool:
         """Une animation de la planche tourne (apparition, glissement de la molette) : rien ne doit lui
         prendre de temps (cases refaites, decodages)."""
@@ -2569,6 +3062,7 @@ class FocusGallery(QListWidget):
         # Ne pas deepcopy les QFont / QColor Qt du look de base : leur copie Python peut
         # invalider des ressources C++ encore utilisees par les peintures de la planche.
         look = dict(self.film_look)
+        look["split"] = bool(self.SPLIT_CELLS)       # case divisee (ancien mode) : marques sur les sous-cellules
         for key in ("image_cell", "text_cell", "image"):
             box = dict(self.film_look[key])
             box["on"] = dict(box.get("on") or {})
@@ -2772,16 +3266,17 @@ class FocusGallery(QListWidget):
             if self.visualRect(index).intersects(view):
                 self.cell_pixmap(index, size, "focus" if index.data(Qt.UserRole) == self.current else None)
 
-    def cell_pixmap(self, index, size: QSize, mark: str | None = None) -> QPixmap:
+    def cell_pixmap(self, index, size: QSize, mark: str | None = None, hovered: bool = False) -> QPixmap:
         """Image de toute la case, refaite seulement si sa taille, sa vignette, l'habillage ou l'etat
         « en vol » changent : la peinture de la planche ne fait que poser ces images. Chemin rapide (une
         image par case et par peinture) : une case dont la vignette est definitive n'interroge plus rien.
         `mark` ("focus" / "hover") : variante marquee de la case, gardee a part (`_MARKED`)."""
-        if mark is not None:
-            return self._marked_pixmap(index, size, mark)
+        if mark is not None or hovered:
+            return self._marked_pixmap(index, size, mark, hovered)
         key = index.data(Qt.UserRole)
         hidden = key == self.hidden_path
         color = self.attr_color(key)
+        attrs = self.attr_values(key)
         import ui_state
         if not hasattr(ui_state, "GALLERY_STYLE_OVERRIDES"):
             from settings_element_style import ensure_row_text_overrides
@@ -2789,7 +3284,8 @@ class FocusGallery(QListWidget):
         styles = getattr(ui_state, "GALLERY_STYLE_OVERRIDES", {}) or {}
         local_style = tuple(repr(styles.get(f"gallery-{part}:{key}")) for part in ("cell", "image", "name", "info"))
         base = (size.width(), size.height(), hidden, self._look_sig, self.devicePixelRatioF() or 1.0, color,
-                (self.table_corners(index.row()), self.mark_insets(index.row())) if color else None, local_style)
+                (self.table_corners(index.row()), self.mark_insets(index.row())) if color else None, local_style,
+                repr(sorted(attrs.items())) + str(SHOW_KEYWORDS))
         cached = _CELLS.get(key)
         if cached is not None and cached[0] == base and (cached[2] or self._ripple_origin is not None):
             return cached[1]                 # (pendant l'apparition, meme une vignette provisoire reste)
@@ -2808,7 +3304,7 @@ class FocusGallery(QListWidget):
         _GalleryDelegate.paint_content(painter, self, QRect(QPoint(0, 0), size), Path(key),
                                        index.data(Qt.UserRole + 2) or "", pix, hidden,
                                        corners=base[6][0] if color else frozenset(), color=color,
-                                       insets=base[6][1] if color else None)
+                                       insets=base[6][1] if color else None, attrs=attrs)
         painter.end()
         _CELLS[key] = (base, out, final, tile_key)
         _CELLS.move_to_end(key)
@@ -2816,11 +3312,15 @@ class FocusGallery(QListWidget):
             _CELLS.popitem(last=False)
         return out
 
-    def attr_color(self, key: str) -> str | None:
-        """Couleur attribuee au fichier (file_attributes, une des 5 de Visionneuse > Filtres) ou None ; lue
-        une fois par dossier, relue au plus toutes les 2 s, hors animation."""
+    def attr_values(self, key: str) -> dict:
+        """Attributs APPLIQUES au fichier (note, couleur, mots cles, statut ; valeurs par defaut omises),
+        lus une fois par dossier, relus au plus toutes les 2 s, jamais pendant une animation. Juste apres
+        un changement fait ici, la valeur choisie est gardee (`hold_attrs`) : Lightroom ecrit en differe."""
         now = time.monotonic()
-        memo = self.__dict__.setdefault("_attr_colors", {})
+        held = self.__dict__.setdefault("_attr_hold", {}).get(key)
+        if held is not None and now < held[0]:
+            return held[1]
+        memo = self.__dict__.setdefault("_attr_values", {})
         hit = memo.get(key)
         if hit is not None and (now - hit[0] < 2.0 or self._busy()):
             return hit[1]
@@ -2832,27 +3332,37 @@ class FocusGallery(QListWidget):
             values = attributes(path) if managed else None
         except (ImportError, OSError, ValueError):
             managed, values = False, None
-        if managed:
-            index = int((values or {}).get("color") or 0)
-        else:
+        if not managed:
             folder, name = file_attributes.location(path)
-            own = file_attributes._load_dir(folder, max_age=2.0).get(name)
-            index = int(own.get("color") or 0) if isinstance(own, dict) else 0
+            values = file_attributes._load_dir(folder, max_age=2.0).get(name)
+        applied = file_attributes._clean(values if isinstance(values, dict) else {})
+        memo[key] = (now, applied)
+        return applied
+
+    def hold_attrs(self, key: str, values: dict, seconds: float = 30.0):
+        """Valeurs que l'on vient de choisir (barre de survol) : montrees aussitot, case refaite."""
+        import file_attributes
+        self.__dict__.setdefault("_attr_hold", {})[key] = (time.monotonic() + seconds,
+                                                           file_attributes._clean(values))
+        self.__dict__.setdefault("_attr_values", {}).pop(key, None)
+        self.invalidate_edited_cell(key)
+
+    def attr_color(self, key: str) -> str | None:
+        """Couleur attribuee au fichier (une des 5 de Visionneuse > Filtres) ou None (voir attr_values)."""
+        index = int(self.attr_values(key).get("color") or 0)
         palette = self.__dict__.get("_filter_palette")
         if palette is None:
             palette = self._filter_palette = [c for _n, c in filter_colors()]
-        color = palette[index - 1] if 1 <= index <= len(palette) else None
-        memo[key] = (now, color)
-        return color
+        return palette[index - 1] if 1 <= index <= len(palette) else None
 
-    def _marked_pixmap(self, index, size: QSize, mark: str) -> QPixmap:
+    def _marked_pixmap(self, index, size: QSize, mark: str | None, hovered: bool = False) -> QPixmap:
         """Case en cours / survolee : meme image que `cell_pixmap`, marquage compris, refaite seulement
         quand la case simple l'est (meme signature, meme vignette)."""
         plain = self.cell_pixmap(index, size)
         key = index.data(Qt.UserRole)
         base, _out, _final, tile_key = _CELLS[key]
         corners = self.table_corners(index.row())
-        cached = _MARKED.get((key, mark))
+        cached = _MARKED.get((key, mark, hovered))
         if cached is not None and cached[0] == base and cached[1] == tile_key and cached[3] == corners:
             return cached[2]
         hidden = base[2]
@@ -2863,10 +3373,11 @@ class FocusGallery(QListWidget):
         painter = QPainter(out)
         _GalleryDelegate.paint_content(painter, self, QRect(QPoint(0, 0), size), Path(key),
                                        index.data(Qt.UserRole + 2) or "", pix, hidden, mark, corners,
-                                       color=base[5], insets=base[6][1] if base[5] else None)
+                                       color=base[5], insets=base[6][1] if base[5] else None,
+                                       attrs=self.attr_values(key), hovered=hovered)
         painter.end()
-        _MARKED[(key, mark)] = (base, tile_key, out, corners)
-        _MARKED.move_to_end((key, mark))
+        _MARKED[(key, mark, hovered)] = (base, tile_key, out, corners)
+        _MARKED.move_to_end((key, mark, hovered))
         while len(_MARKED) > 8:
             _MARKED.popitem(last=False)
         return out
@@ -2879,6 +3390,9 @@ class FocusGallery(QListWidget):
     def eventFilter(self, obj, event):
         if obj in (self, self.viewport()):
             kind = event.type()
+            if kind == QEvent.Leave and obj is self.viewport():
+                self.source_tip.hide()
+                self._set_attr_hover(None)
             if kind == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
                 pos = event.position().toPoint()
                 self._outside_press = event.globalPosition() if self._outside_table(obj, pos) else None
@@ -2895,6 +3409,8 @@ class FocusGallery(QListWidget):
 
     def _split_cell_at(self, pos: QPoint):
         """Case dont la bordure image | texte est sous `pos` (repere du viewport, a 4 px pres)."""
+        if not self.SPLIT_CELLS:
+            return None
         for probe in (pos, pos - QPoint(0, 5), pos + QPoint(0, 5)):
             index = self.indexAt(probe)
             if not index.isValid():
@@ -2908,6 +3424,13 @@ class FocusGallery(QListWidget):
         # Clic pendant un glissement de la molette : les lignes s'arretent la ou elles sont (on choisit
         # la case qu'on voit sous le curseur).
         self._stop_scroll()
+        hit = self._attr_at(event.position().toPoint()) if event.button() == Qt.LeftButton else None
+        if hit is not None:
+            # Element d'attribut (note, couleur, drapeau, « + ») : agit, ne choisit pas l'image.
+            self._attr_press = True
+            self._apply_attr(hit[0], hit[1], hit[2])
+            event.accept()
+            return
         if event.button() == Qt.LeftButton and event.modifiers() & Qt.ControlModifier:
             cell = self._split_cell_at(event.position().toPoint())
             if cell is not None:
@@ -2927,6 +3450,8 @@ class FocusGallery(QListWidget):
                 self._on_split(height, False)
             event.accept()
             return
+        self.source_tip.update_at(event.globalPosition().toPoint(), bool(event.modifiers() & Qt.ShiftModifier))
+        self._set_attr_hover(self._attr_at(event.position().toPoint()))
         if event.modifiers() & Qt.ControlModifier and self._split_cell_at(event.position().toPoint()) is not None:
             self.viewport().setCursor(Qt.SplitVCursor)
         else:
@@ -2934,6 +3459,10 @@ class FocusGallery(QListWidget):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if self._attr_press and event.button() == Qt.LeftButton:
+            self._attr_press = False
+            event.accept()
+            return
         if self._split_drag is not None and event.button() == Qt.LeftButton:
             self._split_drag = None
             self.viewport().unsetCursor()
@@ -2998,7 +3527,15 @@ class FocusGallery(QListWidget):
                 rect = self.visualItemRect(item)
                 if not rect.intersects(self.viewport().rect()):
                     return None
-                target = self.fit_in_box(pix, self.tile_boxes(rect)[1])
+                box = self.tile_boxes(rect)[1]
+                look = self.film_look_for(path)
+                bg, pad = look["bg_padding"], look["image_padding"]
+                box = box.adjusted(bg["left"] + pad["left"], bg["top"] + pad["top"],
+                                   -bg["right"] - pad["right"], -bg["bottom"] - pad["bottom"])
+                band = self.photo_band(look)
+                if box.height() > 2 * band + 20:
+                    box = box.adjusted(0, band, 0, -band)       # meme place que la case peinte
+                target = self.fit_in_box(pix, box)
                 return QRect(self.viewport().mapTo(widget, target.topLeft()), target.size())
         return None
 
@@ -3209,14 +3746,21 @@ class FocusGallery(QListWidget):
         steps = int(self._wheel_rest / 120)
         if steps:
             self._wheel_rest -= steps * 120
+            self._set_attr_hover(None)
             self._scroll_to_row(self.first_visible_row() - steps, animate=self.scroll_animated())
         event.accept()
 
     TEXT_MIN = 10            # hauteur mini de la sous-cellule texte (Ctrl + bordure)
+    # Case NON divisee (demande de l'utilisateur) : plus de sous-cellule texte sous l'image, l'image est
+    # centree sur toute la case (nom en info-bulle, attributs dessines sur l'image : _paint_attrs).
+    SPLIT_CELLS = False
 
     def label_height(self) -> int:
         """Sous-cellule texte (nom + type et poids, sous l'image) : la hauteur choisie par Ctrl + bordure
-        (`viewer_gallery_text_height`, px), sinon de quoi loger les deux lignes dans leurs polices."""
+        (`viewer_gallery_text_height`, px), sinon de quoi loger les deux lignes dans leurs polices ;
+        0 quand la case n'est pas divisee (SPLIT_CELLS)."""
+        if not self.SPLIT_CELLS:
+            return 0
         import ui_state
         try:
             chosen = int((ui_state.APPLIED_SETTINGS or {}).get("viewer_gallery_text_height") or 0)
@@ -3329,7 +3873,18 @@ class FocusGallery(QListWidget):
         if event.key() in (Qt.Key_Return, Qt.Key_Enter) and self.currentItem() is not None:
             self.chosen.emit(Path(self.currentItem().data(Qt.UserRole)))
             return
+        if event.key() == Qt.Key_I and not event.modifiers():
+            self.toggle_keywords()
+            return
         super().keyPressEvent(event)
+
+    def toggle_keywords(self):
+        """Touche I : mots cles ecrits (ou non) sur les photos de la planche."""
+        global SHOW_KEYWORDS
+        SHOW_KEYWORDS = not SHOW_KEYWORDS
+        _CELLS.clear()
+        _MARKED.clear()
+        self.viewport().update()
 
 
 # -- Parametres de l'image (panneau a droite de l'image, Reglages > Visionneuse) -----------------
@@ -3443,6 +3998,30 @@ def _exif_rows(exif, ExifTags, image_rows: list, camera_rows: list):
             camera_rows.append((label, value))
 
 
+def image_sources(path: Path, mtime: float) -> list:
+    """Lignes « Source du proxy » (colonnes, inspecteur, diapositives), « Path du proxy » et
+    « Source de l'aperçu plein écran » (image en focus). Lit le catalogue / le disque : EN FOND."""
+    try:
+        import lightroom_bridge as lb
+        managed = lb.is_managed(path)
+    except (ImportError, OSError, ValueError):
+        managed = False
+    if managed:
+        try:
+            found = lb.proxy_file(path)
+        except Exception:
+            found = None
+        return [("Source du proxy", lb.proxy_source(path)),
+                ("Path du proxy", str(found[0]) if found is not None else "—"),
+                ("Source de l'aperçu plein écran", lb.fullscreen_source(path))]
+    from previews import _file_image_cache_path
+    cache = _file_image_cache_path(path, mtime)
+    proxy = "Application · cache d'aperçus" if cache.is_file() else "Application · pas encore créé"
+    full = "Image originale (JPEG intégré au RAW)" if path.suffix.lower() in RAW_EXTENSIONS else "Image originale"
+    return [("Source du proxy", proxy), ("Path du proxy", str(cache)),
+            ("Source de l'aperçu plein écran", full)]
+
+
 def image_info(path: Path) -> list:
     """Tous les parametres connus d'un fichier de la visionneuse : [(section, [(libelle, valeur)])].
     Lu sans decoder l'image (entete ; EXIF, profil couleur, ppp via Pillow s'il est installe).
@@ -3454,16 +4033,7 @@ def image_info(path: Path) -> list:
                  ("Type", path.suffix.lstrip(".").upper() or "?")]
     try:
         stat = path.stat()
-        from previews import _file_image_cache_path
-        try:
-            from lightroom_bridge import is_managed, proxy_path
-            managed = is_managed(path)
-            proxy = proxy_path(path) if managed else None
-        except (ImportError, OSError, ValueError):
-            managed, proxy = False, None
-        proxy_value = (str(proxy.resolve()) if proxy is not None else "Proxy Lightroom introuvable") \
-            if managed else str(_file_image_cache_path(path, stat.st_mtime).resolve())
-        file_rows.append(("Path du proxy", proxy_value))
+        file_rows += image_sources(path, stat.st_mtime)
 
         def stamp(t):
             return datetime.datetime.fromtimestamp(t).strftime("%d/%m/%Y %H:%M:%S")
@@ -3743,7 +4313,10 @@ class _StatusFlags(QWidget):
             button.setCheckable(True)
             button.setAutoRaise(True)
             button.setToolTip(label)
-            button.setIcon(QIcon(path))
+            custom = {"keep": previews.UI_ICON_VIEWER_FLAG_KEEP,
+                      "delete": previews.UI_ICON_VIEWER_FLAG_DELETE}.get(value)
+            custom_pix = previews.custom_ui_icon_pixmap(custom, scaled(48)) if custom else None
+            button.setIcon(QIcon(custom_pix) if custom_pix is not None else QIcon(path))
             button.setIconSize(QSize(scaled(24), scaled(24)))
             button.setFixedSize(scaled(32), scaled(30))
             button.setStyleSheet(
@@ -3773,6 +4346,7 @@ class FileAttributesEditor(QObject):
         self._path: Path | None = None
         self._loading = False
         self.rows: list = []
+        self.on_saved = None                       # rappel (chemin, changements) apres chaque enregistrement
 
     def build_rows(self) -> list:
         """(libelle, champ, None) pour _flat_cells_table — champs neufs (le tableau est reconstruit)."""
@@ -3794,17 +4368,23 @@ class FileAttributesEditor(QObject):
         self._load()
         return self.rows
 
-    def set_path(self, path: Path | None):
+    def set_path(self, path: Path | None, values: dict | None = None):
+        """`values` : attributs deja connus (memoire de la planche) ; sinon lus (file_attributes.get)."""
         if self.rows and self._path is not None and path != self._path:
             self._save_keywords()                  # mots en cours de saisie : pas perdus
         self._path = path
-        self._load()
+        self._load(values)
 
-    def _load(self):
+    def _load(self, known: dict | None = None):
         import file_attributes
         if not self.rows:
             return
-        values = file_attributes.get(self._path) if file_attributes.eligible(self._path) else dict(file_attributes.DEFAULTS)
+        if not file_attributes.eligible(self._path):
+            values = dict(file_attributes.DEFAULTS)
+        elif known is not None:
+            values = file_attributes.values_of(known)
+        else:
+            values = file_attributes.get(self._path)
         self._loading = True
         try:
             for control in (self.stars, self.colors, self.keywords, self.status):
@@ -3812,6 +4392,7 @@ class FileAttributesEditor(QObject):
             self.stars.setValue(values["rating"])
             self.colors.setValue(values["color"])
             self.keywords.set_words(values["keywords"])
+            self._loaded_keywords = list(values["keywords"])
             self.status.setValue(values["status"])
         except RuntimeError:                       # champs detruits (tableau reconstruit)
             pass
@@ -3823,6 +4404,10 @@ class FileAttributesEditor(QObject):
         if self._loading or not file_attributes.eligible(self._path):
             return
         file_attributes.update(self._path, **changes)
+        if "keywords" in changes:
+            self._loaded_keywords = list(changes["keywords"])
+        if self.on_saved is not None:
+            self.on_saved(self._path, changes)
 
     def _save_keywords(self):
         import file_attributes
@@ -3831,8 +4416,114 @@ class FileAttributesEditor(QObject):
         except RuntimeError:
             return
         if self._path is not None and file_attributes.eligible(self._path) \
-                and words != file_attributes.get(self._path)["keywords"]:
+                and words != self._shown_keywords():
             self._save(keywords=words)
+
+    def _shown_keywords(self) -> list:
+        """Mots cles du fichier avant la saisie (ceux charges dans le champ, ou les derniers enregistres)."""
+        return list(getattr(self, "_loaded_keywords", None) or [])
+
+
+class KeywordsWindow(QWidget):
+    """Fenetre des mots cles d'une photo (bouton « + » de sa case) : UN MOT CLE PAR LIGNE (demande de
+    l'utilisateur ; un mot cle peut contenir des espaces), zone de saisie des reglages
+    (`settings_cells._LinesField`) avec autocompletion des mots deja employes ; elle contient les mots
+    cles actuels — en ajouter une ligne, en effacer. Clic ailleurs ou Ctrl + Entree = enregistrer et fermer,
+    Echap = fermer sans rien changer. Cadre de panneau des reglages (`_PanelFrame`). Le bouton « + » la
+    rouvre a chaque fois (la reference est lachee a la fermeture)."""
+
+    saved = Signal(list)
+    closed = Signal(object)
+
+    def __init__(self, gallery: "FocusGallery", key: str, words: list):
+        super().__init__(gallery.window(), Qt.Tool | Qt.FramelessWindowHint)
+        from PySide6.QtWidgets import QVBoxLayout
+        from settings_cells import _LinesField
+        from settings_store import M
+        from settings_theme import _text_label
+        from settings_window import _PanelFrame
+        import file_attributes
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.key = key
+        self._done = False
+        self._filtered = False
+        frame = _PanelFrame(self)
+        frame.setColors(M["panel_bg"], M["panel_border"])
+        frame.setRadius(scaled(5))
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(frame)
+        box = QVBoxLayout(frame)
+        m = scaled(10)
+        box.setContentsMargins(m, m, m, m)
+        box.setSpacing(scaled(6))
+        title = _text_label(f"Mots clés — {display_name(Path(key))}", "row_label")
+        title.setWordWrap(False)
+        box.addWidget(title)
+        self.field = _LinesField(words, suggestions=file_attributes.known_keywords, width=scaled(300))
+        self.field.setPlaceholderText("un mot clé par ligne")
+        self.field.submitted.connect(self._accept)
+        self.field.textChanged.connect(self._fit)
+        box.addWidget(self.field)
+        hint = _text_label("Ctrl+Entrée ou clic ailleurs : enregistrer · Échap : annuler", "row_label")
+        hint.setWordWrap(True)
+        box.addWidget(hint)
+        self.setFixedWidth(scaled(340))
+        self.adjustSize()
+
+    def _fit(self):
+        self.field.fit_rows()
+        self.adjustSize()
+
+    def popup_near(self, global_pos: QPoint):
+        screen = QApplication.screenAt(global_pos) or QApplication.primaryScreen()
+        area = screen.availableGeometry()
+        x = min(max(area.left(), global_pos.x() - self.width()), area.right() - self.width())
+        y = min(max(area.top(), global_pos.y() - self.height() - scaled(8)), area.bottom() - self.height())
+        self.move(x, y)
+        self.show()
+        self.raise_()
+        self.field.setFocus()
+        self.field.moveCursor(QTextCursor.End)
+        QApplication.instance().installEventFilter(self)
+
+    def _accept(self):
+        if self._done:
+            return
+        self._done = True
+        self.saved.emit(self.field.lines())
+        self.close()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self._done = True
+            self.close()
+            return
+        super().keyPressEvent(event)
+
+    def _is_inside(self, global_pos: QPoint) -> bool:
+        """Le point (global) est dans cette fenetre ou dans la liste de propositions du champ."""
+        widget = QApplication.widgetAt(global_pos)
+        if widget is None:
+            return False
+        popup = self.field.completer_.popup()
+        return (widget is self or self.isAncestorOf(widget)
+                or (popup is not None and (widget is popup or popup.isAncestorOf(widget))))
+
+    def eventFilter(self, obj, event):
+        # « Clic ailleurs » = enregistrer et fermer. Jugé sur le widget SOUS LE CURSEUR, jamais sur `obj` : pour
+        # une fenetre, le filtre d'application recoit aussi le clic au niveau de la fenetre native (pas un
+        # QWidget), pris a tort pour un clic exterieur — la fenetre se fermait des qu'on cliquait dedans
+        # (signale : impossible d'entrer un nouveau mot cle).
+        if event.type() == QEvent.MouseButtonPress and not self._done:
+            if not self._is_inside(event.globalPosition().toPoint()):
+                self._accept()
+        return False
+
+    def closeEvent(self, event):
+        QApplication.instance().removeEventFilter(self)
+        self.closed.emit(self)
+        super().closeEvent(event)
 
 
 class FocusInfoPanel(QWidget):
@@ -3922,6 +4613,13 @@ class FocusInfoPanel(QWidget):
                        or [("Fichier", [("Nom", display_name(path))])])
             self._pool.clear()
             self._pool.start(_InfoTask(path, mtime, self._signals))
+
+    def refresh(self, path: Path):
+        """Relit les parametres de `path` (sources des apercus changees : apercu Lightroom ou proxy
+        arrive apres coup) ; le tableau garde sa forme, seules les valeurs changent."""
+        self._cache.pop(str(path), None)
+        if self._path is not None and str(self._path) == str(path):
+            self._pool.start(_InfoTask(path, previews.cached_mtime(path), self._signals))
 
     def sections(self) -> list:
         return self._sections

@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -55,7 +56,11 @@ class ColorMarkTest(unittest.TestCase):
         index = next(gallery.model().index(i, 0) for i in range(gallery.count())
                      if gallery.item(i).data(0x0100) == str(path))
         rect = gallery.visualRect(index)
-        image = gallery.cell_pixmap(index, rect.size()).toImage()
+        # Le calque seul : sans la bande des attributs (sa pastille montre aussi la couleur).
+        with patch.object(focus, "_paint_attrs"):
+            focus._CELLS.clear()
+            image = gallery.cell_pixmap(index, rect.size()).toImage()
+        focus._CELLS.clear()
         return sum(1 for y in range(0, image.height(), 2) for x in range(0, image.width(), 2)
                    if image.pixelColor(x, y).green() > 200 and image.pixelColor(x, y).red() < 60)
 

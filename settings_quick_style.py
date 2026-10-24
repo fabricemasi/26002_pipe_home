@@ -71,6 +71,9 @@ class QuickStyleWindow(QDialog):
         # peints (choix de l'utilisateur, malgre un risque de clignotement au redimensionnement).
         self.setAttribute(Qt.WA_DeleteOnClose, True)
         settings = settings or load_settings()
+        if name.startswith('Module vidéo'):
+            from video.help_ui import HelpController
+            self._color_help = HelpController(self, settings)
         v2.seed_window_look(settings)
         self._dims_key = f"{NAME}/{name}#0"
         for key, pos in (settings.get("quick_style_positions") or {}).items():

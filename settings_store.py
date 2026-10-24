@@ -639,6 +639,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "ctx_menu_border_enabled": {"top": True, "right": True, "bottom": True, "left": True},
     "ctx_menu_border": {"top": "#2c3034", "right": "#2c3034", "bottom": "#2c3034", "left": "#2c3034"},
     "ctx_menu_border_thickness": 1,
+    "ctx_menu_border_color": "#2c3034",            # couleur des 4 cotes (ligne « Couleur des bordures »)
     "ctx_menu_border_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
     "ctx_menu_border_radius_linked": True,
     "ctx_menu_padding": {"top": 4, "right": 0, "bottom": 4, "left": 0},
@@ -740,6 +741,19 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Ordre des boutons de la visionneuse / planche (Ctrl + glisser ; etat temps reel) : identifiants
     # « hide », « gallery », « filter », « pur:<fichier> » (PipelineBrowser._layout_viewer_buttons).
     "viewer_button_order": [],
+    # Bouton « Récursif » de la visionneuse / planche (etat temps reel) : toutes les photos du dossier,
+    # sous-dossiers compris (PipelineBrowser._toggle_recursive).
+    "viewer_recursive": False,
+    # Module « Board » (board/, .mro) : magnetisme GENERAL (Reglages > MRO ; Alt tenu = sans). Seuil en pixels
+    # d'ecran (meme effet a tout zoom). Les reglages propres a un board (couleur du canvas...) sont dans le .mro.
+    "board_snap_enabled": True,
+    "board_snap_objects": True,
+    "board_snap_grid": False,
+    "board_snap_guides": True,
+    "board_snap_resize": True,
+    "board_snap_distance": 6,
+    # Presets des outils de dessin du board (etat temps reel) : {outil: [{color, width, opacity?} x 3]}.
+    "board_pen_presets": {},
     "viewer_focus_image_border": {"top": "#5f666b", "right": "#5f666b", "bottom": "#5f666b", "left": "#5f666b"},
     "viewer_focus_image_border_thickness": 1,
     "viewer_focus_image_border_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
@@ -780,6 +794,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "viewer_film_image_border_thickness": 1,
     "viewer_film_image_border_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
     "viewer_film_image_border_radius_linked": True,
+    "viewer_film_bg_padding": {"left": 0, "top": 0, "right": 0, "bottom": 0},
+    "viewer_film_bg_padding_linked": True,
+    "viewer_film_image_padding": {"left": 0, "top": 0, "right": 0, "bottom": 0},
+    "viewer_film_image_padding_linked": True,
+    "viewer_film_attr_padding": {"left": 0, "top": 0, "right": 0, "bottom": 0},
+    "viewer_film_attr_padding_linked": True,
     "viewer_film_image_cell_font_family": "",   # police du type de fichier (vignette pas encore prete)
     "viewer_film_image_cell_font_bold": True,
     "viewer_film_image_cell_font_italic": False,
@@ -941,6 +961,94 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "input_radius": 0,
     "button_frame": True,
     "button_radius": 0,
+    "navbar_height": 32,
+    "navbar_bottom_enabled": True,
+    "navbar_bottom_color": "#2c3034",
+    "navbar_bottom_thickness": 1,
+    "navbar_title_font_family": "",
+    "navbar_title_font_size": 11,
+    "navbar_title_font_bold": False,
+    "navbar_title_font_italic": False,
+    "navbar_title_font_color": "#7d858b",
+    "navbar_title_font_smoothing_enabled": False,
+    "navbar_title_font_smoothing": "current",
+    "button_bg_color": "#282c30",
+    "button_border_enabled": True,
+    "button_border": {side: "#383d42" for side in ("top", "right", "bottom", "left")},
+    "button_border_thickness": 1,
+    "button_corner_radius": None,
+    "button_font_family": "",
+    "button_font_size": 11,
+    "button_font_bold": False,
+    "button_font_italic": False,
+    "button_font_color": "#c4cacf",
+    "button_font_smoothing_enabled": False,
+    "button_font_smoothing": "current",
+    "input_bg_color": "#141618",
+    "input_border_enabled": True,
+    "input_border": {side: "#303539" for side in ("top", "right", "bottom", "left")},
+    "input_border_thickness": 1,
+    "input_corner_radius": None,
+    "input_font_family": "",
+    "input_font_size": 11,
+    "input_font_bold": False,
+    "input_font_italic": False,
+    "input_font_color": "#b9bfc4",
+    "input_font_smoothing_enabled": False,
+    "input_font_smoothing": "current",
+    # Barre de navigation > Cheminement (choix de chaque colonne, sous le titre).
+    "crumb_font_family": "",
+    "crumb_font_size": 10,
+    "crumb_font_bold": False,
+    "crumb_font_italic": False,
+    "crumb_font_color": "#b9bfc4",
+    "crumb_font_smoothing_enabled": False,
+    "crumb_font_smoothing": "current",
+    "crumb_spacing": 5,
+    "crumb_separator_kind": "char",         # « char » : un caractere ; « icon » : l'icone choisie
+    "crumb_separator_char": "›",
+    "crumb_sep_font_family": "",            # vide = la police des textes
+    "crumb_sep_font_size": 0,               # 0 = la taille des textes
+    "crumb_sep_font_bold": False,
+    "crumb_sep_font_italic": False,
+    "crumb_sep_font_color": "#5f666b",
+    "crumb_sep_font_smoothing_enabled": False,
+    "crumb_sep_font_smoothing": "current",
+    "crumb_set_bg_color": "#00000000",      # fond des reperes des colonnes de SET
+    "crumb_after_bg_color": "#00000000",    # fond des reperes APRES le set (et de tout projet sans set)
+    "crumb_border_enabled": {"top": False, "right": False, "bottom": False, "left": False},
+    "crumb_border": {side: "#303539" for side in ("top", "right", "bottom", "left")},
+    "crumb_border_thickness": 1,
+    "crumb_corner_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
+    "crumb_corner_radius_linked": True,
+    "crumb_padding": {"left": 0, "top": 0, "right": 0, "bottom": 0},
+    "crumb_padding_linked": True,
+    "crumb_margin": {"left": 0, "top": 0, "right": 0, "bottom": 0},     # espace AUTOUR de chaque repere
+    "crumb_margin_linked": True,
+    "input_height": 0,                  # 0 = la hauteur propre a chaque zone de saisie
+    "tabs_bottom_enabled": True,        # bordure entre la barre des tabs et l'interface
+    "tabs_bottom_color": "#2a2e32",
+    "tabs_bottom_thickness": 1,
+    "tabs_height": 36,
+    "tabs_spacing": 4,
+    "tabs_strip_color": "#00000000",    # transparent = la couleur habituelle de la barre des tabs
+    "tabs_inactive_border_enabled": {"top": False, "right": False, "bottom": False, "left": False},
+    "tabs_inactive_border": {side: "#303539" for side in ("top", "right", "bottom", "left")},
+    "tabs_inactive_border_thickness": 1,
+    "tabs_bg_color": "#00000000",
+    "tabs_active_bg_color": "#00000000",
+    "tabs_hover_bg_color": "#00000000",
+    "tabs_border_enabled": {"top": False, "right": False, "bottom": True, "left": False},
+    "tabs_border": {side: "#3f6f9f" for side in ("top", "right", "bottom", "left")},
+    "tabs_border_thickness": 2,
+    "tabs_corner_radius": 0,
+    "tabs_font_family": "",
+    "tabs_font_size": 11,
+    "tabs_font_bold": True,
+    "tabs_font_italic": False,
+    "tabs_font_color": "#5f9bd0",
+    "tabs_font_smoothing_enabled": False,
+    "tabs_font_smoothing": "current",
     "table_radius": 0,
     # Padding du texte a l'interieur des cellules de tableau (voir
     # _CellPaddingField/SettingsWindow._apply_cell_padding) — 4 valeurs
@@ -1244,9 +1352,59 @@ for _title_level, _title_defaults in _TITLE_LEVEL_DEFAULTS.items():
 
 del _title_level, _title_defaults, _title_key, _title_val
 
+# Cheminement (Reglages > Barre de navigation > Cheminement) : un tableau par ETAT des reperes — « Set » (cles
+# `crumb_*`), « Apres set » (`crumb_after_*`), « Apres focus » (`crumb_afterfocus_*`, les reperes APRES celui qui a
+# le focus : l'image affichee garde tout son cheminement) — memes lignes ; dans les deux derniers, un toggle par
+# ligne (`<prefixe>_ovr_<ligne>`) : allume = la ligne remplace celle du tableau Set, eteint = celle du Set.
+CRUMB_STATE_PREFIXES = {"after": "crumb_after", "after_focus": "crumb_afterfocus"}
+CRUMB_STATE_ROWS = ("font", "bg", "border", "radius", "padding", "margin", "shadow")
+for _pre in CRUMB_STATE_PREFIXES.values():
+    for _k in ("family", "size", "bold", "italic", "color", "smoothing_enabled", "smoothing"):
+        DEFAULT_SETTINGS.setdefault(f"{_pre}_font_{_k}", DEFAULT_SETTINGS[f"crumb_font_{_k}"])
+    DEFAULT_SETTINGS.setdefault(f"{_pre}_bg_color", "#00000000")
+    DEFAULT_SETTINGS.setdefault(f"{_pre}_border_enabled", {s: False for s in ("top", "right", "bottom", "left")})
+    DEFAULT_SETTINGS.setdefault(f"{_pre}_border", {s: "#303539" for s in ("top", "right", "bottom", "left")})
+    DEFAULT_SETTINGS.setdefault(f"{_pre}_border_thickness", 1)
+    DEFAULT_SETTINGS.setdefault(f"{_pre}_border_enabled_linked", False)
+    DEFAULT_SETTINGS.setdefault(f"{_pre}_corner_radius",
+                                {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0})
+    for _k in ("corner_radius", "padding", "margin"):
+        DEFAULT_SETTINGS.setdefault(f"{_pre}_{_k}_linked", True)
+    for _k in ("padding", "margin"):
+        DEFAULT_SETTINGS.setdefault(f"{_pre}_{_k}", {"left": 0, "top": 0, "right": 0, "bottom": 0})
+    for _row in CRUMB_STATE_ROWS:
+        DEFAULT_SETTINGS.setdefault(f"{_pre}_ovr_{_row}", False)
+DEFAULT_SETTINGS["crumb_after_ovr_bg"] = True               # l'ancien « Couleur fond apres set »
+DEFAULT_SETTINGS["crumb_afterfocus_ovr_font"] = True        # apres le focus : une autre couleur de texte
+DEFAULT_SETTINGS["crumb_afterfocus_font_color"] = "#5f666b"
+# Survol / focus d'un repere : fond et bordures (border radius : celui de l'etat du repere).
+for _pre, _color in (("crumb_hover", "#5f666b"), ("crumb_focus", "#5f9bd0")):
+    DEFAULT_SETTINGS.setdefault(f"{_pre}_bg_color", "#00000000")
+    DEFAULT_SETTINGS.setdefault(f"{_pre}_border_enabled", {s: False for s in ("top", "right", "bottom", "left")})
+    DEFAULT_SETTINGS.setdefault(f"{_pre}_border", {s: _color for s in ("top", "right", "bottom", "left")})
+    DEFAULT_SETTINGS.setdefault(f"{_pre}_border_thickness", 1)
+    DEFAULT_SETTINGS.setdefault(f"{_pre}_border_enabled_linked", False)
+DEFAULT_SETTINGS.setdefault("crumb_separator_enabled", True)
+# Visionneuse > Regroupement : cadre « Visionneuse » de la barre de navigation (boutons de la visionneuse).
+DEFAULT_SETTINGS.update({
+    "viewer_group_bg_color": "#00000000",
+    "viewer_group_label_font_family": "", "viewer_group_label_font_size": 9, "viewer_group_label_font_bold": True,
+    "viewer_group_label_font_italic": False, "viewer_group_label_font_color": "#7d858b",
+    "viewer_group_label_font_smoothing_enabled": False, "viewer_group_label_font_smoothing": "current",
+    "viewer_group_border_enabled": {s: True for s in ("top", "right", "bottom", "left")},
+    "viewer_group_border": {s: "#303539" for s in ("top", "right", "bottom", "left")},
+    "viewer_group_border_thickness": 1, "viewer_group_border_enabled_linked": True,
+    "viewer_group_corner_radius": {"top_left": 4, "top_right": 4, "bottom_right": 4, "bottom_left": 4},
+    "viewer_group_corner_radius_linked": True,
+    "viewer_group_padding": {"left": 8, "top": 2, "right": 2, "bottom": 2}, "viewer_group_padding_linked": False,
+    "viewer_group_margin": {"left": 14, "top": 0, "right": 0, "bottom": 0}, "viewer_group_margin_linked": False,
+})   # colonne « Activer » de la ligne Separateur
+del _pre, _k, _row, _color
+
 # Lignes « Ombres » (settings_widgets.shadow_look) : cotes, couleur par cote (opacite comprise), taille.
-SHADOW_PREFIXES = ("item_image_shadow", "preview_shadow", "viewer_film_image_shadow", "viewer_focus_image_shadow",
-                   "table_shadow", "viewer_film_table_shadow", "ctx_menu_shadow", "extra_window_shadow")
+SHADOW_PREFIXES = ("crumb_shadow", "crumb_after_shadow", "crumb_afterfocus_shadow", "button_shadow", "item_image_shadow", "preview_shadow", "viewer_film_image_shadow", "viewer_focus_image_shadow",
+                   "table_shadow", "viewer_film_table_shadow", "ctx_menu_shadow", "extra_window_shadow",
+                   "video_frame_shadow")
 for _shadow in SHADOW_PREFIXES:
     DEFAULT_SETTINGS[f"{_shadow}_enabled"] = {"top": False, "right": False, "bottom": False, "left": False}
     DEFAULT_SETTINGS[_shadow] = {"top": "#8c000000", "right": "#8c000000", "bottom": "#8c000000",
@@ -1254,6 +1412,17 @@ for _shadow in SHADOW_PREFIXES:
     DEFAULT_SETTINGS[f"{_shadow}_size"] = 10
     DEFAULT_SETTINGS[f"{_shadow}_enabled_linked"] = True
 del _shadow
+# Etat du toggle « lier les 4 » de chaque ligne a cotes / coins / padding : une cle `<cle>_linked` DOIT etre declaree
+# ici, sinon `load_settings` l'ignore et le toggle ne se retrouve pas a la reouverture (signale : Tabs > Border radius).
+for _key, _default in (("button_border_enabled", False), ("button_corner_radius", True),
+                       ("input_border_enabled", False), ("input_corner_radius", True),
+                       ("tabs_border_enabled", False), ("tabs_inactive_border_enabled", False),
+                       ("tabs_corner_radius", True), ("crumb_border_enabled", False),
+                       ("ctx_menu_border_enabled", False), ("step_badge_border_enabled", False),
+                       ("item_selection_unfocus_padding", True), ("item_selection_hover_padding", True),
+                       ("item_selection_idle_padding", True)):
+    DEFAULT_SETTINGS.setdefault(f"{_key}_linked", _default)
+del _key, _default
 # Menus contextuels : leur ombre remplace celle de Windows (coupee, elle debordait des coins arrondis) ->
 # allumee par defaut, halo doux.
 DEFAULT_SETTINGS["ctx_menu_shadow_enabled"] = {"top": True, "right": True, "bottom": True, "left": True}
@@ -1281,12 +1450,327 @@ del _sides_key
 _DYNAMIC_KEY = re.compile(r"^toggle(?:[3-9]\d*|[1-9]\d+)_")
 
 
-_LIVE_STATE_KEYS = ("table_dims", "slider_ranges", "toggle_custom_styles", "toggle_styles",
+# Module « Board » (board/) — Reglages > MRO > Barres d'outils : apparence d'origine par defaut (palette des
+# panneaux des reglages : fond #16181a, filet #2a2e32 d'un pixel, angles droits ; texte #d6d9dc).
+DEFAULT_SETTINGS.update({
+    "board_toolbar_bg_color": "#16181a",
+    "board_toolbar_border_enabled": {s: True for s in ("top", "right", "bottom", "left")},
+    "board_toolbar_border": {s: "#2a2e32" for s in ("top", "right", "bottom", "left")},
+    "board_toolbar_border_thickness": 1, "board_toolbar_border_enabled_linked": True,
+    "board_toolbar_corner_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
+    "board_toolbar_corner_radius_linked": True,
+    "board_toolbar_padding": {s: 6 for s in ("top", "right", "bottom", "left")},
+    "board_toolbar_padding_linked": True,
+    "board_toolbar_shadow_enabled": {s: False for s in ("top", "right", "bottom", "left")},
+    "board_toolbar_shadow": {s: "#8c000000" for s in ("top", "right", "bottom", "left")},
+    "board_toolbar_shadow_size": 10, "board_toolbar_shadow_enabled_linked": True,
+    "board_toolbar_text_font_family": "", "board_toolbar_text_font_size": 12, "board_toolbar_text_font_bold": False,
+    "board_toolbar_text_font_italic": False, "board_toolbar_text_font_color": "#d6d9dc",
+    "board_toolbar_text_font_smoothing_enabled": False, "board_toolbar_text_font_smoothing": "current",
+    "board_toolbar_invert": False,                 # icones et textes des barres en negatif
+    "board_toolbar_focus_width": 26, "board_toolbar_focus_color": "#6e3f6f9f",
+    "board_toolbar_focus_radius": 6, "board_toolbar_hover_color": "#232729",
+    "board_toolbar_hover_radius": 6,
+})
+# Reglages > MRO > Menus contextuels : les MEMES reglages que Menu contextuel, propres au board (`board_<cle>`),
+# chacun avec son interrupteur d'override (`board_ovr_<cle>`, coupe = suit le menu de l'appli).
+BOARD_MENU_KEYS = tuple(k for k in DEFAULT_SETTINGS if k.startswith("ctx_menu"))
+for _key in BOARD_MENU_KEYS:
+    DEFAULT_SETTINGS[f"board_{_key}"] = json.loads(json.dumps(DEFAULT_SETTINGS[_key]))
+    DEFAULT_SETTINGS[f"board_ovr_{_key}"] = False
+del _key
+
+# -- Module Markdown / code (paquet mdeditor/, onglet « Markdown » des reglages) ---------------------------------
+# SOURCE UNIQUE de l'apparence des notes (lecture ET edition, inspecteur compris) : mdeditor/style.py traduit ces
+# cles en variables CSS. Valeurs d'origine = celles du CSS de l'utilisateur (snippet « fabrice.css » de son coffre,
+# octobre 2026) ; couleurs au format de l'appli (#aarrggbb quand elles ont une opacite).
+
+def _md_font(prefix: str, family: str, size: int, color: str, bold: bool = False, italic: bool = False) -> dict:
+    """Cles d'une ligne « police » (gabarit des reglages : police | gras | italique | hauteur | couleur)."""
+    return {f"{prefix}_font_family": family, f"{prefix}_font_bold": bold, f"{prefix}_font_italic": italic,
+            f"{prefix}_font_size": size, f"{prefix}_font_smoothing_enabled": False,
+            f"{prefix}_font_smoothing": "current", f"{prefix}_font_color": color}
+
+
+def _md_sides(key: str, sides: tuple, color: str, thickness: int) -> dict:
+    """Cles d'une ligne « Bordures » : cotes allumes, couleur par cote, epaisseur, « lier les 4 »."""
+    every = ("top", "right", "bottom", "left")
+    return {key: {s: s in sides for s in every}, key.replace("_enabled", ""): {s: color for s in every},
+            key.replace("_enabled", "_thickness"): thickness, f"{key}_linked": False}
+
+
+def _md_box(key: str, left: int, top: int, right: int, bottom: int) -> dict:
+    return {key: {"left": left, "top": top, "right": right, "bottom": bottom}, f"{key}_linked": False}
+
+
+MD_DEFAULT_CSS = r"C:\Users\fabrice\Documents\Obsidian\Fabrice\Fabrice\.obsidian\snippets\fabrice.css"
+
+MARKDOWN_DEFAULTS: dict[str, Any] = {
+    # Ouverture : extensions ouvertes au double-clic (les autres fichiers texte / code s'ouvrent par le bouton
+    # « Éditeur » de la barre), double-clic sur une note .md (« module » ou l'application Obsidian), mode a
+    # l'ouverture d'une note (« last », « edit », « reading »), syntaxe masquee hors du curseur en edition.
+    "md_open_extensions": [".md"],
+    "md_open_md": "module",
+    "md_default_mode": "last",
+    "md_live_preview": True,
+    "md_preload": True,
+    # Feuille CSS chargee par-dessus l'habillage (Reglages > Markdown > CSS) : par defaut l'extrait CSS du coffre
+    # Obsidian de l'utilisateur (demande de l'utilisateur ; chemin propre a sa machine — absent ailleurs = style integre).
+    "md_css_path": MD_DEFAULT_CSS,
+    # Page
+    "md_bg_color": "#1b1c1d",
+    "md_bg_secondary": "#282a2c",
+    "md_accent_color": "#5ca6f5",
+    "md_selection_color": "#405ca6f5",
+    "md_content_width": 0,
+    "md_module_padding": 0,
+    **_md_box("md_page_padding", 40, 28, 40, 28),
+    **_md_box("md_page_margin", 0, 0, 0, 0),
+    **_md_sides("md_page_border_enabled", (), "#ff5e6366", 1),
+    "md_page_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
+    "md_page_radius_linked": False,
+    "md_scroll_width": 10,
+    "md_scroll_radius": 5,
+    "md_scroll_thumb_color": "#1fffffff",
+    "md_scroll_thumb_hover_color": "#33ffffff",
+    "md_scroll_track_color": "#00000000",
+    "md_scroll_offset": 0,
+    "md_scroll_padding": 0,
+    "md_zoom": 100,
+    # Texte normal
+    **_md_font("md_text", "Inter", 16, "#bfffffff"),
+    "md_text_weight": 400,
+    "md_line_height": 150,
+    "md_letter_spacing": 0,
+    "md_paragraph_spacing": 16,
+    # Titre de la note (nom du fichier, au-dessus du texte)
+    "md_title_enabled": True,
+    **_md_font("md_title", "Cantarell", 32, "#ffffcf67"),
+    "md_title_weight": 500,
+    "md_title_spacing": 20,
+    # Titres H1 a H6 (police, graisse, interligne, espace avant / apres)
+    **{key: value for n, (color, weight) in enumerate((("#ff4bafff", 700), ("#ff4bafff", 300), ("#ffcba54e", 700),
+                                                       ("#ffcba54e", 600), ("#ffd16f2e", 700), ("#ffd16f2e", 300)),
+                                                      start=1)
+       for key, value in {**_md_font(f"md_h{n}", "Cantarell", 18, color), f"md_h{n}_weight": weight,
+                          f"md_h{n}_line_height": 130, f"md_h{n}_space_before": 24,
+                          f"md_h{n}_space_after": 8}.items()},
+    # Mise en forme du texte
+    "md_bold_color": "#ffffcf67",
+    "md_bold_weight": 700,
+    "md_italic_color": "#bfffffff",
+    "md_strike_color": "#80ffffff",
+    "md_strike_line_color": "#99ff6464",
+    "md_strike_bg": "#1a808080",
+    "md_highlight_bg": "#66ff0000",
+    "md_highlight_color": "#ffffffff",
+    "md_markup_color": "#ff6a7075",
+    "md_tag_color": "#ff5ca6f5",
+    "md_tag_bg": "#265ca6f5",
+    # Liens
+    **_md_font("md_link", "JetBrains Mono", 16, "#ffb44747"),
+    "md_link_letter_spacing": -5,
+    "md_link_underline": False,
+    "md_link_hover_underline": True,
+    "md_link_unresolved_opacity": 60,
+    # Listes
+    "md_list_indent": 28,
+    "md_list_spacing": 2,
+    "md_bullet_1_char": "●", "md_bullet_1_font_size": 12, "md_bullet_1_font_color": "#ff5e6366", "md_bullet_1_vertical_offset": 0,
+    "md_bullet_2_char": "○", "md_bullet_2_font_size": 10, "md_bullet_2_font_color": "#ff5e6366", "md_bullet_2_vertical_offset": 0,
+    "md_bullet_3_char": "◆", "md_bullet_3_font_size": 8, "md_bullet_3_font_color": "#ff5e6366", "md_bullet_3_vertical_offset": 0,
+    "md_number_color": "#ff8a9196",
+    "md_checkbox_color": "#ff5ca6f5",
+    "md_checkbox_size": 15,
+    "md_task_done_strike": True,
+    "md_task_done_color": "#80ffffff",
+    # Citations
+    **_md_font("md_quote", "", 16, "#ff00ff00", italic=True),
+    "md_quote_bg": "#ff242628",
+    **_md_sides("md_quote_border_enabled", ("left",), "#ffb44747", 3),
+    "md_quote_radius": 8, "md_quote_radius_linked": True,
+    **_md_box("md_quote_padding", 16, 12, 16, 12),
+    "md_quote_spacing": 16,
+    # Callouts (« > [!type] titre »)
+    "md_callout_bg": "#ff282a2c",
+    "md_callout_border_color": "#ff666666",
+    "md_callout_border_width": 3,
+    "md_callout_title_color": "#ffff6f00",
+    "md_callout_radius": 5, "md_callout_radius_linked": True,
+    # Code en ligne
+    **_md_font("md_code_inline", "JetBrains Mono", 14, "#b2a9a9a9"),
+    "md_code_inline_weight": 300,
+    "md_code_inline_bg": "#ff282a2c",
+    "md_code_inline_radius": 4, "md_code_inline_radius_linked": True,
+    **_md_box("md_code_inline_padding", 8, 2, 8, 2),
+    # Blocs de code
+    **_md_font("md_codeblock", "JetBrains Mono", 14, "#b2a9a9a9"),
+    "md_codeblock_weight": 300,
+    "md_codeblock_line_height": 150,
+    "md_codeblock_bg": "#ff282a2c",
+    **_md_sides("md_codeblock_border_enabled", ("left", "top", "right", "bottom"), "#ff282a2c", 1),
+    "md_codeblock_radius": 8, "md_codeblock_radius_linked": True,
+    **_md_box("md_codeblock_padding", 16, 12, 16, 12),
+    "md_codeblock_spacing": 16,
+    # Coloration syntaxique (blocs de code des notes, fichiers de code, edition comme lecture)
+    "md_syntax_comment": "#ce5bbd00",
+    "md_syntax_keyword": "#ffc678dd",
+    "md_syntax_string": "#ff98c379",
+    "md_syntax_number": "#ffd19a66",
+    "md_syntax_def": "#ff61afef",
+    "md_syntax_variable": "#ffe06c75",
+    "md_syntax_type": "#ffe5c07b",
+    "md_syntax_builtin": "#ff56b6c2",
+    "md_syntax_operator": "#ff56b6c2",
+    "md_syntax_property": "#ffd8b6b6",
+    "md_syntax_tag": "#ffe06c75",
+    "md_syntax_attribute": "#ffd19a66",
+    "md_syntax_meta": "#ff8a9196",
+    "md_syntax_italic_comments": False,
+    # Tableaux
+    **_md_font("md_table", "", 15, "#ffc6c6c6"),
+    **_md_font("md_table_head", "", 15, "#ffc6c6c6", bold=True),
+    "md_table_grid_color": "#ff3e4143",
+    "md_table_grid_width": 1,
+    "md_table_cell_bg": "#40000000",
+    "md_table_alt_bg": "#40000000",
+    "md_table_head_bg": "#40000000",
+    "md_table_radius": 4, "md_table_radius_linked": True,
+    **_md_box("md_table_cell_padding", 12, 6, 12, 6),
+    "md_table_spacing": 16,
+    # Separateurs
+    "md_hr_color": "#39ffffff",
+    "md_hr_thickness": 1,
+    "md_hr_spacing": 24,
+    # Images
+    "md_image_max_width": 100,
+    "md_image_align": "left",
+    "md_image_radius": 5, "md_image_radius_linked": True,
+    "md_image_spacing": 8,
+    # Editeur : curseur, ligne active, syntaxe revelee, fichiers de code (police, numeros de ligne, retour a la ligne)
+    "md_caret_color": "#ff5ca6f5",
+    "md_caret_width": 2,
+    "md_active_line_bg": "#0affffff",
+    **_md_font("md_code_file", "JetBrains Mono", 14, "#ffd6d9dc"),
+    "md_code_file_line_height": 150,
+    "md_code_file_bg": "#ff1b1c1d",
+    "md_line_numbers": True,
+    "md_gutter_color": "#ff5f666b",
+    "md_gutter_bg": "#00000000",
+    "md_code_wrap": False,
+    "md_tab_size": 4,
+    # Barre d'outils (reprise du plugin Editing Toolbar)
+    "md_toolbar_enabled": True,
+    "md_toolbar_font_color": "#ff0000",
+    "md_toolbar_background_color": "#d3f8b6",
+    "md_toolbar_bg": "#b3282a2c",
+    "md_toolbar_icon_color": "#ffdadada",
+    "md_toolbar_icon_size": 18,
+    "md_toolbar_button_size": 30,
+    "md_toolbar_radius": 0, "md_toolbar_radius_linked": True,
+    "md_toolbar_hover_bg": "#1affffff",
+    "md_toolbar_active_bg": "#595ca6f5",
+    "md_toolbar_button_radius": 4, "md_toolbar_button_radius_linked": True,
+    **_md_box("md_toolbar_padding", 8, 4, 8, 4),
+    **_md_box("md_toolbar_margin", 0, 0, 0, 0),
+    "md_toolbar_shadow_enabled": {s: False for s in ("top", "right", "bottom", "left")},
+    "md_toolbar_shadow": {s: "#8c000000" for s in ("top", "right", "bottom", "left")},
+    "md_toolbar_shadow_size": 10, "md_toolbar_shadow_enabled_linked": True,
+    "md_toolbar_gap": 2,
+    **_md_sides("md_toolbar_border_enabled", ("bottom",), "#ff2a2e32", 1),
+    "md_toolbar_centered": False,
+    # Etat temps reel : dernier mode (« edit » / « reading »), taille du texte des fichiers de code (Ctrl + molette).
+    "md_last_mode": "edit",
+    "md_code_font_zoom": 0,
+}
+DEFAULT_SETTINGS.update(MARKDOWN_DEFAULTS)
+
+# Module vidéo (paquet video/) : réglages GÉNÉRAUX, onglet « Module vidéo » des réglages. Source unique des défauts.
+VIDEO_DEFAULTS: dict[str, Any] = {
+    # Ouverture
+    "video_open_videos": True, "video_open_sequences": True, "video_detect_sequences": True,
+    # Affichage
+    **{f"auto_{task}_{key}": value for task in ("settings", "moodboard", "video")
+       for key, value in (("enabled", task == "settings"), ("when", "app"), ("delay", 60))},
+    "video_moodboard_proxy_width": 1200,
+    "video_bg_color": "#141414", "video_moodboard_bg_color": "#202020", "video_default_zoom": "smart", "video_wheel_zoom": True, "video_zoom_step": 25,
+    "video_analysis_colors": 16, "video_analysis_exclude_black": False, "video_analysis_exclude_white": False,
+    "video_match_lut_size": 33, "video_match_intensity": 100, "video_match_method": 0,
+    "video_help_enabled": True, "video_help_delay": 350, "video_help_width": 500,
+    "video_mood_info_enabled": False, "video_mood_info_timestamp": True, "video_mood_info_interval": True,
+    "video_mood_info_font_size": 11, "video_mood_info_color": "#ffffff", "video_mood_info_bg": "#000000",
+    "video_mood_info_opacity": 75, "video_mood_info_radius": 2, "video_mood_info_padding": 4,
+    "video_mood_info_format": "clock", "video_mood_info_position": "top_right",
+    "video_mood_info_margin_x": 4, "video_mood_info_margin_y": 4,
+    "video_interpolation": "auto", "video_mipmaps": True, "video_pan": "bounded", "video_fit_margin": 0,
+    "video_checker": True, "video_checker_size": 12, "video_checker_a": "#3a3a3a", "video_checker_b": "#262626",
+    "video_backend": "auto", "video_fullscreen_autohide": True, "video_fullscreen_info": True,
+    "video_controls_bg": "#16181a", "video_controls_color": "#c4cacf", "video_controls_height": 34,
+    # Cadre de l'image (autour du rectangle VISIBLE de la vidéo ; affichage seulement, jamais exporté). L'ombre :
+    # SHADOW_PREFIXES (« video_frame_shadow ») + décalages / extension ci-dessous.
+    "video_frame_border_enabled": {"top": False, "right": False, "bottom": False, "left": False},
+    "video_frame_border_enabled_linked": True,
+    "video_frame_border": {"top": "#5f666b", "right": "#5f666b", "bottom": "#5f666b", "left": "#5f666b"},
+    "video_frame_border_thickness": 1,
+    "video_frame_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
+    "video_frame_radius_linked": True,
+    "video_frame_shadow_offset_x": 0, "video_frame_shadow_offset_y": 6, "video_frame_shadow_spread": 0,
+    # Informations en surimpression (touche I)
+    "video_info_enabled": False, "video_info_opacity": 60, "video_info_bg": "#000000",
+    "video_info_font_family": "", "video_info_font_bold": False, "video_info_font_size": 12,
+    "video_info_font_color": "#e8e8e8", "video_info_label_color": "#9aa0a6", "video_info_title_color": "#ffffff",
+    "video_info_corner": "top_right", "video_info_margin_x": 16, "video_info_margin_y": 16,
+    "video_info_line_spacing": 3, "video_info_padding": 10, "video_info_radius": 6, "video_info_width": 0,
+    "video_info_compact": False, "video_info_titles": True, "video_info_temporary": False, "video_info_timeout": 3,
+    "video_info_media": True, "video_info_image": True, "video_info_playback": True, "video_info_display": True,
+    "video_info_pixel": True,
+    # Lecture
+    "video_sequence_fps": "24", "video_autoplay": True, "video_loop": True, "video_volume": 80,
+    # Moteur des vidéos : « vlc » (LibVLC : décodage matériel, son, réseau) ou « pyav » ; caches de VLC (ms).
+    "video_engine": "vlc", "video_cache_local_ms": 1000, "video_cache_network_ms": 1500,
+    "video_end_behavior": "stop", "video_priority": "smooth", "video_missing": "black",
+    "video_prefetch_ahead": 24, "video_prefetch_behind": 8, "video_reset_position": True,
+    "video_key_in": "Shift+I", "video_key_out": "Shift+O", "video_key_clear": "Shift+X",
+    # Timeline
+    "video_timeline_height": 54, "video_timeline_tick": 8, "video_timeline_density": 80,
+    "video_time_display": "frames", "video_timeline_zoom_step": 25, "video_timeline_zoom_cursor": True,
+    "video_timeline_playhead": "#ff5a36", "video_timeline_selection": "#3a6ea5", "video_timeline_in": "#4caf50",
+    "video_timeline_out": "#e05252", "video_timeline_bg": "#17191b", "video_timeline_ruler": "#24272b",
+    "video_timeline_text": "#a8adb3", "video_timeline_cache": True, "video_timeline_thumbs": True,
+    "video_timeline_thumb_height": 40,
+    # Couleur
+    "video_ocio_config": "", "video_display": "sRGB - Display", "video_view_video": "Un-tone-mapped",
+    "video_view_image": "Un-tone-mapped", "video_input_video": "sRGB Encoded Rec.709 (sRGB)",
+    "video_input_exr": "Linear Rec.709 (sRGB)", "video_input_float": "Linear Rec.709 (sRGB)",
+    "video_input_int": "sRGB Encoded Rec.709 (sRGB)", "video_alpha_mode": "auto", "video_channel": "rgb",
+    "video_grade_on_change": "keep", "video_clipping": False,
+    # LUT
+    "video_lut_dir": "", "video_lut_default": "", "video_lut_auto": False, "video_lut_mix": 100,
+    "video_lut_position": "display",
+    # Performances
+    "video_cache_mb": 3072, "video_workers": 4, "video_diagnostics": False,
+    # Export
+    "video_export_format": "mp4", "video_export_codec": "h264", "video_export_crf": 18,
+    "video_export_preset": "medium", "video_export_dir": "", "video_export_color": "display",
+    "video_export_lut": True, "video_export_fps_mode": "resample", "video_export_interp": "minterpolate",
+    "video_export_audio": True, "video_export_depth": "half", "video_export_numbering": "source",
+    "video_export_overwrite": False, "video_rife_path": "",
+    # État temps réel : corrections en cours, presets de corrections, derniers réglages d'export.
+    "video_grade": {}, "video_grade_presets": {}, "video_export_last": {}, "video_last_zoom": {},
+    "video_scopes": False,
+}
+DEFAULT_SETTINGS.update(VIDEO_DEFAULTS)
+
+_LIVE_STATE_KEYS = ("md_toolbar_font_color", "md_toolbar_background_color",
+                    "table_dims", "slider_ranges", "toggle_custom_styles", "toggle_styles",
                     "toggle_style_overrides", "element_spaces", "ui_spaces",
                     "element_spaces_below", "ui_spaces_below", "title_order", "element_style_overrides",
                     "viewer_film_text_ratio", "viewer_gallery_text_height", "context_menu_layouts",
-                    "viewer_button_order", "quick_style_positions", "interface_move_positions",
-                    "interface_edit_appearance")
+                    "viewer_button_order", "viewer_recursive", "md_last_mode", "md_code_font_zoom",
+                    "board_pen_presets", "quick_style_positions", "interface_move_positions",
+                    "interface_edit_appearance", "video_grade", "video_grade_presets", "video_export_last",
+                    "video_info_enabled", "video_loop", "video_volume", "video_last_zoom",
+                    "video_time_display", "video_scopes", "video_timeline_thumb_height")
 
 
 def toggle_style_list(settings: dict) -> list[dict]:
@@ -1388,6 +1872,10 @@ def load_settings(startup: bool = False) -> dict[str, Any]:
             for key, value in raw.items():
                 if _DYNAMIC_KEY.match(key):
                     settings[key] = value
+    for new_key, old_key in (("button_corner_radius", "button_radius"),
+                             ("input_corner_radius", "input_radius")):
+        if settings.get(new_key) is None:
+            settings[new_key] = settings.get(old_key, 0)
     return settings
 
 # ---------------------------------------------------------------------------------------------------
@@ -1560,6 +2048,49 @@ def _resolve_color_value(value: str, colors: dict) -> str:
         ref, alpha = split_color_ref(value)
         return with_alpha(colors.get(_SLOT_REAL.get(ref[1:], "chrome"), "#000000"), alpha)
     return value
+
+# -- Zone de saisie (Reglages > Zone de saisie) : valeurs LUES par toutes les zones de saisie de la fenetre de
+# reglages au moment de leur habillage (la feuille de style de l'appli couvre, elle, les QLineEdit de l'appli).
+INPUT_LOOK: dict = {}
+
+
+def set_input_look(values: dict) -> None:
+    INPUT_LOOK.clear()
+    INPUT_LOOK.update({k: v for k, v in values.items() if k.startswith("input_")})
+    INPUT_LOOK["colors"] = values.get("colors") or {}
+
+
+def input_bg() -> str:
+    value = INPUT_LOOK.get("input_bg_color")
+    return _resolve_color_value(value, INPUT_LOOK.get("colors") or {}) if value else M["field_bg"]
+
+
+def input_border_decl() -> str:
+    """Bordures de la zone de saisie : une declaration par cote (couleur, epaisseur, cotes allumes)."""
+    colors = INPUT_LOOK.get("colors") or {}
+    enabled = INPUT_LOOK.get("input_border_enabled", True)
+    if not isinstance(enabled, dict):
+        enabled = dict.fromkeys(("top", "right", "bottom", "left"), bool(enabled))
+    raw = INPUT_LOOK.get("input_border")
+    if not isinstance(raw, dict):
+        raw = dict.fromkeys(("top", "right", "bottom", "left"), raw or M["field_border"])
+    try:
+        width = max(0, int(INPUT_LOOK.get("input_border_thickness", 1)))
+    except (TypeError, ValueError):
+        width = 1
+    return " ".join(
+        f"border-{side}: {width}px solid {_resolve_color_value(raw.get(side) or M['field_border'], colors)};"
+        if enabled.get(side) and width else f"border-{side}: none;"
+        for side in ("top", "right", "bottom", "left"))
+
+
+def input_height() -> int:
+    """Hauteur imposee aux zones de saisie (0 : chacune garde la sienne)."""
+    try:
+        return max(0, int(INPUT_LOOK.get("input_height") or 0))
+    except (TypeError, ValueError):
+        return 0
+
 
 def _coerce_side_enabled(value, default: bool = True) -> dict[str, bool]:
     """Normalise un reglage de bordure "activee" en dict {cote: bool} —

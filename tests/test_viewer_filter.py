@@ -363,6 +363,33 @@ class PlancheTest(unittest.TestCase):
             self.assertIn("Toute la racine", window.filter_fields["Portée"]._options)
             window.close()
 
+    def test_filter_button_toggles_application_without_forgetting_criteria(self):
+        win = pb.PipelineBrowser(self.root)
+        win._idle_preview_scheduler.timer.stop()
+        self.addCleanup(win.deleteLater)
+        win._project_columns_hidden = True
+        win._viewer_paths = win._viewer_base = list(self.here)
+        win._viewer_index = 0
+        win._open_focus_gallery()
+        APP.processEvents()
+        button = win._filter_btn
+        win._set_viewer_filter({"extensions": ["png"]})
+        self.assertEqual([p.name for p in win._gallery_list], ["a.png", "b.png"])
+        self.assertIsNotNone(button._alert)
+
+        button.click()
+        APP.processEvents()
+        self.assertEqual([p.name for p in win._gallery_list], ["a.png", "b.png", "c.jpg"])
+        self.assertEqual(win._viewer_filter["extensions"], ["png"])
+        self.assertFalse(win._viewer_filter_enabled)
+        self.assertIsNone(button._alert)
+
+        button.click()
+        APP.processEvents()
+        self.assertEqual([p.name for p in win._gallery_list], ["a.png", "b.png"])
+        self.assertTrue(win._viewer_filter_enabled)
+        self.assertIsNotNone(button._alert)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -111,6 +111,16 @@ class GalleryCellsTest(unittest.TestCase):
         self.old = ui_state.APPLIED_SETTINGS
         ui_state.APPLIED_SETTINGS = copy.deepcopy(DEFAULT_SETTINGS)
         self.addCleanup(setattr, ui_state, "APPLIED_SETTINGS", self.old)
+        # Case DIVISEE (image | texte) : coupee dans la planche (focus.FocusGallery.SPLIT_CELLS), gardee ici.
+        self.addCleanup(setattr, focus.FocusGallery, "SPLIT_CELLS", focus.FocusGallery.SPLIT_CELLS)
+        focus.FocusGallery.SPLIT_CELLS = True
+        # L'ancien padding de cellule (Reglages > Tableaux) n'existe plus dans la planche ; ces tests de la case
+        # divisee en ont besoin.
+        patcher = mock.patch.object(focus, "_gallery_look", lambda: {"padding": {k: 8 for k in
+                                                                                 ("left", "top", "right", "bottom")}})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        focus._CELLS.clear()
         folder = Path(tempfile.mkdtemp())
         paths = []
         for i in range(4):
@@ -383,11 +393,12 @@ class FocusFrameTest(unittest.TestCase):
 
 
 class FilmSettingsTest(unittest.TestCase):
-    def test_three_sub_sections_under_visionneuse(self):
+    def test_visionneuse_hides_text_cell_settings(self):
         node = next(n for n in v2.GENERAL_TREE if n.title == "Visionneuse")
         self.assertEqual(node.group, "Visionneuse")
         self.assertEqual([c.title for c in node.children],
-                         ["Tableau", "Sous cellule image", "Sous cellule texte", "Focus", "Filtres"])
+                         ["Tableau", "Cellules", "Focus", "Filtres", "Icônes"])
+        self.assertNotIn("Visionneuse : Cellule texte", [group for _title, group in v2.VIEWER_FILM_GROUPS])
         self.assertEqual([sp.label for sp in v2.CATALOG["Visionneuse : Focus"]],
                          ["Bordures de l'image", "Border radius de l'image", "Ombres de l'image"])
         labels = [sp.label for sp in v2.CATALOG["Visionneuse : Cellule image"]]
@@ -451,16 +462,16 @@ class FilmSettingsTest(unittest.TestCase):
             win = v2.SettingsWindowV2()
         self.addCleanup(win.deleteLater)
         page = win.stack.currentWidget()
-        for title in ("Visionneuse", "Sous cellule texte"):     # les enfants naissent au depliage du parent
+        for title in ("Visionneuse", "Cellules"):     # les enfants naissent au depliage du parent
             for node in page.findChildren(v2._LazyNode):
                 if node.node.title == title:
                     node.set_collapsed(False)
-        self.assertEqual(win.wired_values()["viewer_film_text_cell_font_size"], 11)
-        win.external_values({"viewer_film_text_cell_font_size": 17, "viewer_film_text_ratio": 0.6})
+        self.assertEqual(win.wired_values()["viewer_film_image_cell_font_size"], 11)
+        win.external_values({"viewer_film_image_cell_font_size": 17, "viewer_film_text_ratio": 0.6})
         values = win.wired_values()
-        self.assertEqual(values["viewer_film_text_cell_font_size"], 17)
+        self.assertEqual(values["viewer_film_image_cell_font_size"], 17)
         self.assertEqual(win.settings["viewer_film_text_ratio"], 0.6)
-        self.assertEqual(win._original_settings["viewer_film_text_cell_font_size"], 17)
+        self.assertEqual(win._original_settings["viewer_film_image_cell_font_size"], 17)
 
 
 if __name__ == "__main__":

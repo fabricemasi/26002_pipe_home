@@ -50,6 +50,8 @@ from settings_theme import _set_button_radius, _set_input_radius, _set_text_role
 from settings_store import (
     DEFAULT_SETTINGS,
     M,
+    input_bg,
+    input_border_decl,
     _PRESETS_PATH,
     _coerce_corner_radius,
     _coerce_side_enabled,
@@ -5442,7 +5444,7 @@ class SettingsWindow(QDialog):
 
     def _refresh_root_field_style(self):
         self.root_field.setStyleSheet(
-            f"background: {M['field_bg']}; border: 1px solid {M['field_border']}; "
+            f"background: {input_bg()}; {input_border_decl()} "
             f"color: {M['value_muted']}; padding: 0 8px;"
         )
         self._refresh_omit_fields_style()

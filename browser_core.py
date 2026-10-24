@@ -2,6 +2,8 @@ import json
 import os
 import subprocess
 import sys
+import time
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 from PySide6.QtCore import (
@@ -40,6 +42,7 @@ from app_style import (
     set_auto_collapse_set_columns,
     set_button_frame,
     set_button_radius,
+    set_control_look,
     set_color,
     set_column_gap,
     set_columns_resizable,
@@ -454,26 +457,212 @@ def human_size(n: int) -> str:
         n /= 1024.0
     return ""
 
-def list_entries(directory: Path, exclude: frozenset[str] | None = None) -> list[Path]:
+# Type et taille de chaque element lu par list_entries : `os.scandir` les donne avec le nom (sous Windows, sans
+# aucun acces de plus). Column.refresh les reprend au lieu de refaire `is_dir()` / `stat()` par ligne — sur un
+# partage reseau, chacun etait un aller-retour (dossier de 200 elements : plusieurs secondes figees).
+_ENTRY_INFO: dict[str, tuple[bool, int | None, float | None]] = {}
+_LISTED_COUNT: dict[str, tuple[float, int]] = {}      # dossier -> (instant, nombre d'elements de sa lecture)
+_DIR_CHILDREN: dict[str, dict[str, Path]] = {}       # sous-dossiers, statuts compris
+
+
+def _remote_gui(path) -> bool:
+    from previews import is_remote_path
+    return threading.current_thread() is threading.main_thread() and is_remote_path(path)
+
+
+def _request_directory(directory):
+    """Revalidation partagée, sans stat réseau préalable sur le fil Qt."""
+    from column_loading import loader
+    service = loader()
+    directories = [Path(directory)]
+    key = service.key(directories, None)
+    data = service.cached(key)
+    if data is None or time.monotonic() - data.stamp >= service.FRESH_S:
+        service.request(key, directories, None, service)
+
+
+def remember_entry(path, is_dir: bool, size: int | None = None, mtime: float | None = None) -> None:
+    if len(_ENTRY_INFO) > 200_000:
+        _ENTRY_INFO.clear()
+    _ENTRY_INFO[str(path)] = (bool(is_dir), size, mtime)
+
+
+def entry_mtime(path) -> float | None:
+    """Date de modification, reprise de la lecture de son dossier quand elle est connue (sinon `stat`)."""
+    info = _ENTRY_INFO.get(str(path))
+    if info is not None and info[2] is not None:
+        return info[2]
+    if _remote_gui(path):
+        _request_directory(Path(path).parent)
+        return None
+    try:
+        return Path(path).stat().st_mtime
+    except OSError:
+        return None
+
+
+def listed_count(directory, max_age: float = 5.0) -> int | None:
+    """Nombre d'elements de la derniere lecture de `directory` par list_entries (si recente), sinon None."""
+    hit = _LISTED_COUNT.get(os.path.normcase(str(directory)))
+    if hit is not None and time.monotonic() - hit[0] < max_age:
+        return hit[1]
+    return None
+
+
+def entry_is_dir(path) -> bool:
+    """`path.is_dir()`, repris de la derniere lecture de son dossier quand elle est connue."""
+    info = _ENTRY_INFO.get(str(path))
+    if info is not None:
+        return info[0]
+    if _remote_gui(path):
+        _request_directory(Path(path).parent)
+        return False
+    return Path(path).is_dir()
+
+
+def entry_size(path) -> int | None:
+    """Taille d'un fichier, reprise de la lecture de son dossier quand elle est connue (sinon `stat`)."""
+    info = _ENTRY_INFO.get(str(path))
+    if info is not None and info[1] is not None:
+        return info[1]
+    if _remote_gui(path):
+        _request_directory(Path(path).parent)
+        return None
+    try:
+        return Path(path).stat().st_size
+    except OSError:
+        return None
+
+
+# Fichiers de configuration caches d'un dossier (.pipeline_layout.json, .pipeline_shortcuts.json,
+# .pipeline_columns.json, .pipeline_lightroom.json…) : relus a CHAQUE clic et a chaque peinture d'une ligne
+# (pastille d'etapes), chaque lecture ou `stat` etant un aller-retour sur un partage reseau (~70 par clic,
+# mesure). La lecture du dossier (`list_entries`) les voit passer avec leur date et leur taille (donnees de
+# `os.scandir`, gratuites sous Windows) : tant que cette lecture est recente, un fichier absent n'est pas
+# cherche et un contenu deja lu est repris s'il a la meme date et la meme taille. Nos propres ecritures
+# oublient l'etat du dossier (`forget_config`). Hors d'une lecture recente : `stat` garde CONFIG_FRESH_S.
+CONFIG_FRESH_S = 4.0
+_CONFIG_REVISION = 0
+_CONFIG_PREFIX = ".pipeline"
+_DIR_CONFIG: dict[str, tuple[float, dict]] = {}          # dossier -> (instant, {nom: (mtime_ns, taille)})
+_CONFIG_STAT: dict[str, tuple[float, tuple | None]] = {}  # fichier -> (instant, (mtime_ns, taille) | None)
+_CONFIG_TEXT: dict[str, tuple[tuple, str]] = {}           # fichier -> (etat, contenu)
+
+
+def _note_dir_config(directory, found: dict) -> None:
+    if len(_DIR_CONFIG) > 20_000:
+        _DIR_CONFIG.clear()
+    _DIR_CONFIG[os.path.normcase(str(directory))] = (time.monotonic(), found)
+
+
+def config_state(path) -> tuple | None:
+    """(mtime_ns, taille) du fichier de configuration `path`, None s'il n'existe pas."""
+    path = Path(path)
+    now = time.monotonic()
+    record = _DIR_CONFIG.get(os.path.normcase(str(path.parent)))
+    if _remote_gui(path):
+        if record is None or now - record[0] >= CONFIG_FRESH_S:
+            _request_directory(path.parent)
+        return record[1].get(path.name.lower()) if record else None
+    if record is not None and now - record[0] < CONFIG_FRESH_S:
+        return record[1].get(path.name.lower())
+    key = os.path.normcase(str(path))
+    hit = _CONFIG_STAT.get(key)
+    if hit is not None and now - hit[0] < CONFIG_FRESH_S:
+        return hit[1]
+    try:
+        st = os.stat(path)
+        state = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        state = None
+    if len(_CONFIG_STAT) > 20_000:
+        _CONFIG_STAT.clear()
+    _CONFIG_STAT[key] = (now, state)
+    return state
+
+
+def read_config_text(path) -> str | None:
+    """Contenu du fichier de configuration `path` (None s'il est absent ou illisible), relu seulement s'il a
+    change (voir config_state)."""
+    path = Path(path)
+    state = config_state(path)
+    if state is None:
+        return None
+    key = os.path.normcase(str(path))
+    hit = _CONFIG_TEXT.get(key)
+    if hit is not None and hit[0] == state:
+        return hit[1]
+    if _remote_gui(path):
+        _request_directory(path.parent)
+        return hit[1] if hit else None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if len(_CONFIG_TEXT) > 5_000:
+        _CONFIG_TEXT.clear()
+    _CONFIG_TEXT[key] = (state, text)
+    return text
+
+
+def forget_config(path) -> None:
+    """A appeler apres avoir ecrit / supprime un fichier de configuration : etats et contenu oublies."""
+    global _CONFIG_REVISION
+    _CONFIG_REVISION += 1
+    path = Path(path)
+    key = os.path.normcase(str(path))
+    _CONFIG_TEXT.pop(key, None)
+    _CONFIG_STAT.pop(key, None)
+    _DIR_CONFIG.pop(os.path.normcase(str(path.parent)), None)
+
+
+def forget_all_config() -> None:
+    global _CONFIG_REVISION
+    _CONFIG_REVISION += 1
+    _CONFIG_TEXT.clear()
+    _CONFIG_STAT.clear()
+    _DIR_CONFIG.clear()
+
+
+def list_entries(directory: Path, exclude: frozenset[str] | None = None, *, strict: bool = False) -> list[Path]:
     """Dossiers puis fichiers, tries. Les FLATTEN_FOLDERS sont traverses.
     `exclude` (noms en minuscules) : entrees jamais listees, quel que soit
     leur contenu — voir STATUS_FOLDERS, exclus des colonnes Projets/
-    Sous-projet (voir Column.refresh)."""
+    Sous-projet (voir Column.refresh). Type et taille retenus (`entry_is_dir`, `entry_size`) ; fichiers de
+    configuration du dossier retenus (voir config_state)."""
     dirs: list[Path] = []
     files: list[Path] = []
+    config: dict = {}
+    children = {}
     try:
         with os.scandir(directory) as it:
             for entry in it:
+                if entry.is_dir() and not entry.name.startswith(HIDDEN_PREFIXES):
+                    children[entry.name.lower()] = Path(entry.path)
                 if entry.name.startswith(HIDDEN_PREFIXES):
+                    if entry.name.startswith(_CONFIG_PREFIX):
+                        try:
+                            st = entry.stat()
+                            config[entry.name.lower()] = (st.st_mtime_ns, st.st_size)
+                        except OSError:
+                            pass
                     continue
                 if exclude and entry.name.lower() in exclude:
                     continue
-                if entry.is_dir() and _is_globally_omitted_dir(entry.name):
+                is_dir = entry.is_dir()
+                if is_dir and _is_globally_omitted_dir(entry.name):
                     continue
                 path = Path(entry.path)
-                if entry.is_dir():
+                try:
+                    st = entry.stat()
+                    size = None if is_dir else st.st_size
+                    mtime = st.st_mtime
+                except OSError:
+                    size = mtime = None
+                remember_entry(path, is_dir, size, mtime)
+                if is_dir:
                     if entry.name.upper() in FLATTEN_FOLDERS:
-                        dirs.extend(p for p in list_entries(path) if p.is_dir())
+                        dirs.extend(p for p in list_entries(path, strict=strict) if entry_is_dir(p))
                     else:
                         dirs.append(path)
                 else:
@@ -481,7 +670,16 @@ def list_entries(directory: Path, exclude: frozenset[str] | None = None) -> list
                         continue
                     files.append(path)
     except OSError:
+        if strict:
+            raise
         return []
+    _note_dir_config(directory, config)
+    if len(_DIR_CHILDREN) > 20_000:
+        _DIR_CHILDREN.clear()
+    _DIR_CHILDREN[os.path.normcase(str(directory))] = children
+    if len(_LISTED_COUNT) > 20_000:
+        _LISTED_COUNT.clear()
+    _LISTED_COUNT[os.path.normcase(str(directory))] = (time.monotonic(), len(dirs) + len(files))
     key = lambda p: p.name.lower()
     return sorted(dirs, key=key) + sorted(files, key=key)
 
@@ -536,6 +734,11 @@ def _make_group_drag_ghost(column: QWidget) -> QWidget:
 def _dir_has_content(directory: Path) -> bool:
     """True des que `directory` contient au moins une entree visible
     (fichier ou dossier, hors HIDDEN_PREFIXES)."""
+    if _remote_gui(directory):
+        count = listed_count(directory)
+        if count is None:
+            _request_directory(directory)
+        return bool(count)
     try:
         with os.scandir(directory) as it:
             for entry in it:
@@ -554,6 +757,14 @@ def status_folder_state(directory: Path, name: str) -> tuple[bool, Path]:
     chemin). Actif = le dossier existe (insensible a la casse) et n'est pas
     vide. Le chemin retourne est celui trouve sur le disque si actif, sinon
     `directory / name` (repli pour l'ouverture eventuelle malgre tout)."""
+    if _remote_gui(directory):
+        children = _DIR_CHILDREN.get(os.path.normcase(str(directory)))
+        if children is None:
+            _request_directory(directory)
+        path = (children or {}).get(name.lower(), directory / name)
+        if children is not None and name.lower() not in children:
+            return False, path
+        return _dir_has_content(path), path
     try:
         with os.scandir(directory) as it:
             for entry in it:
@@ -581,6 +792,11 @@ def _named_subdir(directory: Path, name: str) -> Path:
     de cette fonction avant sa generalisation a la chaine configurable) : le
     sous-dossier `name` de `directory` (insensible a la casse) s'il existe,
     sinon `directory` lui-meme (repli si la convention n'est pas suivie)."""
+    children = _DIR_CHILDREN.get(os.path.normcase(str(directory)))
+    if _remote_gui(directory):
+        if children is None:
+            _request_directory(directory)
+        return (children or {}).get(name.lower(), directory)
     try:
         with os.scandir(directory) as it:
             for entry in it:
@@ -668,6 +884,13 @@ def project_thumbnail_pixmap(path: Path) -> QPixmap:
     cached = _project_thumbnail_cache.get(key)
     if cached and cached[0] == mtime:
         return cached[1]
+    if _remote_gui(thumb) and mtime is not None:
+        from previews import file_image_pixmap
+        pix = file_image_pixmap(thumb, asynchronous=True)
+        if pix is None:
+            return default_thumbnail()   # ne pas mémoriser ce repli pendant le décodage
+        _bounded_cache_set(_project_thumbnail_cache, key, (mtime, pix))
+        return pix
     pix = QPixmap(str(thumb)) if mtime is not None else QPixmap()
     if pix.isNull():
         pix = default_thumbnail()
@@ -823,25 +1046,24 @@ def _lightroom_set_defaults(project_dir: Path) -> tuple | None:
         if cached is None:
             return None
         marker, marker_mtime, generation = cached
-        try:
-            if marker.stat().st_mtime_ns == marker_mtime:
-                return (str(marker), marker_mtime, generation)
-        except OSError:
-            pass
+        state = config_state(marker)
+        if state is not None and state[0] == marker_mtime:
+            return (str(marker), marker_mtime, generation)
     current = project_dir
     while True:
         marker = current / ".pipeline_lightroom.json"
         try:
-            stat = marker.stat()
-            raw = json.loads(marker.read_text(encoding="utf-8"))
+            state = config_state(marker)
+            text = read_config_text(marker) if state is not None else None
+            raw = json.loads(text) if text is not None else None
             if isinstance(raw, dict) and raw.get("catalog"):
                 generation = raw.get("set_defaults_at_ns")
                 try:
                     generation = int(generation) if generation is not None else None
                 except (TypeError, ValueError):
                     generation = None
-                _PROJECT_LIGHTROOM_CACHE[project_dir] = (marker, stat.st_mtime_ns, generation)
-                return (str(marker), stat.st_mtime_ns, generation)
+                _PROJECT_LIGHTROOM_CACHE[project_dir] = (marker, state[0], generation)
+                return (str(marker), state[0], generation)
         except (OSError, ValueError):
             pass
         parent = current.parent
@@ -855,6 +1077,7 @@ def invalidate_project_columns_cache() -> None:
     """Invalide les configs et associations Lightroom mémorisées après un lien."""
     _PROJECT_COLUMNS_CACHE.clear()
     _PROJECT_LIGHTROOM_CACHE.clear()
+    forget_all_config()
 
 
 def _lightroom_default_project_config() -> dict:
@@ -873,7 +1096,8 @@ def _lightroom_default_project_config() -> dict:
 def _read_project_columns(path: Path) -> dict | None:
     """Lit et normalise un fichier de configuration de projet."""
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        text = read_config_text(path)
+        raw = json.loads(text) if text is not None else None
     except (OSError, ValueError):
         return None
     if not isinstance(raw, dict):
@@ -915,14 +1139,10 @@ def load_project_columns(project_dir: Path) -> dict | None:
     redimensionner les lignes ... il y a de grosses lenteurs"."""
     path = _project_columns_path(project_dir)
     defaults_path = _project_columns_defaults_path(project_dir.parent)
-    try:
-        mtime = path.stat().st_mtime_ns
-    except OSError:
-        mtime = None
-    try:
-        defaults_mtime = defaults_path.stat().st_mtime_ns
-    except OSError:
-        defaults_mtime = None
+    state = config_state(path)
+    mtime = state[0] if state is not None else None
+    state = config_state(defaults_path)
+    defaults_mtime = state[0] if state is not None else None
     lightroom_defaults = _lightroom_set_defaults(project_dir)
     cached = _PROJECT_COLUMNS_CACHE.get(project_dir)
     if (cached is not None and cached[0] == mtime and cached[1] == defaults_mtime
@@ -958,6 +1178,7 @@ def save_project_columns_defaults(project_root: Path, config: dict) -> None:
     _clear_hidden(path)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     _set_hidden(path)
+    forget_config(path)
     _PROJECT_COLUMNS_CACHE.clear()
 
 def save_project_columns(project_dir: Path, config: dict) -> None:
@@ -986,6 +1207,7 @@ def save_project_columns(project_dir: Path, config: dict) -> None:
     # pourrait sinon renvoyer encore l'ANCIENNE config juste apres cet
     # enregistrement.
     _PROJECT_COLUMNS_CACHE.pop(project_dir, None)
+    forget_config(path)
 
 def project_step_count(config: dict | None) -> int | str:
     """Nombre d'etapes necessaires pour etre "bien sette" dans l'espace de
@@ -1047,13 +1269,14 @@ def _layout_preset() -> str:
 def _read_layout_raw(directory: Path) -> dict:
     path = _layout_settings_path(directory)
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        text = read_config_text(path)
+        raw = json.loads(text) if text is not None else {}
     except (OSError, ValueError):
         return {}
     return raw if isinstance(raw, dict) else {}
 
 
-def load_layout_settings(directory: Path) -> dict:
+def load_layout_settings(directory: Path, *, migrate: bool = True) -> dict:
     """Reglages de mise en page de `directory` — {} si le fichier est
     absent/illisible/invalide (repli SILENCIEUX sur les valeurs par
     defaut, meme esprit que load_project_columns : jamais bloquant).
@@ -1067,7 +1290,7 @@ def load_layout_settings(directory: Path) -> dict:
     legacy = {k: raw[k] for k in PIN_LAYOUT_KEYS if k in raw}
     if not isinstance(own, dict):
         own = legacy if legacy and not by_preset else {}
-        if own:
+        if own and migrate:
             save_layout_settings(directory, {**view, **own})     # attribuees au preset en cours
     view.update(own)
     return view
@@ -1094,8 +1317,10 @@ def save_layout_settings(directory: Path, data: dict) -> None:
     try:
         path.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
     except OSError:
+        forget_config(path)
         return
     _set_hidden(path)
+    forget_config(path)
 
 def _update_layout_setting(directory: Path, key: str, value) -> None:
     """Modifie UNE seule cle des reglages de mise en page de `directory`,
@@ -1127,7 +1352,8 @@ def load_shortcuts(directory: Path) -> list[dict]:
     """Raccourcis de `directory` — [] si le fichier est absent/illisible/
     invalide (repli SILENCIEUX, meme convention que load_layout_settings)."""
     try:
-        raw = json.loads(_shortcuts_path(directory).read_text(encoding="utf-8"))
+        text = read_config_text(_shortcuts_path(directory))
+        raw = json.loads(text) if text is not None else []
     except (OSError, ValueError):
         return []
     if not isinstance(raw, list):
@@ -1140,8 +1366,10 @@ def save_shortcuts(directory: Path, shortcuts: list[dict]) -> None:
     try:
         path.write_text(json.dumps(shortcuts, indent=2, ensure_ascii=False), encoding="utf-8")
     except OSError:
+        forget_config(path)
         return
     _set_hidden(path)
+    forget_config(path)
 
 def add_shortcut(directory: Path, target: Path) -> None:
     shortcuts = load_shortcuts(directory)
@@ -1721,8 +1949,12 @@ class _SlideOverlay(QWidget):
     def __init__(self, parent, left: QPixmap, right: QPixmap, x_collapsed: int, x_expanded: int,
                  background: QColor, start: float, end: float, duration_ms: int = 200, on_finished=None,
                  on_done=None, limit: int | None = None, retreat: float | None = None, shade: float = 0.45,
-                 emerge: bool = False, on_progress=None):
+                 emerge: bool = False, on_progress=None, origin: int = 0):
         super().__init__(parent)
+        # `origin` (apparition seulement) : l'overlay ne couvre qu'à partir de cet x (coordonnées du parent) ;
+        # à sa gauche rien ne bouge, les vrais widgets restent visibles (captures plus petites, moins de
+        # colonnes à repeindre : leur coût grandissait avec la profondeur). `left` commence alors à `origin`.
+        self._origin = max(0, int(origin)) if emerge else 0
         # on_progress(p) : appele a chaque image (et a l'arrivee) — sert a faire suivre
         # l'inspecteur, qui se redimensionne en meme temps que le mouvement.
         self._on_progress = on_progress
@@ -1736,7 +1968,7 @@ class _SlideOverlay(QWidget):
         # Opaque : Qt n'a plus a redessiner les widgets places dessous a chaque image.
         self.setAttribute(Qt.WA_OpaquePaintEvent, True)
         width = parent.width() if limit is None else max(1, min(limit, parent.width()))
-        self.setGeometry(QRect(0, 0, width, parent.height()))
+        self.setGeometry(QRect(self._origin, 0, max(1, width - self._origin), parent.height()))
         self._left = left
         self._right = right
         self._xa = x_collapsed
@@ -1773,7 +2005,7 @@ class _SlideOverlay(QWidget):
         if content_width is not None:
             right_w = min(right_w, content_width)
         right_x = int(round(self._xa + (self._xb - self._xa) * self._value))
-        return QRect(right_x, 0, right_w, self.height())
+        return QRect(right_x, 0, right_w, self.height())   # coordonnées du parent (origin compris)
 
     def paintEvent(self, event):
         # Peu de pixels touches par image : pas de remplissage integral du fond (seulement
@@ -1782,12 +2014,14 @@ class _SlideOverlay(QWidget):
         painter = QPainter(self)
         p = self._value
         height = self.height()
-        width = self.width()
+        width = self.width() + self._origin
+        if self._origin:
+            painter.translate(-self._origin, 0)     # dessin en coordonnées du parent
         left_w = int(self._left.deviceIndependentSize().width())
         right_w = 0 if self._right.isNull() else int(self._right.deviceIndependentSize().width())
         if self._emerge:
             right_x = int(round(self._xa + (self._xb - self._xa) * p))
-            left_x = 0
+            left_x = self._origin
         else:
             right_x = int(round(self._xa + (self._xb - self._xa) * p))
             left_x = -int(round(self._xb * self._retreat * (1.0 - p)))
@@ -1803,7 +2037,7 @@ class _SlideOverlay(QWidget):
         if self._emerge:
             if right_w:
                 painter.drawPixmap(right_x, 0, self._right)
-            painter.drawPixmap(0, 0, self._left)
+            painter.drawPixmap(self._origin, 0, self._left)
             return
         # 1. colonnes de set, qui reculent (et s'assombrissent a mesure)
         painter.drawPixmap(left_x, 0, self._left)
@@ -2773,6 +3007,9 @@ def apply_all_settings(settings: dict) -> None:
     set_button_frame(settings.get("button_frame", True))
     set_input_frame(settings.get("input_frame", True))
     set_input_radius(settings.get("input_radius", 0))
+    set_control_look(settings)
+    from settings_theme import apply_input_look
+    apply_input_look(settings)                   # zones de saisie des fenetres de reglages
     set_table_radius(settings.get("table_radius", 0))
     set_columns_resizable(settings.get("columns_resizable", True))
     set_auto_collapse_set_columns(settings.get("auto_collapse_set_columns", True))

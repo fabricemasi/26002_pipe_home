@@ -74,6 +74,9 @@ from browser_core import (
 # Place (repere du viewport de la liste) ou _paint_unified_row vient de poser l'apercu d'une ligne,
 # relevee par RowDelegate.paint (Column._preview_slots) : depart du vol vers la visionneuse.
 _LAST_PREVIEW_SLOT: list = [None]
+# Compteurs IMG / VID d'un raccourci (bande a droite) : position par defaut (voir _paint_unified_row).
+MEDIA_RIGHT_SHIFT = 6
+MEDIA_VIDEO_DROP = 11
 
 
 class RowDelegate(QStyledItemDelegate):
@@ -219,6 +222,7 @@ class RowDelegate(QStyledItemDelegate):
             self.column.is_active, annotation=index.data(ROLE_SOURCE_LABEL),
             annotation_step=index.data(ROLE_SOURCE_STEP),
             media_counts=index.data(ROLE_MEDIA_COUNTS),
+            media_counts_right=bool(index.data(ROLE_IS_SHORTCUT)),
             media_looks=_row_media_looks(self.column, index),
             icon_visible_override=self.column._show_icon_override,
             preview_visible_override=self.column._show_preview_override,
@@ -268,6 +272,7 @@ def _paint_unified_row(
     is_file: bool = False,
     media_counts: tuple[int, int] | None = None,
     media_looks: dict | None = None,
+    media_counts_right: bool = False,
 ):
     """Ligne UNIQUE, PARTAGEE par toutes les colonnes (Type/Projets/Sous-
     projet/Logiciels/Contenu) : icone toggle optionnelle, icone de
@@ -332,6 +337,32 @@ def _paint_unified_row(
     preview_visible = True if preview_visible_override is None else preview_visible_override
     has_icon = icon_pixmap is not None and icon_visible
     has_preview = preview_pixmap is not None and preview_visible
+
+    media_labels = []
+    media_width = 0
+    media_font = role_font("info", 9, 600)
+    media_font.setPixelSize(9)
+    media_font.setHintingPreference(QFont.HintingPreference.PreferDefaultHinting)
+    if media_counts is not None:
+        try:
+            photo_count, video_count = max(0, int(media_counts[0])), max(0, int(media_counts[1]))
+            painter.setFont(media_font)
+            metrics = painter.fontMetrics()
+            media_labels = [(str(photo_count), "#87CEFA"), (str(video_count), "#FFB347")]
+            media_width = max(metrics.horizontalAdvance(label) for label, _color in media_labels) + 8
+        except (TypeError, ValueError, IndexError):
+            media_labels = []
+            media_width = 0
+    media_on_right = bool(media_counts_right and media_labels)
+    # Sur un raccourci, les compteurs occupent une bande dédiée à droite de
+    # l'aperçu. Leur bord de dessin garde 2 px de retrait, comme en haut.
+    media_edge_inset = 0
+    media_top_inset = 1
+    media_gap = 6
+    media_panel = None
+    if media_on_right:
+        media_right = rect.right() - media_edge_inset
+        media_panel = QRect(media_right - media_width + 1, rect.top(), media_width, rect.height())
 
     # resolve_color_ref partout : toutes les couleurs de la fenetre de reglages v2 peuvent stocker une
     # reference "@slot" (choix app/sys), pas seulement un hex direct.
@@ -459,6 +490,8 @@ def _paint_unified_row(
     img_y = sel_rect.top() if sel_rect.height() > 0 else rect.center().y() - 7
     img_pad = s.get("item_image_padding") or {}
     text_right_limit = rect.right() - text_padding
+    if media_on_right and not has_preview:
+        text_right_limit = min(text_right_limit, media_panel.left() - media_gap)
 
     if has_icon:
         # Hauteur = celle de la zone de selection, collee sur son bord
@@ -519,7 +552,10 @@ def _paint_unified_row(
         # MEME principe que l'icone, mais ANCRE sur le bord DROIT de la
         # zone de selection (QRect.right() = left+width-1, voir Qt) —
         # jamais lie a la presence/absence d'une icone a gauche.
-        preview_img_x = (sel_rect.right() - img_width + 1) if sel_rect.width() > 0 else (rect.right() - img_width)
+        preview_right = sel_rect.right() if sel_rect.width() > 0 else rect.right()
+        if media_on_right:
+            preview_right -= media_width + media_gap
+        preview_img_x = preview_right - img_width + 1
         preview_rect = part_rect(option, "preview", QRect(preview_img_x, img_y, img_width, img_size))
         _paint_row_image(painter, preview_rect, preview_pixmap, s)
         slot_pad = s.get("item_image_padding") or {}
@@ -545,31 +581,13 @@ def _paint_unified_row(
         text_font = text_look.get("_font", text_font)
         final_text_color = text_look.get("_color", final_text_color)
     text_rect = QRect(text_x, rect.top(), max(0, text_right_limit - text_x), rect.height())
-    media_text_rect = QRect(text_rect)
+    media_text_rect = media_panel if media_on_right else QRect(text_rect)
     edit_parts = getattr(option, "_edit_parts", None)
     if edit_parts is not None:
         painter.setFont(text_font)
         content = painter.fontMetrics().boundingRect(text_rect, Qt.AlignLeft | Qt.AlignVCenter, str(name))
         edit_parts["text"] = content.intersected(text_rect)
         text_rect.translate(option._edit_text_offset)
-    media_labels = []
-    media_width = 0
-    media_font = role_font("info", 9, 600)
-    # Les deux compteurs gardent la famille/gras du role « info », mais leur
-    # hauteur visible est fixe : 9 px, independamment du DPI et du role global.
-    media_font.setPixelSize(9)
-    media_font.setHintingPreference(QFont.HintingPreference.PreferDefaultHinting)
-    if media_counts is not None:
-        try:
-            photo_count, video_count = max(0, int(media_counts[0])), max(0, int(media_counts[1]))
-            painter.setFont(media_font)
-            metrics = painter.fontMetrics()
-            media_labels = [(str(photo_count), "#87CEFA"), (str(video_count), "#FFB347")]
-            media_width = max(metrics.horizontalAdvance(label) for label, _color in media_labels) + 8
-        except (TypeError, ValueError, IndexError):
-            media_labels = []
-            media_width = 0
-
     if annotation or media_labels:
         # Largeur de l'annotation d'ABORD (police "info", voir sa remarque
         # de tete) : le nom n'a droit qu'au RESTE de text_rect, elide en
@@ -582,7 +600,7 @@ def _paint_unified_row(
 
         painter.setFont(text_font)
         painter.setPen(QColor(final_text_color))
-        name_width = max(0, text_rect.width() - ann_width - media_width)
+        name_width = max(0, text_rect.width() - ann_width - (0 if media_on_right else media_width))
         elided_name = painter.fontMetrics().elidedText(name, Qt.ElideMiddle, name_width)
         _paint_text_look(painter, text_rect, elided_name, text_look)
         _draw_row_name(painter, text_rect, name, elided_name, final_text_color, is_file)
@@ -610,19 +628,26 @@ def _paint_unified_row(
                 look = (media_looks or {}).get(part) or {}
                 painter.setFont(look.get("_font", media_font))
                 painter.setPen(QColor(look.get("_color", color)))
-                base_line = QRect(media_text_rect.right() - media_width + 2,
-                                  media_text_rect.top() + 1 + (1 if i == 0 else 3) + i * line_h,
-                                  media_width - 4,
-                                  line_h)
+                if media_on_right:
+                    # Place par defaut = celle choisie par l'utilisateur au mode edition (capture fournie) :
+                    # 6 px du bord droit, VID 11 px plus bas que sous IMG.
+                    line = QRect(media_text_rect.left() - MEDIA_RIGHT_SHIFT,
+                                 media_text_rect.top() + media_top_inset + (1 if i == 0 else 3) + i * line_h
+                                 + (MEDIA_VIDEO_DROP if i else 0),
+                                 media_width - 2, line_h)
+                else:
+                    line = QRect(media_text_rect.right() - media_width + 2,
+                                 media_text_rect.top() + 1 + (1 if i == 0 else 3) + i * line_h,
+                                 media_width - 4, line_h)
                 # La zone de sélection du mode édition reste facile à viser,
                 # indépendamment de la petite taille du texte affiché.
-                hit_width = max(42, base_line.width() + 10)
-                hit_right = base_line.right() + 4
-                hit_rect = QRect(hit_right - hit_width + 1, base_line.top() - 2,
+                hit_width = max(42, line.width() + 10)
+                hit_right = min(line.right() + 4, media_text_rect.right()) if media_on_right else line.right() + 4
+                hit_rect = QRect(hit_right - hit_width + 1, line.top() - 2,
                                  hit_width, max(12, line_h + 4))
                 moved_hit = part_rect(option, part, hit_rect)
-                line = base_line.translated(moved_hit.topLeft() - hit_rect.topLeft())
-                painter.drawText(line, Qt.AlignRight | Qt.AlignTop, label)
+                draw_line = line.translated(moved_hit.topLeft() - hit_rect.topLeft())
+                painter.drawText(draw_line, Qt.AlignRight | Qt.AlignTop, label)
     else:
         painter.setFont(text_font)
         painter.setPen(QColor(final_text_color))
@@ -829,6 +854,7 @@ class ProjectTileDelegate(QStyledItemDelegate):
             text_look=text_look,
             is_file=not is_dir_entry,
             media_counts=index.data(ROLE_MEDIA_COUNTS),
+            media_counts_right=is_shortcut,
             media_looks=_row_media_looks(self.column, index),
         )
         painter.restore()

@@ -192,11 +192,8 @@ class _ColumnConfigBlock(QWidget):
         label.setFont(font(11, 400))
         label.setStyleSheet(f"color: {C['label']}; background: transparent;")
         name_row.addWidget(label)
+        # Zone de saisie : habillage = Reglages > Zone de saisie (feuille de style de l'appli), pas un style local.
         self.name_edit = QLineEdit(data.get("name", ""))
-        self.name_edit.setStyleSheet(
-            f"QLineEdit {{ background: {C['well']}; color: {C['text']}; "
-            f"border: 1px solid {C['border']}; border-radius: 0px; padding: 3px 8px; }}"
-        )
         name_row.addWidget(self.name_edit, 1)
         layout.addLayout(name_row)
 
@@ -507,9 +504,11 @@ class ColumnConfigDialog(QDialog):
         type_row.addWidget(type_lbl)
         self.work_type_combo = QComboBox()
         self.work_type_combo.setFixedHeight(26)
+        from app_style import _control_radius
+        from settings_store import input_bg, input_border_decl
         self.work_type_combo.setStyleSheet(
-            f"QComboBox {{ background: {C['well']}; color: {C['text']}; font-style: italic; "
-            f"border: 1px solid {C['border']}; border-radius: 0px; padding: 3px 8px; }}"
+            f"QComboBox {{ background: {input_bg()}; color: {C['text']}; font-style: italic; "
+            f"{input_border_decl()} {_control_radius('input', 0)} padding: 3px 8px; }}"
             f"QComboBox:hover {{ border: 1px solid {C['accent']}; }}"
             f"QComboBox::drop-down {{ border: none; width: 20px; }}"
         )

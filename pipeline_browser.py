@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -6,13 +7,14 @@ import threading
 import time
 from PySide6.QtCore import (
     QByteArray, QCoreApplication, QEasingCurve, QEvent, QEventLoop, QObject, QParallelAnimationGroup, QPoint, QPointF, QPropertyAnimation,
-    QRect, QRectF, QSize, QSizeF, Qt, QTimer,
+    QRect, QRectF, QSize, QSizeF, Qt, QTimer, Signal,
 )
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
     QColor,
     QCursor,
+    QFontMetrics,
     QImage,
     QKeySequence,
     QPainter,
@@ -28,6 +30,8 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
     QFrame,
+    QGraphicsDropShadowEffect,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -37,6 +41,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QToolButton,
     QScrollArea,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -49,10 +54,12 @@ from app_style import (
     apply_style,
     auto_collapse_set_columns,
     column_gap,
+    build_stylesheet,
     refresh_style,
     resize_hit_test,
     role_color,
     role_font,
+    font,
     scaled,
     start_native_move,
     column_style_for,
@@ -86,6 +93,7 @@ from settings_store import (
 )
 from settings_widgets import (
     Menu, menu_row,
+    shadow_look,
     TOGGLE_STYLE_LISTENERS, _Toggle, make_space_actions, set_space_above, set_space_below, space_target,
     widget_at_path, widget_path,
 )
@@ -114,6 +122,7 @@ from browser_core import (
     _show_resize_width,
     _update_layout_setting,
     apply_all_settings,
+    _resolve_font_family,
     col_width,
     load_layout_settings,
     load_project_columns,
@@ -171,9 +180,11 @@ from browser_core import (
 )
 from browser_core import (
     _HoverPrime,
+    entry_is_dir,
 )
 from previews import (
     sweep_preview_cache,
+    sweep_preview_cache_if_due,
 )
 
 
@@ -213,6 +224,306 @@ class _MouseBackFilter(QObject):
             elif self._browser._focus_gallery is not None:
                 self._browser._set_columns_hidden(False)
         return True                       # avale aussi le relachement (rien d'autre ne le voit)
+
+
+class _AppInputWatch(QObject):
+    """Filtre d'application pose SEULEMENT pendant le chargement des reglages sur inactivite : le premier geste
+    reel (evenement spontane : clavier, souris, molette) sur l'appli l'arrete aussitot."""
+
+    def __init__(self, kinds, on_input):
+        super().__init__()
+        self._kinds, self._on_input = kinds, on_input
+
+    def eventFilter(self, watched, event):
+        if event.type() in self._kinds and event.spontaneous():
+            self._on_input()
+        return False
+
+
+
+_CRUMB_LOOK_CACHE: list = [None, None]       # [reglages appliques, habillage] : un calcul par jeu de reglages
+
+
+def _crumb_look() -> dict:
+    """Habillage du cheminement (Reglages > Barre de navigation > Cheminement, cles `crumb_*`) : police, espacement,
+    separateur, fonds (set / apres set), bordures, rayon, padding, ombre. Calcule une fois par jeu de reglages
+    appliques (il est relu a chaque redimensionnement et a chaque cran d'un curseur)."""
+    applied = ui_state.APPLIED_SETTINGS
+    if _CRUMB_LOOK_CACHE[0] is applied and _CRUMB_LOOK_CACHE[1] is not None:
+        return _CRUMB_LOOK_CACHE[1]
+    look = _build_crumb_look()
+    _CRUMB_LOOK_CACHE[0], _CRUMB_LOOK_CACHE[1] = applied, look
+    return look
+
+
+def _build_crumb_look() -> dict:
+    """Habillage du cheminement. Un habillage par ETAT de repere (`look["states"]`) : « set » (cles `crumb_*`),
+    « after » (`crumb_after_*`), « after_focus » (`crumb_afterfocus_*`) ; dans les deux derniers, une ligne dont le
+    toggle d'override (`<prefixe>_ovr_<ligne>`) est eteint reprend celle du Set. Survol / focus : fond et bordures
+    par-dessus (`look["hover"]`, `look["focus"]`)."""
+    from settings_store import _coerce_corner_radius, _coerce_side_enabled
+    values = dict(DEFAULT_SETTINGS)
+    values.update(ui_state.APPLIED_SETTINGS or {})
+    sides = ("top", "right", "bottom", "left")
+
+    def number(key, default, low=0, high=999):
+        try:
+            return max(low, min(high, int(values.get(key, default))))
+        except (TypeError, ValueError):
+            return default
+
+    def fill(key):
+        color = QColor(resolve_color_ref(values.get(key), "#00000000"))
+        return color if color.alpha() else None
+
+    def border(pre):
+        raw = values.get(f"{pre}_border")
+        colors = {s: resolve_color_ref(raw.get(s) if isinstance(raw, dict) else raw, "#303539") for s in sides}
+        enabled = _coerce_side_enabled(values.get(f"{pre}_border_enabled"), False)
+        thickness = number(f"{pre}_border_thickness", 1, 0, 20) if any(enabled.values()) else 0
+        return enabled, colors, thickness
+
+    def box(key):
+        raw = values.get(key)
+        raw = raw if isinstance(raw, dict) else {}
+        return {s: max(0, int(raw.get(s, 0) or 0)) for s in ("left", "top", "right", "bottom")}
+
+    def text_font(pre):
+        size = number(f"{pre}_font_size", 10, 4, 80)
+        weight = 700 if values.get(f"{pre}_font_bold") else 500
+        family = (values.get(f"{pre}_font_family") or "").strip()
+        if family and family != "Systeme":
+            result = font(size, weight, family=_resolve_font_family(family, size, weight),
+                          italic=bool(values.get(f"{pre}_font_italic")))
+        else:
+            result = role_font("info", size, weight)
+            result.setItalic(bool(values.get(f"{pre}_font_italic")))
+        color = QColor(resolve_color_ref(values.get(f"{pre}_font_color"), role_color("info", C["text_mono"])))
+        return result, color, family, size
+
+    def state(pre, bg_key):
+        crumb_font, color, _family, _size = text_font(pre)
+        enabled, colors, thickness = border(pre)
+        return {"font": crumb_font, "color": color, "bg": fill(bg_key),
+                "border_on": enabled, "border_colors": colors, "thickness": thickness,
+                "radius": _coerce_corner_radius(values.get(f"{pre}_corner_radius", 0)),
+                "padding": box(f"{pre}_padding"), "margin": box(f"{pre}_margin"),
+                "shadow": shadow_look(values, f"{pre}_shadow", resolve_color_ref)}
+
+    base = state("crumb", "crumb_set_bg_color")
+    rows = {"font": ("font", "color"), "bg": ("bg",), "border": ("border_on", "border_colors", "thickness"),
+            "radius": ("radius",), "padding": ("padding",), "margin": ("margin",), "shadow": ("shadow",)}
+    states = {"set": base}
+    for name, pre, bg_key in (("after", "crumb_after", "crumb_after_bg_color"),
+                              ("after_focus", "crumb_afterfocus", "crumb_afterfocus_bg_color")):
+        own = state(pre, bg_key)
+        merged = dict(base)
+        for row, fields in rows.items():
+            if values.get(f"{pre}_ovr_{row}"):
+                merged.update({f: own[f] for f in fields})
+        states[name] = merged
+
+    def overlay(pre):
+        enabled, colors, thickness = border(pre)
+        return {"bg": fill(f"{pre}_bg_color"), "border_on": enabled, "border_colors": colors,
+                "thickness": thickness}
+
+    _crumb_font, _color, family, size = text_font("crumb")
+    # Separateur : sa propre police ; famille vide = celle des textes, taille 0 = celle des textes.
+    sep_size = number("crumb_sep_font_size", 0, 0, 80) or size
+    sep_weight = 700 if values.get("crumb_sep_font_bold") else 500
+    sep_family = (values.get("crumb_sep_font_family") or "").strip()
+    if not sep_family or sep_family == "Systeme":
+        sep_family = family if family and family != "Systeme" else ""
+    if sep_family:
+        sep_font = font(sep_size, sep_weight, family=_resolve_font_family(sep_family, sep_size, sep_weight),
+                        italic=bool(values.get("crumb_sep_font_italic")))
+    else:
+        sep_font = role_font("info", sep_size, sep_weight)
+        sep_font.setItalic(bool(values.get("crumb_sep_font_italic")))
+    return {
+        **base,                                           # habillage du Set (anciens appels)
+        "states": states, "hover": overlay("crumb_hover"), "focus": overlay("crumb_focus"),
+        "set_bg": base["bg"], "after_bg": states["after"]["bg"],
+        "sep_font": sep_font,
+        "sep_color": QColor(resolve_color_ref(values.get("crumb_sep_font_color"), C["dim"])),
+        "spacing": number("crumb_spacing", 5, 0, 80),
+        "separators": bool(values.get("crumb_separator_enabled", True)),
+        "separator_icon": values.get("crumb_separator_kind") == "icon",
+        "separator_char": str(values.get("crumb_separator_char") or "›"),
+        "signature": repr({k: v for k, v in values.items() if k.startswith("crumb_")}) + repr(values.get("colors")),
+    }
+
+
+def _crumb_state(kind: str) -> tuple:
+    """Genre d'un repere -> (etat, focus) : « set », « after », « after_focus » ; suffixe « ! » = le repere qui a
+    le focus."""
+    return kind.rstrip("!"), kind.endswith("!")
+
+
+class _CrumbChip(QWidget):
+    """Un repere du cheminement : habillage de son etat (Set / Apres set / Apres focus), fond et bordures du focus
+    et du survol par-dessus (border radius de l'etat), ombre, texte ; cliquer = focus sur l'element de sa colonne."""
+
+    clicked = Signal()
+
+    def __init__(self, text: str, kind: str, look: dict, parent=None):
+        super().__init__(parent)
+        self._kind, self._look = kind, look
+        self._full_text = text                    # aucune info-bulle au survol (demande de l'utilisateur)
+        self._hover = False
+        self.setCursor(Qt.PointingHandCursor)
+        self.set_look(look, kind)
+
+    def set_look(self, look: dict, kind: str):
+        """(Re)pose l'habillage, la taille et le texte : mise a jour SUR PLACE, sans recreer la puce."""
+        self._kind, self._look = kind, look
+        state, self._focus = _crumb_state(kind)
+        self._st = st = (look.get("states") or {}).get(state) or look
+        metrics = QFontMetrics(st["font"])
+        self._text = metrics.elidedText(self._full_text, Qt.ElideMiddle, scaled(220, 0))
+        pad, t = st["padding"], st["thickness"]
+        on = st["border_on"]
+        self._edge = {"left": pad["left"] + (t if on["left"] else 0), "right": pad["right"] + (t if on["right"] else 0),
+                      "top": pad["top"] + (t if on["top"] else 0), "bottom": pad["bottom"] + (t if on["bottom"] else 0)}
+        self._margin = st["shadow"]["size"] if st["shadow"] else 0
+        out = {s: self._margin + st["margin"][s] for s in ("left", "top", "right", "bottom")}   # ombre + margin
+        self._out = out
+        width = metrics.horizontalAdvance(self._text) + self._edge["left"] + self._edge["right"]
+        height = metrics.height() + self._edge["top"] + self._edge["bottom"]
+        self.setFixedSize(width + out["left"] + out["right"], height + out["top"] + out["bottom"])
+        self.update()
+
+    def enterEvent(self, event):
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        from settings_widgets import _paint_bordered_vector, paint_shadow
+        st = self._st
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        o = self._out
+        box = self.rect().adjusted(o["left"], o["top"], -o["right"], -o["bottom"])
+        if st["shadow"] is not None:
+            paint_shadow(painter, QRectF(box), st["radius"], st["shadow"])
+        fill, border_on, colors, thickness = st["bg"], st["border_on"], st["border_colors"], st["thickness"]
+        for active, extra in ((self._focus, self._look.get("focus")), (self._hover, self._look.get("hover"))):
+            if active and extra:                       # focus puis survol, par-dessus l'etat du repere
+                if extra["bg"] is not None:
+                    fill = extra["bg"]
+                if extra["thickness"]:
+                    border_on, colors, thickness = extra["border_on"], extra["border_colors"], extra["thickness"]
+        if fill is not None or thickness:
+            _paint_bordered_vector(painter, box, st["radius"], border_on, thickness,
+                                   colors, fill.name(QColor.NameFormat.HexArgb) if fill else None)
+        painter.setFont(st["font"])
+        painter.setPen(st["color"])
+        inner = box.adjusted(self._edge["left"], self._edge["top"], -self._edge["right"], -self._edge["bottom"])
+        painter.drawText(inner, Qt.AlignVCenter | Qt.AlignLeft, self._text)
+        painter.end()
+
+    def mousePressEvent(self, event):
+        # Garder le clic : sinon il remonte a la barre de titre, qui lance le deplacement natif de la fenetre
+        # (boucle modale) et le relachement n'arrive jamais ici.
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
+            self.clicked.emit()
+        event.accept()
+
+
+class _ViewerGroup(QWidget):
+    """Cadre « Visionneuse » de la barre de navigation (demande de l'utilisateur) : les boutons de la visionneuse /
+    planche y sont regroupes, visionneuse ouverte. Habillage : Reglages > Visionneuse > Regroupement (fond, police
+    du libelle, bordures, border radius, padding, margin ; cles `viewer_group_*`). Les boutons sont ses enfants,
+    poses par `PipelineBrowser._layout_viewer_buttons` a partir de `content_origin()`."""
+
+    LABEL = "Visionneuse"
+
+    def __init__(self, parent=None, label: str | None = None):
+        super().__init__(parent)
+        if label is not None:
+            self.LABEL = label                    # cadre « Editeur de texte » : meme habillage, autre libelle
+        self.setAttribute(Qt.WA_StyledBackground, False)
+        self.restyle()
+
+    def restyle(self):
+        from settings_store import _coerce_corner_radius, _coerce_side_enabled
+        values = dict(DEFAULT_SETTINGS)
+        values.update(ui_state.APPLIED_SETTINGS or {})
+
+        def box(key):
+            raw = values.get(key)
+            raw = raw if isinstance(raw, dict) else {}
+            return {s: max(0, int(raw.get(s, 0) or 0)) for s in ("left", "top", "right", "bottom")}
+
+        size = max(4, int(values.get("viewer_group_label_font_size", 9) or 9))
+        weight = 700 if values.get("viewer_group_label_font_bold") else 500
+        family = (values.get("viewer_group_label_font_family") or "").strip()
+        if family and family != "Systeme":
+            label_font = font(size, weight, family=_resolve_font_family(family, size, weight),
+                              italic=bool(values.get("viewer_group_label_font_italic")))
+        else:
+            label_font = role_font("info", size, weight)
+            label_font.setItalic(bool(values.get("viewer_group_label_font_italic")))
+        raw = values.get("viewer_group_border")
+        sides = ("top", "right", "bottom", "left")
+        enabled = _coerce_side_enabled(values.get("viewer_group_border_enabled"), True)
+        thickness = max(0, int(values.get("viewer_group_border_thickness", 1) or 0)) if any(enabled.values()) else 0
+        bg = QColor(resolve_color_ref(values.get("viewer_group_bg_color"), "#00000000"))
+        self.look = {
+            "font": label_font,
+            "color": QColor(resolve_color_ref(values.get("viewer_group_label_font_color"), C["dim"])),
+            "bg": bg if bg.alpha() else None,
+            "border_on": enabled, "thickness": thickness,
+            "border_colors": {s: resolve_color_ref(raw.get(s) if isinstance(raw, dict) else raw, "#303539")
+                              for s in sides},
+            "radius": _coerce_corner_radius(values.get("viewer_group_corner_radius", 4)),
+            "padding": box("viewer_group_padding"), "margin": box("viewer_group_margin"),
+        }
+        self.update()
+
+    def _edges(self) -> dict:
+        look, t = self.look, self.look["thickness"]
+        return {s: look["padding"][s] + (t if look["border_on"].get(s) else 0)
+                for s in ("left", "top", "right", "bottom")}
+
+    def label_width(self) -> int:
+        return QFontMetrics(self.look["font"]).horizontalAdvance(self.LABEL)
+
+    def content_origin(self) -> QPoint:
+        """Ou commence le premier bouton (apres le libelle)."""
+        return QPoint(self._edges()["left"] + self.label_width() + scaled(8, 0), self._edges()["top"])
+
+    def fit(self, content_right: int, content_height: int):
+        """Taille du cadre pour des boutons qui finissent a `content_right` (coordonnees du cadre)."""
+        edges = self._edges()
+        height = max(content_height, QFontMetrics(self.look["font"]).height()) + edges["top"] + edges["bottom"]
+        self.setFixedSize(content_right + edges["right"], height)
+
+    def paintEvent(self, event):
+        from settings_widgets import _paint_bordered_vector
+        look = self.look
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        if look["bg"] is not None or look["thickness"]:
+            _paint_bordered_vector(painter, self.rect(), look["radius"], look["border_on"], look["thickness"],
+                                   look["border_colors"],
+                                   look["bg"].name(QColor.NameFormat.HexArgb) if look["bg"] else None)
+        edges = self._edges()
+        painter.setFont(look["font"])
+        painter.setPen(look["color"])
+        painter.drawText(QRect(edges["left"], 0, self.label_width() + 2, self.height()),
+                         Qt.AlignVCenter | Qt.AlignLeft, self.LABEL)
+        painter.end()
 
 
 class TitleBar(QWidget):
@@ -264,26 +575,341 @@ class TitleBar(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 0, 0, 0)
         layout.setSpacing(9)
-        layout.addWidget(icon)
-        layout.addWidget(self.title_label)
+        # Logo et titre : en haut de la barre (comme les boutons : barre haute = tout reste en haut), centres sur
+        # la hauteur d'un bouton (TITLEBAR_HEIGHT) pour s'aligner avec les outils de la barre.
+        self._icon_holder = QWidget()
+        holder_layout = QHBoxLayout(self._icon_holder)
+        holder_layout.setContentsMargins(0, 0, 0, 0)
+        holder_layout.addWidget(icon, alignment=Qt.AlignVCenter)
+        self._icon_holder.setFixedHeight(scaled(TITLEBAR_HEIGHT))
+        self._icon_holder.setObjectName("NavHolder")
+        self._icon_holder.setStyleSheet("#NavHolder { background: transparent; }")   # sinon « QWidget » de l'appli : gris
+        self.title_label.setFixedHeight(scaled(TITLEBAR_HEIGHT))
+        layout.addWidget(self._icon_holder, alignment=Qt.AlignTop)
+        layout.addWidget(self.title_label, alignment=Qt.AlignTop)
         layout.addStretch(1)
 
+        # Choix de chaque colonne, SOUS le titre, colles a gauche (a la hauteur d'un bouton : la rangee des outils
+        # reste en haut). Enfant libre de la barre : placee par `_place_crumbs`.
+        self._crumb_names: list = []
+        self.crumbs = QWidget(self)
+        self.crumbs.setStyleSheet("background: transparent;")
+        self._crumb_layout = QHBoxLayout(self.crumbs)
+        self._crumb_layout.setContentsMargins(0, 0, 0, 0)
+        self._crumb_layout.setSpacing(scaled(5, 0))
         self.btn_min = self._make_button("min", window.showMinimized)
         self.btn_max = self._make_button("max", self._toggle_max)
         self.btn_close = self._make_button("close", window.close)
-        layout.addWidget(self.btn_min)
-        layout.addWidget(self.btn_max)
-        layout.addWidget(self.btn_close)
+        layout.addWidget(self.btn_min, alignment=Qt.AlignTop)
+        layout.addWidget(self.btn_max, alignment=Qt.AlignTop)
+        layout.addWidget(self.btn_close, alignment=Qt.AlignTop)
+
+    def _crumb_row_height(self) -> int:
+        """Hauteur de la rangee du cheminement : un repere (police + padding + bordures + marge de l'ombre)."""
+        look = _crumb_look()
+        height = 0
+        for st in (look.get("states") or {"set": look}).values():     # le plus haut des etats (Set, Apres...)
+            pad, t, on = st["padding"], st["thickness"], st["border_on"]
+            margin = st["shadow"]["size"] if st["shadow"] else 0
+            height = max(height, QFontMetrics(st["font"]).height() + pad["top"] + pad["bottom"]
+                         + (t if on["top"] else 0) + (t if on["bottom"] else 0) + 2 * margin
+                         + st["margin"]["top"] + st["margin"]["bottom"])
+        return max(scaled(14, 0), height, QFontMetrics(look["sep_font"]).height())
+
+    def set_crumbs(self, items: list, force: bool = False):
+        """Un repere par colonne ayant un choix, a gauche sous le titre. `items` = [(genre, nom, rappel)] : genre
+        « set » (colonnes du set) ou « after » (apres le set, ou projet sans set) ; `rappel` = ce que fait un clic
+        (= cliquer l'element de sa colonne). Mise en forme : Reglages > Barre de navigation > Cheminement."""
+        look = _crumb_look()
+        names = [str(name) for _kind, name, _cb in items]
+        key = (names, [kind for kind, _n, _c in items], look["signature"])
+        if not force and key == getattr(self, "_crumb_key", None) and self._crumb_layout.count():
+            self._crumb_items = items
+            return
+        separators = (look.get("separators", True), look["separator_icon"])
+        structure = (names, [kind for kind, _n, _c in items], separators)
+        previous = getattr(self, "_crumb_structure", None)
+        self._crumb_key = key
+        self._crumb_items = items
+        self._crumb_names = names
+        if not force and structure == previous and self._crumb_layout.count():
+            self._restyle_crumbs(look)                       # memes reperes : seulement l'habillage change
+            return
+        kinds = [kind for kind, _n, _c in items]
+        if (not force and previous is not None and self._crumb_layout.count()
+                and len(previous[1]) == len(kinds) and previous[2] == separators):
+            # Autant de reperes, autres noms ou etats (visionneuse : image suivante ; focus deplace) : textes et
+            # habillages changes SUR PLACE, aucun widget recree (sinon chaque image refaisait toute la rangee).
+            self._crumb_structure = structure
+            chips = iter(zip(names, kinds))
+            for index in range(self._crumb_layout.count()):
+                widget = self._crumb_layout.itemAt(index).widget()
+                if isinstance(widget, _CrumbChip):
+                    widget._full_text, kind = next(chips)
+                    widget.set_look(look, kind)
+            return
+        self._crumb_structure = structure
+        while self._crumb_layout.count():
+            item = self._crumb_layout.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        self._crumb_layout.setSpacing(look["spacing"])
+        separator_icon = None
+        if look["separator_icon"]:
+            import previews as _previews
+            separator_icon = custom_ui_icon_pixmap(_previews.UI_ICON_NAVBAR_CRUMB_SEPARATOR,
+                                                   QFontMetrics(look["sep_font"]).height())
+        for index, (kind, name, callback) in enumerate(items):
+            if index and separators[0]:                    # separateurs coupes : aucun (colonne « Activer »)
+                sep = QLabel()
+                sep.setAlignment(Qt.AlignCenter)
+                if separator_icon is not None:
+                    sep.setPixmap(separator_icon)
+                else:
+                    sep.setText(look["separator_char"])
+                    sep.setFont(look["sep_font"])         # sa police (par defaut celle des textes)
+                sep.setStyleSheet(f"color: {look['sep_color'].name(QColor.NameFormat.HexArgb)}; "
+                                  "background: transparent;")
+                self._crumb_layout.addWidget(sep)
+            chip = _CrumbChip(name, kind, look)
+            # Le rappel est relu au clic dans `_crumb_items` : les reperes sont gardes d'un rafraichissement a
+            # l'autre (mise a jour sur place) alors que les colonnes, elles, sont recreees.
+            chip.clicked.connect(lambda i=index: self._crumb_click(i))
+            self._crumb_layout.addWidget(chip)
+        self._crumb_layout.addStretch(1)
+        self.refresh_sizes()
+
+    def _crumb_click(self, index: int):
+        items = getattr(self, "_crumb_items", None) or []
+        if 0 <= index < len(items):
+            items[index][2]()
+
+    def _restyle_crumbs(self, look: dict):
+        """Habillage change, reperes inchanges : puces et separateurs mis a jour sur place (aucun widget recree)."""
+        self._crumb_layout.setSpacing(look["spacing"])
+        kinds = iter([kind for kind, _n, _c in self._crumb_items])
+        separator_icon = None
+        if look["separator_icon"]:
+            import previews as _previews
+            separator_icon = custom_ui_icon_pixmap(_previews.UI_ICON_NAVBAR_CRUMB_SEPARATOR,
+                                                   QFontMetrics(look["sep_font"]).height())
+        for index in range(self._crumb_layout.count()):
+            widget = self._crumb_layout.itemAt(index).widget()
+            if isinstance(widget, _CrumbChip):
+                widget.set_look(look, next(kinds))
+            elif isinstance(widget, QLabel):
+                if separator_icon is not None:
+                    widget.setPixmap(separator_icon)
+                else:
+                    widget.setText(look["separator_char"])
+                    widget.setFont(look["sep_font"])
+                widget.setStyleSheet(f"color: {look['sep_color'].name(QColor.NameFormat.HexArgb)}; "
+                                     "background: transparent;")
+        self.refresh_sizes()
+
+    def refresh_crumbs(self):
+        """Reglages changes : repose les reperes seulement si leur habillage a change."""
+        if getattr(self, "_crumb_items", None) is not None:
+            self.set_crumbs(self._crumb_items)
+
+    def _place_crumbs(self):
+        left = scaled(10, 0)
+        top = scaled(TITLEBAR_HEIGHT, 0)
+        reserved = scaled(26 * 3, 0)                      # reduire / agrandir / fermer restent libres
+        self.crumbs.setGeometry(left, top, max(0, self.width() - left - reserved),
+                                min(self._crumb_row_height(), max(0, self.height() - top)))
+        self.crumbs.raise_()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._place_crumbs()
+        self.place_viewer_group()
+        self._place_load_bar()
+
+    def set_load_progress(self, percent: int | None):
+        """Barre « Réglages n % » en bas a droite de la barre (chargement des reglages sur inactivite) ; None =
+        masquee. Meme habillage que la barre de mise en cache des apercus."""
+        status = getattr(self, '_background_status', None)
+        if status is not None:
+            status.settings_progress(percent)
+            return
+        bar = getattr(self, "_load_bar", None)
+        if percent is None:
+            if bar is not None:
+                bar.setFormat("Réglages en mémoire  %p %")
+                bar.setStyleSheet(f"QProgressBar {{ background: transparent; border: none; color: {C['label']}; }} "
+                                 "QProgressBar::chunk { background: transparent; }")
+                bar.show()
+            return
+        if bar is None:
+            bar = self._load_bar = QProgressBar(self)
+            bar.setFixedSize(scaled(150), scaled(15))
+            bar.setRange(0, 100)
+            bar.setTextVisible(True)
+            bar.setAlignment(Qt.AlignCenter)
+            bar.setFormat("Réglages  %p %")
+            bar.setFont(role_font("app", 8, 400))
+            bar.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            bar.setStyleSheet(
+                f"QProgressBar {{ background: {C['chrome']}; border: 1px solid {C['border']}; border-radius: 3px; "
+                f"color: {role_color('app', C['label'])}; }} "
+                f"QProgressBar::chunk {{ background: {C['accent']}; border-radius: 2px; }}")
+        bar.setValue(max(0, min(100, int(percent))))
+        bar.setFormat("Réglages  %p %")
+        bar.setStyleSheet(f"QProgressBar {{ background: {C['chrome']}; border: 1px solid {C['border']}; "
+                         f"color: {C['label']}; }} QProgressBar::chunk {{ background: {C['accent']}; }}")
+        self._place_load_bar()
+        bar.show()
+        bar.raise_()
+
+    def _place_load_bar(self):
+        bar = getattr(self, "_load_bar", None)
+        if bar is not None:
+            gap = scaled(6, 0)
+            bar.move(self.width() - bar.width() - gap, self.height() - bar.height() - gap)
+
+    def viewer_group(self) -> "_ViewerGroup":
+        group = getattr(self, "_viewer_group", None)
+        if group is None:
+            group = self._viewer_group = _ViewerGroup(self)
+            group.hide()
+        return group
+
+    def editor_group(self) -> "_ViewerGroup":
+        """Cadre « Éditeur » (module Markdown / code, paquet mdeditor/) : memes habillage et place que « Visionneuse »."""
+        group = getattr(self, "_editor_group", None)
+        if group is None:
+            group = self._editor_group = _ViewerGroup(self, "Éditeur")
+            group.hide()
+        return group
+
+    def board_group(self) -> "_ViewerGroup":
+        """Cadre « Board » (mode board, paquet board/) : memes habillage et place que « Visionneuse »."""
+        group = getattr(self, "_board_group", None)
+        if group is None:
+            group = self._board_group = _ViewerGroup(self, "Board")
+            group.hide()
+        return group
+
+    def video_group(self) -> "_ViewerGroup":
+        """Cadre « Vidéo » (module video/) : memes habillage et place que « Visionneuse »."""
+        group = getattr(self, "_video_group", None)
+        if group is None:
+            group = self._video_group = _ViewerGroup(self, "Vidéo")
+            group.hide()
+        return group
+
+    def place_viewer_group(self):
+        """Cadres « Visionneuse » / « Éditeur » / « Board » / « Vidéo » : a la suite des outils (apres
+        le dernier bouton de la barre), centres dans la hauteur de la rangee des outils, decales de leur margin."""
+        for group in (getattr(self, "_viewer_group", None), getattr(self, "_editor_group", None),
+                      getattr(self, "_board_group", None), getattr(self, "_video_group", None)):
+            if group is not None and not group.isHidden():
+                self._place_group(group)
+
+    def _place_group(self, group):
+        tools = getattr(self, "_tool_buttons", None)
+        anchor = tools[-1] if tools else self.title_label
+        margin = group.look["margin"]
+        row = scaled(TITLEBAR_HEIGHT, 0)
+        x = anchor.geometry().right() + 1 + margin["left"]
+        y = (row - group.height()) // 2 + margin["top"] - margin["bottom"]
+        if group.pos() != QPoint(x, y):
+            group.move(x, y)
+        group.raise_()
+
+    def add_tools(self, *widgets):
+        """Racine, parcourir, presets, reglages... poses juste apres le titre. Les IconButton ont tous la MEME
+        taille (celle des boutons reduire / agrandir / fermer)."""
+        root_field, browse, picker, presets, settings, collapse, *modes = widgets
+        # modes : boutons visionneuse et editeur de texte, a la suite du repli des colonnes.
+        self._tool_buttons = [browse, presets, settings, collapse, *modes]
+        layout = self.layout()
+        # Disposition de BASE (capture de l'utilisateur) : tout sur la meme ligne, centre dans la hauteur de la
+        # barre ; racine a 32 px du titre, Parcourir colle a la racine (3 px), 14 px avant le menu des presets,
+        # puis 9 px entre les boutons ; repli des colonnes a la suite de l'engrenage.
+        box = QWidget()
+        self._tool_boxes = [box, picker]
+        # PAS de feuille de style ici (`background: transparent` sans selecteur se propageait au champ racine et
+        # ecrasait la feuille de style de l'appli : champ NOIR, indifferent a Reglages > Zone de saisie).
+        row = QHBoxLayout(box)
+        row.setContentsMargins(scaled(23, 0), 0, 0, 0)       # + l'espacement de la barre (9) = 32
+        row.setSpacing(scaled(3, 0))
+        row.addWidget(root_field, alignment=Qt.AlignVCenter)
+        row.addWidget(browse, alignment=Qt.AlignVCenter)
+        picker.layout().setContentsMargins(scaled(5, 0), 0, 0, 0)   # + 9 = 14 apres Parcourir
+        for holder in self._tool_boxes:                  # meme hauteur qu'un bouton : champs centres dessus
+            holder.setFixedHeight(scaled(TITLEBAR_HEIGHT))
+            holder.setObjectName("NavHolder")            # fond de la barre, pas le gris du « QWidget » de l'appli
+            holder.setStyleSheet("#NavHolder { background: transparent; }")
+        position = 2                                     # apres l'icone et le titre
+        for widget in (box, picker, presets, settings, collapse, *modes):
+            layout.insertWidget(position, widget, alignment=Qt.AlignTop)
+            position += 1
 
     def refresh_sizes(self):
         """Reapplique l'echelle courante (voir app_style.scaled) a la
         hauteur de la barre et a ses boutons — construits une seule fois
         (contrairement aux colonnes, jamais reconstruits), donc sans cela le
         slider d'echelle ne les affecterait qu'au prochain lancement."""
-        self.setFixedHeight(scaled(TITLEBAR_HEIGHT))
+        settings = ui_state.APPLIED_SETTINGS or {}
+        self.setFixedHeight(max(scaled(TITLEBAR_HEIGHT, 0) + self._crumb_row_height(),
+                                scaled(int(settings.get("navbar_height", TITLEBAR_HEIGHT)))))
+        self._place_crumbs()
         self._icon.setFixedSize(scaled(9), scaled(9))
-        for btn in (self.btn_min, self.btn_max, self.btn_close):
+        self._icon_holder.setFixedHeight(scaled(TITLEBAR_HEIGHT))
+        self.title_label.setFixedHeight(scaled(TITLEBAR_HEIGHT))
+        for holder in getattr(self, "_tool_boxes", ()):
+            holder.setFixedHeight(scaled(TITLEBAR_HEIGHT))
+        for btn in (self.btn_min, self.btn_max, self.btn_close, *getattr(self, "_tool_buttons", ())):
             btn.setFixedSize(scaled(26), scaled(TITLEBAR_HEIGHT))
+
+    def refresh_look(self):
+        settings = ui_state.APPLIED_SETTINGS or {}
+        enabled = bool(settings.get("navbar_bottom_enabled", True))
+        width = max(0, int(settings.get("navbar_bottom_thickness", 1))) if enabled else 0
+        color = resolve_color_ref(settings.get("navbar_bottom_color"), C["border"])
+        owner = self.window()
+        toolbar_margin = settings.get("md_toolbar_margin") or {}
+        margins_are_zero = (not any(int(toolbar_margin.get(side, 0) or 0)
+                                    for side in ("top", "right", "bottom", "left"))
+                            if isinstance(toolbar_margin, dict) else int(toolbar_margin or 0) == 0)
+        toolbar_borders = settings.get("md_toolbar_border_enabled") or {}
+        toolbar_top_enabled = (toolbar_borders.get("top", False) if isinstance(toolbar_borders, dict)
+                              else bool(toolbar_borders))
+        toolbar_visible = (getattr(owner, "_md_open", False) and settings.get("md_toolbar_enabled", True))
+        if toolbar_visible:
+            import mdeditor.pane as md_pane
+            pane = md_pane.instance(create=False)
+            toolbar_visible = pane is not None and pane.kind == "markdown" and pane.mode == "edit"
+        if toolbar_visible and margins_are_zero and toolbar_top_enabled:
+            width = max(0, int(settings.get("md_toolbar_border_thickness", 1)))
+            toolbar_colors = settings.get("md_toolbar_border") or {}
+            toolbar_color = (toolbar_colors.get("top") if isinstance(toolbar_colors, dict) else toolbar_colors)
+            color = resolve_color_ref(toolbar_color, C["border"])
+        self.setStyleSheet(f"#TitleBar {{ background: {C['app_bg']}; "
+                           f"border-bottom: {width}px solid {color}; }}")
+        size = max(6, int(settings.get("navbar_title_font_size", 11)))
+        family = settings.get("navbar_title_font_family") or ""
+        if family:
+            weight = 700 if settings.get("navbar_title_font_bold") else 400
+            title_font = font(size, weight, family=_resolve_font_family(family, size, weight),
+                              italic=bool(settings.get("navbar_title_font_italic", False)))
+        else:
+            title_font = role_font("titles", size, 700 if settings.get("navbar_title_font_bold") else 400,
+                                   tracking=0.01)
+            title_font.setItalic(bool(settings.get("navbar_title_font_italic", False)))
+        self.title_label.setFont(title_font)
+        self.title_label.setStyleSheet(
+            f"color: {resolve_color_ref(settings.get('navbar_title_font_color'), role_color('titles', C['label']))}; "
+            "background: transparent;")
+        custom_logo = custom_ui_icon_pixmap(UI_ICON_APP_LOGO, self._icon.width())
+        self._icon.setPixmap(custom_logo or QPixmap())
+        self._icon.setStyleSheet("background: transparent;" if custom_logo is not None else
+                                 f"border: 1px solid {C['mark_dir_bd']}; background: transparent;")
+        for btn in (self.btn_min, self.btn_max, self.btn_close):
+            btn.update()
+        self.refresh_crumbs()
 
     def _make_button(self, kind: str, slot) -> IconButton:
         btn = IconButton(kind, C["label"], C["text"])
@@ -546,7 +1172,10 @@ class _InterfaceMoveMode(QObject):
             return
         import settings_cells as cells
         for window in QApplication.topLevelWidgets():
-            if not self._editable_window(window) or not window.isVisible():
+            # Toute fenetre eligible, PAS seulement celles du mode edition : `editable_windows` est vide tant qu'on
+            # n'est pas entre dans le mode edition, donc les positions enregistrees n'etaient reappliquees qu'a
+            # son activation (signale : « au redemarrage la position n'est pas celle modifiee »).
+            if not self._eligible_window(window) or not window.isVisible():
                 continue
             prefix = self._window_key(window) + "|"
             for key, saved in list(self.position_overrides.items()):
@@ -592,7 +1221,11 @@ class _InterfaceMoveMode(QObject):
                 delta = saved.get("offset", [0, 0])
                 if isinstance(delta, list) and len(delta) == 2 and all(isinstance(n, int) for n in delta):
                     if isinstance(widget, PaintedTarget):
-                        widget.move(self._bounded_position(widget, widget.pos() + QPoint(*delta)))
+                        # Decalage ABSOLU depuis la place peinte (`base`), jamais depuis sa position du moment :
+                        # rejoue toutes les 150 ms, il s'ajoutait a chaque tour et les compteurs IMG / VID
+                        # glissaient vers la gauche jusqu'au bord de la ligne (signale).
+                        self.original_positions.setdefault(widget, widget.base.topLeft())
+                        widget.move(self._bounded_position(widget, widget.base.topLeft() + QPoint(*delta)))
                         self.modified.add(widget)
                     else:
                         context = self._object_context(widget)
@@ -2465,18 +3098,18 @@ class _ViewerButtonDrag(QObject):
         from types import SimpleNamespace
         from settings_layout import _ReorderOverlay
         browser = self.browser
-        viewport = browser.scroll.viewport()
         items = browser._viewer_row_items()
         widgets = [w for _k, w in items]
         if button not in widgets:
             self.press = None
             return
+        viewport = button.parentWidget()          # le cadre « Visionneuse » de la barre de navigation
         self.keys = [k for k, _w in items]
         rects = [QRect(w.mapTo(viewport, QPoint(0, 0)), w.size()) for w in widgets]
         top = min(r.top() for r in rects)
         bottom = max(r.bottom() for r in rects)
-        left = min(r.left() for r in rects) - scaled(8, 0)
-        right = max(r.right() for r in browser._button_rects()) + scaled(8, 0)
+        left = max(0, min(r.left() for r in rects) - scaled(8, 0))
+        right = min(viewport.width(), max(r.right() for r in rects) + scaled(8, 0))
         strip = self.strip = QWidget(viewport)
         strip.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         strip.setStyleSheet("background: transparent;")     # les autres boutons restent visibles dessous
@@ -2505,7 +3138,34 @@ class _ViewerButtonDrag(QObject):
             self.browser._move_viewer_button(self.keys, source, target)
 
 
+
+def settings_window_v2_preload_enabled() -> bool:
+    """Prechargement de la fenetre de reglages au lancement (coupe par PIPELINE_NO_PREBUILD : tests)."""
+    return not os.environ.get("PIPELINE_NO_PREBUILD")
+
+
 class PipelineBrowser(QMainWindow):
+    _bulk_navigation = False        # _navigate_to en cours : niveaux intermediaires sans fondu ni animation
+
+    @property
+    def _project_columns_hidden(self) -> bool:
+        return self.__dict__.get("_columns_hidden_flag", False)
+
+    @_project_columns_hidden.setter
+    def _project_columns_hidden(self, value):
+        """Colonnes masquees (visionneuse, planche) : le filtre du bouton « precedent » de la souris n'est
+        pose qu'a ce moment. Pose en permanence sur l'application, il etait appele pour CHAQUE evenement de
+        l'appli (~50 000 pendant quelques clics de navigation) pour ne rien faire."""
+        value = bool(value)
+        self.__dict__["_columns_hidden_flag"] = value
+        back = self.__dict__.get("_mouse_back")
+        if back is not None:
+            app = QApplication.instance()
+            if value:
+                app.installEventFilter(back)
+            else:
+                app.removeEventFilter(back)
+
 
     def __init__(self, root: Path):
         super().__init__()
@@ -2540,11 +3200,16 @@ class PipelineBrowser(QMainWindow):
         self._floating_gallery_btn = None   # son bouton quand il n'y a pas de colonne Focus
         self._lightroom_btn = None          # ouvrir la photo courante dans Lightroom Classic
         self._viewer_100_btn = None         # afficher l'image a sa taille reelle
+        self._recursive_btn = None          # « Récursif » : photos des sous-dossiers aussi
+        self._viewer_folder: Path | None = None       # dossier de la visionneuse (liste, mode récursif)
+        self._viewer_entry_folder: Path | None = None  # double-clic sur un dossier : lui, pas le parent du 1er fichier
+        self._pending_folder_view = None    # (dossier, colonne) en attente du parcours récursif
         self._viewer_purs: list = []        # planches PureRef du dossier de la visionneuse
         self._pur_buttons: list = []        # un bouton « ouvrir » par planche (en haut a droite)
         # Filtres de la planche (file_filters ; le temps de la session) : bouton filtre (planche ouverte),
         # elements du filtre ecrits a cote, fenetre des filtres, fichiers des portees larges (parcours en fond).
         self._viewer_filter: dict = dict(file_filters.DEFAULT_FILTER)
+        self._viewer_filter_enabled = False
         self._filter_btn = None
         self._filter_chips = None
         self._filter_window = None
@@ -2709,63 +3374,83 @@ class PipelineBrowser(QMainWindow):
         # l'oeil (le style GENERIQUE — boutons/scrollbars/menus — n'est de
         # toute facon pas ce qu'on regarde en glissant une pastille de
         # couleur), mais qui evite l'accumulation de secondes de latence.
+        # Reperes de la barre de navigation (choix de chaque colonne) : mises a jour regroupees.
+        self._crumb_timer = QTimer(self)
+        self._crumb_timer.setSingleShot(True)
+        self._crumb_timer.setInterval(0)
+        self._crumb_timer.timeout.connect(self._refresh_crumbs)
         self._pending_stylesheet_rebuild = False
         self._stylesheet_rebuild_timer = QTimer(self)
         self._stylesheet_rebuild_timer.setSingleShot(True)
         self._stylesheet_rebuild_timer.setInterval(250)
         self._stylesheet_rebuild_timer.timeout.connect(self._flush_stylesheet_rebuild)
 
-        # --- barre du haut ---
-        self.root_label = QLabel("Root")
-        self.root_label.setFont(role_font("app", 10, 600, tracking=0.8, caps=True))
-        self.root_label.setStyleSheet(f"color: {role_color('app', C['label'])}; background: transparent;")
-
+        # --- barre de navigation (ex barre du haut, supprimee) : racine, parcourir, presets, reglages ---
         self.root_field = QLineEdit(str(root))
-        self.root_field.setFont(role_font("info", 12, 400))
-        self.root_field.setFixedHeight(scaled(24))
+        self.root_field.setFont(role_font("info", 11, 400))
+        self.root_field.setFixedHeight(self._nav_input_height())
+        self.root_field.setFixedWidth(scaled(190))
+        self.root_field.setToolTip("Racine des projets")
         self.root_field.returnPressed.connect(self.reload)
 
-        self.btn_browse = QPushButton("Parcourir")
-        self.btn_reload = QPushButton("Refresh")
-        self.btn_last_place = QPushButton("↩ Dernier endroit")
+        # Boutons de la barre : TOUS de la meme taille, chacun avec son icone (Reglages > Barre de navigation).
+        self.btn_browse = IconButton("browse", role_color("buttons", "#c4cacf"), C["text"])
+        self.btn_presets = IconButton("presets", role_color("buttons", "#c4cacf"), C["text"])
         # IconButton (voir la classe, juste avant TitleBar), PAS un glyphe
         # de police "⚙" : aucune police testee (sans_family(), Segoe UI
         # Symbol...) ne le rendait de facon fiable a cette taille — meme
         # correctif que pour les boutons min/max/close de TitleBar.
         self.btn_settings = IconButton("gear", role_color("buttons", "#c4cacf"), C["text"])
+        # Fenetres v1 desactivees (config.SETTINGS_V1_ENABLED) : ce bouton n'est plus dans la barre.
         self.btn_style = IconButton("sliders", role_color("buttons", "#c4cacf"), C["text"])
-        for btn in (self.btn_browse, self.btn_reload, self.btn_last_place, self.btn_style, self.btn_settings):
-            btn.setFont(role_font("buttons", 11, 500))
-            btn.setFixedHeight(scaled(24))
+        # Repli / depli des colonnes de set (ex bouton de la colonne Focus), maintenant dans la barre.
+        self.btn_collapse = IconButton("dchevron_right", role_color("buttons", "#c4cacf"), C["text"])
+        # Modes (demande de l'utilisateur) : visionneuse sur la selection, editeur de texte (grise tant que la
+        # selection n'est pas un fichier texte, voir _sync_mode_buttons).
+        self.btn_viewer = IconButton("viewer", role_color("buttons", "#c4cacf"), C["text"])
+        self.btn_text_editor = IconButton("text_editor", role_color("buttons", "#c4cacf"), C["text"])
+        # Board (paquet board/, facon Miro) : grise tant que la selection n'est pas un fichier .mro.
+        self.btn_board = IconButton("board", role_color("buttons", "#c4cacf"), C["text"])
+        # Module video (paquet video/) : grise tant que la selection n'est pas une video ou une image.
+        self.btn_video = IconButton("video", role_color("buttons", "#c4cacf"), C["text"])
+        self.btn_video.setToolTip("Module vidéo (vidéo, séquence d'images EXR / TIFF / PNG…)")
+        self.btn_video.clicked.connect(self._toggle_video)
+        self._video = None
+        self._video_buttons = []
+        self.btn_viewer.setToolTip("Visionneuse (sélection en cours)")
+        self.btn_text_editor.setToolTip("Éditeur Markdown / code (sélectionner une note, un fichier texte ou de code)")
+        self.btn_board.setToolTip("Board (sélectionner un fichier .mro — clic droit dans une colonne > Créer un mro)")
+        self.btn_viewer.clicked.connect(self._on_viewer_button)
+        self.btn_text_editor.clicked.connect(self._toggle_md_editor)
+        self.btn_board.clicked.connect(self._toggle_board)
+        self._md_open = False                    # module Markdown / code (paquet mdeditor/) ouvert
+        self._editor_buttons = []
+        self._board = None
+        self._board_buttons = []
+        for btn in (self.btn_browse, self.btn_presets, self.btn_settings, self.btn_collapse, self.btn_viewer,
+                    self.btn_text_editor, self.btn_board, self.btn_video):
             btn.setCursor(Qt.ArrowCursor)
-        for btn in (self.btn_browse, self.btn_reload, self.btn_last_place):
-            btn.setStyleSheet(f"color: {role_color('buttons', '#c4cacf')};")
-        self.btn_settings.setFixedWidth(scaled(28))
-        self.btn_style.setFixedWidth(scaled(28))
-        self.btn_style.setToolTip("Parametres visuels")
+            btn.setFlat(True)
+            btn.setStyleSheet("QPushButton { background: transparent; border: none; }"
+                              f"QPushButton:hover {{ background: {C['hover']}; }}")
+        self.btn_browse.setToolTip("Parcourir…")
+        self.btn_presets.setToolTip("Gérer les presets…")
         self.btn_settings.setToolTip("Parametres generaux" if SETTINGS_V1_ENABLED else "Parametres")
-        # Fenetres v1 desactivees (config.SETTINGS_V1_ENABLED) : un seul bouton, qui ouvre la v2.
-        self.btn_style.setVisible(SETTINGS_V1_ENABLED)
-        self.btn_last_place.setToolTip("Revenir a l'endroit ouvert a la derniere fermeture")
+        self.btn_collapse.setToolTip("Replier les colonnes de set")
+        self.btn_collapse.clicked.connect(lambda: self._toggle_project_columns())
+        _HoverPrime(self.btn_collapse, self._prime_slide_snapshot)      # capture preparee des le survol
+        self.btn_style.setToolTip("Parametres visuels")
+        self.btn_style.setVisible(False)
         self.btn_browse.clicked.connect(self.browse_root)
-        self.btn_reload.clicked.connect(self.reload)
-        self.btn_last_place.clicked.connect(self.go_to_last_place)
+        self.btn_presets.clicked.connect(self._open_preset_manager)
         self.btn_settings.clicked.connect(lambda: self.open_settings("general"))
         self.btn_style.clicked.connect(lambda: self.open_settings("visuel"))
         # Clic droit : fenetre de reglages v2 (maquette comparative, voir
         # settings_window_v2.py) — n'affecte pas la fenetre reelle.
         self.btn_style.setContextMenuPolicy(Qt.CustomContextMenu)
         self.btn_style.customContextMenuRequested.connect(self._open_settings_v2_menu)
-        # Chemin ouvert a la derniere fermeture (voir closeEvent) : l'appli
-        # s'ouvre toujours a la racine, ce bouton permet d'y revenir a la
-        # demande plutot que d'y naviguer automatiquement (voir
-        # _restore_window_state).
+        # Chemin ouvert a la derniere fermeture (voir closeEvent, go_to_last_place).
         self._last_place: Path | None = None
-        self.btn_last_place.setEnabled(False)
-
-        self.synced_label = QLabel("")
-        self.synced_label.setFont(role_font("info2", 10, 400))
-        self.synced_label.setStyleSheet(f"color: {role_color('info2', C['dim'])}; background: transparent;")
 
         self.preview_cache_progress = QProgressBar()
         self.preview_cache_progress.setFixedSize(scaled(132), scaled(15))
@@ -2779,40 +3464,18 @@ class PipelineBrowser(QMainWindow):
             f"border-radius: 3px; }} QProgressBar::chunk {{ background: {C['accent']}; border-radius: 2px; }}"
         )
 
-        topbar = QWidget()
-        self.topbar = topbar
-        topbar.setFixedHeight(TOPBAR_HEIGHT)
-        # objectName + selecteur ID : voir la remarque sur #TitleBar plus
-        # haut (meme piege, meme correctif) — root_label et synced_label,
-        # simples QLabel sans bordure propre, heriteraient sinon du
-        # border-bottom nu et se retrouveraient chacun souligne.
-        topbar.setObjectName("TopBar")
-        topbar.setStyleSheet(
-            f"#TopBar {{ background: {C['topbar']}; border-bottom: 1px solid {C['border']}; }}"
-        )
-        top_layout = QHBoxLayout(topbar)
-        top_layout.setContentsMargins(10, 0, 10, 0)
-        top_layout.setSpacing(10)
-        top_layout.addWidget(self.root_label)
-        top_layout.addWidget(self.root_field, 1)
-        top_layout.addWidget(self.btn_browse)
-        top_layout.addWidget(self.btn_reload)
-        top_layout.addWidget(self.btn_last_place)
-        top_layout.addWidget(self.synced_label)
-        top_layout.addWidget(self.preview_cache_progress)
-        # Presets : menu deroulant (preset actif) + « Gerer les presets… » (settings_presets.py, briques
-        # des reglages).
+        # Presets : menu deroulant (preset actif) dans la barre ; « Gerer les presets… » = l'icone btn_presets
+        # (settings_presets.py, briques des reglages).
         import settings_window_v2
         from settings_presets import PresetPicker
         settings_window_v2.seed_window_look(ui_state.APPLIED_SETTINGS or load_settings())
         self.preset_picker = PresetPicker()
+        self.preset_picker.manage.hide()
+        self.preset_picker.select.setFixedHeight(self._nav_input_height())
         self.preset_picker.refresh(ui_state.APPLIED_SETTINGS or load_settings())
         self.preset_picker.presetChosen.connect(self._choose_preset)
         self.preset_picker.manageRequested.connect(self._open_preset_manager)
         self._preset_manager = None
-        top_layout.addWidget(self.preset_picker)
-        top_layout.addWidget(self.btn_style)
-        top_layout.addWidget(self.btn_settings)
 
         # --- zone des colonnes ---
         self.columns_layout = QHBoxLayout()
@@ -2833,8 +3496,15 @@ class PipelineBrowser(QMainWindow):
         self.columns_layout.setSpacing(scaled(max(0, column_gap()), 0))
 
         self.detail = DetailPanel()
+        from background_status import BackgroundStatus
+        self._background_status = BackgroundStatus(self.detail)
         self.detail.preview_double_clicked.connect(self._toggle_project_columns_hidden)
         self._detail_state_width = {}   # {replie: largeur de l'inspecteur} (voir _set_columns_collapsed_now)
+        self._inspector_visible = False
+        self.detail.hide()
+        self._inspector_shortcut = QShortcut(QKeySequence("I"), self)
+        self._inspector_shortcut.setContext(Qt.WindowShortcut)
+        self._inspector_shortcut.activated.connect(self._toggle_inspector)
 
         # objectName + selecteur ID : le fond au-dela de la derniere colonne
         # (l'espace que la colonne Inspecteur, desormais a largeur fixe, ne
@@ -2865,7 +3535,7 @@ class PipelineBrowser(QMainWindow):
         columns_host.installEventFilter(self)
         # Bouton « precedent » de la souris : sortie de la visionneuse (voir _MouseBackFilter).
         self._mouse_back = _MouseBackFilter(self)
-        QApplication.instance().installEventFilter(self._mouse_back)
+        self._project_columns_hidden = self._project_columns_hidden   # filtre pose seulement colonnes masquees
         self._focus_wheel = 0
         self._focus_path = None       # fichier montre au centre quand il attend son apercu (voir _focus_on_file)
         _previews._PREVIEW_DECODE_MANAGER.ready.connect(self._on_focus_preview_ready)
@@ -2921,6 +3591,17 @@ class PipelineBrowser(QMainWindow):
         self.status_right = QLabel("read-only")
         self.status_right.setFont(role_font("info2", 11, 400))
         self.status_right.setStyleSheet(f"color: {role_color('info2', C['dim'])}; background: transparent;")
+        self.md_margin_slider = QSlider(Qt.Horizontal)
+        self.md_margin_slider.setRange(0, 1000)
+        self.md_margin_slider.setFixedWidth(scaled(140))
+        self.md_margin_slider.setToolTip("Marge gauche et droite du module Markdown")
+        self.md_margin_slider.setValue(int((ui_state.APPLIED_SETTINGS or {}).get("md_module_padding", 0)))
+        self.md_margin_slider.valueChanged.connect(self._set_md_margin)
+        self.md_margin_slider.hide()
+        self._md_margin_timer = QTimer(self)
+        self._md_margin_timer.setSingleShot(True)
+        self._md_margin_timer.setInterval(300)
+        self._md_margin_timer.timeout.connect(self._persist_md_margin)
 
         statusbar = QWidget()
         self.statusbar = statusbar
@@ -2935,9 +3616,18 @@ class PipelineBrowser(QMainWindow):
         status_layout.setSpacing(12)
         status_layout.addWidget(self.path_label)
         status_layout.addStretch(1)
+        status_layout.addWidget(self.preview_cache_progress)
         status_layout.addWidget(self.status_right)
+        status_layout.addWidget(self.md_margin_slider)
 
         self.titlebar = TitleBar(self)
+        self.titlebar._background_status = self._background_status
+        self.titlebar.add_tools(self.root_field, self.btn_browse, self.preset_picker, self.btn_presets,
+                                self.btn_settings, self.btn_collapse, self.btn_viewer, self.btn_text_editor,
+                                self.btn_board, self.btn_video)
+        self._sync_mode_buttons()
+        self.titlebar.refresh_sizes()
+        self.titlebar.refresh_look()
 
         # objectName + selecteur ID : une regle "nue" (sans selecteur) posee
         # via setStyleSheet sur un widget conteneur se propage a TOUS ses
@@ -2973,7 +3663,6 @@ class PipelineBrowser(QMainWindow):
         layout.setContentsMargins(1, 1, 1, 1)
         layout.setSpacing(0)
         layout.addWidget(self.titlebar)
-        layout.addWidget(topbar)
         layout.addWidget(self.scroll, 1)
         layout.addWidget(statusbar)
         self.setCentralWidget(central)
@@ -3055,7 +3744,6 @@ class PipelineBrowser(QMainWindow):
                 pass
         last_path = state.get("last_path")
         self._last_place = Path(last_path) if last_path else None
-        self.btn_last_place.setEnabled(self._last_place is not None)
 
     def go_to_last_place(self):
         if self._last_place is not None:
@@ -3073,38 +3761,66 @@ class PipelineBrowser(QMainWindow):
             parts = target.relative_to(root).parts
         except ValueError:
             return
-        current = root
-        col_index = 0
-        for part in parts:
-            current = current / part
-            if not self.columns:
-                return
-            if col_index < len(self.columns):
-                candidates = [self.columns[col_index]]
-            else:
-                candidates = [self.columns[-1], *self.group_columns]
-            match = None
-            column = None
-            for candidate in candidates:
-                for i in range(candidate.list.count()):
-                    item = candidate.list.item(i)
-                    if Path(item.data(ROLE_PATH)).name == part:
-                        match, column = item, candidate
+        self._nav_plan = {"root": root, "parts": parts, "index": 0, "column": 0, "current": root}
+        self._resume_path_navigation()
+
+    def _resume_path_navigation(self):
+        """Un niveau par tour Qt ; les colonnes en lecture reprennent par leur signal loaded."""
+        plan = getattr(self, "_nav_plan", None)
+        if plan is None or getattr(self, "_remote_selection", None):
+            return
+        if plan["index"] >= len(plan["parts"]):
+            self._nav_plan = None
+            if self.columns:
+                for column in reversed(self.columns):
+                    path = column.current_path()
+                    if path is not None:
+                        self.detail.show_path(path)
                         break
-                if match is not None:
+                last = self.columns[-1]
+                QTimer.singleShot(0, lambda c=last: self._animate_column_in(c))
+            return
+        col_index = plan["column"]
+        if not self.columns:
+            self._nav_plan = None
+            return
+        candidates = ([self.columns[col_index]] if col_index < len(self.columns)
+                      else [self.columns[-1], *self.group_columns])
+        if any(c.loading or c._load_timer.isActive() for c in candidates):
+            return
+        part = plan["parts"][plan["index"]]
+        current = plan["current"] / part
+        match = column = None
+        for candidate in candidates:
+            for i in range(candidate.list.count()):
+                item = candidate.list.item(i)
+                if Path(item.data(ROLE_PATH)).name == part:
+                    match, column = item, candidate
                     break
-            if match is None:
-                if part.lower() in STATUS_FOLDERS and current.is_dir():
-                    continue
+            if match is not None:
+                break
+        plan["index"] += 1
+        plan["current"] = current
+        if match is None:
+            # Les dossiers de statut sont franchis dans le groupe, hors liste.
+            if part.lower() not in STATUS_FOLDERS:
+                self._nav_plan = None
                 return
+        else:
             in_group = column in self.group_columns
-            if column.list.currentItem() is match:
-                column.reselect_current()
-            else:
-                column.list.setCurrentItem(match)
-            col_index = len(self.columns) - 1 if in_group else col_index + 1
-            if not current.is_dir():
-                return
+            is_dir = bool(match.data(ROLE_ISDIR))
+            self._bulk_navigation = self._navigating_step = True
+            try:
+                if column.list.currentItem() is match:
+                    column.reselect_current()
+                else:
+                    column.list.setCurrentItem(match)
+            finally:
+                self._bulk_navigation = self._navigating_step = False
+            plan["column"] = len(self.columns) - 1 if in_group else col_index + 1
+            if not is_dir:
+                plan["index"] = len(plan["parts"])
+        QTimer.singleShot(0, self._resume_path_navigation)
 
     # -- Espace au-dessus d'un element de la fenetre (clic droit la ou rien d'autre n'a de menu) --
     # Les lignes des colonnes ont leur propre ligne de menu (Column.set_item_space) ; ici, tout le
@@ -3195,10 +3911,45 @@ class PipelineBrowser(QMainWindow):
             QTimer.singleShot(0, self._apply_ui_spaces)
 
     def closeEvent(self, event):
+        video_pane = getattr(self, "_video", None)
+        if video_pane is not None:                                      # module video : fils de fond arretes
+            video_pane.shutdown()
+        board_pane = getattr(self, "_board", None)
+        if board_pane is not None and not board_pane.confirm_leave():   # board : enregistre (contenu + vue)
+            event.ignore()
+            return
+        import mdeditor.pane as md_pane
+        pane = md_pane.instance(create=False)
+        if getattr(self, "_md_open", False) and pane is not None and not pane.confirm_leave():
+            event.ignore()                                            # module Markdown : tout est enregistre
+            return
+        if pane is not None and pane.parentWidget() is None:
+            pane.deleteLater()           # page prechargee sans parent : detruite avant l'application (QtWebEngine)
+        automatic = getattr(self, "_automatic_tasks", None)
+        if automatic is not None:
+            automatic.stop()
         state = load_window_state()
         state["geometry"] = bytes(self.saveGeometry().toBase64()).decode("ascii")
         state["last_path"] = str(self.columns[-1].directory) if self.columns else ""
         save_window_state(state)
+        dialog = getattr(self, "_settings_dialog_v2", None)       # fenetre sans parent : elle part avec celle-ci
+        if dialog is not None:
+            try:
+                dialog.close()
+                dialog.deleteLater()
+            except RuntimeError:
+                pass
+        import mdeditor.css_sync as css_sync                       # feuille partagee avec Obsidian : rien en attente
+        css_sync.engine().flush()
+        self._nav_plan = None
+        pending = getattr(self, "_remote_selection", None)
+        if pending is not None:
+            from column_loading import loader
+            loader().cancel(pending[0], self)
+            self._remote_selection = None
+        for column in [*self.columns, *self.group_columns]:
+            if hasattr(column, "cancel_loading"):
+                column.cancel_loading()
         super().closeEvent(event)
 
     _RESIZE_BORDER = 6
@@ -3223,12 +3974,19 @@ class PipelineBrowser(QMainWindow):
     # -- gestion des colonnes ------------------------------------------
 
     def reload(self):
+        import browser_core
+        browser_core.forget_all_config()     # F5 : relecture réelle, même cache encore frais
+        self._nav_plan = None
+        pending = getattr(self, "_remote_selection", None)
+        if pending is not None:
+            from column_loading import loader
+            loader().cancel(pending[0], self)
+            self._remote_selection = None
         root = Path(self.root_field.text())
         self.prune_after(-1)
         self.detail.clear()
-        if not root.is_dir():
+        if not _previews.is_remote_path(root) and not root.is_dir():
             self.path_label.setText(f"Introuvable : {root}")
-            self.synced_label.setText("")
             return
         self._project_columns_collapsed = False
         self._project_columns_hidden = False
@@ -3236,7 +3994,7 @@ class PipelineBrowser(QMainWindow):
         self._auto_collapse_armed = True
         self.add_column(root, 0)
         self.path_label.setText(str(root))
-        self.synced_label.setText(datetime.now().strftime("scan %H:%M:%S"))
+        self._request_crumbs()
         self.update_preview_stack()
         self._sync_collapse_state()
 
@@ -3252,6 +4010,9 @@ class PipelineBrowser(QMainWindow):
             self.columns_layout.removeWidget(self._group_stack_wrapper)
 
     def _clear_group_stack(self):
+        for column in self.group_columns:
+            if hasattr(column, "cancel_loading"):
+                column.cancel_loading()
         wrapper = self._group_stack_wrapper
         if wrapper is not None:
             # Remis a None AVANT setParent(None) : le focus qui quitte le conteneur
@@ -3315,12 +4076,17 @@ class PipelineBrowser(QMainWindow):
             # propre display_title (voir sa remarque).
             display_title = directory.name
         column = Column(
-            directory, title, is_focus_level=is_focus_level, style_title=style_title,
+            directory, title, parent=self.columns_host, is_focus_level=is_focus_level, style_title=style_title, async_load=True,
             display_title=display_title,
             show_dirs=show_dirs, show_files=show_files, omit_dirs=omit_dirs, omit_files=omit_files)
         column.selected.connect(self.on_selected)
+        column.loaded.connect(self._column_loaded)
         column.activated.connect(self.on_activated)
         column.view_requested.connect(lambda path, c=column: self._view_in_viewer(path, c))
+        column.folder_view_requested.connect(lambda path, c=column: self._view_folder_in_viewer(path, c))
+        column.folder_gallery_requested.connect(lambda path, c=column: self._view_folder_in_viewer(path, c, True))
+        column.recursive_requested.connect(self._set_recursive)
+        beyond_chain = len(self.columns) >= self._chain_expected_total()
         self.columns.append(column)
         # Le groupe fantome IN/OVER/OUT/LOGICIELS (voir update_preview_
         # stack) peut occuper cet emplacement depuis la selection
@@ -3338,7 +4104,11 @@ class PipelineBrowser(QMainWindow):
         # focus") — un _clear_group_stack() (destructeur) ici aurait
         # recree les 4 colonnes a CHAQUE _open_group_folder, y compris pour
         # une simple creation de dossier qui re-selectionne l'element cree.
-        self._detach_group_stack()
+        if not (beyond_chain and self._group_stack_wrapper is not None
+                and self.columns_layout.indexOf(self._group_stack_wrapper) >= 0):
+            self._detach_group_stack()
+        # Contenu ouvert APRES la chaine : il se pose a la suite du groupe, deja a sa place (pas de retrait :
+        # la pile n'est alors plus refaite, voir update_preview_stack).
         self.columns_layout.addWidget(column)
         # _suppress_left() (voir Column._containing_layout) a besoin que la
         # colonne soit DEJA dans columns_layout pour detecter correctement
@@ -3368,7 +4138,7 @@ class PipelineBrowser(QMainWindow):
             if getattr(group_column, "_group_kind", None) != "logiciels" or not shiboken6.isValid(group_column):
                 continue
             selected = group_column.current_path()
-            if selected is not None and selected.is_dir():
+            if selected is not None and entry_is_dir(selected):
                 key = _previews.software_icon_key(selected.name)
                 if software_launch.can_launch(key):
                     software = (key, selected)
@@ -3397,9 +4167,168 @@ class PipelineBrowser(QMainWindow):
     def prune_after(self, index: int):
         while len(self.columns) > index + 1:
             column = self.columns.pop()
+            column.cancel_loading()
             self.columns_layout.removeWidget(column)
             column.setParent(None)
             column.deleteLater()
+        self._request_crumbs()
+
+    def _request_crumbs(self):
+        timer = getattr(self, "_crumb_timer", None)
+        if timer is not None:
+            timer.start()
+
+    def _refresh_crumbs(self):
+        """Barre de navigation : le choix (nom) de chaque colonne, dans l'ordre, jusqu'au premier sans choix ;
+        visionneuse ouverte : le dossier central puis l'image regardee (`_viewer_crumb_items`)."""
+        if self._project_columns_hidden and self._viewer_folder is not None:
+            self.titlebar.set_crumbs(self._viewer_crumb_items())
+        else:
+            self.titlebar.set_crumbs(self._crumb_items())
+
+    def _viewer_crumb_items(self) -> list:
+        """Cheminement de la visionneuse, calcule sur SON etat (jamais sur les colonnes cachees, qui ne suivent
+        qu'au repos — le cheminement arrivait 700 ms et plus apres l'image, signale) : les reperes des colonnes
+        jusqu'au DOSSIER CENTRAL (`_viewer_folder` : la visionneuse montre ses images, sous-dossiers compris en
+        mode recursif), qui a le FOCUS, puis — genre « after_focus », l'image garde tout son cheminement — les
+        sous-dossiers de l'image regardee et l'image. Clic sur un dossier = il devient le dossier central
+        (`_set_viewer_folder`)."""
+        folder = Path(self._viewer_folder)
+        items, last = [], None
+        for kind, path, _column in self._crumb_entries():
+            if path != folder and path not in folder.parents:
+                break
+            items.append((kind, path.name or str(path), lambda _c=False, p=path: self._set_viewer_folder(p)))
+            last = path
+        if last != folder:
+            # Dossiers entre le dernier repere des colonnes (ou la racine) et le dossier central.
+            base = last if last is not None else Path(self.root_field.text())
+            try:
+                parts = folder.relative_to(base).parts
+            except ValueError:
+                base, parts = folder.parent, (folder.name,)
+            for part in parts:
+                base = base / part
+                items.append(("after", part, lambda _c=False, p=base: self._set_viewer_folder(p)))
+        if items:
+            kind, name, callback = items[-1]
+            items[-1] = (kind + "!", name, callback)             # le dossier central a le focus
+        if self._focus_gallery is None and 0 <= self._viewer_index < len(self._viewer_paths):
+            path = Path(self._viewer_paths[self._viewer_index])
+            if self._pur_sources.get(str(path)) is not None:     # image d'une planche PureRef
+                pur = self._pur_sources[str(path)][0]
+                parts, shown = self._relative_parts(Path(pur).parent, folder), _focus.display_name(path)
+            else:
+                parts, shown = self._relative_parts(path.parent, folder), path.name
+            base = folder
+            for part in parts:
+                base = base / part
+                items.append(("after_focus", part, lambda _c=False, p=base: self._set_viewer_folder(p)))
+            items.append(("after_focus", shown, lambda _c=False: None))
+        return items
+
+    @staticmethod
+    def _relative_parts(path: Path, folder: Path) -> tuple:
+        try:
+            return Path(path).relative_to(folder).parts
+        except ValueError:
+            return ()
+
+    def _set_viewer_folder(self, folder: Path):
+        """Clic sur un dossier du cheminement, visionneuse ouverte : il devient le dossier CENTRAL — la
+        visionneuse (pellicule, planche) montre ses images, celles des sous-dossiers aussi si « Récursif » est
+        coche ; l'image regardee est gardee si elle y est encore, sinon la 1re."""
+        folder = Path(folder)
+        if not self._project_columns_hidden or self._viewer_folder is None:
+            return
+        if folder == Path(self._viewer_folder):
+            return
+        if self._recursive_on():
+            self._start_filter_scan(folder)                      # liste a jour, lue en fond
+        elif not self._viewer_folder_files(folder):
+            self.path_label.setText(f"Aucune photo directement dans {folder.name} (cocher « Récursif » "
+                                    "pour celles des sous-dossiers)")
+            return
+        self._viewer_folder = folder
+        self._viewer_base = []                                   # liste refaite meme si identique
+        self._apply_viewer_base()
+        self.path_label.setText(str(folder))
+        self._request_crumbs()
+
+    def _crumb_entries(self) -> list:
+        """[(genre, chemin, colonne)] : voir `_crumb_items`."""
+        config = self._active_project_config
+        settable = config is None or bool(config.get("set_enabled", True))
+        total = self._chain_expected_total()
+        entries = []
+
+        def add(kind, column):
+            path = column.current_path()
+            if path is None:
+                return False
+            entries.append((kind, path, column))
+            return True
+
+        try:
+            chain = self.columns[:total]
+            for column in chain:
+                if not add("set" if settable else "after", column):
+                    return entries
+            if len(chain) < total:
+                return entries
+            for column in self.group_columns:
+                if add("after", column):
+                    break
+            for column in self.columns[total:]:
+                if not add("after", column):
+                    break
+        except RuntimeError:
+            pass
+        return entries
+
+    def _crumb_items(self) -> list:
+        """[(genre, nom, rappel)] : le choix de chaque colonne de la chaine (genre « set », ou « after » quand le
+        projet choisi n'a pas de set), puis le dossier choisi dans LOGICIELS / IN / OVER / OUT, puis les colonnes
+        ouvertes a leur suite (« after »). Le dernier a le FOCUS (genre suffixe « ! ») ; les reperes du chemin
+        parcouru AU-DELA de lui sont gardes (demande de l'utilisateur : l'image affichee garde tout son
+        cheminement), genre « after_focus » — tant que le chemin actuel en est le debut (`_crumb_trail`). Un clic =
+        focus sur l'element de sa colonne ; sur un repere apres le focus : les colonnes vont jusqu'a lui."""
+        entries = self._crumb_entries()
+        items = [(kind, path.name or str(path), lambda _c=False, col=column: self._crumb_clicked(col))
+                 for kind, path, column in entries]
+        paths = [path for _k, path, _c in entries]
+        trail = getattr(self, "_crumb_trail", None) or []
+        if len(trail) > len(paths) and [p for p, _n in trail[:len(paths)]] == paths:
+            beyond = trail[len(paths):]                          # meme debut : le reste est garde
+        else:
+            beyond = []
+            self._crumb_trail = [(path, path.name or str(path)) for path in paths]
+        if items:
+            kind, name, callback = items[-1]
+            items[-1] = (kind + "!", name, callback)
+        for path, name in beyond:
+            items.append(("after_focus", name, lambda _c=False, p=path: self._crumb_go(p)))
+        return items
+
+    def _crumb_go(self, path: Path):
+        """Clic sur un repere APRES le focus : les colonnes vont jusqu'a lui (il prend le focus)."""
+        self._navigate_to(Path(path))
+        column = next((c for c in reversed([*self.columns, *self.group_columns])
+                       if shiboken6.isValid(c) and c.current_path() == Path(path)), None)
+        if column is not None:
+            column.list.setFocus(Qt.MouseFocusReason)
+            self.update_active_column()
+
+    def _crumb_clicked(self, column):
+        """Clic sur un repere du cheminement = FOCUS sur lui (demande de l'utilisateur ; avant : defocus, comme un
+        re-clic) : sa ligne reste selectionnee et devient la ligne en focus, les colonnes ouvertes apres elle se
+        referment et son contenu est reaffiche (meme chemin qu'une selection, `reselect_current`)."""
+        if not shiboken6.isValid(column) or column.current_path() is None:
+            return
+        column.reselect_current()
+        if shiboken6.isValid(column):
+            column.list.setFocus(Qt.MouseFocusReason)
+            self.update_active_column()
 
     def refresh_all_columns(self, rescan: bool = True, relayout_titles: set | None = None):
         """Reapplique aux colonnes existantes (largeur, delegate, polices)
@@ -3557,7 +4486,7 @@ class PipelineBrowser(QMainWindow):
         # (voir update_preview_stack/_sync_collapse_state/_on_group_
         # height_resize_end, tous les 3 appelants) — voir la remarque de
         # l'utilisateur, "les fichiers ne sont pas des elements de set".
-        if path is not None and not path.is_dir():
+        if path is not None and not entry_is_dir(path):
             return None
         return path
 
@@ -3609,24 +4538,36 @@ class PipelineBrowser(QMainWindow):
         )
 
     def update_preview_stack(self, if_changed: bool = False):
-        """`if_changed` (selection d'un FICHIER) : la pile (vignettes Focus, groupe IN/OVER/OUT/LOGICIELS)
-        ne depend que de la CHAINE des dossiers selectionnes et de l'habillage ; inchangee, elle n'est pas
-        reconstruite (~100 ms : le retour aux colonnes depuis la visionneuse, qui resynchronise la colonne
-        sur l'image montree, en etait bloque d'autant — saccade signalee)."""
+        """La pile (vignettes Focus, groupe IN/OVER/OUT/LOGICIELS) ne depend que de la CHAINE des dossiers
+        selectionnes et de l'habillage : inchangee (selection d'un fichier, navigation dans le contenu ouvert
+        APRES le groupe, a n'importe quelle profondeur), elle n'est ni reconstruite ni relue. Avant, chaque clic
+        sur un dossier la refaisait : 2 colonnes Focus recreees et les 4 colonnes du groupe relues sur le disque
+        (~65 ms par clic en local, 4 allers-retours de plus sur un partage reseau). `if_changed` : garde pour
+        les appelants, meme comportement."""
         self._columns_epoch += 1
         self._prewarm_timer.start()
         key = self._preview_stack_key()
-        if not (if_changed and key == getattr(self, "_preview_stack_built", None)):
+        if not (key == getattr(self, "_preview_stack_built", None) and self._preview_stack_in_place()):
             self._update_preview_stack_impl()
             self._preview_stack_built = key
         self._enforce_hidden_columns(final=True)
 
     def _preview_stack_key(self):
         """Ce dont depend la pile d'apercus : colonnes de la chaine (objet, dossier, selection), config du
-        projet, habillage des colonnes Focus."""
+        projet, habillage des colonnes Focus. Les colonnes ouvertes APRES la chaine n'y sont pas : elles
+        s'ajoutent a la suite du groupe sans le deplacer (voir add_column)."""
         chain = self.columns[:self._chain_expected_total()]
-        return (tuple((id(c), str(c.directory), str(c.current_path())) for c in chain), len(self.columns),
+        return (tuple((id(c), str(c.directory), str(c.current_path())) for c in chain),
                 id(self._active_project_config), self._preview_style_snapshot())
+
+    def _preview_stack_in_place(self) -> bool:
+        """Conteneurs de la pile toujours vivants et poses dans la rangee des colonnes."""
+        for wrapper in (getattr(self, "_preview_stack_wrapper", None), self._group_stack_wrapper):
+            if wrapper is None:
+                continue
+            if not shiboken6.isValid(wrapper) or self.columns_layout.indexOf(wrapper) < 0:
+                return False
+        return True
 
     def _update_preview_stack_impl(self):
         """Recalcule l'apercu empile : un bloc par colonne a vignettes
@@ -3798,7 +4739,7 @@ class PipelineBrowser(QMainWindow):
             # que "Distance entre colonnes" (column_gap), transpose a la
             # verticale — coherent avec l'espacement HORIZONTAL habituel entre
             # colonnes.
-            wrapper = QWidget()
+            wrapper = QWidget(self.columns_host)
             wrapper.setStyleSheet("background: transparent;")
             wrapper_layout = QVBoxLayout(wrapper)
             wrapper_layout.setContentsMargins(0, 0, 0, 0)
@@ -3816,9 +4757,9 @@ class PipelineBrowser(QMainWindow):
             # controler les deux colonnes".
             for offset, (title, pixmap, path, open_status, level_title, source_column) in enumerate(entries):
                 column = PreviewColumn(
-                    PREVIEW_STACK_TITLE, on_toggle=self._toggle_project_columns if offset == 0 else None,
-                    on_hide_columns=self._toggle_project_columns_hidden if offset == 0 else None,
-                    on_gallery=self._toggle_focus_gallery if offset == 0 else None,
+                    PREVIEW_STACK_TITLE, parent=wrapper, on_toggle=None,
+                    on_hide_columns=None,
+                    on_gallery=None,     # plus de bouton image / planche (demande de l'utilisateur : touche G)
                     user_width=self._preview_column_user_width,
                     on_resize=self._on_preview_column_resized, fit_height=True,
                     display_title=_FOCUS_LEVEL_LABEL.get(level_title, PREVIEW_STACK_TITLE))
@@ -3927,7 +4868,7 @@ class PipelineBrowser(QMainWindow):
 
         self._clear_group_stack()
         self._group_context_key = context_key
-        group_wrapper = QWidget()
+        group_wrapper = QWidget(self.columns_host)
         group_wrapper.setStyleSheet("background: transparent;")
         group_layout = QVBoxLayout(group_wrapper)
         group_layout.setContentsMargins(0, 0, 0, 0)
@@ -3965,7 +4906,7 @@ class PipelineBrowser(QMainWindow):
             # navigation a l'autre, exactement comme une colonne normale.
             stable_directory = softs_dirs[0] if kind == "logiciels" else terminal_path / kind
             column = Column(
-                stable_directory, style_title,
+                stable_directory, style_title, parent=group_wrapper, async_load=True,
                 source_dirs=source_dirs, source_labels=source_labels, display_title=display,
                 user_width=self._group_column_user_width, on_resize=self._on_group_column_resized,
                 on_resize_end=self._on_group_column_resize_end,
@@ -3977,8 +4918,12 @@ class PipelineBrowser(QMainWindow):
                 only_recognized_software=(kind == "logiciels" and work_dir_only_recognized_software),
                 on_group_maximize=self._on_group_maximize, on_group_equalize=self._on_group_equalize)
             column.selected.connect(lambda col, p, k=kind: self._on_group_item_selected(col, p, k))
+            column.loaded.connect(self._column_loaded)
             column.activated.connect(self.on_activated)
             column.view_requested.connect(lambda path, c=column: self._view_in_viewer(path, c))
+            column.folder_view_requested.connect(lambda path, c=column: self._view_folder_in_viewer(path, c))
+            column.folder_gallery_requested.connect(lambda path, c=column: self._view_folder_in_viewer(path, c, True))
+            column.recursive_requested.connect(self._set_recursive)
             group_layout.addWidget(column, 1 if fill else 0)
             self.group_columns.append(column)
 
@@ -4037,6 +4982,13 @@ class PipelineBrowser(QMainWindow):
         # coloree indefiniment — voir la remarque de l'utilisateur, capture
         # a l'appui, "le repertoire textures est encore en selection alors
         # qu'il ne devrait pas du tout".
+        if path is not None and not getattr(self, "_navigating_step", False):
+            self._nav_plan = None
+            pending = getattr(self, "_remote_selection", None)
+            if pending is not None:
+                from column_loading import loader
+                loader().cancel(pending[0], self)
+                self._remote_selection = None
         if path is not None:
             for other in self.group_columns:
                 if other is not column:
@@ -4055,8 +5007,9 @@ class PipelineBrowser(QMainWindow):
         # comme une colonne normale (voir _on_selected_now), la ligne cliquee,
         # dossier ou fichier, y est affichee.
         self.path_label.setText(str(path))
+        self._request_crumbs()
         self.detail.show_path(path)
-        if not path.is_dir():
+        if not entry_is_dir(path):
             # Un fichier n'ouvre rien : le contenu deja ouvert depuis ce groupe
             # (dossier clique avant) se ferme, comme apres un fichier d'une colonne normale.
             keep_index = self._chain_expected_total() - 1
@@ -4414,15 +5367,67 @@ class PipelineBrowser(QMainWindow):
             # Colonne deja retiree (signal emis pendant sa destruction, ou focus
             # passe a une liste pendant une reconstruction) : rien a naviguer.
             return
+        if not getattr(self, "_navigating_step", False):
+            self._nav_plan = None
+        previous = getattr(self, "_remote_selection", None)
+        if previous is not None:
+            from column_loading import loader
+            loader().cancel(previous[0], self)
+            self._remote_selection = None
+        if path is not None and _previews.is_remote_path(path) and entry_is_dir(path):
+            from column_loading import loader
+            service = loader()
+            if not getattr(self, "_remote_selection_connected", False):
+                service.ready.connect(self._navigation_data_ready)
+                self._remote_selection_connected = True
+            excluded = frozenset(STATUS_FOLDERS)
+            key = service.key([path], excluded)
+            cached = service.cached(key)
+            if cached is None:
+                self._remote_selection = (key, column, path)
+                self.path_label.setText(str(path))
+                self._request_crumbs()
+                service.request(key, [path], excluded, self)
+                return
         pending = self._select_fade
         if _anim_running(pending):
             pending.finish_now()
-        overlay = self._fade_before_select(column)
+        overlay = None if self._bulk_navigation else self._fade_before_select(column)
         self._on_selected_now(column, path)
         if overlay is not None:
             # Au-dessus de l'apparition (creee en differe par _on_selected_now) : l'ancien
             # contenu s'estompe PENDANT que la nouvelle colonne sort de dessous.
             QTimer.singleShot(0, lambda: self._raise_select_fade(overlay))
+
+    def _navigation_data_ready(self, key, data, error):
+        pending = getattr(self, "_remote_selection", None)
+        if pending is None or pending[0] != key:
+            return
+        self._remote_selection = None
+        from column_loading import loader
+        loader().cancel(key, self)
+        _, column, path = pending
+        if column not in self.columns or column.current_path() != path:
+            return
+        if data is None or data.errors.get(str(path)):
+            error = error or data.errors.get(str(path), "")
+            self.path_label.setText(f"{path} — {error}")
+            self._nav_plan = None
+            return
+        self._navigating_step = bool(getattr(self, "_nav_plan", None))
+        try:
+            self.on_selected(column, path)
+        finally:
+            self._navigating_step = False
+        self._resume_path_navigation()
+
+    def _column_loaded(self):
+        """Métadonnées de l'inspecteur reprises du scan ; jamais un second scan GUI."""
+        path = getattr(self.detail, "_current_path", None)
+        if path:
+            self.detail._fill_folder_count(path, scan=False)
+        if getattr(self, "_nav_plan", None):
+            QTimer.singleShot(0, self._resume_path_navigation)
 
     def on_reclicked(self, column: Column):
         """Clic sur la ligne DEJA selectionnee de `column` (voir FileListWidget.mouseReleaseEvent) :
@@ -4486,12 +5491,10 @@ class PipelineBrowser(QMainWindow):
             if not spans:
                 return None
             x0 = spans[0][0]
-            image = viewport.grab(rect).toImage().convertToFormat(QImage.Format_ARGB32_Premultiplied)
-            dpr = image.devicePixelRatio()
-            region = QRect(int(x0 * dpr), 0, image.width() - int(x0 * dpr), image.height())
-            pixmap = QPixmap.fromImage(image.copy(region))
-            pixmap.setDevicePixelRatio(dpr)
             target = QRect(rect.x() + x0, rect.y(), rect.width() - x0, rect.height())
+            # Seulement la partie qui s'estompe (capturer toute la zone puis la recouper repeignait aussi les
+            # colonnes de gauche, de plus en plus nombreuses avec la profondeur).
+            pixmap = viewport.grab(target)
             overlay = _FadeOverlay(viewport, pixmap, target, 1.0, 0.0, 520,
                                    on_done=lambda: setattr(self, "_select_fade", None))
             # Pas de set_spans : l'ancien contenu s'estompe d'un bloc (et non colonne apres colonne).
@@ -4544,14 +5547,19 @@ class PipelineBrowser(QMainWindow):
         if path is None:
             self.detail.clear()
             self.update_active_column()
+            self._sync_mode_buttons()
             # Deselection : la pile n'est refaite que si la chaine a change (deselectionner un fichier, ex.
             # sortie de la planche, la reconstruisait pour rien : ~95 ms au clic).
             self.update_preview_stack(if_changed=True)
             self._sync_collapse_state()
             return
         self.path_label.setText(str(path))
-        self.detail.show_path(path)
-        if path.is_dir():
+        self._request_crumbs()
+        if not self._bulk_navigation:
+            self.detail.show_path(path)
+        self._sync_mode_buttons()
+        is_dir = entry_is_dir(path)          # type connu par la lecture du dossier : pas d'acces disque
+        if is_dir:
             depth = index + 1
             config = self._active_project_config
             # `index < expected_total - 1` (PAS juste `config is not None`) :
@@ -4653,8 +5661,10 @@ class PipelineBrowser(QMainWindow):
                     self.add_column(path, depth, title="Contenu")
         self.update_active_column()
         self._sync_collapse_state()
-        self.update_preview_stack(if_changed=not path.is_dir())   # un fichier : pile refaite si la chaine change
+        self.update_preview_stack(if_changed=not is_dir)   # un fichier : pile refaite si la chaine change
         self._slide_snapshot = None   # les colonnes de droite ont change : capture perimee
+        if self._bulk_navigation:
+            return                     # navigation directe (_navigate_to) : seule la derniere colonne apparait
         if len(self.columns) > index + 1:
             QTimer.singleShot(0, lambda c=self.columns[index + 1]: self._animate_column_in(c))
         else:
@@ -4701,8 +5711,12 @@ class PipelineBrowser(QMainWindow):
             fade_up = _anim_running(fade) and fade.isVisible()
             if fade_up:
                 fade.hide()
+            # Seule la zone a partir de la colonne sous laquelle la nouvelle sort bouge : rien a capturer ni a
+            # couvrir a sa gauche (les captures de TOUTES les colonnes visibles coutaient de plus en plus cher
+            # avec la profondeur, ~50 ms a 10 niveaux).
+            origin = max(0, x - column.width())
             try:
-                snapshot = self._grab_set_columns_at(x)
+                snapshot = self._grab_set_columns_at(x, start=origin)
             finally:
                 if fade_up:
                     fade.show()
@@ -4712,7 +5726,7 @@ class PipelineBrowser(QMainWindow):
             overlay = _SlideOverlay(
                 viewport, left, right, x - column.width(), x, background, 0.0, 1.0, 200,
                 None, on_done=lambda: setattr(self, "_columns_slide", None), limit=limit,
-                emerge=True)
+                emerge=True, origin=origin)
             overlay.show()
             overlay.raise_()
             self._columns_slide = overlay
@@ -4778,7 +5792,9 @@ class PipelineBrowser(QMainWindow):
             # update_preview_stack ait reconstruit les vignettes/le groupe ; capturer
             # maintenant figerait un etat intermediaire (puis un saut a l'ecran).
             self._auto_collapse_armed = False
-            QTimer.singleShot(0, self._auto_collapse_now)
+            # Navigation directe (_navigate_to) : repli pose sans animation (rien n'a ete montre entre-temps).
+            animate = not self._bulk_navigation
+            QTimer.singleShot(0, lambda: self._auto_collapse_now(animate))
 
     def _toggle_project_columns_hidden(self):
         """Bouton « masquer les colonnes » (voir PreviewColumn.hide_btn) : TOUTES
@@ -4862,11 +5878,14 @@ class PipelineBrowser(QMainWindow):
         return list(zip(starts, [*starts[1:], rect.width()]))
 
     def _button_rects(self) -> list:
+        """Boutons poses SUR la zone des colonnes (trous de l'image, clics a cote) ; ceux du cadre « Visionneuse »
+        de la barre de navigation n'y sont pas."""
+        viewport = self.scroll.viewport()
         rects = self._base_button_rects()
-        for widget in (self._filter_btn, self._filter_chips, self._lightroom_btn, self._viewer_100_btn):
-            if widget is not None and widget.isVisible():
+        for widget in (self._filter_btn, self._filter_chips, self._lightroom_btn, self._viewer_100_btn,
+                       self._recursive_btn, *self._pur_buttons):
+            if widget is not None and widget.isVisible() and widget.parentWidget() is viewport:
                 rects.append(widget.geometry())
-        rects.extend(b.geometry() for b in self._pur_buttons if b.isVisible())
         return rects
 
     def _base_button_rects(self) -> list:
@@ -4876,10 +5895,11 @@ class PipelineBrowser(QMainWindow):
         if self.image_preview_columns:
             pc = self.image_preview_columns[0]
             for button in (pc.toggle_btn, pc.hide_btn, pc.gallery_btn):
-                if button is not None and (button is not pc.gallery_btn or button.isVisible()):
+                if (button is not None and (button is not pc.gallery_btn or button.isVisible())
+                        and viewport.isAncestorOf(button)):
                     rects.append(QRect(button.mapTo(viewport, QPoint(0, 0)), button.size()))
         floating = self._floating_gallery_btn
-        if floating is not None and floating.isVisible():
+        if floating is not None and floating.isVisible() and floating.parentWidget() is viewport:
             rects.append(floating.geometry())
         return rects
 
@@ -4914,7 +5934,8 @@ class PipelineBrowser(QMainWindow):
         # peut partir au centre : on revient par Echap ou le bouton « precedent » de la souris.
         if hidden == self._project_columns_hidden or (
                 hidden and not self.image_preview_columns and self._focus_source() is None
-                and getattr(self, "_viewer_entry_source", None) is None):
+                and getattr(self, "_viewer_entry_source", None) is None
+                and not getattr(self, "_viewer_force_hide", False)):
             return
         if not hidden:
             if self._focus_gallery is not None:
@@ -5177,7 +6198,7 @@ class PipelineBrowser(QMainWindow):
         du dossier de la portee : parcourus EN FOND (`rescan` : relus a l'ouverture de la planche), la
         colonne filtree en attendant le premier parcours. Fichier en cours : None s'il est ecarte."""
         spec = file_filters.normalized(self._viewer_filter)
-        if not file_filters.is_active(spec):
+        if not self._viewer_filter_active():
             return paths, current
         folder = self._filter_scope_folder(spec["scope"])
         entries = paths
@@ -5250,6 +6271,13 @@ class PipelineBrowser(QMainWindow):
         if task is not None and str(task.folder) == folder:
             self._filter_task = None
         self._scope_files[folder] = entries
+        pending = self._pending_folder_view
+        if pending is not None and str(pending[0]) == folder:
+            self._pending_folder_view = None
+            self._view_folder_in_viewer(*pending)             # double-clic sur un dossier : parcours fini
+        elif self._project_columns_hidden and self._recursive_on() and self._viewer_folder is not None \
+                and str(self._viewer_folder) == folder:
+            self._apply_viewer_base()                         # mode récursif : liste complète arrivée
         # Images des planches PureRef parcourues : rangees comme celles de la visionneuse (nom affiche
         # « planche.pur · n/N », planche retrouvee au retour aux colonnes, attributs de la planche).
         boards: dict = {}
@@ -5265,12 +6293,13 @@ class PipelineBrowser(QMainWindow):
         """Planche ouverte : bouton filtre a la suite des autres boutons (rouge quand un filtre agit), et les
         elements du filtre ecrits a cote, en « style code » (FilterChips) ; puis les boutons PureRef."""
         spec = file_filters.normalized(self._viewer_filter)
-        active = file_filters.is_active(spec)
+        configured = file_filters.is_active(spec)
+        active = configured and self._viewer_filter_enabled
         # Le filtre reste une action de la visionneuse, même lorsqu'on est
         # revenu à l'image seule : l'icône doit alors rester dans la rangée
         # pour signaler l'état actif et permettre de le modifier.
         viewer_mode = self._focus_gallery is not None or self._viewer_active()
-        want = viewer_mode and (self._focus_gallery is not None or active)
+        want = viewer_mode and (self._focus_gallery is not None or configured)
         button, chips = self._filter_btn, self._filter_chips
         if not want:
             for widget in (button, chips):
@@ -5284,7 +6313,7 @@ class PipelineBrowser(QMainWindow):
                                                    parent=viewport)
             button.setCursor(Qt.ArrowCursor)
             button.setFlat(True)
-            button.clicked.connect(self._open_filter_window)
+            button.clicked.connect(self._on_filter_button_clicked)
             button.setContextMenuPolicy(Qt.CustomContextMenu)
             button.customContextMenuRequested.connect(self._filter_button_menu)
             chips = self._filter_chips = FilterChips(viewport)
@@ -5292,8 +6321,9 @@ class PipelineBrowser(QMainWindow):
         settings = ui_state.APPLIED_SETTINGS or {}
         button.set_alert(resolve_color_ref(settings.get("viewer_filter_active_color") or "#c62828")
                          if active else None)
-        button.setToolTip("Filtres de la planche (clic droit : retirer le filtre)" if active
-                          else "Filtres de la planche")
+        button.setToolTip(("Filtres actifs — cliquer pour désactiver (clic droit : retirer)" if active
+                           else "Filtres en mémoire, désactivés — cliquer pour réactiver"
+                           if configured else "Filtres de la planche"))
         button.show()
         button.raise_()
         if active and self._focus_gallery is not None:
@@ -5323,6 +6353,15 @@ class PipelineBrowser(QMainWindow):
         if self._filter_window is not None:
             self._filter_window.close()          # rouverte, elle repart des valeurs vides
         self._set_viewer_filter(dict(file_filters.DEFAULT_FILTER))
+
+    def _on_filter_button_clicked(self):
+        """Sans critères, ouvre leur réglage ; avec des critères, active/désactive leur application."""
+        if file_filters.is_active(self._viewer_filter):
+            self._viewer_filter_enabled = not self._viewer_filter_enabled
+            self._refresh_focus_gallery(rescan=True)
+            self._sync_filter_button()
+            return
+        self._open_filter_window()
 
     def _open_filter_window(self):
         window = self._filter_window
@@ -5385,8 +6424,12 @@ class PipelineBrowser(QMainWindow):
 
     def _set_viewer_filter(self, spec: dict | None):
         self._viewer_filter = file_filters.normalized(spec)
+        self._viewer_filter_enabled = file_filters.is_active(self._viewer_filter)
         self._refresh_focus_gallery(rescan=True)
         self._sync_filter_button()
+
+    def _viewer_filter_active(self) -> bool:
+        return self._viewer_filter_enabled and file_filters.is_active(self._viewer_filter)
 
     def _refresh_focus_gallery(self, rescan: bool = True):
         """Filtre change (ou parcours termine) : la planche est refaite sur place avec les fichiers retenus,
@@ -5417,6 +6460,9 @@ class PipelineBrowser(QMainWindow):
         column, current = self._focus_file_column()
         if current is None:
             return [], None
+        recursive = self._recursive_known() if self._project_columns_hidden or self._viewer_entry_folder else None
+        if recursive and str(current) in {str(p) for p in recursive}:
+            return list(recursive), str(current)          # mode récursif : tout le dossier et dessous
         if column is not None:
             items = [column.list.item(i) for i in range(column.list.count())]
             paths = [Path(item.data(ROLE_PATH)) for item in items if not item.data(ROLE_ISDIR)]
@@ -5440,7 +6486,9 @@ class PipelineBrowser(QMainWindow):
         bouton de la planche flotte seul en haut a gauche de la zone des colonnes, meme style.
         Avec une colonne Focus, c'est elle qui le porte (PreviewColumn.gallery_btn)."""
         self._sync_viewer_chrome()
-        want = self._project_columns_hidden and not self.image_preview_columns
+        # Bouton de passage image / planche SUPPRIME (demande de l'utilisateur) : la touche G, le clic sur l'image
+        # et Ctrl+molette restent.
+        want = False
         button = self._floating_gallery_btn
         if not want:
             if button is not None:
@@ -5473,7 +6521,9 @@ class PipelineBrowser(QMainWindow):
         if not self._project_columns_hidden:
             return
         paths, current = self._gallery_paths()
-        if not paths and not file_filters.is_active(self._viewer_filter):
+        if getattr(self, "_gallery_no_focus", False):
+            current = None                 # ouverte depuis un dossier : aucune image en focus
+        if not paths and not self._viewer_filter_active():
             return
         viewport = self.scroll.viewport()
         gallery = self._make_focus_gallery(paths, current)
@@ -5546,6 +6596,7 @@ class PipelineBrowser(QMainWindow):
                 self._focus_home = None
             return
         self._focus_gallery = None
+        self._request_crumbs()                   # l'image regardee revient au bout du cheminement
         if self._gallery_deselected:
             # Retour a l'image depuis la planche : la colonne et l'inspecteur la reprennent (deselectionnes
             # d'avance pour la sortie, _pregrab_columns).
@@ -5662,6 +6713,7 @@ class PipelineBrowser(QMainWindow):
         focus._FILM.pop(path_str, None)
         focus._FILM_FAILED.pop(path_str, None)
         focus._CELLS.pop(path_str, None)
+        focus._PROXY_SOURCES.pop(path_str, None)     # le proxy a pu changer de source
         self._focus_images.invalidate(Path(path_str))
         for mark in ("focus", "hover"):
             focus._MARKED.pop((path_str, mark), None)
@@ -5737,6 +6789,10 @@ class PipelineBrowser(QMainWindow):
         """Colonnes masquees : la visionneuse prend la main. Liste des fichiers du dossier (ordre
         de la colonne), image en cours a sa place definitive (taille reelle lue dans l'entete) et
         demandee en pleine definition, voisines prechargees, pellicule et clavier."""
+        _column, first = self._focus_file_column()
+        self._viewer_folder = self._viewer_entry_folder or (first.parent if first is not None else None)
+        if self._recursive_on() and self._viewer_folder is not None:
+            self._start_filter_scan(self._viewer_folder)         # liste à jour : relue en fond
         paths, current = self._scan_viewer_paths()
         self._viewer_purs = [p for p in paths if p.suffix.lower() in PUR_PREVIEW_EXTENSIONS]
         paths, self._viewer_index = self._expand_viewer_pureref(paths, current)
@@ -5842,6 +6898,219 @@ class PipelineBrowser(QMainWindow):
         return (self._project_columns_hidden and self._focus_gallery is None
                 and 0 <= self._viewer_index < len(self._viewer_paths))
 
+    # -- Dossier dans la visionneuse + mode récursif (demande de l'utilisateur) --
+
+    def _recursive_on(self) -> bool:
+        return bool((ui_state.APPLIED_SETTINGS or {}).get("viewer_recursive", False))
+
+    def _recursive_known(self) -> list | None:
+        """Photos du dossier de la visionneuse ET de ses sous-dossiers (parcours en fond, file_filters.scan_files) ;
+        None : mode coupé ou parcours pas encore fait."""
+        folder = self._viewer_entry_folder or self._viewer_folder
+        if not self._recursive_on() or folder is None:
+            return None
+        known = self._scope_files.get(str(folder))
+        return [Path(entry[0]) for entry in known] if known is not None else None
+
+    def _viewer_folder_files(self, folder: Path) -> list:
+        """Fichiers à aperçu DIRECTEMENT dans `folder` : l'ordre de sa colonne si elle est ouverte, sinon le
+        nom."""
+        kinds = PREVIEWABLE_EXTENSIONS | PUR_PREVIEW_EXTENSIONS
+        for column in [*self.columns, *self.group_columns]:
+            if Path(column.directory) == folder:
+                return [Path(item.data(ROLE_PATH)) for item in
+                        (column.list.item(i) for i in range(column.list.count()))
+                        if not item.data(ROLE_ISDIR) and Path(item.data(ROLE_PATH)).suffix.lower() in kinds]
+        try:
+            return sorted((p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in kinds
+                           and not p.name.startswith(".")), key=lambda p: p.name.casefold())
+        except OSError:
+            return []
+
+    def _view_folder_in_viewer(self, folder: Path, column=None, gallery: bool = False):
+        """Double-clic sur un dossier : la visionneuse s'ouvre sur sa première photo (la planche est à une
+        touche : G). `gallery` (menu « Ouvrir la visionneuse à cet endroit ») : directement la PLANCHE, sans
+        aucune image en focus. Mode récursif : les photos des sous-dossiers aussi (parcours en fond si
+        besoin). Sans aucune photo à montrer : l'explorateur, comme avant."""
+        if self._project_columns_hidden:
+            return
+        folder = Path(folder)
+        files = self._viewer_folder_files(folder)
+        if gallery and not files and not self._recursive_on():
+            # Les photos sont dans les sous-dossiers : la planche les montre (mode récursif allumé pour cela,
+            # remis si finalement il n'y en a aucune) ; jamais l'explorateur depuis ce menu.
+            self._auto_recursive = True
+            self._set_recursive(True)
+        if self._recursive_on():
+            known = self._scope_files.get(str(folder))
+            if known is None:
+                self._pending_folder_view = (folder, column, gallery)
+                self._start_filter_scan(folder)
+                return
+            files = [Path(entry[0]) for entry in known] or files
+        if not files:
+            if gallery:
+                self.path_label.setText(f"Aucune photo dans {folder.name} ni dans ses sous-dossiers")
+                if getattr(self, "_auto_recursive", False):
+                    self._set_recursive(False)
+                self._auto_recursive = False
+                return
+            self.on_activated(folder)
+            return
+        self._auto_recursive = False
+        first = files[0]
+
+        def go():
+            pixmap = self._focus_pixmap(first, None)
+            slot = None
+            if column is not None and pixmap is not None and not pixmap.isNull():
+                for i in range(column.list.count()):
+                    item = column.list.item(i)
+                    if item.data(ROLE_PATH) == str(folder):
+                        rect = column.list.visualItemRect(item)
+                        side = max(8, min(rect.height(), rect.width()))
+                        thumb = QRect(0, 0, side, side)
+                        thumb.moveCenter(rect.center())
+                        viewport = self.scroll.viewport()
+                        slot = QRect(viewport.mapFromGlobal(column.list.viewport().mapToGlobal(thumb.topLeft())),
+                                     thumb.size())
+                        break
+            if gallery:
+                slot = None                                      # planche directe : aucune image ne vole
+            if slot is not None:
+                self._viewer_entry_source = (pixmap, slot)       # l'image part de la ligne du dossier
+            self._viewer_entry_path = (None, first)
+            self._viewer_entry_folder = folder
+            # Planche directe : pas d'objet qui part au centre, donc la garde « sans colonne Focus » ne
+            # s'applique pas (sinon les colonnes restaient et l'explorateur s'ouvrait).
+            self._viewer_force_hide = gallery
+            try:
+                self._set_columns_hidden(True, animate=not gallery)
+            finally:
+                self._viewer_force_hide = False
+                self._viewer_entry_source = None
+                self._viewer_entry_path = None
+                self._viewer_entry_folder = None
+            if not self._project_columns_hidden:
+                self.on_activated(folder)
+            elif gallery:
+                self._gallery_no_focus = True                    # aucune case « en cours » : pas de focus
+                self._open_focus_gallery()
+                self._gallery_no_focus = False
+            elif self._focus_overlay is None and 0 <= self._viewer_index < len(self._viewer_paths):
+                self._viewer_go(self._viewer_index)              # aucun objet au centre au départ : créé ici
+
+        QTimer.singleShot(0, go)
+
+    def _sync_recursive_button(self):
+        """Bouton « Récursif » (visionneuse ou planche ouverte) : allumé (couleur du filtre actif) quand les
+        photos des sous-dossiers sont montrées aussi."""
+        viewer_mode = self._project_columns_hidden and (self._focus_gallery is not None or self._viewer_active())
+        button = self._recursive_btn
+        if not viewer_mode:
+            if button is not None and not button.isHidden():
+                button.hide()
+                self._layout_viewer_buttons()
+            return
+        if button is None:
+            # Icone (demande de l'utilisateur ; Reglages > Visionneuse > Icones > Recursif), plus un texte.
+            button = self._recursive_btn = IconButton(
+                "recursive", role_color("buttons", "#c4cacf"), C["text"], parent=self.scroll.viewport())
+            button.setCursor(Qt.ArrowCursor)
+            button.setFlat(True)
+            button.clicked.connect(self._toggle_recursive)
+        style_focus_button(button)
+        on = self._recursive_on()
+        button.set_alert(resolve_color_ref((ui_state.APPLIED_SETTINGS or {}).get("viewer_filter_active_color")
+                                           or "#c62828") if on else None)
+        button.setToolTip("Récursif : photos des sous-dossiers montrées (clic pour les retirer)" if on
+                          else "Récursif : montrer aussi les photos des sous-dossiers")
+        button.show()
+        button.raise_()
+        self._layout_viewer_buttons()
+        if self._focus_overlay is not None:
+            self._focus_overlay.set_holes(self._button_rects())
+
+    def _toggle_recursive(self):
+        """Bouton « Récursif » : bascule (voir `_set_recursive`)."""
+        self._set_recursive(not self._recursive_on())
+
+    def _set_recursive(self, value: bool):
+        """Mode récursif (bouton « Récursif » ou case du menu d'un dossier), enregistré aussitôt (état temps
+        réel) ; la liste de la visionneuse, la pellicule et la planche sont refaites sur place, l'image
+        regardée gardée si elle y est encore."""
+        value = bool(value)
+        if value == self._recursive_on():
+            return
+        if isinstance(ui_state.APPLIED_SETTINGS, dict):
+            ui_state.APPLIED_SETTINGS["viewer_recursive"] = value
+        from settings_store import save_live_state
+        save_live_state("viewer_recursive", value)
+        self._recursive_applied = value
+        self._sync_settings_row("viewer_recursive", value)      # sa ligne de Reglages > Visionneuse suit
+        self._refresh_recursive_list(value)
+
+    def _sync_settings_row(self, setting: str, value):
+        """La ligne `setting` de la fenetre de reglages (ouverte ou gardee en memoire) prend `value`."""
+        dialog = getattr(self, "_settings_dialog_v2", None)
+        if dialog is None:
+            return
+        try:
+            for store in dialog.stores.values():
+                for spec, widget in store.get("specs", ()):
+                    if getattr(spec, "key", None) == setting and widget.isChecked() != bool(value):
+                        widget.blockSignals(True)
+                        widget.setChecked(bool(value))
+                        widget.blockSignals(False)
+        except (RuntimeError, AttributeError):
+            pass
+
+    def _refresh_recursive_list(self, value: bool):
+        """Liste de la visionneuse / planche refaite pour le mode recursif `value`."""
+        folder = self._viewer_folder
+        if value and folder is not None:
+            self._start_filter_scan(folder)                      # liste complète lue en fond
+        self._apply_viewer_base()
+        self._sync_recursive_button()
+
+    def _apply_viewer_base(self):
+        """Refait la liste de la visionneuse (récursive ou non) sans quitter l'image en cours ; pellicule et
+        planche suivent."""
+        folder = self._viewer_folder
+        if not self._project_columns_hidden or folder is None:
+            return
+        recursive = self._recursive_on()
+        if recursive:
+            paths = self._recursive_known()
+            if paths is None:
+                return                                           # parcours en cours : l'arrivée relancera
+        else:
+            paths = self._viewer_folder_files(folder)
+        if not paths:
+            return
+        current = (str(self._viewer_paths[self._viewer_index])
+                   if 0 <= self._viewer_index < len(self._viewer_paths) else None)
+        if not recursive:
+            self._viewer_purs = [p for p in paths if p.suffix.lower() in PUR_PREVIEW_EXTENSIONS]
+            paths, _index = self._expand_viewer_pureref(paths, current)
+        else:
+            self._viewer_purs = []
+        if [str(p) for p in paths] == [str(p) for p in (self._viewer_base or [])]:
+            return
+        self._viewer_base = list(paths)
+        shown, _found = self._filtered_gallery(list(paths), current, rescan=False)
+        self._viewer_paths = list(shown or paths)
+        index = next((i for i, p in enumerate(self._viewer_paths) if str(p) == current), -1)
+        if self._filmstrip is not None:
+            self._filmstrip.set_paths(self._viewer_paths, max(0, index))
+        self._viewer_index = index if index >= 0 else 0
+        if index < 0 and self._focus_gallery is None:
+            self._viewer_go(0)                                   # l'image regardée n'est plus dans la liste
+        if self._focus_gallery is not None:
+            self._refresh_focus_gallery(rescan=False)
+        self._sync_pur_buttons()
+        self._sync_recursive_button()
+
     def _position_focus_origin_badge(self):
         badge = getattr(self, "_focus_origin_badge", None)
         if badge is not None:
@@ -5849,54 +7118,39 @@ class PipelineBrowser(QMainWindow):
 
     def _set_focus_origin_badge(self, path: Path | None, *, decoded: bool = False,
                                 application_preview: bool = False):
-        """Indique la source du contenu visible au centre de la visionneuse."""
+        """La source de l'image au centre (et celle du proxy) est dans le tableau de droite,
+        « Paramètres de l'image » (lignes « Source du proxy » / « Source de l'aperçu plein écran »,
+        demande de l'utilisateur) — plus d'encart près des boutons : ce tableau est relu quand
+        l'image en focus ou son proxy arrive (la source a pu changer)."""
         badge = getattr(self, "_focus_origin_badge", None)
-        if badge is None or not self._viewer_active() or path is None \
-                or path.suffix.casefold() not in (IMAGE_EXTENSIONS | RAW_EXTENSIONS):
-            if badge is not None:
-                badge.hide()
-            return
-        try:
-            import lightroom_bridge
-            if lightroom_bridge.is_managed(path):
-                origin = (self._focus_images.origin(path) if decoded else None) or lightroom_bridge.preview_origin(path)
-                entries = {
-                    "lightroom": ("APERÇU LIGHTROOM", "#9ed8ff", "#17364a"),
-                    "application": ("APERÇU CRÉÉ PAR L’APPLICATION", "#ffd28a", "#493515"),
-                    "original": ("IMAGE ORIGINALE", "#b9e6c7", "#183c2a"),
-                }
-                entry = entries.get(origin, ("SOURCE DE L’APERÇU INCONNUE", "#e3e8ed", "#343a40"))
-            elif decoded:
-                entry = ("IMAGE ORIGINALE", "#b9e6c7", "#183c2a")
-            elif application_preview:
-                entry = ("APERÇU CRÉÉ PAR L’APPLICATION", "#ffd28a", "#493515")
-            else:
-                entry = ("CHARGEMENT DE L’IMAGE ORIGINALE…", "#e3e8ed", "#343a40")
-        except (ImportError, OSError, ValueError):
-            entry = ("SOURCE DE L’APERÇU INCONNUE", "#e3e8ed", "#343a40")
-        title, foreground, background = entry
-        badge.setText(title)
-        badge.setStyleSheet(
-            f"color: {foreground}; background: {background}; border-radius: 3px; "
-            "padding: 3px 7px; font-size: 10px;"
-        )
-        badge.adjustSize()
-        self._position_focus_origin_badge()
-        badge.show()
-        badge.raise_()
+        if badge is not None:
+            badge.hide()
+        panel = getattr(self, "_info_panel", None)
+        if panel is not None and path is not None and (decoded or application_preview):
+            panel.refresh(path)
 
     def _sync_viewer_chrome(self):
         """Pellicule, raccourcis clavier et suivi de la souris : actifs seulement colonnes
         masquees, image seule au centre (pas pendant la planche)."""
+        self._sync_collapse_button()
+        self._request_crumbs()                   # visionneuse ouverte / fermee : son cheminement ou celui des colonnes
         if not self._project_columns_hidden:
+            self._release_viewer_buttons()       # cadre « Visionneuse » de la barre : boutons rendus
             self._viewer_sync.stop()
             self._viewer_paths, self._viewer_index = [], -1
             self._viewer_base = []
             self._viewer_purs = []
+            self._viewer_folder = None
+            self._pending_folder_view = None
             if hasattr(self, "_focus_origin_badge"):
                 self._focus_origin_badge.hide()
+        self._sync_recursive_button()
         self._sync_pur_buttons()
         active = self._viewer_active()
+        # I bascule l'inspecteur dans la navigation normale; en visionneuse,
+        # cette touche reste réservée au tableau « Paramètres de l'image ».
+        if hasattr(self, "_inspector_shortcut"):
+            self._inspector_shortcut.setEnabled(not self._project_columns_hidden)
         if active and not self._large_lightroom_timer.isActive():
             self._large_lightroom_timer.start()
         elif not active:
@@ -5944,6 +7198,13 @@ class PipelineBrowser(QMainWindow):
         if not self._viewer_idle.isActive():
             self._viewer_cursor = None
             self._viewer_idle.start()
+
+    def _toggle_inspector(self):
+        """Affiche ou masque l'inspecteur avec I, hors visionneuse."""
+        if self._project_columns_hidden:
+            return
+        self._inspector_visible = not self._inspector_visible
+        self.detail.setVisible(self._inspector_visible)
 
     def _sync_pur_buttons(self):
         """Visionneuse (ou planche) ouverte sur un dossier qui contient des planches PureRef : un
@@ -6042,7 +7303,7 @@ class PipelineBrowser(QMainWindow):
 
     # -- Rangee des boutons de la visionneuse / planche : ordre choisi a la main (Ctrl + glisser) --
 
-    _BUTTON_DEFAULT_ORDER = ("hide", "gallery", "zoom100", "lightroom", "filter", "pur")
+    _BUTTON_DEFAULT_ORDER = ("hide", "gallery", "zoom100", "lightroom", "filter", "recursive", "pur")
 
     def _viewer_row_items(self) -> list:
         """(identifiant, bouton) des boutons deplacables de la rangee, dans l'ordre retenu
@@ -6056,7 +7317,8 @@ class PipelineBrowser(QMainWindow):
                     items.append((key, button))
         for key, button in (("gallery", self._floating_gallery_btn),
                             ("zoom100", self._viewer_100_btn),
-                            ("lightroom", self._lightroom_btn), ("filter", self._filter_btn)):
+                            ("lightroom", self._lightroom_btn), ("filter", self._filter_btn),
+                            ("recursive", self._recursive_btn)):
             if button is not None and not button.isHidden():
                 items.append((key, button))
         items.extend((f"pur:{b._pur_path.name}", b) for b in self._pur_buttons if not b.isHidden())
@@ -6071,31 +7333,88 @@ class PipelineBrowser(QMainWindow):
         return [item for _i, item in sorted(enumerate(items), key=rank)]
 
     def _layout_viewer_buttons(self):
-        """Pose la rangee dans l'ordre retenu, a la suite du bouton de repliement (ou depuis la place du
-        bouton flottant) ; les elements du filtre suivent son bouton. Colonnes masquees seulement (sinon
-        la colonne Focus place elle-meme ses boutons)."""
+        """Pose la rangee dans l'ordre retenu DANS le cadre « Visionneuse » de la barre de navigation (demande de
+        l'utilisateur) ; les elements du filtre suivent son bouton. Colonnes masquees seulement : sinon les
+        boutons retournent chez eux (la colonne Focus place elle-meme les siens)."""
         if not self._project_columns_hidden:
+            self._release_viewer_buttons()
             return
-        viewport = self.scroll.viewport()
-        pc = self.image_preview_columns[0] if self.image_preview_columns else None
-        if pc is not None and pc.toggle_btn is not None:
-            start = QRect(pc.toggle_btn.mapTo(viewport, QPoint(0, 0)), pc.toggle_btn.size())
-            x, y = start.right() + 1 + scaled(4, 0), start.top()
-        else:
-            style = column_style_for(PREVIEW_STACK_TITLE)
-            x, y = scaled(int(style.get("preview_toggle_x", 8)), 0) + scaled(8, 0), scaled(10, 0)
-        gap = scaled(4, 0)
+        group = self.titlebar.viewer_group()
+        items = self._viewer_row_items()
         chips = self._filter_chips
-        for key, button in self._viewer_row_items():
-            parent = button.parentWidget()
-            button.move(QPoint(x, y) if parent is viewport else parent.mapFrom(viewport, QPoint(x, y)))
+        hosted = []
+        origin = group.content_origin()
+        x = origin.x()
+        gap = scaled(4, 0)
+        height = max((button.height() for _k, button in items), default=0)
+        for key, button in items:
+            self._host_in_group(button, group)
+            hosted.append(button)
+            button.move(x, origin.y() + (height - button.height()) // 2)
             x += button.width() + gap
             self._button_drag.hook(button)
             if key == "filter" and chips is not None and not chips.isHidden():
-                chips.move(x - gap + scaled(6), y + (button.height() - chips.height()) // 2)
+                self._host_in_group(chips, group)
+                hosted.append(chips)
+                chips.move(x - gap + scaled(6), origin.y() + (height - chips.height()) // 2)
                 x = chips.x() + chips.width() + scaled(6)
+        for widget in list(getattr(self, "_group_hosted", ())):  # n'est plus dans la rangee : rendu a son parent
+            if widget not in hosted:
+                self._send_home(widget)
+        self._group_hosted = hosted
+        if not hosted:
+            group.hide()
+            return
+        group.fit(x - gap, height)
+        group.show()
+        self.titlebar.place_viewer_group()
+        for widget in hosted:
+            widget.show()
+            widget.raise_()
+        pc = self.image_preview_columns[0] if self.image_preview_columns else None
         if pc is not None:
             pc.fit_buttons()
+
+    @staticmethod
+    def _host_in_group(widget: QWidget, group: QWidget):
+        if widget.parentWidget() is not group:
+            if not hasattr(widget, "_viewer_home"):
+                widget._viewer_home = widget.parentWidget()
+            widget.setParent(group)
+
+    def _send_home(self, widget: QWidget):
+        """Bouton sorti du cadre « Visionneuse » : rendu a son parent d'origine (colonne Focus, zone des colonnes) ;
+        son parent a disparu (colonne Focus refaite) : detruit."""
+        try:
+            home = getattr(widget, "_viewer_home", None)
+            if home is not None and shiboken6.isValid(home):
+                widget.setParent(home)
+                widget.hide()
+                del widget._viewer_home
+            else:
+                widget.hide()
+                widget.deleteLater()
+        except RuntimeError:
+            pass
+
+    def _release_viewer_buttons(self):
+        """Colonnes revenues : tous les boutons du cadre « Visionneuse » repartent chez eux, le cadre se cache ; le
+        bouton « masquer » de la colonne Focus y redevient visible a sa place."""
+        hosted = list(getattr(self, "_group_hosted", ()))
+        self._group_hosted = []
+        group = getattr(getattr(self, "titlebar", None), "_viewer_group", None)
+        if group is not None and not group.isHidden():
+            group.hide()
+        if not hosted:
+            return
+        for widget in hosted:
+            self._send_home(widget)
+        for pc in self.image_preview_columns:
+            if not shiboken6.isValid(pc):
+                continue
+            if pc.hide_btn is not None and pc.hide_btn.parentWidget() is pc:
+                pc.hide_btn.show()
+            pc._place_hide_btn()
 
     def _move_viewer_button(self, keys: list, source: int, target: int):
         """Glisser termine : le bouton `source` passe devant l'emplacement `target` (0..len) ; ordre
@@ -6130,6 +7449,16 @@ class PipelineBrowser(QMainWindow):
         """Reglages de la visionneuse appliques en direct : pellicule affichee ou non, et l'image
         au centre recalee sur la zone qui lui revient (la bande de la pellicule est liberee)."""
         self._sync_viewer_toggle_keys()
+        recursive = self._recursive_on()
+        if recursive != getattr(self, "_recursive_applied", recursive):
+            self._recursive_applied = recursive                  # ligne « Recursif » des reglages
+            self._refresh_recursive_list(recursive)
+        self._recursive_applied = recursive
+        group = getattr(getattr(self, "titlebar", None), "_viewer_group", None)
+        if group is not None:
+            group.restyle()                     # Reglages > Visionneuse > Regroupement
+            if not group.isHidden():
+                self._layout_viewer_buttons()
         panel = getattr(self, "_info_panel", None)
         if panel is not None and panel.isVisible():
             panel.restyle()                     # habillage des reglages : suit leurs changements
@@ -6178,7 +7507,7 @@ class PipelineBrowser(QMainWindow):
         head = menu.addAction("Changement de style à la volée")
         head.setEnabled(False)
         menu.addSeparator()
-        names = {"Tableau": "Tableau…", "Sous cellule image": "Cellule image…", "Sous cellule texte": "Cellule texte…"}
+        names = {"Tableau": "Tableau…", "Cellules": "Cellules…", "Sous cellule texte": "Cellule texte…"}
         actions = {menu.addAction(names.get(title, title)): (title, group) for title, group in VIEWER_FILM_GROUPS}
         chosen = menu.exec(global_pos)
         if chosen in actions:
@@ -6278,8 +7607,8 @@ class PipelineBrowser(QMainWindow):
     def _raise_viewer_chrome(self):
         """La pellicule et le bouton flottant restent au-dessus de l'image et des fondus."""
         for widget in (self._filmstrip, getattr(self, "_info_panel", None), self._floating_gallery_btn,
-                       self._lightroom_btn, self._viewer_100_btn, getattr(self, "_focus_origin_badge", None),
-                       *self._pur_buttons):
+                       self._lightroom_btn, self._viewer_100_btn, self._recursive_btn,
+                       getattr(self, "_focus_origin_badge", None), *self._pur_buttons):
             if widget is not None and widget.isVisible():
                 widget.raise_()
 
@@ -6366,9 +7695,9 @@ class PipelineBrowser(QMainWindow):
         path = paths[index]
         self._sync_lightroom_button()
         self._focus_path = str(path)
+        self._request_crumbs()                   # cheminement : l'image suit AUSSITOT (pas la colonne cachee)
         pixmap, natural, full = self._viewer_image(path, fallback)
-        self._set_focus_origin_badge(path, decoded=self._focus_images.get(path) is not None,
-                                     application_preview=not pixmap.isNull())
+        self._set_focus_origin_badge(path)     # la source se lit dans « Paramètres de l'image »
         overlay = self._focus_overlay
         if overlay is None and self._project_columns_hidden and not pixmap.isNull():
             # Colonnes masquees sans objet au centre (fichier sans apercu au depart) : on le cree.
@@ -6400,7 +7729,8 @@ class PipelineBrowser(QMainWindow):
         panel = getattr(self, "_info_panel", None)
         if panel is not None and panel.isVisible():
             panel.set_path(path)
-            strip.reveal()
+            if strip is not None:
+                strip.reveal()                   # pas de pellicule (reglage coupe) : rien a montrer
         self._viewer_sync.start()
 
     def _viewer_image(self, path: Path, fallback: QPixmap | None = None) -> tuple:
@@ -6682,6 +8012,12 @@ class PipelineBrowser(QMainWindow):
         la fenetre de reglages ouverte suit (sa ligne est mise a jour)."""
         default = self._VIEWER_TOGGLES[setting][1]
         enabled = not bool((ui_state.APPLIED_SETTINGS or {}).get(setting, default))
+        self._write_setting_now(setting, enabled)
+        self._apply_viewer_settings()
+
+    def _write_setting_now(self, setting: str, enabled: bool):
+        """Reglage oui / non change hors de la fenetre de reglages (touche, bouton du board) : enregistre
+        aussitot (fichier + preset par defaut actif) ; la fenetre de reglages ouverte suit (sa ligne)."""
         dialog = getattr(self, "_settings_dialog_v2", None)
         try:
             for store in (dialog.stores.values() if dialog is not None and dialog.isVisible() else ()):
@@ -6697,7 +8033,6 @@ class PipelineBrowser(QMainWindow):
         browser_core._sync_default_preset_override(settings, lambda preset: preset.__setitem__(setting, enabled))
         if isinstance(ui_state.APPLIED_SETTINGS, dict):
             ui_state.APPLIED_SETTINGS[setting] = enabled
-        self._apply_viewer_settings()
 
     def _viewer_zoom(self, factor: float):
         overlay = self._focus_overlay
@@ -6759,6 +8094,10 @@ class PipelineBrowser(QMainWindow):
         transitoire d'une navigation."""
         if not self._project_columns_hidden:
             return
+        if self._focus_gallery is not None:
+            # Planche ouverte (ex. « Ouvrir la visionneuse à cet endroit » : aucune image en focus, donc aucun
+            # objet au centre) : tout reste masqué, c'est la planche qui est le contenu.
+            return
         if not self.image_preview_columns and self._focus_overlay is not None:
             # Masque par double-clic sur un apercu, sans colonnes Focus : rien a
             # reconstruire, on garde juste tout masque.
@@ -6789,14 +8128,14 @@ class PipelineBrowser(QMainWindow):
         if self._project_columns_collapsed and (self._chain_terminal_path() is None or not focus_enabled):
             self._apply_project_columns_collapsed(False)
 
-    def _auto_collapse_now(self):
+    def _auto_collapse_now(self, animate: bool = True):
         """Repli automatique differe (voir _sync_collapse_state), re-verifie : la
         navigation a pu changer entre-temps."""
         active_config = self._active_project_config
         focus_enabled = True if active_config is None else active_config.get("focus_enabled", True)
         if (self._chain_terminal_path() is not None and focus_enabled and auto_collapse_set_columns()
                 and not self._project_columns_collapsed):
-            self._apply_project_columns_collapsed(True)
+            self._apply_project_columns_collapsed(True, animate=animate)
 
     def _toggle_project_columns(self):
         """Reagit a l'icone unique portee par la colonne des vignettes
@@ -6842,6 +8181,7 @@ class PipelineBrowser(QMainWindow):
         self._columns_snapshot = None   # le contenu des colonnes change : capture du fondu perimee
         if self.image_preview_columns:
             self.image_preview_columns[0].set_toggle_state(collapsed)
+        self._sync_collapse_button()
         targets = [c for c in self.columns[:self._chain_expected_total()] if c.collapsible]
         slide = self._columns_slide
         if _anim_running(slide) and slide.emerge:
@@ -6935,7 +8275,7 @@ class PipelineBrowser(QMainWindow):
 
     def _prime_expanded_snapshot(self, force: bool = False):
         column = self.image_preview_columns[0] if self.image_preview_columns else None
-        if (column is None or column.toggle_btn is None or not (force or column.toggle_btn.underMouse())
+        if (column is None or not (force or self.btn_collapse.underMouse())
                 or not self._project_columns_collapsed or self._project_columns_hidden
                 or _anim_running(self._columns_slide)):
             return
@@ -7075,7 +8415,8 @@ class PipelineBrowser(QMainWindow):
         None si rien a animer. L'inspecteur n'est jamais capture : il ne bouge pas."""
         return self._grab_set_columns_at(self._set_columns_anchor_x())
 
-    def _grab_set_columns_at(self, x: int):
+    def _grab_set_columns_at(self, x: int, start: int = 0):
+        """`start` : la capture de gauche commence a cet x (apparition d'une colonne : seule la zone qui bouge)."""
         viewport = self.scroll.viewport()
         width, height = viewport.width(), viewport.height()
         limit = width
@@ -7083,8 +8424,14 @@ class PipelineBrowser(QMainWindow):
             limit = min(width, max(0, self.detail.mapTo(viewport, QPoint(0, 0)).x()))
         if x <= 0 or x > limit or height <= 0:
             return None
-        left = viewport.grab(QRect(0, 0, x, height))
-        right = viewport.grab(QRect(x, 0, limit - x, height)) if limit - x > 0 else QPixmap()
+        start = max(0, min(int(start), x - 1))
+        # Une seule peinture : deux grab voisins repassaient dans les effets
+        # graphiques des mêmes cartes. Découper ensuite les pixels déjà peints.
+        whole = viewport.grab(QRect(start, 0, limit - start, height))
+        dpr = whole.devicePixelRatio() or 1.0
+        split = round((x - start) * dpr)
+        left = whole.copy(0, 0, split, whole.height())
+        right = whole.copy(split, 0, whole.width() - split, whole.height()) if limit > x else QPixmap()
         return left, right, x, QColor(C["window"]), limit
 
     def on_activated(self, path: Path):
@@ -7094,6 +8441,15 @@ class PipelineBrowser(QMainWindow):
         if path.is_dir():
             open_in_file_manager(path)
             return
+        if self._video_claims(path) and self._open_video(path):   # module video : video / sequence d'images
+            return
+        import board
+        if board.is_board_file(path):                     # board facon Miro : ouvert DANS l'appli
+            if self._open_board(path):
+                return
+        if self._md_opens_on_double_click(path):
+            if self._open_md_editor(path):                # module Markdown / code : note ou fichier DANS l'appli
+                return
         if path.suffix.lower() == ".md":
             import markdown_preview
             url = markdown_preview.obsidian_open_url(path)
@@ -7110,6 +8466,8 @@ class PipelineBrowser(QMainWindow):
         une fois que le clic l'a montree dans l'inspecteur. L'image part de l'apercu de la LIGNE
         (pas de celui de l'inspecteur) ; le retour aux colonnes la ramene dans l'inspecteur."""
         if self._project_columns_hidden:
+            return
+        if self._video_claims(path) and self._open_video(path):   # video / sequence EXR, TIFF… : module video
             return
 
         def go():
@@ -7227,14 +8585,183 @@ class PipelineBrowser(QMainWindow):
                 return
         except RuntimeError:
             pass
-        dialog = settings_window_v2.SettingsWindowV2(self)
+        # Fenetre gardee en memoire (preparee sur inactivite, voir _start_settings_idle_watch) : on la rouvre telle
+        # quelle, remise a jour des reglages changes entre-temps. Fermee en annulant des modifications, ses
+        # champs gardent ces valeurs : elle est jetee et refaite.
+        try:
+            if existing is not None and not existing.isVisible() and not existing.discard_on_reopen():
+                existing.reopen()
+                return
+            if existing is not None:
+                existing.deleteLater()
+        except RuntimeError:
+            pass
+        dialog = self._make_settings_v2()
+        dialog.show()
+
+    def _make_settings_v2(self):
+        """Cree la fenetre de reglages v2 (cachee) et la garde pour toute la session."""
+        import settings_window_v2
+        # SANS parent (lien « transitoire » de fenetre seulement : elle reste au-dessus de celle-ci) : la feuille de
+        # style de la fenetre principale ne se propage pas a ses ~20 000 widgets (voir _apply_global_stylesheet).
+        dialog = settings_window_v2.SettingsWindowV2(None)
+        dialog.prebuild_hold = self._settings_prebuild_hold
+        dialog.prebuild_unattended = self._settings_unattended
+        dialog.prebuild_progress = self._on_settings_prebuild_progress
+        dialog.create()
+        handle, owner = dialog.windowHandle(), self.windowHandle()
+        if handle is not None and owner is not None:
+            handle.setTransientParent(owner)
         # Sections branchees (settings_window_v2.WIRED_SECTIONS) : apercu en
         # direct et enregistrement passent par les memes rappels que la
         # fenetre reelle.
-        dialog.settingsChanged.connect(self._apply_settings)
+        dialog.settingsChanged.connect(
+            lambda settings, d=dialog: self._apply_settings(settings, getattr(d, "live_changed_keys", None)))
         dialog.settingsSaved.connect(self._apply_settings)
         self._settings_dialog_v2 = dialog
-        dialog.show()
+        return dialog
+
+    def _heavy_foreground_work(self) -> bool:
+        """Vrai quand l'appli a besoin de toute la boucle d'interface : lecture video en cours. Les preparations
+        de fond qui s'executent sur le fil de l'interface (fenetre de reglages) attendent."""
+        pane = getattr(self, "_video", None)
+        return bool(pane is not None and getattr(pane, "_playing", False))
+
+    # -- Chargement des reglages sur inactivite (demande de l'utilisateur) --
+    # Plus rien au lancement : la fenetre de reglages est creee cachee et ses sections construites en fond
+    # seulement apres SETTINGS_IDLE_LOAD_S sans aucune action sur l'APPLI (l'activite du reste de l'ordinateur ne
+    # compte pas), jamais pendant qu'un module (Markdown, board, visionneuse, video) est ouvert. Le moindre geste
+    # sur l'appli l'arrete aussitot (filtre d'application pose seulement pendant le chargement) ; il reprend ou
+    # il en etait a la prochaine minute d'inactivite. Avancement : barre « Réglages n % » de la barre de navigation.
+
+    SETTINGS_IDLE_LOAD_S = 60.0
+    _INPUT_EVENTS = frozenset((QEvent.MouseMove, QEvent.MouseButtonPress, QEvent.MouseButtonDblClick,
+                               QEvent.Wheel, QEvent.KeyPress, QEvent.NonClientAreaMouseMove,
+                               QEvent.NonClientAreaMouseButtonPress, QEvent.TouchBegin, QEvent.TabletPress))
+
+    def _start_settings_idle_watch(self):
+        """Releve de l'activite de l'appli, une fois par seconde (aucun filtre d'evenements permanent)."""
+        if not settings_window_v2_preload_enabled() or getattr(self, "_settings_idle_timer", None) is not None:
+            return
+        self._settings_idle_loading = False
+        self._app_input_at = time.monotonic()
+        from automatic_tasks import AutomaticTasks
+        self._automatic_tasks = AutomaticTasks(self)
+        self.titlebar.set_load_progress(0)
+        self.titlebar.set_load_progress(None)
+        timer = self._settings_idle_timer = QTimer(self)
+        timer.setInterval(1000)
+        timer.timeout.connect(self._settings_idle_tick)
+        timer.start()
+
+    def _module_open(self) -> bool:
+        """Un module occupe l'appli : Markdown / code, board, visionneuse (ou planche), video."""
+        return bool(getattr(self, "_md_open", False) or getattr(self, "_board", None) is not None
+                    or getattr(self, "_video", None) is not None or getattr(self, "_project_columns_hidden", False))
+
+    def _app_used_recently(self) -> bool:
+        """Entree clavier / souris recente ET destinee a l'appli (fenetre active, ou curseur sur l'une de ses
+        fenetres) : l'horloge d'entree de Windows seule compterait tout l'ordinateur."""
+        import settings_window_v2
+        if QApplication.mouseButtons() != Qt.NoButton and QApplication.activeWindow() is not None:
+            return True
+        idle = settings_window_v2._system_idle_ms()
+        cursor = QCursor.pos()
+        if idle is None:                                   # hors Windows : mouvement du curseur sur l'appli
+            last, self._idle_cursor = getattr(self, "_idle_cursor", None), cursor
+            return last is not None and last != cursor and QApplication.widgetAt(cursor) is not None
+        if idle > 1500:
+            return False
+        return QApplication.activeWindow() is not None or QApplication.widgetAt(cursor) is not None
+
+    def _live_settings_dialog(self):
+        dialog = getattr(self, "_settings_dialog_v2", None)
+        try:
+            if dialog is not None:
+                dialog.isVisible()
+            return dialog
+        except RuntimeError:
+            self._settings_dialog_v2 = None                # detruite
+            return None
+
+    def _settings_idle_tick(self):
+        automatic = getattr(self, "_automatic_tasks", None)
+        if automatic is not None:
+            automatic.tick()
+            return
+        now = time.monotonic()
+        dialog = self._live_settings_dialog()
+        if self._settings_idle_loading:
+            if self._module_open() or self._heavy_foreground_work() or (dialog is not None and dialog.isVisible()):
+                self._stop_settings_idle_load()
+            return
+        if self._module_open() or self._heavy_foreground_work() or self._app_used_recently():
+            self._app_input_at = now                       # module ouvert : la minute ne compte qu'apres sa fermeture
+            return
+        if dialog is not None and (dialog.isVisible()
+                                   or (dialog.prebuild_finished() and not dialog.discard_on_reopen())):
+            return                                         # ouverte (elle se construit seule) ou deja prete
+        if now - self._app_input_at >= self.SETTINGS_IDLE_LOAD_S:
+            self._begin_settings_idle_load()
+
+    def _begin_settings_idle_load(self):
+        dialog = self._live_settings_dialog()
+        if dialog is not None and dialog.discard_on_reopen():
+            dialog.deleteLater()                           # fermee en annulant : ses champs ne servent plus
+            dialog = self._settings_dialog_v2 = None
+        self._settings_idle_loading = True
+        self._background_status.report('settings', 'Chargement des réglages en mémoire')
+        watch = getattr(self, "_idle_input_watch", None)
+        if watch is None:
+            watch = self._idle_input_watch = _AppInputWatch(self._INPUT_EVENTS, self._stop_settings_idle_load)
+        QApplication.instance().installEventFilter(watch)
+        if dialog is None:
+            dialog = self._make_settings_v2()
+        self.titlebar.set_load_progress(int(dialog.prebuild_fraction() * 100))
+        dialog.start_background_build()
+
+    def _stop_settings_idle_load(self):
+        """L'utilisateur revient (ou un module s'ouvre) : chargement suspendu, barre retiree, minute recomptee."""
+        self._app_input_at = time.monotonic()
+        if not getattr(self, "_settings_idle_loading", False):
+            return
+        self._settings_idle_loading = False
+        self._background_status.finish('settings', 'Chargement des réglages terminé ou suspendu')
+        watch = getattr(self, "_idle_input_watch", None)
+        if watch is not None:
+            QApplication.instance().removeEventFilter(watch)
+        self.titlebar.set_load_progress(None)
+
+    def _settings_unattended(self) -> bool:
+        """Chargement sur inactivite en cours, fenetre de reglages cachee."""
+        dialog = self._live_settings_dialog()
+        return bool(getattr(self, "_settings_idle_loading", False) and dialog is not None
+                    and not dialog.isVisible())
+
+    def _settings_prebuild_hold(self) -> bool:
+        """Preparation suspendue : lecture video, ou fenetre cachee hors du chargement sur inactivite (fenetre
+        ouverte par l'utilisateur : elle se prepare comme avant)."""
+        automatic = getattr(self, "_automatic_tasks", None)
+        if automatic is not None and getattr(self, "_settings_idle_loading", False):
+            import ui_state
+            if not automatic.eligible('settings', ui_state.APPLIED_SETTINGS or {}):
+                self._stop_settings_idle_load()
+                return True
+        if self._heavy_foreground_work():
+            return True
+        dialog = self._live_settings_dialog()
+        visible = dialog is not None and dialog.isVisible()
+        return not visible and not getattr(self, "_settings_idle_loading", False)
+
+    def _on_settings_prebuild_progress(self, fraction: float):
+        self.titlebar.set_load_progress(int(fraction * 100))
+        if not getattr(self, "_settings_idle_loading", False):
+            self.titlebar.set_load_progress(None)
+            return
+        if fraction >= 1.0:
+            self._stop_settings_idle_load()                # tout est pret : la barre disparait
+            return
+        self.titlebar.set_load_progress(int(fraction * 100))
 
     def open_settings(self, mode: str = "visuel"):
         """Ouvre l'une des deux fenetres de reglages : "visuel" (aspect de
@@ -7302,7 +8829,7 @@ class PipelineBrowser(QMainWindow):
             self.btn_settings.setEnabled(True)
             self.btn_style.setEnabled(True)
 
-    def _apply_settings(self, settings: dict):
+    def _apply_settings(self, settings: dict, changed_keys: set | None = None):
         """Applique des reglages (live, pendant qu'on les ajuste dans la
         fenetre de parametres, ou definitifs a l'enregistrement — les deux
         cas appellent cette meme methode). N'ecrit jamais sur le disque
@@ -7322,11 +8849,85 @@ class PipelineBrowser(QMainWindow):
         # d'AUCUNE ligne, quelle que soit la colonne — voir la remarque de
         # l'utilisateur, "il y a des ralentissements dans les animations,
         # optimise un maximum".
+        if changed_keys and all(k.startswith("auto_") for k in changed_keys):
+            if isinstance(ui_state.APPLIED_SETTINGS, dict):
+                ui_state.APPLIED_SETTINGS.update({k: settings.get(k) for k in changed_keys})
+            automatic = getattr(self, "_automatic_tasks", None)
+            if automatic is not None:
+                automatic.tick()
+            return
         if self._last_style_key is None:
             # Premier changement : la reference est l'etat DEJA applique (sans
             # elle, le tout premier cran de n'importe quel slider declenchait
             # une reconstruction globale de plus d'une seconde).
             self._last_style_key = self._style_key(load_settings())
+        # Chemin RAPIDE (glisser une couleur / un rayon dans Bouton, Zone de saisie, Tabs : un apercu toutes les
+        # ~30 ms) : si seules des cles de ces trois groupes ont change depuis ce qui est applique, rien d'autre ne
+        # bouge (ni colonnes, ni couleurs de l'appli, ni tailles) — pas de rafraichissement de toutes les colonnes.
+        previous = ui_state.APPLIED_SETTINGS or {}
+        # `changed_keys` (apercu en direct de la v2) : les cles que le geste a vraiment changees.
+        changed = set(changed_keys) if changed_keys else (
+            {k for k, v in settings.items() if previous.get(k) != v} | (previous.keys() - settings.keys()))
+        md_changed = {k for k in changed if k.startswith("md_")}
+        if md_changed:
+            # Feuille CSS partagee avec Obsidian : apercu aussitot, ecriture regroupee apres le geste (css_sync).
+            import mdeditor.css_sync as css_sync
+            css_sync.engine().update(settings, md_changed)
+        if changed and all(k.startswith("md_") for k in changed):
+            # Onglet Markdown : seule la page du module (si elle existe) les reprend, sans rechargement ; l'apercu
+            # des notes de l'inspecteur suit a la prochaine note affichee.
+            if isinstance(ui_state.APPLIED_SETTINGS, dict):
+                ui_state.APPLIED_SETTINGS.update({k: settings.get(k) for k in changed})
+            if changed.intersection({"md_toolbar_enabled", "md_toolbar_margin", "md_toolbar_border_enabled",
+                                    "md_toolbar_border", "md_toolbar_border_thickness"}):
+                self.titlebar.refresh_look()
+            if "md_module_padding" in changed:
+                self.md_margin_slider.blockSignals(True)
+                self.md_margin_slider.setValue(int(settings.get("md_module_padding") or 0))
+                self.md_margin_slider.blockSignals(False)
+            import mdeditor.pane as md_pane
+            pane = md_pane.instance(create=False)
+            if pane is not None:
+                pane.apply_settings(ui_state.APPLIED_SETTINGS or settings, changed)
+            timer = getattr(self, "_md_inspector_timer", None)
+            if timer is None:                    # apercu de l'inspecteur : une fois, apres le geste
+                timer = self._md_inspector_timer = QTimer(self)
+                timer.setSingleShot(True)
+                timer.setInterval(350)
+                timer.timeout.connect(self.detail.refresh_markdown_style)
+            timer.start()
+            return
+        if changed and all(k.startswith("video_") for k in changed):
+            # Reglages > Module video : seul le module ouvert est refait.
+            if isinstance(ui_state.APPLIED_SETTINGS, dict):
+                ui_state.APPLIED_SETTINGS.update({k: settings.get(k) for k in changed})
+            if getattr(self, "_video", None) is not None:
+                self._video.apply_settings(ui_state.APPLIED_SETTINGS or settings)
+            return
+        if changed and all(k.startswith("board_") for k in changed):
+            # Reglages > MRO (magnetisme du board) : rien d'autre a refaire que le board ouvert.
+            if isinstance(ui_state.APPLIED_SETTINGS, dict):
+                ui_state.APPLIED_SETTINGS.update({k: settings.get(k) for k in changed})
+            if getattr(self, "_board", None) is not None:
+                self._board.apply_settings(ui_state.APPLIED_SETTINGS or settings)
+            return
+        if getattr(self, "_board", None) is not None:
+            self._board.apply_settings(settings)
+        if getattr(self, "_video", None) is not None:
+            self._video.apply_settings(settings)
+        if changed and all(k.startswith(("button_", "input_", "tabs_", "crumb_")) for k in changed):
+            apply_all_settings(settings)
+            style_key = self._style_key(settings)
+            if style_key != self._last_style_key:
+                self._last_style_key = style_key
+                self._pending_stylesheet_rebuild = True
+                self._stylesheet_rebuild_timer.start()
+            self._refresh_button_shadows()
+            if "input_height" in changed:
+                self.refresh_chrome_sizes()               # champs de la barre de navigation
+            if any(k.startswith("crumb_") for k in changed):
+                self.titlebar.refresh_crumbs()            # cheminement : habillage et hauteur de la barre
+            return
         prev_geometry = {title: (conf["height"], conf["spacing"]) for title, conf in COLUMN_SETTINGS.items()}
         prev_omissions = (GLOBAL_OMIT_DIR_NAMES.copy(), GLOBAL_OMIT_FILE_NAMES.copy(),
                           GLOBAL_OMIT_FILE_EXTENSIONS.copy())
@@ -7410,6 +9011,8 @@ class PipelineBrowser(QMainWindow):
             settings.get("input_radius"),
             settings.get("input_frame"),
             settings.get("table_radius"),
+            json.dumps({k: v for k, v in settings.items()
+                        if k.startswith(("button_", "input_"))}, sort_keys=True, default=str),
         )
 
     def _flush_stylesheet_rebuild(self):
@@ -7434,9 +9037,654 @@ class PipelineBrowser(QMainWindow):
             self._stylesheet_rebuild_timer.start()
             return
         self._pending_stylesheet_rebuild = False
-        app = QApplication.instance()
-        if app is not None:
-            refresh_style(app)
+        self._apply_global_stylesheet()
+
+    @staticmethod
+    def _nav_input_height() -> int:
+        """Hauteur des champs de la barre de navigation : Reglages > Zone de saisie > Hauteur (0 = 20 px), sans
+        depasser la rangee des boutons."""
+        from settings_store import input_height
+        return min(scaled(TITLEBAR_HEIGHT), scaled(input_height() or 20))
+
+    def _sync_collapse_button(self):
+        """Icone / infobulle / disponibilite du bouton de repli des colonnes de la barre : replie ou deplie
+        selon l'etat, grise quand les colonnes sont masquees (visionneuse)."""
+        button = getattr(self, "btn_collapse", None)
+        if button is None:
+            return
+        collapsed = bool(getattr(self, "_project_columns_collapsed", False))
+        button.set_kind("dchevron_left" if collapsed else "dchevron_right")
+        button.setToolTip("Deplier les colonnes de set" if collapsed else "Replier les colonnes de set")
+        usable = (not getattr(self, "_project_columns_hidden", False) and not getattr(self, "_md_open", False)
+                  and getattr(self, "_board", None) is None)
+        self._set_button_usable(button, usable)
+        self._sync_mode_buttons()
+
+    @staticmethod
+    def _set_button_usable(button, usable: bool):
+        if button.isEnabled() == usable and (button.graphicsEffect() is None) == usable:
+            return
+        button.setEnabled(usable)
+        button.setGraphicsEffect(None)
+        if not usable:
+            effect = QGraphicsOpacityEffect(button)
+            effect.setOpacity(0.35)
+            button.setGraphicsEffect(effect)
+
+    def _selected_path(self) -> tuple:
+        """(colonne, chemin) du choix le plus profond des colonnes, ou (None, None)."""
+        for column in reversed(getattr(self, "columns", [])):
+            try:
+                path = column.current_path()
+            except RuntimeError:
+                continue
+            if path is not None:
+                return column, Path(path)
+        return None, None
+
+    def _sync_mode_buttons(self):
+        """Boutons visionneuse / editeur de texte de la barre : l'editeur n'est disponible que sur un fichier
+        texte selectionne (ou deja ouvert, pour en sortir) ; la visionneuse sur une selection (ou ouverte)."""
+        if not hasattr(self, "btn_text_editor"):
+            return
+        import mdeditor
+        editing = getattr(self, "_md_open", False)
+        _column, path = self._selected_path()
+        viewer_open = getattr(self, "_project_columns_hidden", False)
+        # Type repris de la lecture du dossier (un `is_file()` par bouton = 3 allers-retours par clic en reseau).
+        is_file = path is not None and not entry_is_dir(path)
+        self._set_button_usable(self.btn_text_editor,
+                                editing or (not viewer_open and is_file and mdeditor.is_text_file(path)))
+        self._set_button_usable(self.btn_viewer, viewer_open or editing or path is not None)
+        self.btn_text_editor.set_alert(self._mode_on_color() if editing else None)
+        self.btn_viewer.set_alert(self._mode_on_color() if viewer_open else None)
+        import board
+        on_board = self._board is not None
+        self._set_button_usable(self.btn_board, on_board or (not viewer_open and is_file
+                                                             and board.is_board_file(path)))
+        self.btn_board.set_alert(self._mode_on_color() if on_board else None)
+        import video
+        on_video = getattr(self, "_video", None) is not None
+        self._set_button_usable(self.btn_video, on_video or (not viewer_open and is_file
+                                                             and video.is_media_file(path)))
+        self.btn_video.set_alert(self._mode_on_color() if on_video else None)
+
+    @staticmethod
+    def _mode_on_color() -> str:
+        color = QColor(C["accent"])
+        color.setAlpha(90)
+        return color.name(QColor.HexArgb)
+
+    # -- Bouton « visionneuse » de la barre --
+
+    def _on_viewer_button(self):
+        """Visionneuse ouverte : retour aux colonnes. Sinon elle s'ouvre sur la selection : un fichier a apercu
+        tel quel, un dossier (sa premiere photo), un autre fichier (les photos de son dossier)."""
+        if self._project_columns_hidden:
+            self._toggle_project_columns_hidden()
+            return
+        if not self._close_md_editor():
+            return
+        if self._board is not None and not self._close_board():
+            return
+        self._close_video()
+        from column import opens_in_viewer
+        column, path = self._selected_path()
+        if path is None:
+            return
+        if path.is_dir():
+            self._view_folder_in_viewer(path, column)
+        elif opens_in_viewer(path):
+            self._view_in_viewer(path, column)
+        else:
+            self._view_folder_in_viewer(path.parent, column)
+
+    # -- Module Markdown / code (paquet mdeditor/) --
+
+    def _set_md_margin(self, value):
+        settings = ui_state.APPLIED_SETTINGS if isinstance(ui_state.APPLIED_SETTINGS, dict) else {}
+        settings["md_module_padding"] = value
+        import mdeditor.pane as md_pane
+        pane = md_pane.instance(create=False)
+        if pane is not None:
+            pane._apply_module_padding(settings)
+        self._md_margin_timer.start()
+
+    def _persist_md_margin(self):
+        value = self.md_margin_slider.value()
+        save_live_state("md_module_padding", value)
+        import browser_core
+        browser_core._sync_default_preset_override(ui_state.APPLIED_SETTINGS or {},
+                                                   lambda preset: preset.update(md_module_padding=value))
+        dialog = getattr(self, "_settings_dialog_v2", None)
+        try:
+            if dialog is not None and dialog.isVisible():
+                dialog.external_values({"md_module_padding": value})
+        except RuntimeError:
+            pass
+
+    def _md_pane(self):
+        """Le module (instance unique, prechargee) : branche une fois sur la barre et les reglages."""
+        import mdeditor.pane as md_pane
+        import mdeditor.style as md_style
+        from browser_core import _resolve_font_family
+        md_style.FONT_RESOLVER = _resolve_font_family
+        md_pane.HOOKS["settings"] = lambda: ui_state.APPLIED_SETTINGS or {}
+        md_pane.HOOKS["save_state"] = self._save_md_state
+        import mdeditor.css_sync as css_sync                 # module ouvert avant le demarrage de la synchro
+        css_sync.HOOKS["external"] = self._apply_md_external
+        pane = md_pane.instance(create=True)
+        if not getattr(pane, "_pb_connected", False):
+            pane._pb_connected = True
+            pane.stateChanged.connect(self._layout_md_buttons)
+            pane.pathChanged.connect(lambda path: self.path_label.setText(path))
+            pane.closeRequested.connect(self._close_md_editor)
+        return pane
+
+    def _save_md_state(self, key: str, value):
+        """Etat temps reel du module (dernier mode, taille du texte des fichiers de code) : fichier de reglages."""
+        from settings_store import save_live_state
+        if isinstance(ui_state.APPLIED_SETTINGS, dict):
+            ui_state.APPLIED_SETTINGS[key] = value
+        save_live_state(key, value)
+
+    def _start_css_sync(self):
+        """Feuille CSS partagee avec Obsidian (Reglages > Markdown > CSS) : lue une fois au demarrage — ses valeurs
+        (peut-etre modifiees dans Obsidian pendant que l'appli etait fermee) sont reprises dans les reglages —, puis
+        suivie sur le disque (mdeditor/css_sync.py)."""
+        import mdeditor.css_sync as css_sync
+        import mdeditor.style as md_style
+        from browser_core import _resolve_font_family
+        md_style.FONT_RESOLVER = _resolve_font_family         # polices « de l'appli » comparees sous leur vrai nom
+        css_sync.HOOKS["external"] = self._apply_md_external
+        css_sync.engine().update(ui_state.APPLIED_SETTINGS or load_settings())
+
+    def _apply_md_external(self, values: dict):
+        """Reglages Markdown repris de la feuille partagee (modifiee dans Obsidian ou un editeur) : appliques au
+        module et a l'inspecteur, enregistres (fichier + preset actif), montres par la fenetre de reglages ouverte
+        — sinon une valeur perimee y resterait et ecraserait la modification a l'enregistrement suivant."""
+        if not values:
+            return
+        if isinstance(ui_state.APPLIED_SETTINGS, dict):
+            ui_state.APPLIED_SETTINGS.update(values)
+        settings = load_settings()
+        settings.update(values)
+        save_settings(settings)
+        import browser_core
+        browser_core._sync_default_preset_override(settings, lambda preset: preset.update(values))
+        dialog = getattr(self, "_settings_dialog_v2", None)
+        if dialog is not None:
+            try:
+                dialog.external_values(values)
+            except RuntimeError:
+                pass
+        import mdeditor.pane as md_pane
+        pane = md_pane.instance(create=False)
+        if pane is not None:
+            pane.apply_settings(ui_state.APPLIED_SETTINGS or settings, set(values))
+        timer = getattr(self, "_md_inspector_timer", None)
+        if timer is not None:
+            timer.start()
+        else:
+            self.detail.refresh_markdown_style()
+
+    def _preload_md_editor(self):
+        """Module prepare en fond (page, CodeMirror et feuille charges) : l'ouvrir est ensuite immediat."""
+        if not (ui_state.APPLIED_SETTINGS or {}).get("md_preload", True):
+            return
+        if QApplication.mouseButtons() != Qt.NoButton or self._heavy_foreground_work():
+            QTimer.singleShot(1500, self._preload_md_editor)       # souris enfoncee / lecture video : plus tard
+            return
+        try:
+            self._md_pane()
+        except ImportError:
+            pass
+
+    def _md_opens_on_double_click(self, path: Path) -> bool:
+        """Double-clic : extensions de Markdown > Ouverture ; une note .md va a l'application Obsidian si le
+        reglage le demande."""
+        import mdeditor.pane as md_pane
+        settings = ui_state.APPLIED_SETTINGS or {}
+        if path.suffix.lower() == ".md" and settings.get("md_open_md") == "obsidian":
+            return False
+        return md_pane.opens_on_double_click(path, settings)
+
+    def _toggle_md_editor(self):
+        if getattr(self, "_md_open", False):
+            self._close_md_editor()
+            return
+        import mdeditor
+        _column, path = self._selected_path()
+        if path is not None and path.is_file() and mdeditor.is_text_file(path):
+            self._open_md_editor(path)
+
+    def _open_md_editor(self, path: Path) -> bool:
+        """Le fichier recouvre les colonnes ; ses boutons dans le cadre « Éditeur » de la barre de navigation."""
+        if self._project_columns_hidden:
+            return False
+        if self._board is not None and not self._close_board():
+            return False
+        self._close_video()
+        try:
+            pane = self._md_pane()
+        except ImportError:
+            return False
+        reason = pane.can_open(Path(path))
+        if reason is not None:
+            self.path_label.setText(reason)
+            return False
+        pane.attach(self.scroll.viewport())
+        pane.open(Path(path))
+        if not getattr(self, "_md_open", False):
+            self._md_open = True
+            self.status_right.hide()
+            self.md_margin_slider.show()
+            self.titlebar.refresh_look()
+            pane.fade_in()
+        else:
+            pane.raise_()
+        self._layout_md_buttons()
+        self._sync_collapse_button()
+        self.path_label.setText(str(path))
+        return True
+
+    def _close_md_editor(self) -> bool:
+        """Retour aux colonnes (tout est enregistre ; un conflit demande a l'utilisateur). False = annule. La page
+        reste chargee (cachee) : la rouvrir est immediat."""
+        if not getattr(self, "_md_open", False):
+            return True
+        import mdeditor.pane as md_pane
+        pane = md_pane.instance(create=False)
+        if pane is not None and not pane.confirm_leave():
+            return False
+        self._md_open = False
+        self.md_margin_slider.hide()
+        self.status_right.show()
+        self.titlebar.refresh_look()
+        self.titlebar.editor_group().hide()
+        if pane is not None:
+            pane.fade_out()
+        self._sync_collapse_button()
+        column, _path = self._selected_path()
+        if column is not None:
+            column.list.setFocus()
+        return True
+
+    def _layout_md_buttons(self):
+        """Cadre « Éditeur » de la barre : precedent, suivant, lecture / edition, rechercher, enregistrer, ouvrir dans
+        l'application Obsidian (note d'un coffre), fermer."""
+        group = self.titlebar.editor_group()
+        if not getattr(self, "_md_open", False):
+            group.hide()
+            return
+        import mdeditor.pane as md_pane
+        pane = md_pane.instance(create=False)
+        if pane is None:
+            group.hide()
+            return
+        self.titlebar.refresh_look()       # le trait partagé suit le mode lecture/édition et le type de fichier
+        if not self._editor_buttons:
+            current = lambda: md_pane.instance(create=False)          # noqa: E731
+            for kind, tip, slot in (
+                    ("nav_back", "Précédent (Alt+←)", lambda: current() and current().go(-1)),
+                    ("nav_forward", "Suivant (Alt+→)", lambda: current() and current().go(1)),
+                    ("reading", "Lecture / édition (Ctrl+E)", lambda: current() and current().toggle_mode()),
+                    ("find", "Rechercher (Ctrl+F)", lambda: current() and current().find()),
+                    ("save", "Enregistrer (Ctrl+S)", lambda: current() and current().flush()),
+                    ("external", "Ouvrir dans l'application Obsidian",
+                     lambda: current() and current().open_in_obsidian()),
+                    ("close", "Fermer l'éditeur (Échap)", self._close_md_editor)):
+                button = IconButton(kind, role_color("buttons", "#c4cacf"), C["text"], parent=group)
+                button.setCursor(Qt.ArrowCursor)
+                button.setFlat(True)
+                button.setToolTip(tip)
+                button.clicked.connect(slot)
+                button._editor_kind = kind
+                self._editor_buttons.append(button)
+        import markdown_preview
+        on = self._mode_on_color()
+        if pane.path != getattr(self, "_md_vault_path", None):        # une fois par fichier (lecture du disque)
+            self._md_vault_path = pane.path
+            self._md_in_vault = pane.path is not None and pane.kind == "markdown" and \
+                markdown_preview.vault_containing(pane.path) is not None
+        origin = group.content_origin()
+        x, height = origin.x(), 0
+        for button in self._editor_buttons:
+            kind = button._editor_kind
+            visible = not (kind == "external" and not self._md_in_vault) and \
+                not (kind == "reading" and pane.kind != "markdown")
+            button.setVisible(visible)
+            if not visible:
+                continue
+            style_focus_button(button)
+            if kind == "nav_back":
+                self._set_button_usable(button, pane.can_back)
+            elif kind == "nav_forward":
+                self._set_button_usable(button, pane.can_forward)
+            elif kind == "reading":
+                button.set_alert(on if pane.mode == "reading" else None)
+            elif kind == "save":
+                button.set_alert(resolve_color_ref("#c62828") if pane.is_dirty() else None)
+            button.move(x, origin.y())
+            x += button.width() + scaled(6, 0)
+            height = max(height, button.height())
+        group.restyle()
+        group.fit(x - scaled(6, 0), height)
+        group.show()
+        group.raise_()
+        self.titlebar.place_viewer_group()
+
+    # -- Module video (paquet video/) --
+
+    def _preload_video(self):
+        """Bibliotheques lourdes du module video (PyOpenGL ~1,2 s, PyAV, OpenImageIO, OpenColorIO + configuration
+        ACES integree) importees dans un fil de fond : la 1re ouverture du module ne les attend plus."""
+        import threading
+        import video
+        threading.Thread(target=video.preload, name="video-preload", daemon=True).start()
+
+    def _video_claims(self, path) -> bool:
+        """Le double-clic va-t-il au module video ? Videos (reglage « Double-clic sur une video ») ; images EXR /
+        TIFF / DPX numerotees d'une sequence (reglage « … sa sequence »)."""
+        import video
+        settings = ui_state.APPLIED_SETTINGS or {}
+        path = Path(path)
+        if not path.is_file():
+            return False
+        if video.is_video_file(path):
+            return bool(settings.get("video_open_videos", True))
+        if path.suffix.lower() in video.PRO_IMAGE_EXTENSIONS and settings.get("video_open_sequences", True):
+            from video.media import find_sequence
+            return find_sequence(path) is not None
+        return False
+
+    def _install_video_hooks(self):
+        import video.pane as video_pane
+        from app_style import resolve_color_ref
+        from browser_core import _resolve_font_family
+        video_pane.HOOKS.update({
+            "settings": lambda: ui_state.APPLIED_SETTINGS or load_settings(),
+            "save_state": self._save_video_state,
+            "write_setting": self._write_video_setting,
+            "resolve_color": resolve_color_ref,
+            "resolve_font": lambda family: _resolve_font_family(family, 12),
+            "status": self.path_label.setText,
+        })
+
+    def _write_video_setting(self, key: str, value):
+        """Valeur vidéo choisie dans le module : fichier, preset et réglages ouverts."""
+        settings = load_settings()
+        settings[key] = value
+        save_settings(settings)
+        import browser_core
+        browser_core._sync_default_preset_override(settings, lambda preset: preset.__setitem__(key, value))
+        if isinstance(ui_state.APPLIED_SETTINGS, dict):
+            ui_state.APPLIED_SETTINGS[key] = value
+        dialog = getattr(self, '_settings_dialog_v2', None)
+        if dialog is not None:
+            try:
+                dialog.external_values({key: value})
+            except RuntimeError:
+                pass
+
+    def _save_video_state(self, key: str, value):
+        """Etat temps reel du module (corrections, presets, derniers parametres d'export, I, boucle, volume) :
+        enregistre aussitot, et suivi par les reglages appliques."""
+        from settings_store import save_live_state
+        if isinstance(ui_state.APPLIED_SETTINGS, dict):
+            ui_state.APPLIED_SETTINGS[key] = value
+        save_live_state(key, value)
+
+    def _toggle_video(self):
+        if self._video is not None:
+            self._close_video()
+            return
+        import video
+        _column, path = self._selected_path()
+        if path is not None and path.is_file() and video.is_media_file(path):
+            self._open_video(path)
+
+    def _open_video(self, path: Path) -> bool:
+        """Le module video recouvre les colonnes ; ses boutons dans le cadre « Vidéo » de la barre de navigation.
+        Modes exclusifs (editeur, board, visionneuse)."""
+        if self._project_columns_hidden:
+            return False
+        if not self._close_md_editor():
+            return False
+        if self._board is not None and not self._close_board():
+            return False
+        self._install_video_hooks()
+        if self._video is None:
+            from video.pane import VideoPane
+            pane = VideoPane(self.scroll.viewport(), ui_state.APPLIED_SETTINGS or {})
+            pane.closeRequested.connect(self._close_video)
+            pane.stateChanged.connect(self._layout_video_buttons)
+            self._video = pane
+        pane = self._video
+        if not pane.open(path):
+            if pane.source is None:
+                pane.shutdown()
+                pane.deleteLater()
+                self._video = None
+            return False
+        pane.fade_in()
+        # Colonnes VRAIMENT masquees sous le module : sinon Qt les repeignait a chaque image de la lecture
+        # (composition OpenGL : ~20 ms par image, lecture 1080p saccadee). Remontrees a la fermeture.
+        host = self.scroll.widget()
+        if host is not None and host.isVisible():
+            host.hide()
+            self._video_hid_columns = True
+        self._layout_video_buttons()
+        self._sync_collapse_button()
+        self._sync_mode_buttons()
+        self.path_label.setText(str(path))
+        return True
+
+    def _close_video(self):
+        """Retour aux colonnes : lecture et fils de fond arretes, memoire du cache rendue."""
+        pane = self._video
+        if pane is None:
+            return
+        self._video = None
+        self.titlebar.video_group().hide()
+        if getattr(self, "_video_hid_columns", False):
+            self._video_hid_columns = False
+            host = self.scroll.widget()
+            if host is not None:
+                host.show()
+        pane.shutdown()
+        pane.hide()
+        pane.deleteLater()
+        self._sync_collapse_button()
+        self._sync_mode_buttons()
+        column, _path = self._selected_path()
+        if column is not None:
+            column.list.setFocus()
+
+    def _video_menu(self, button):
+        """Bouton « Corrections » : fenetres de corrections, presets de corrections, reinitialiser."""
+        from settings_menu import Menu
+        pane = self._video
+        if pane is None:
+            return
+        menu = Menu(self)
+        menu.addAction("Corrections colorimétriques et LUT…").triggered.connect(
+            lambda: pane.open_grade_window("grade_main"))
+        menu.addAction("Corrections par canal et niveaux…").triggered.connect(
+            lambda: pane.open_grade_window("grade_channels"))
+        menu.addSeparator()
+        presets = pane.grade_presets()
+        load = menu.addMenu("Charger un preset de corrections")
+        load.setEnabled(bool(presets))
+        for name in sorted(presets):
+            load.addAction(name).triggered.connect(lambda _c=False, n=name: pane.load_grade_preset(n))
+        menu.addAction("Enregistrer les corrections comme preset…").triggered.connect(
+            lambda: self._ask_video_preset(pane))
+        menu.addAction("Réinitialiser les corrections").triggered.connect(pane.reset_grade)
+        menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
+
+    def _ask_video_preset(self, pane):
+        from PySide6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(self, "Preset de corrections", "Nom du preset :")
+        if ok and name.strip():
+            pane.save_grade_preset(name.strip())
+
+    def _layout_video_buttons(self):
+        """Boutons du cadre « Vidéo » : corrections, exporter, informations, plein ecran, fermer."""
+        pane = self._video
+        group = self.titlebar.video_group()
+        if pane is None:
+            group.hide()
+            return
+        if not self._video_buttons:
+            for kind, tip, slot in (
+                    ("grade", "Corrections colorimétriques, LUT, presets", None),
+                    ("export", "Exporter (sélection IN / OUT ou média complet)…",
+                     lambda: self._video and self._video.open_export_window()),
+                    ("info", "Informations en surimpression (I)", lambda: self._video and self._video.toggle_info()),
+                    ("fullscreen", "Plein écran (F, Échap pour sortir)",
+                     lambda: self._video and self._video.toggle_fullscreen()),
+                    ("close", "Fermer le module vidéo (Échap)", self._close_video)):
+                button = IconButton(kind, role_color("buttons", "#c4cacf"), C["text"], parent=group)
+                button.setCursor(Qt.ArrowCursor)
+                button.setFlat(True)
+                button.setToolTip(tip)
+                if slot is None:
+                    button.clicked.connect(lambda _c=False, b=button: self._video_menu(b))
+                else:
+                    button.clicked.connect(slot)
+                button._video_kind = kind
+                self._video_buttons.append(button)
+        origin = group.content_origin()
+        x, height = origin.x(), 0
+        for button in self._video_buttons:
+            style_focus_button(button)
+            if button._video_kind == "info":
+                button.set_alert(self._mode_on_color() if pane.info_visible() else None)
+            button.move(x, origin.y())
+            button.show()
+            x += button.width() + scaled(6, 0)
+            height = max(height, button.height())
+        group.restyle()
+        group.fit(x - scaled(6, 0), height)
+        group.show()
+        group.raise_()
+        self.titlebar.place_viewer_group()
+
+    # -- Mode « Board » (paquet board/, facon Miro) --
+
+    @staticmethod
+    def _board_icon(kind: str, size: int):
+        """Icone perso d'un bouton du board (Reglages > MRO > Icones), sinon None (glyphe peint)."""
+        from previews import custom_ui_icon_pixmap
+        return custom_ui_icon_pixmap(f"ui_board_{kind}", size)
+
+    def _toggle_board(self):
+        if self._board is not None:
+            self._close_board()
+            return
+        import board
+        _column, path = self._selected_path()
+        if path is not None and path.is_file() and board.is_board_file(path):
+            self._open_board(path)
+
+    def _open_board(self, path: Path) -> bool:
+        """Le board recouvre les colonnes (comme l'editeur de texte) ; ses boutons dans le cadre « Board » de la
+        barre de navigation. Un autre board ouvert est d'abord enregistre et ferme."""
+        import board.ui
+        from board.ui import BoardPane
+        board.ui.ICON_PROVIDER = self._board_icon
+        board.ui.SETTING_WRITER = self._write_setting_now
+        # Overrides des menus du board (Reglages > MRO > Menus contextuels) : la correspondance des lignes est
+        # dans le catalogue des reglages (deja charge par le prechargement de la fenetre, sinon ~0,1 s une fois).
+        import settings_window_v2  # noqa: F401
+        if self._project_columns_hidden:
+            return False
+        if not self._close_md_editor():
+            return False
+        self._close_video()
+        if self._board is not None:
+            if self._board.path == Path(path):
+                return True
+            if not self._close_board():
+                return False
+        pane = BoardPane(self.scroll.viewport(), ui_state.APPLIED_SETTINGS or {})
+        if not pane.open(path):
+            pane.deleteLater()
+            return False
+        self._board = pane
+        pane.closeRequested.connect(self._close_board)
+        pane.stateChanged.connect(self._layout_board_buttons)
+        pane.dirtyChanged.connect(lambda _d: self._layout_board_buttons())
+        pane.fade_in()
+        self._layout_board_buttons()
+        self._sync_collapse_button()
+        self.path_label.setText(str(path))
+        return True
+
+    def _close_board(self) -> bool:
+        """Retour aux colonnes (le board est enregistre, avec sa vue). False = annule."""
+        pane = self._board
+        if pane is None:
+            return True
+        if not pane.confirm_leave():
+            return False
+        self._board = None
+        self.titlebar.board_group().hide()
+        pane.fade_out(pane.deleteLater)
+        self._sync_collapse_button()
+        column, _path = self._selected_path()
+        if column is not None:
+            column.list.setFocus()
+        return True
+
+    def _layout_board_buttons(self):
+        """Boutons du cadre « Board » : annuler, retablir, tout voir, exporter, fermer."""
+        pane = self._board
+        group = self.titlebar.board_group()
+        if pane is None:
+            group.hide()
+            return
+        if not self._board_buttons:
+            for kind, tip, slot in (
+                    ("undo", "Annuler (Ctrl+Z)", lambda: self._board and self._board.undo()),
+                    ("redo", "Rétablir (Ctrl+Y)", lambda: self._board and self._board.redo()),
+                    ("fit", "Tout voir (Maj+1)", lambda: self._board and self._board.view.fit_all()),
+                    ("export", "Exporter (PNG, SVG, PDF)…", lambda: self._board and self._board.export_dialog()),
+                    ("close", "Fermer le board (Échap)", self._close_board)):
+                button = IconButton(kind, role_color("buttons", "#c4cacf"), C["text"], parent=group)
+                button.setCursor(Qt.ArrowCursor)
+                button.setFlat(True)
+                button.setToolTip(tip)
+                button.clicked.connect(slot)
+                button._board_kind = kind
+                self._board_buttons.append(button)
+        origin = group.content_origin()
+        x, height = origin.x(), 0
+        for button in self._board_buttons:
+            style_focus_button(button)
+            kind = button._board_kind
+            if kind == "undo":
+                self._set_button_usable(button, pane.can_undo())
+            elif kind == "redo":
+                self._set_button_usable(button, pane.can_redo())
+            button.move(x, origin.y())
+            button.show()
+            x += button.width() + scaled(6, 0)
+            height = max(height, button.height())
+        group.restyle()
+        group.fit(x - scaled(6, 0), height)
+        group.show()
+        group.raise_()
+        self.titlebar.place_viewer_group()
+
+    def _apply_global_stylesheet(self):
+        """Feuille de style commune (boutons, zones de saisie, couleurs) reappliquee a la fenetre principale et a
+        tout ce qui en depend — PAS a l'application entiere : `QApplication.setStyleSheet` repolit TOUS les
+        widgets, y compris ceux de la fenetre de reglages gardee en memoire (~24 000, soit ~70 s) ; sur la seule
+        fenetre principale (~160 widgets) : ~0,05 s. La feuille de l'application (posee au lancement) reste la base ;
+        celle-ci passe devant pour tout ce qui est dans la fenetre principale."""
+        self.setStyleSheet(build_stylesheet())
 
     def refresh_chrome_sizes(self):
         """Reapplique l'echelle courante (voir app_style.scaled) aux
@@ -7445,29 +9693,20 @@ class PipelineBrowser(QMainWindow):
         construits qu'une fois et ne suivraient donc pas le slider d'echelle
         sans ce rafraichissement explicite."""
         self.titlebar.refresh_sizes()
-        self.root_field.setFixedHeight(scaled(24))
-        for btn in (self.btn_browse, self.btn_reload, self.btn_last_place, self.btn_style, self.btn_settings):
-            btn.setFixedHeight(scaled(24))
-        self.btn_settings.setFixedWidth(scaled(28))
-        self.btn_style.setFixedWidth(scaled(28))
+        self.titlebar.refresh_look()
+        self.root_field.setFixedHeight(self._nav_input_height())
+        self.root_field.setFixedWidth(scaled(190))
+        self.preset_picker.select.setFixedHeight(self._nav_input_height())
 
     def refresh_chrome_fonts(self):
         """Reapplique les polices de role aux widgets permanents de la
         fenetre (topbar, statut, panneau de detail), qui contrairement aux
         colonnes ne sont pas recrees par reload()."""
-        self.titlebar.title_label.setFont(role_font("titles", 11, 400, tracking=0.01))
-        self.titlebar.title_label.setStyleSheet(f"color: {role_color('titles', C['label'])}; background: transparent;")
-        self.root_label.setFont(role_font("app", 10, 600, tracking=0.8, caps=True))
-        self.root_label.setStyleSheet(f"color: {role_color('app', C['label'])}; background: transparent;")
-        self.root_field.setFont(role_font("info", 12, 400))
-        for btn in (self.btn_browse, self.btn_reload, self.btn_last_place, self.btn_style, self.btn_settings):
-            btn.setFont(role_font("buttons", 11, 500))
-        for btn in (self.btn_browse, self.btn_reload, self.btn_last_place):
-            btn.setStyleSheet(f"color: {role_color('buttons', '#c4cacf')};")
-        self.btn_settings.set_colors(role_color("buttons", "#c4cacf"), C["text"])
-        self.btn_style.set_colors(role_color("buttons", "#c4cacf"), C["text"])
-        self.synced_label.setFont(role_font("info2", 10, 400))
-        self.synced_label.setStyleSheet(f"color: {role_color('info2', C['dim'])}; background: transparent;")
+        self.titlebar.refresh_look()
+        self.root_field.setFont(role_font("info", 11, 400))
+        for btn in (self.btn_browse, self.btn_presets, self.btn_settings, self.btn_style, self.btn_collapse,
+                    self.btn_viewer, self.btn_text_editor, self.btn_board, self.btn_video):
+            btn.set_colors(role_color("buttons", "#c4cacf"), C["text"])
         self.path_label.setFont(role_font("info", 11, 400))
         self.path_label.setStyleSheet(f"color: {role_color('info', C['text_mono'])}; background: transparent;")
         self.status_right.setFont(role_font("info2", 11, 400))
@@ -7501,18 +9740,16 @@ class PipelineBrowser(QMainWindow):
         le reste de cette methode restant assez leger pour tourner a chaque
         rafraichissement."""
         if rebuild_stylesheet:
-            app = QApplication.instance()
-            if app is not None:
-                refresh_style(app)
+            self._apply_global_stylesheet()
         _set_qss(self.central,
             f"#CentralFrame {{ background: {C['window']}; border: 1px solid {C['border']}; "
             f"border-radius: {ui_state.WINDOW_RADIUS}px; }}"
         )
         _set_qss(self.columns_host, f"#ColumnsHost {{ background: {C['window']}; }}")
-        _set_qss(self.titlebar, f"#TitleBar {{ background: {C['app_bg']}; border-bottom: 1px solid {C['border']}; }}")
+        self.titlebar.refresh_look()
         for btn in (self.titlebar.btn_min, self.titlebar.btn_max, self.titlebar.btn_close):
             btn.set_colors(C["label"], C["text"])
-        _set_qss(self.topbar, f"#TopBar {{ background: {C['topbar']}; border-bottom: 1px solid {C['border']}; }}")
+        self._refresh_button_shadows()
         _set_qss(self.statusbar, f"#StatusBar {{ background: {C['chrome']}; border-top: 1px solid {C['border']}; }}")
         for column in self.columns:
             column.refresh_colors()
@@ -7522,6 +9759,41 @@ class PipelineBrowser(QMainWindow):
             column.refresh_colors()
         self.detail.refresh_colors()
         self.refresh_chrome_fonts()
+
+    def _refresh_button_shadows(self):
+        """Ombre du groupe Bouton sur les boutons de la fenêtre principale."""
+        look = shadow_look(ui_state.APPLIED_SETTINGS or {}, "button_shadow", resolve_color_ref)
+        # Meme ombre que la derniere fois : seuls les boutons NOUVEAUX en ont besoin (chaque tick d'un glisser
+        # de couleur reposait l'effet sur tous les boutons : effets graphiques recalcules, lent).
+        sig = repr(look)
+        unchanged = sig == getattr(self, "_button_shadow_sig", None)
+        self._button_shadow_sig = sig
+        for button in self.findChildren(QPushButton):
+            own = getattr(button, "_app_shadow_effect", None)
+            if unchanged and (own is not None or look is None):
+                continue
+            if look is None:
+                if own is not None:
+                    button.setGraphicsEffect(None)
+                    button._app_shadow_effect = None
+                continue
+            if own is None and button.graphicsEffect() is not None:
+                continue
+            if own is None:
+                own = QGraphicsDropShadowEffect(button)
+                button._app_shadow_effect = own
+                button.setGraphicsEffect(own)
+            sides = look["on"]
+            size = look["size"]
+            own.setBlurRadius(max(1, size * 2))
+            own.setOffset((int(sides["right"]) - int(sides["left"])) * size / 3,
+                          (int(sides["bottom"]) - int(sides["top"])) * size / 3)
+            color = next((look["colors"][side] for side in ("bottom", "right", "top", "left") if sides[side]), None)
+            if color is None:                      # aucun cote allume : pas d'ombre (jamais d'exception ici)
+                button.setGraphicsEffect(None)
+                button._app_shadow_effect = None
+                continue
+            own.setColor(QColor(color))
 
 def _save_menu_layouts(layouts: dict) -> None:
     """Disposition des menus contextuels choisie a la main (settings_menu) : etat temps reel, ecrit aussitot,
@@ -7579,9 +9851,10 @@ def main():
     apply_all_settings(settings)
     root = Path(settings["root_path"])
     _config.ROOT = root
-    migrate_cache_names()
-    # Menage du cache en arriere-plan : ni images inutiles ni apercus de fichiers supprimes.
-    threading.Thread(target=sweep_preview_cache, name="preview-cache-sweep", daemon=True).start()
+    # Cache en arriere-plan : index des noms (lu une fois), anciens noms renommes, puis menage (ni images
+    # inutiles ni apercus de fichiers supprimes). Rien de tout cela sur le fil de l'interface.
+    threading.Thread(target=lambda: (migrate_cache_names(), sweep_preview_cache_if_due()),
+                     name="preview-cache-sweep", daemon=True).start()
 
     # Le winId() d'une fenetre enfant (reglages, config des colonnes : voir
     # apply_dwm_frame) rendait natifs ses « freres », dont #CentralFrame : un
@@ -7589,11 +9862,17 @@ def main():
     # image et les animations des colonnes sautaient des l'ouverture des
     # reglages (tests/_probe_screen_anim.py).
     QApplication.setAttribute(Qt.AA_DontCreateNativeWidgetSiblings, True)
+    # QtWebEngine (inspecteur des notes, module Markdown) cree apres l'application : contextes OpenGL partages.
+    QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
     app = QApplication(sys.argv)
     apply_style(app)
     _install_context_menus()
     window = PipelineBrowser(root)
     window.show()
+    window._start_settings_idle_watch()     # reglages prepares apres 1 min sans activite sur l'appli (rien au lancement)
+    QTimer.singleShot(6000, window._preload_md_editor)       # module Markdown / code prepare en fond
+    QTimer.singleShot(4500, window._preload_video)            # module video : bibliotheques chargees en fond
+    QTimer.singleShot(1500, window._start_css_sync)          # feuille CSS partagee avec Obsidian
     sys.exit(app.exec())
 
 if __name__ == "__main__":

@@ -6,8 +6,8 @@ Les icones et logiciels touchent au cache de l'appli : imports tardifs (previews
 comme dans la v1."""
 from __future__ import annotations
 
-from PySide6.QtCore import QTimer, Qt, Signal
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtCore import QPointF, QTimer, Qt, Signal
+from PySide6.QtGui import QFont, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMessageBox, QVBoxLayout, QWidget,
 )
@@ -17,7 +17,7 @@ from app_style import SMOOTHING_CHOICES, SMOOTHING_LABELS_SHORT, auto_family_for
 from settings_colorpicker import _ColorField
 
 from settings_sections import _SMOOTHING_STEPS, _font_choices
-from settings_store import M
+from settings_store import M, input_bg, input_border_decl
 from settings_theme import _input_radius, _register_input, _set_text_role
 from settings_widgets import _Btn, _FontSelectField, _SteppedSliderField, _qfont
 
@@ -66,7 +66,7 @@ class RootPathField(QWidget):
 
     def _restyle(self):
         self.edit.setStyleSheet(
-            f"QLineEdit {{ background: {M['field_bg']}; border: 1px solid {M['field_border']}; "
+            f"QLineEdit {{ background: {input_bg()}; {input_border_decl()} "
             f"border-radius: {self._radius}px; color: {M['value_fg']}; padding: 0 6px; }}")
 
     def _browse(self):
@@ -226,6 +226,89 @@ def _avatar() -> QLabel:
     return avatar
 
 
+def _default_glyph(key: str, size: int) -> QPixmap | None:
+    """Rendu actuel (glyphe peint) d'une icone de la visionneuse sans icone perso, pour la montrer dans
+    ICONES / Visionneuse > Icones ; None pour les autres cles."""
+    import focus
+    import previews as pb_previews
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QColor, QPainter
+
+    navbar_kinds = {pb_previews.UI_ICON_NAVBAR_MIN: "min", pb_previews.UI_ICON_NAVBAR_MAX: "max",
+                    pb_previews.UI_ICON_NAVBAR_CLOSE: "close", pb_previews.UI_ICON_NAVBAR_BROWSE: "browse",
+                    pb_previews.UI_ICON_NAVBAR_PRESETS: "presets", pb_previews.UI_ICON_SETTINGS_GEAR: "gear",
+                    pb_previews.UI_ICON_SETTINGS_STYLE: "sliders", pb_previews.UI_ICON_NAVBAR_VIEWER: "viewer",
+                    pb_previews.UI_ICON_NAVBAR_TEXT_EDITOR: "text_editor",
+                    pb_previews.UI_ICON_NAVBAR_BOARD: "board"}
+    if key in navbar_kinds:
+        from preview_column import IconButton
+
+        button = IconButton(navbar_kinds[key], "#c4cacf", "#ffffff")
+        button.setFlat(True)                             # sans le cadre des boutons de l'appli
+        button.setStyleSheet("QPushButton { background: transparent; border: none; }")
+        button.resize(size, size)
+        return button.grab()
+    if isinstance(key, str) and key.startswith("ui_board_"):    # Reglages > MRO > Icones : glyphe du board
+        from board.ui import paint_glyph
+        from PySide6.QtCore import QRectF
+        kind = key[len("ui_board_"):]
+        glyph = QPixmap(size, size)
+        glyph.fill(Qt.transparent)
+        painter = QPainter(glyph)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        paint_glyph(painter, kind, QRectF(0, 0, size, size), QColor("#c4cacf"))
+        painter.end()
+        return glyph
+    if key == pb_previews.UI_ICON_NAVBAR_CRUMB_SEPARATOR:   # le caractere de separation par defaut
+        glyph = QPixmap(size, size)
+        glyph.fill(Qt.transparent)
+        painter = QPainter(glyph)
+        painter.setPen(QColor("#9aa1a6"))
+        font = painter.font()
+        font.setPixelSize(int(size * 0.8))
+        painter.setFont(font)
+        painter.drawText(glyph.rect(), Qt.AlignCenter, "›")
+        painter.end()
+        return glyph
+    if key == pb_previews.UI_ICON_APP_LOGO:                 # le carre neutre d'origine
+        square = QPixmap(size, size)
+        square.fill(Qt.transparent)
+        painter = QPainter(square)
+        painter.setPen(QPen(QColor("#5f666b"), 1))
+        painter.drawRect(size // 2 - 5, size // 2 - 5, 9, 9)
+        painter.end()
+        return square
+    if key not in pb_previews.VIEWER_ICON_KEYS:
+        return None
+    pix = QPixmap(size, size)
+    pix.fill(Qt.transparent)
+    kind = next((k for k, v in pb_previews.VIEWER_BUTTON_ICONS.items() if v == key), None)
+    if kind is not None:
+        from preview_column import IconButton
+
+        button = IconButton(kind, "#c4cacf", "#ffffff")
+        button.setFlat(True)                             # sans le cadre des boutons de l'appli
+        button.setStyleSheet("QPushButton { background: transparent; border: none; }")
+        button.resize(size, size)
+        return button.grab()
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    rect = QRect(0, 0, size, size)
+    if key in (pb_previews.UI_ICON_VIEWER_STAR_ON, pb_previews.UI_ICON_VIEWER_STAR_OFF):
+        focus._paint_star(painter, rect, key == pb_previews.UI_ICON_VIEWER_STAR_ON)
+    elif key == pb_previews.UI_ICON_VIEWER_PLUS:
+        painter.setPen(QPen(QColor("#c4cacf"), 1.6, Qt.SolidLine, Qt.RoundCap))
+        centre, arm = size / 2, size * 0.3
+        painter.drawLine(QPointF(centre - arm, centre), QPointF(centre + arm, centre))
+        painter.drawLine(QPointF(centre, centre - arm), QPointF(centre, centre + arm))
+    else:
+        flag = focus._flag_pixmap("keep" if key == pb_previews.UI_ICON_VIEWER_FLAG_KEEP else "delete", size - 2)
+        if flag is not None:
+            painter.drawPixmap(1, 1, flag)
+    painter.end()
+    return pix
+
+
 class UiIconField(QWidget):
     """ICONES > General : une icone d'interface (dossier, fichier, engrenage...) ou la punaise (deux
     etats sur la meme ligne). Changer / capturer / reinitialiser agit tout de suite sur le fichier
@@ -236,9 +319,7 @@ class UiIconField(QWidget):
         import previews as pb_previews
 
         self.setStyleSheet("background: transparent;")
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(24)
+        self._states: list = []                 # (legende, apercu, boutons) : voir states()
         if ui_key == "pin":
             states = ((pb_previews.UI_ICON_PIN_INACTIVE, "Non attachee"), (pb_previews.UI_ICON_PIN_ACTIVE, "Attachee"))
             short = True
@@ -247,22 +328,22 @@ class UiIconField(QWidget):
             states = ((getattr(pb_previews, f"UI_ICON_{ui_key.upper()}", ui_key), ""),)
             short = False
         for key, caption in states:
-            group, group_l = _row()
-            if caption:
-                label = QLabel(caption)
-                _set_text_role(label, "note")
-                group_l.addWidget(label)
             avatar = _avatar()
             self._show(avatar, key)
-            group_l.addWidget(avatar)
+            # Deux boutons COTE A COTE (plus de capture d'une zone d'ecran : demande de l'utilisateur).
+            row, row_layout = _row()
             for text, action in ((("Changer..." if short else "Changer l'icone..."), self._change),
-                                 (("Capturer..." if short else "Capturer une zone d'ecran..."), self._capture),
                                  (("Reinit." if short else "Reinitialiser"), self._reset)):
                 button = _button(text)
                 button.clicked.connect(lambda _c=False, k=key, av=avatar, act=action: act(k, av))
-                group_l.addWidget(button)
-            layout.addWidget(group)
-        layout.addStretch(1)
+                row_layout.addWidget(button)
+            row_layout.addStretch(1)
+            self._states.append((caption, avatar, [row]))
+
+    def states(self) -> list:
+        """[(legende, apercu de l'icone en cours, boutons Changer / Capturer / Reinitialiser)] : la cellule divisee
+        de la ligne (sous-cellule « Icône » avec l'apercu, puis les choix)."""
+        return self._states
 
     @staticmethod
     def _show(avatar: QLabel, key: str):
@@ -275,15 +356,22 @@ class UiIconField(QWidget):
             avatar.setPixmap(pb_core._pin_icon_pixmap(True, 24))
         else:
             pix = pb_previews.custom_ui_icon_pixmap(key, 24)
+            if pix is None:
+                pix = _default_glyph(key, 24)               # l'icone EN COURS : le glyphe peint par defaut
             avatar.setPixmap(pix if pix is not None else QPixmap())
 
     def _change(self, key: str, avatar: QLabel):
         pix = _pick_image(self)
         if pix is not None and _save_icon(self, key, pix):
             self._show(avatar, key)
+            self._refresh_app_icons()
 
     def _capture(self, key: str, avatar: QLabel):
-        _capture(self, lambda pix: _save_icon(self, key, pix) and self._show(avatar, key))
+        def saved(pix):
+            if _save_icon(self, key, pix):
+                self._show(avatar, key)
+                self._refresh_app_icons()
+        _capture(self, saved)
 
     def _reset(self, key: str, avatar: QLabel):
         import previews as pb_previews
@@ -295,6 +383,23 @@ class UiIconField(QWidget):
             pass
         pb_previews.forget_mtime(path)
         self._show(avatar, key)
+        self._refresh_app_icons()
+
+    @staticmethod
+    def _refresh_app_icons():
+        from preview_column import IconButton
+        for window in QApplication.topLevelWidgets():
+            titlebar = getattr(window, "titlebar", None)
+            if titlebar is not None and hasattr(titlebar, "refresh_look"):
+                titlebar.refresh_look()
+            for button in window.findChildren(IconButton):
+                button.update()
+            try:                                         # boutons du board ouvert (Reglages > MRO > Icones)
+                from board.ui import _GlyphButton
+                for button in window.findChildren(_GlyphButton):
+                    button.update()
+            except Exception:                            # noqa: BLE001
+                pass
 
 
 class LogicielsField(QWidget):

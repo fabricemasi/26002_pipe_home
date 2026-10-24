@@ -15,3 +15,13 @@ rawpy
 # les .md restent en texte brut.
 markdown-it-py
 mdit-py-plugins
+# Module video (paquet video/) : decodage exact des videos (PyAV, FFmpeg integre), EXR / TIFF / DPX en pleine
+# precision (OpenImageIO), colorimetrie (OpenColorIO, configuration ACES integree), affichage GPU (PyOpenGL).
+# Tous optionnels : sans eux le module dit ce qui manque. Export : FFmpeg en ligne de commande (PATH).
+av
+OpenImageIO
+opencolorio
+PyOpenGL
+# Lecture des videos par LibVLC (moteur de VLC : decodage materiel, son, cache reseau) : python-vlc + VLC 3
+# installe (64 bits). Sans eux, le module lit par PyAV.
+python-vlc

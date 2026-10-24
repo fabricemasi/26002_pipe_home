@@ -95,9 +95,6 @@ class InspectorEditTest(unittest.TestCase):
         patcher = mock.patch.object(dp, "QMessageBox", _FakeBox)
         patcher.start()
         self.addCleanup(patcher.stop)
-        assets = mock.patch.object(mp, "obsidian_assets", return_value=None)
-        assets.start()
-        self.addCleanup(assets.stop)
 
     def edit(self, text):
         editor = self.panel.markdown_editor

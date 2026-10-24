@@ -689,7 +689,38 @@ class _SquarePreviewImage(QLabel):
         mp.end()
         self.setPixmap(masked)
 
-class _StatusLabel(QLabel):
+class _ShadowTextMixin:
+    """Texte pose sur une image (titre / indicateurs de la colonne Focus) : ombre portee de 1 px peinte a la
+    main, lisible sur une photo claire comme sombre. PAS de QGraphicsDropShadowEffect : la carte de la colonne
+    est deja sous un QGraphicsEffect (coins arrondis), des effets imbriques ralentissaient ses captures."""
+
+    _shadowed = False
+    _text_color = "#d6d9dc"
+
+    def paintEvent(self, event):
+        if not self._shadowed:
+            return super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setFont(self.font())
+        rect, flags, text = self.contentsRect(), int(self.alignment()), self.text()
+        painter.setPen(QColor(0, 0, 0, 170))
+        painter.drawText(rect.translated(0, 1), flags, text)
+        painter.drawText(rect.translated(1, 1), flags, text)
+        painter.setPen(QColor(self._text_color))
+        painter.drawText(rect, flags, text)
+        painter.end()
+
+
+class _ImageTitle(_ShadowTextMixin, QLabel):
+    """Titre de la colonne Focus, pose dans l'image."""
+
+
+def _legible_on_image(label: QWidget, color: str) -> None:
+    label._shadowed = True
+    label._text_color = color
+
+
+class _StatusLabel(_ShadowTextMixin, QLabel):
     """Un des trois indicateurs in/over/out en tete d'un _PreviewBlock : voir
     STATUS_FOLDERS/status_folder_state. Sombre et inerte si le dossier
     correspondant est vide/absent, clair et cliquable (ouvre le dossier) des
@@ -725,6 +756,7 @@ class _StatusLabel(QLabel):
         # selectionne, sur la meme ligne que apercu des dossiers -
         # couleur").
         color = (active_color or C["text"]) if active else (idle_color or C["dim"])
+        self._text_color = color
         self.setStyleSheet(f"color: {color}; background: transparent;")
         if active:
             self.setCursor(Qt.PointingHandCursor)
@@ -891,14 +923,17 @@ class _PreviewBlock(QWidget):
         # items des colonnes focus"). Aucun filet entre les indicateurs et
         # le titre (border: none, EXPLICITE) — juste explicite ici pour ne PAS
         # heriter d'un style par defaut.
-        status_bar.setAttribute(Qt.WA_StyledBackground, True)
-        status_bar.setStyleSheet(f"background: {block_bg}; border: none;")
+        # Demande de l'utilisateur : titre en haut a gauche et indicateurs in / over / out en bas a gauche,
+        # A L'INTERIEUR de l'image, qui monte tout en haut du bloc. Barres transparentes posees sur l'image
+        # (`_place_overlays`), plus de rangees au-dessus d'elle.
+        status_bar.setParent(self)
+        status_bar.setAttribute(Qt.WA_StyledBackground, False)
+        status_bar.setStyleSheet("background: transparent; border: none;")
         status_layout = QHBoxLayout(status_bar)
         status_layout.setContentsMargins(
             int(status_pad.get("left", 14)), int(status_pad.get("top", 0)),
             int(status_pad.get("right", 14)), int(status_pad.get("bottom", 0)))
         status_layout.setSpacing(14)
-        status_layout.addStretch(1)
         for name in STATUS_FOLDERS:
             active, folder_path = status_folder_state(path, name)
             label = _StatusLabel(
@@ -908,30 +943,32 @@ class _PreviewBlock(QWidget):
                 weight=status_font_weight, italic=status_font_italic)
             if active:
                 label.clicked.connect(lambda p=folder_path: open_status(p))
+            _legible_on_image(label, label._text_color)
             status_layout.addWidget(label)
-        layout.addWidget(status_bar)
+        status_layout.addStretch(1)
         self._status_bar = status_bar
 
         title_bar = QWidget()
         title_bar.setFixedHeight(title_height)
         # MEME couleur que status_bar/le reste du bloc (block_bg) — voir sa
         # remarque juste au-dessus.
-        title_bar.setAttribute(Qt.WA_StyledBackground, True)
-        title_bar.setStyleSheet(f"background: {block_bg}; border: none;")
+        title_bar.setParent(self)
+        title_bar.setAttribute(Qt.WA_StyledBackground, False)
+        title_bar.setStyleSheet("background: transparent; border: none;")
+        # Rien de cliquable dedans : les clics vont a l'image dessous (le clic droit du bloc reste).
+        title_bar.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         title_layout = QHBoxLayout(title_bar)
         title_layout.setContentsMargins(
             int(title_pad.get("left", 14)), int(title_pad.get("top", 0)),
             int(title_pad.get("right", 14)), int(title_pad.get("bottom", 8)))
-        name = QLabel(title)
+        name = _ImageTitle(title)
         name.setFont(font(
             title_font_size, title_font_weight, family=title_font_family, tracking=0.0,
             smoothing=title_font_smoothing, italic=title_font_italic))
         name.setStyleSheet(f"color: {title_font_color}; background: transparent;")
-        # Colle au bas de la barre de titre (juste au-dessus de l'image),
-        # pas centre sur toute sa hauteur : plus proche de l'image, plus
-        # affiche.
-        title_layout.addWidget(name, 0, Qt.AlignBottom | Qt.AlignLeft)
-        layout.addWidget(title_bar)
+        # En haut a gauche de l'image (demande de l'utilisateur).
+        _legible_on_image(name, title_font_color)
+        title_layout.addWidget(name, 0, Qt.AlignTop | Qt.AlignLeft)
         self._title_bar = title_bar
 
         # Toujours enveloppee dans image_wrap (meme si le padding est nul) :
@@ -1014,6 +1051,7 @@ class _PreviewBlock(QWidget):
         self.image.set_rect(img_width, img_height)
         self._image_wrap_layout.setContentsMargins(pad_left, pad_top, pad_right, pad_bottom)
         image_area_height = pad_top + img_height + pad_bottom
+        self._image_box = QRect(pad_left, pad_top, img_width, img_height)
 
         # Sans une hauteur EXPLICITE, ce widget garde une politique de
         # taille verticale "Preferred" par defaut : des qu'un parent (voir
@@ -1027,7 +1065,25 @@ class _PreviewBlock(QWidget):
         # HEIGHT + title_height + img_height (PAS PREVIEW_BLOCK_EXTRA_
         # HEIGHT + width, fige sur les anciennes constantes/le carre) :
         # hauteur EFFECTIVE, ratio/hauteur de zone titre compris.
-        self.setFixedHeight(PREVIEW_STATUS_HEIGHT + title_height + image_area_height)
+        # Titre et indicateurs sont DANS l'image : le bloc n'a que la hauteur de l'image.
+        self.setFixedHeight(image_area_height)
+        self._title_height = title_height
+        self._place_overlays()
+
+    def _place_overlays(self):
+        """Titre en haut a gauche et indicateurs en bas a gauche, sur l'image (sous la bordure du bloc)."""
+        box = getattr(self, "_image_box", None)
+        if box is None or not hasattr(self, "_title_bar"):
+            return
+        self._title_bar.setGeometry(box.left(), box.top(), box.width(), min(box.height(), self._title_height))
+        status = self._status_bar
+        width = min(box.width(), status.sizeHint().width())
+        status.setGeometry(box.left(), box.bottom() + 1 - PREVIEW_STATUS_HEIGHT, width, PREVIEW_STATUS_HEIGHT)
+        for bar in (self._title_bar, status):
+            bar.raise_()
+        overlay = getattr(self, "_border_overlay", None)
+        if overlay is not None:
+            overlay.raise_()
 
     def install_resize_filter(self, owner: QWidget):
         """Installe `owner` (PreviewColumn, voir resize_begin/resize_update/
@@ -1193,6 +1249,7 @@ class _PreviewBlock(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._border_overlay.setGeometry(self.rect())
+        self._place_overlays()
         self._border_overlay.raise_()
 
 class _RoundedCornersEffect(QGraphicsEffect):

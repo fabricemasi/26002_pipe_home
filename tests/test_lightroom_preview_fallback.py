@@ -174,8 +174,11 @@ class LightroomPreviewFallbackTest(unittest.TestCase):
             large = QImage(1600, 1067, QImage.Format_RGB32)
             large.fill(0xFFAA5500)
             self.assertTrue(large.save(str(rendered), "JPEG"))
+            # Vignette de la pyramide trop petite (< 640 px) : le proxy est le rendu SDK...
             self.assertEqual(lightroom_bridge.proxy_path(self.photo), rendered)
             self.assertEqual(lightroom_bridge.proxy_path(self.photo, max_dimension=640), rendered)
+            # ... et l'image en focus aussi (jamais la vignette).
+            self.assertEqual(lightroom_bridge.large_file(self.photo)[0], rendered)
 
     def test_focus_requests_large_render_when_only_thumbnail_exists(self):
         small = self.base / "lightroom-small.jpg"
@@ -227,7 +230,7 @@ class LightroomPreviewFallbackTest(unittest.TestCase):
         with (patch.object(lightroom_bridge, "is_managed", return_value=True),
               patch.object(lightroom_bridge, "proxy_path", return_value=small) as proxy):
             focus._ProxyTask(signals, str(self.photo), self.photo.stat().st_mtime, 480).run()
-        proxy.assert_called_once_with(self.photo, max_dimension=640)
+        proxy.assert_called_once_with(self.photo)
         self.assertEqual(received[0].size(), QSize(160, 100))
 
     def test_oriented_small_and_large_proxies_have_distinct_cache_files(self):
@@ -257,11 +260,11 @@ class LightroomPreviewFallbackTest(unittest.TestCase):
         received = []
         signals.done.connect(lambda *_args: received.append(_args))
         with (patch.object(lightroom_bridge, "is_managed", return_value=True),
-              patch.object(lightroom_bridge, "proxy_path", return_value=small),
-              patch.object(lightroom_bridge, "preview_origin", return_value="lightroom")):
+              patch.object(lightroom_bridge, "large_file", return_value=None),
+              patch.object(lightroom_bridge, "proxy_path", return_value=small)):
             focus._DecodeTask(signals, str(original), original.stat().st_mtime, QSize(600, 400), 8192).run()
         self.assertEqual(received[0][2].size(), QSize(1200, 800))
-        self.assertEqual(received[0][5], "original")
+        self.assertEqual(received[0][5], "Image originale")
 
     def test_focus_keeps_large_lightroom_preview_with_edits(self):
         proxy_image = QImage(1200, 800, QImage.Format_RGB32)
@@ -271,12 +274,13 @@ class LightroomPreviewFallbackTest(unittest.TestCase):
         signals = focus._DecodeSignals()
         received = []
         signals.done.connect(lambda *_args: received.append(_args))
+        source = "Lightroom · aperçu développé 1200 px (Previews.lrdata)"
         with (patch.object(lightroom_bridge, "is_managed", return_value=True),
-              patch.object(lightroom_bridge, "proxy_path", return_value=proxy),
-              patch.object(lightroom_bridge, "preview_origin", return_value="lightroom")):
-            focus._DecodeTask(signals, str(self.photo), self.photo.stat().st_mtime, QSize(600, 400), 8192).run()
+              patch.object(lightroom_bridge, "large_file", return_value=(proxy, source))):
+            # Zone de focus plus GRANDE que l'aperçu : il reste montré (jamais l'original non développé).
+            focus._DecodeTask(signals, str(self.photo), self.photo.stat().st_mtime, QSize(2400, 1600), 8192).run()
         self.assertEqual(received[0][2].size(), QSize(1200, 800))
-        self.assertEqual(received[0][5], "lightroom")
+        self.assertEqual(received[0][5], source)
 
     def test_focus_applies_lightroom_orientation_to_unrotated_original(self):
         original = self.base / "landscape.jpg"

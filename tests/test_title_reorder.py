@@ -21,6 +21,7 @@ app = QApplication.instance() or QApplication([])
 import settings_window_v2 as v2
 from settings_layout import _ReorderOverlay
 from settings_store import DEFAULT_SETTINGS as _DEFAULTS
+from settings_widgets import set_space_above, set_space_below
 
 v2.AUTOSAVE = False
 
@@ -115,6 +116,25 @@ class TitleReorderTest(unittest.TestCase):
         self._drag(first.head, QPoint(30, first.head.height() // 2), first.height() + stack.nodes[1].height() // 2 + 6)
         self.assertEqual([n.node.title for n in stack.nodes], [titles[1], titles[0]])
         self.assertEqual(self.win.settings["title_order"]["General|TITRES"], [titles[1], titles[0]])
+
+    def test_above_and_below_spaces_move_with_their_sections(self):
+        stack = self._sections(self.win)
+        first, second = stack.nodes[:2]
+        set_space_above(first, 13)
+        set_space_below(first, 27)
+        set_space_above(second, 41)
+        set_space_below(second, 55)
+
+        layout = stack.container.layout()
+        trailing_stretch = layout.itemAt(layout.count() - 1).spacerItem()
+        stack.apply([second, first, *stack.nodes[2:]])
+        self.assertIs(layout.itemAt(layout.count() - 1).spacerItem(), trailing_stretch)
+        for node, above, below in ((second, 41, 55), (first, 13, 27)):
+            index = layout.indexOf(node)
+            self.assertIs(layout.itemAt(index - 1).spacerItem(), node._space_above_item)
+            self.assertEqual(layout.itemAt(index - 1).spacerItem().sizeHint().height(), above)
+            self.assertIs(layout.itemAt(index + 1).spacerItem(), node._space_below_item)
+            self.assertEqual(layout.itemAt(index + 1).spacerItem().sizeHint().height(), below)
 
 
 if __name__ == "__main__":

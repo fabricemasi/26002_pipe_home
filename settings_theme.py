@@ -9,6 +9,7 @@ nouveau.
 
 Vient juste apres settings_store dans l'ordre de dependance (avant
 settings_widgets, qui reexporte _qfont)."""
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QLabel, QWidget
 
@@ -172,6 +173,84 @@ def _set_radius_of(kind: str, radius: int) -> None:
 
 def _input_radius() -> int:
     return _radius_of("input")
+
+
+def apply_input_look(values: dict) -> None:
+    """Reglages > Zone de saisie : rayon, hauteur, couleur, bordures de TOUTES les zones de saisie inscrites (menus
+    deroulants, champs texte, boites de valeur des curseurs...) — rejoue leur habillage."""
+    import settings_store as store
+    store.set_input_look(values)
+    radius = values.get("input_corner_radius")
+    if radius is not None:
+        top_left = radius.get("top_left", 0) if isinstance(radius, dict) else radius
+        try:
+            _RADII["input"] = max(0, int(top_left))
+        except (TypeError, ValueError):
+            pass
+    # Rien n'a change pour les zones de saisie (ce qui est le cas de presque tout apercu en direct : curseur d'une
+    # autre section...) : ne rien repeindre. Rejouer l'habillage de ~1000 zones de saisie coutait ~1 s PAR cran
+    # d'un curseur, sur n'importe quel reglage.
+    global _LAST_INPUT_SIG
+    signature = repr((sorted((k, repr(v)) for k, v in store.INPUT_LOOK.items() if k != "colors"),
+                      sorted((store.INPUT_LOOK.get("colors") or {}).items()), _RADII["input"]))
+    if signature == _LAST_INPUT_SIG:
+        return
+    _LAST_INPUT_SIG = signature
+    visible = []
+    hidden = []
+    for widget in list(_REGISTERED["input"]):
+        try:
+            (visible if widget.isVisible() else hidden).append(widget)
+        except RuntimeError:                              # objet Qt deja detruit (fenetre fermee)
+            _REGISTERED["input"].discard(widget)
+    for widget in visible:                                # ce qu'on voit : tout de suite
+        _restyle_input(widget)
+    _PENDING_INPUTS[:] = hidden                           # le reste : par petits paquets, sans figer l'interface
+    if hidden and not _PENDING_TIMER:
+        _PENDING_TIMER.append(True)
+        QTimer.singleShot(20, _restyle_pending_inputs)
+
+
+_LAST_INPUT_SIG = None
+_PENDING_INPUTS: list = []
+_PENDING_TIMER: list = []
+
+
+def _restyle_input(widget) -> None:
+    import settings_store as store
+    try:
+        base = getattr(widget, "_default_height", None)
+        if base is None:
+            # Hauteur NATURELLE, jamais celle du moment : une section preparee en fond (cachee, mise en page tassee)
+            # donnait ~17 px a un curseur dont la case de valeur en fait 25 — case coupee en bas (signale).
+            if 0 < widget.minimumHeight() == widget.maximumHeight():
+                base = widget.minimumHeight()            # hauteur fixee par son createur : gardee
+            else:
+                base = widget.sizeHint().height()
+                if widget.isVisible():
+                    base = max(base, widget.height())
+            widget._default_height = base
+        widget.setRadius(_RADII["input"])                 # rejoue aussi son habillage
+        height = store.input_height() or base
+        box = getattr(widget, "box", None)                # curseur : jamais plus bas que sa case de valeur
+        if box is not None:
+            height = max(height, box.height())
+        widget.setFixedHeight(height)
+    except RuntimeError:
+        _REGISTERED["input"].discard(widget)
+
+
+def _restyle_pending_inputs() -> None:
+    import time
+    # Paquet borne en TEMPS (6 ms), pas en nombre : 40 zones de saisie prenaient ~40 ms d'un coup, toutes les
+    # 20 ms, pendant plus d'une seconde — l'interface (curseur tire, toggle) hachait.
+    end = time.perf_counter() + 0.006
+    while _PENDING_INPUTS and time.perf_counter() < end:
+        _restyle_input(_PENDING_INPUTS.pop())
+    if _PENDING_INPUTS:
+        QTimer.singleShot(20, _restyle_pending_inputs)
+    else:
+        _PENDING_TIMER.clear()
 
 
 def _register_input(widget: QWidget) -> int:

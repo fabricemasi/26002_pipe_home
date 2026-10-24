@@ -1,37 +1,31 @@
-"""Apercu des notes Markdown avec le CSS d'Obsidian : page HTML complete (pour QWebEngineView,
-voir DetailPanel) qui reproduit la structure du mode lecture d'Obsidian, pour que ses regles
-s'appliquent telles quelles.
+"""Notes Markdown : rendu HTML (mode lecture du module Markdown, apercu de l'inspecteur) et lecture / ecriture
+FIDELES des fichiers texte.
 
-CSS, dans l'ordre d'Obsidian : son app.css (lu dans SON installation, archive obsidian.asar,
-extrait une fois avec ses polices dans data/obsidian_cache/<date de l'archive>/), le theme du
-coffre puis ses snippets ACTIVES (.obsidian/themes, .obsidian/snippets, relus a chaque rendu),
-et les reglages d'apparence du coffre (clair/sombre, accent, polices, taille de texte). Coffre =
-celui qui contient la note (dossier .obsidian dans un parent), sinon celui ouvert dans Obsidian
-(%APPDATA%/obsidian/obsidian.json).
+Conversion : markdown-it-py (+ mdit-py-plugins) — CommonMark, tableaux, barre, cases a cocher, notes de bas de page,
+proprietes (front-matter) — plus la syntaxe courante des notes de l'utilisateur ecrites dans Obsidian : liens
+[[note|alias]], images ![[image.png|300]], ==surlignage==, #tags, %%commentaires%%, callouts « > [!type] titre »,
+adresses web en clair. Images et liens relatifs resolus depuis le dossier de la note (sous-dossiers compris), puis
+par NOM dans la racine de la note (coffre = parent qui a un dossier .obsidian, sinon le dossier de la note) ;
+references d'origine jamais modifiees (seul le HTML pointe vers les fichiers).
 
-Conversion : markdown-it-py (+ mdit-py-plugins) et la syntaxe propre a Obsidian ajoutee par-dessus :
-[[liens]] et ![[integrations]] (resolus dans le dossier de la note puis dans le coffre), callouts
-« > [!type] titre », ==surlignage==, #tags, %%commentaires%%, proprietes (front-matter).
-Pas encore : formules ($...$) et diagrammes Mermaid (montres comme du code).
+Apparence : AUCUN style ici ; la page de l'inspecteur prend la feuille du module (mdeditor/web/base.css) et les
+variables des reglages (mdeditor/style.py) : meme rendu que le mode lecture du module.
 Aucune dependance vers le reste de l'appli hors config."""
 from __future__ import annotations
 
-import colorsys
 import html
 import json
 import os
 import re
-import shutil
-import struct
 import threading
+import time
 from pathlib import Path
-
-from config import DATA_DIR
+from urllib.parse import quote, unquote
 
 MARKDOWN_EXTENSIONS = {".md", ".markdown"}
 IMAGE_EMBED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp", ".avif"}
-CACHE_DIR = DATA_DIR / "obsidian_cache"
-_LOCK = threading.Lock()
+INDEX_MAX_FILES = 30000          # au-dela, la recherche par nom s'arrete (racine geante : F:\PIPELINE...)
+INDEX_TTL = 30.0                 # secondes avant de reparcourir une racine
 
 
 def available() -> bool:
@@ -42,104 +36,23 @@ def available() -> bool:
         return False
 
 
-# -- Installation d'Obsidian : app.css et ses ressources ------------------------------------------
+# -- Racine d'une note et coffres Obsidian ---------------------------------------------------------------------------
 
-def obsidian_asar() -> Path | None:
-    candidates = []
-    if os.environ.get("OBSIDIAN_ASAR"):
-        candidates.append(Path(os.environ["OBSIDIAN_ASAR"]))
-    for root in (os.environ.get("LOCALAPPDATA"), os.environ.get("ProgramFiles"), r"C:\Program Files"):
-        if root:
-            candidates += [Path(root) / "Programs" / "Obsidian" / "resources" / "obsidian.asar",
-                           Path(root) / "Obsidian" / "resources" / "obsidian.asar"]
-    return next((p for p in candidates if p.is_file()), None)
-
-
-def _asar_entries(asar: Path) -> tuple[dict, int]:
-    """(arbre des fichiers, debut des donnees) d'une archive asar (format d'Electron : entete
-    JSON precede de sa taille)."""
-    with open(asar, "rb") as stream:
-        _, header_size, _, json_size = struct.unpack("<4I", stream.read(16))
-        return json.loads(stream.read(json_size)), 8 + header_size
-
-
-def _asar_extract(asar: Path, header: dict, base: int, inner: str, dest: Path):
-    """Extrait le fichier ou le dossier `inner` (chemin a / dans l'archive) sous `dest`."""
-    node = header
-    for part in inner.split("/"):
-        node = node.get("files", {}).get(part)
-        if node is None:
-            return
-    with open(asar, "rb") as stream:
-        def write(entry: dict, rel: str):
-            if "files" in entry:
-                for name, child in entry["files"].items():
-                    write(child, f"{rel}/{name}")
-                return
-            if entry.get("unpacked") or "offset" not in entry:
-                return
-            target = dest / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            stream.seek(base + int(entry["offset"]))
-            target.write_bytes(stream.read(int(entry["size"])))
-        write(node, inner)
-
-
-def obsidian_assets() -> Path | None:
-    """Dossier local avec app.css, public/ (polices, images) et lib/prism.min.js, extraits de
-    l'installation d'Obsidian. Refait quand l'archive change (mise a jour d'Obsidian)."""
-    asar = obsidian_asar()
-    if asar is None:
-        return None
+def note_root(note: Path) -> Path:
+    """Racine de resolution par NOM : le coffre qui contient la note (parent avec `.obsidian`), sinon son dossier."""
     try:
-        stamp = str(int(asar.stat().st_mtime))
+        note = note.resolve()
     except OSError:
-        return None
-    dest = CACHE_DIR / stamp
-    with _LOCK:
-        if (dest / "app.css").is_file():
-            return dest
-        try:
-            header, base = _asar_entries(asar)
-            work = CACHE_DIR / (stamp + ".tmp")
-            shutil.rmtree(work, ignore_errors=True)
-            for inner in ("app.css", "public", "lib/prism.min.js"):
-                _asar_extract(asar, header, base, inner, work)
-            if not (work / "app.css").is_file():
-                return None
-            shutil.rmtree(dest, ignore_errors=True)
-            work.rename(dest)
-            for old in CACHE_DIR.iterdir():          # versions precedentes d'Obsidian
-                if old != dest:
-                    shutil.rmtree(old, ignore_errors=True)
-            return dest
-        except (OSError, ValueError, KeyError, struct.error):
-            return None
-
-
-# -- Coffre (vault) et son apparence ---------------------------------------------------------------
-
-def vault_for(note: Path) -> Path | None:
-    for parent in note.resolve().parents:
+        pass
+    for parent in note.parents:
         if (parent / ".obsidian").is_dir():
             return parent
-    config = Path(os.environ.get("APPDATA", "")) / "obsidian" / "obsidian.json"
-    try:
-        vaults = json.loads(config.read_text(encoding="utf-8")).get("vaults", {}).values()
-    except (OSError, ValueError):
-        return None
-    ordered = sorted(vaults, key=lambda v: (bool(v.get("open")), v.get("ts", 0)), reverse=True)
-    for vault in ordered:
-        path = Path(vault.get("path", ""))
-        if (path / ".obsidian").is_dir():
-            return path
-    return None
+    return note.parent
 
 
 def vault_containing(note: Path) -> Path | None:
-    """Coffre Obsidian qui CONTIENT vraiment la note (un parent avec `.obsidian`, ou un coffre declare dans
-    %APPDATA%/obsidian/obsidian.json qui en est un parent) ; None sinon (contrairement a vault_for, pas
-    de repli sur le coffre ouvert)."""
+    """Coffre Obsidian qui CONTIENT la note (un parent avec `.obsidian`, ou un coffre declare dans
+    %APPDATA%/obsidian/obsidian.json qui en est un parent) ; None sinon."""
     try:
         resolved = note.resolve()
     except OSError:
@@ -163,146 +76,130 @@ def vault_containing(note: Path) -> Path | None:
 
 
 def obsidian_open_url(note: Path) -> str | None:
-    """Lien qui ouvre Obsidian SUR cette note (`obsidian://open?path=<chemin absolu>` : Obsidian ouvre le
-    coffre qui la contient) ; None si la note n'est dans aucun coffre."""
+    """Lien qui ouvre l'application Obsidian SUR cette note (`obsidian://open?path=<chemin absolu>`) ; None si la note
+    n'est dans aucun coffre."""
     if note.suffix.lower() != ".md" or vault_containing(note) is None:
         return None
-    from urllib.parse import quote
     return "obsidian://open?path=" + quote(str(note.resolve()), safe="")
 
 
-def _read_json(path: Path) -> dict:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-        return value if isinstance(value, dict) else {}
-    except (OSError, ValueError):
-        return {}
+# -- Index des noms de fichiers d'une racine (liens [[nom]], images ![[image.png]]) -----------------------------------
+
+_INDEX: dict = {}
+_INDEX_LOCK = threading.Lock()
 
 
-def _hex_to_hsl(value: str):
-    value = value.lstrip("#")
-    if len(value) != 6:
+def file_index(root: Path) -> dict:
+    """{nom en minuscules: chemin} des fichiers de `root` (sous-dossiers compris, dossiers caches exclus), le plus
+    proche de la racine gagne. Parcouru au plus une fois par `INDEX_TTL` (a appeler hors du fil de l'interface)."""
+    key = str(root)
+    now = time.monotonic()
+    with _INDEX_LOCK:
+        cached = _INDEX.get(key)
+        if cached is not None and now - cached[0] < INDEX_TTL:
+            return cached[1]
+    names: dict = {}
+    count = 0
+    for folder, dirs, files in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+        for name in files:
+            names.setdefault(name.casefold(), os.path.join(folder, name))
+            count += 1
+        if count > INDEX_MAX_FILES:
+            break
+    with _INDEX_LOCK:
+        _INDEX[key] = (now, names)
+    return names
+
+
+def forget_index(root: Path | None = None):
+    with _INDEX_LOCK:
+        if root is None:
+            _INDEX.clear()
+        else:
+            _INDEX.pop(str(root), None)
+
+
+class Resolver:
+    """Fichier vise par un lien depuis une note : chemin relatif a la note, puis a la racine, puis par nom."""
+
+    def __init__(self, note: Path, root: Path | None = None):
+        self.note = note
+        self.root = root or note_root(note)
+        self._names = None
+
+    def find(self, target: str) -> Path | None:
+        target = unquote(target or "").strip().replace("\\", "/")
+        if not target:
+            return None
+        if re.match(r"^[a-zA-Z]:/|^/", target):
+            candidate = Path(target)
+            return candidate if candidate.is_file() else None
+        names = [target] if Path(target).suffix else [target + ".md", target]
+        for base in (self.note.parent, self.root):
+            for name in names:
+                candidate = base / name
+                try:
+                    if candidate.is_file():
+                        return candidate
+                except OSError:
+                    continue
+        if self._names is None:
+            self._names = file_index(self.root)
+        for name in names:
+            found = self._names.get(Path(name).name.casefold())
+            if found is not None:
+                return Path(found)
         return None
-    try:
-        r, g, b = (int(value[i:i + 2], 16) / 255 for i in (0, 2, 4))
-    except ValueError:
-        return None
-    h, l, s = colorsys.rgb_to_hls(r, g, b)
-    return round(h * 360), round(s * 100), round(l * 100)
 
 
-def _body(appearance: dict, app_settings: dict) -> tuple[str, str]:
-    """(classes, style) du <body>, comme Obsidian les pose d'apres l'apparence du coffre."""
-    theme = appearance.get("theme", "obsidian")
-    classes = ["obsidian-app", "mod-windows", "theme-light" if theme == "moonstone" else "theme-dark"]
-    if app_settings.get("showInlineTitle", True):
-        classes.append("show-inline-title")
-    style = []
-    hsl = _hex_to_hsl(appearance.get("accentColor") or "")
-    if hsl:
-        style.append("--accent-h: %d; --accent-s: %d%%; --accent-l: %d%%;" % hsl)
-    for key, var in (("interfaceFontFamily", "--font-interface-override"),
-                     ("textFontFamily", "--font-text-override"),
-                     ("monospaceFontFamily", "--font-monospace-override")):
-        family = (appearance.get(key) or "").strip()
-        if family:
-            style.append("%s: '%s';" % (var, family.replace("'", "")))
-    if appearance.get("baseFontSize"):
-        style.append("--font-text-size: %dpx;" % int(appearance["baseFontSize"]))
-    return " ".join(classes), " ".join(style)
+def file_url(path: Path) -> str:
+    return Path(path).resolve().as_uri()
 
 
-def vault_stylesheets(vault: Path | None, appearance: dict) -> list[Path]:
-    """Theme puis snippets ACTIVES du coffre, dans l'ordre d'Obsidian (fichiers existants)."""
-    if vault is None:
-        return []
-    sheets = []
-    theme = (appearance.get("cssTheme") or "").strip()
-    if theme:
-        for candidate in (vault / ".obsidian" / "themes" / theme / "theme.css",
-                          vault / ".obsidian" / "themes" / f"{theme}.css"):
-            if candidate.is_file():
-                sheets.append(candidate)
-                break
-    for name in appearance.get("enabledCssSnippets") or []:
-        snippet = vault / ".obsidian" / "snippets" / f"{name}.css"
-        if snippet.is_file():
-            sheets.append(snippet)
-    return sheets
-
-
-# -- Markdown -> HTML ------------------------------------------------------------------------------
+# -- Markdown -> HTML ---------------------------------------------------------------------------------------------------
 
 _INLINE_RE = re.compile(
     r"(?P<wiki>(?P<bang>!)?\[\[(?P<target>[^\]\|]*?)(?:\|(?P<alias>[^\]]*))?\]\])"
     r"|(?P<mark>==(?P<marked>[^=\n]+?)==)"
     r"|(?P<tag>(?<![\w/&#])#(?P<tagname>[^\s\d#.,;:!?()\[\]{}'\"`][^\s#.,;:!?()\[\]{}'\"`]*))"
 )
-# Adresses web ecrites en clair (Obsidian en fait des liens), hors des liens existants.
 _URL_RE = re.compile(r"(?P<url>(?:https?|ftp)://[^\s<>\"'\[\]]*[^\s<>\"'\[\].,;:!?)])")
-_CALLOUT_RE = re.compile(r"^\[!(?P<type>[^\]\s]+)\](?P<fold>[+-]?)[ \t]*(?P<title>[^\n]*)\n?")
+_CALLOUT_RE = re.compile(r"^\[!(?P<type>[^\]|]*)(?:\|(?P<meta>[^\]]*))?\](?P<fold>[+-]?)[ \t]*(?P<title>[^\n]*)\n?")
 _COMMENT_RE = re.compile(r"%%.*?%%", re.S)
+_SIZE_RE = re.compile(r"^\s*(\d+)(?:x(\d+))?\s*$")
 
 
-class _Resolver:
-    """Trouve le fichier vise par un [[lien]] : chemin relatif a la note, puis au coffre, puis
-    par nom n'importe ou dans le coffre (index construit une fois par rendu)."""
-
-    def __init__(self, note: Path, vault: Path | None):
-        self.note, self.vault = note, vault
-        self._index = None
-
-    def find(self, target: str) -> Path | None:
-        target = target.strip().replace("\\", "/")
-        if not target:
-            return self.note
-        names = [target] if Path(target).suffix else [target + ".md", target]
-        for base in filter(None, (self.note.parent, self.vault)):
-            for name in names:
-                candidate = base / name
-                if candidate.is_file():
-                    return candidate
-        if self.vault is None:
-            return None
-        if self._index is None:
-            self._index = {}
-            for root, dirs, files in os.walk(self.vault):
-                dirs[:] = [d for d in dirs if not d.startswith(".")]
-                for file_name in files:
-                    self._index.setdefault(file_name.casefold(), Path(root) / file_name)
-        for name in names:
-            found = self._index.get(Path(name).name.casefold())
-            if found is not None:
-                return found
-        return None
+def _size_attrs(text: str | None) -> str:
+    match = _SIZE_RE.match(text or "")
+    if not match:
+        return ""
+    return f' width="{match.group(1)}"' + (f' height="{match.group(2)}"' if match.group(2) else "")
 
 
-def _file_url(path: Path) -> str:
-    return path.resolve().as_uri()
-
-
-def _make_parser():
+def _make_parser(resolver: Resolver):
     from markdown_it import MarkdownIt
+    from markdown_it.token import Token
     from mdit_py_plugins.footnote import footnote_plugin
     from mdit_py_plugins.front_matter import front_matter_plugin
     from mdit_py_plugins.tasklists import tasklists_plugin
 
     md = MarkdownIt("commonmark", {"html": True, "breaks": True}).enable(["table", "strikethrough"])
-    md.use(front_matter_plugin).use(footnote_plugin).use(tasklists_plugin)
+    # Cases actives (pas « disabled ») : un clic dans la lecture du module coche la tache dans le texte, comme Obsidian.
+    md.use(front_matter_plugin).use(footnote_plugin).use(tasklists_plugin, enabled=True)
 
+    # Callouts « > [!type] titre » : le blockquote devient un callout.
     def callouts(state):
-        """> [!type] titre : le blockquote devient un callout (balisage d'Obsidian)."""
-        stack = []
-        tokens = state.tokens
-        i = 0
+        stack, tokens, i = [], state.tokens, 0
         while i < len(tokens):
             token = tokens[i]
             if token.type == "blockquote_open":
                 inline = tokens[i + 2] if i + 2 < len(tokens) and tokens[i + 1].type == "paragraph_open" else None
                 match = _CALLOUT_RE.match(inline.content) if inline is not None and inline.type == "inline" else None
                 if match:
-                    token.meta = {"callout": match.group("type").lower(), "fold": match.group("fold"),
-                                  "title": match.group("title").strip()}
+                    label = match.group("type").strip()
+                    token.meta = {"callout": (label or "note").lower(), "fold": match.group("fold"),
+                                  "title": match.group("title").strip(), "label": label}
                     inline.content = inline.content[match.end():]
                     if not inline.content.strip():
                         del tokens[i + 1:i + 4]          # paragraphe qui ne portait que le titre
@@ -312,71 +209,105 @@ def _make_parser():
                     token.meta = {"callout": True}
             i += 1
 
-    md.core.ruler.before("inline", "obsidian_callouts", callouts)
+    md.core.ruler.before("inline", "md_callouts", callouts)
 
-    def render_blockquote_open(renderer, tokens, idx, options, env):
+    def blockquote_open(renderer, tokens, idx, options, env):
         meta = tokens[idx].meta or {}
         if not meta.get("callout"):
             return "<blockquote>\n"
         kind, fold = meta["callout"], meta["fold"]
-        title = md.renderInline(meta["title"]) if meta["title"] else html.escape(kind.capitalize())
+        label = meta.get("label") or kind
+        title = md.renderInline(meta["title"]) if meta["title"] else html.escape(label[:1].upper() + label[1:])
         classes = "callout" + (" is-collapsible" if fold else "") + (" is-collapsed" if fold == "-" else "")
-        return (f'<div data-callout-metadata="" data-callout-fold="{fold}" data-callout="{html.escape(kind)}" '
-                f'class="{classes}"><div class="callout-title"><div class="callout-icon"></div>'
-                f'<div class="callout-title-inner">{title}</div></div><div class="callout-content">\n')
+        # Structure Obsidian : icone + titre + chevron, puis contenu. Les classes restent identiques en lecture
+        # et dans le bloc de l'editeur, donc un snippet Obsidian peut les habiller sans adaptation.
+        icons = {
+            "info": "i", "note": "i", "abstract": "≡", "summary": "≡", "tldr": "≡", "tip": "✦",
+            "hint": "✦", "important": "!", "success": "✓", "check": "✓", "done": "✓", "question": "?",
+            "help": "?", "faq": "?", "warning": "!", "caution": "!", "attention": "!", "failure": "×",
+            "fail": "×", "missing": "×", "danger": "⚠", "error": "×", "bug": "•", "example": "◇", "quote": "❝",
+            "cite": "❝",
+        }
+        icon = html.escape(icons.get(kind, "i"))
+        fold_attr = f' data-callout-fold="{html.escape(fold)}"' if fold else ""
+        chevron = '<div class="callout-fold">⌄</div>' if fold else ""
+        return (f'<div class="{classes}" data-callout="{html.escape(kind)}"{fold_attr}><div class="callout-title">'
+                f'<div class="callout-icon" aria-hidden="true">{icon}</div><div class="callout-title-inner">{title}</div>{chevron}</div>'
+                f'<div class="callout-content">\n')
 
-    def render_blockquote_close(renderer, tokens, idx, options, env):
+    def blockquote_close(renderer, tokens, idx, options, env):
         return "</div></div>\n" if (tokens[idx].meta or {}).get("callout") else "</blockquote>\n"
 
-    md.add_render_rule("blockquote_open", render_blockquote_open)
-    md.add_render_rule("blockquote_close", render_blockquote_close)
-    return md
+    md.add_render_rule("blockquote_open", blockquote_open)
+    md.add_render_rule("blockquote_close", blockquote_close)
 
+    # Images markdown : chemin resolu depuis la note (la reference du texte ne change pas), « alt|300 » = largeur.
+    def image(renderer, tokens, idx, options, env):
+        token = tokens[idx]
+        src = token.attrGet("src") or ""
+        alt = renderer.renderInlineAsText(token.children or [], options, env)
+        alt, _, size = alt.partition("|")
+        if not re.match(r"^[a-zA-Z][\w+.-]*:", src):
+            found = resolver.find(src)
+            if found is None:
+                return f'<span class="md-image-missing">{html.escape(src)}</span>'
+            src = file_url(found)
+        title = token.attrGet("title")
+        extra = f' title="{html.escape(title)}"' if title else ""
+        return f'<img src="{html.escape(src)}" alt="{html.escape(alt)}"{_size_attrs(size)}{extra}>'
 
-def _obsidian_inline(md, resolver: _Resolver):
-    """[[liens]], ![[integrations]], ==surlignage== et #tags dans le texte (jamais dans le code)."""
-    from markdown_it.token import Token
+    md.add_render_rule("image", image)
 
+    # Liens markdown vers un fichier local : resolus, gardent leur cible d'origine (data-href) pour la navigation.
+    def link_open(renderer, tokens, idx, options, env):
+        token = tokens[idx]
+        href = token.attrGet("href") or ""
+        if href and not href.startswith("#") and not re.match(r"^[a-zA-Z][\w+.-]*:", href):
+            found = resolver.find(href.split("#")[0])
+            token.attrSet("data-href", href)
+            token.attrSet("class", "internal-link" if found is not None else "internal-link is-unresolved")
+            token.attrSet("href", file_url(found) if found is not None else "#")
+        return renderer.renderToken(tokens, idx, options, env)
+
+    md.add_render_rule("link_open", link_open)
+
+    # Syntaxe propre aux notes Obsidian dans le texte (jamais dans le code).
     def replace(match) -> str:
         if match.group("wiki"):
             raw_target = match.group("target") or ""
             target, _, anchor = raw_target.partition("#")
             alias = match.group("alias")
-            found = resolver.find(target)
-            if match.group("bang") and found is not None and found.suffix.lower() in IMAGE_EMBED_EXTENSIONS:
-                size = ""
-                if alias and re.fullmatch(r"\d+(x\d+)?", alias.strip()):
-                    width, _, height = alias.strip().partition("x")
-                    size = f' width="{width}"' + (f' height="{height}"' if height else "")
-                return (f'<span class="internal-embed media-embed image-embed is-loaded" src="{html.escape(raw_target)}">'
-                        f'<img src="{_file_url(found)}"{size} alt="{html.escape(found.name)}"></span>')
-            label = alias or (Path(target).stem if target else "") + (f" > {anchor}" if anchor else "")
-            classes = "internal-link" + ("" if found is not None else " is-unresolved")
-            href = _file_url(found) if found is not None else "#"
+            found = resolver.find(target) if target else None
+            if match.group("bang"):
+                if found is not None and found.suffix.lower() in IMAGE_EMBED_EXTENSIONS:
+                    return (f'<img src="{html.escape(file_url(found))}" alt="{html.escape(found.name)}"'
+                            f'{_size_attrs(alias)}>')
+                if found is None and Path(target).suffix.lower() in IMAGE_EMBED_EXTENSIONS:
+                    return f'<span class="md-image-missing">{html.escape(target)}</span>'
+            label = alias or ((Path(target).stem + (f" > {anchor}" if anchor else "")) if target else anchor)
+            classes = "internal-link" + ("" if found is not None or not target else " is-unresolved")
+            href = file_url(found) if found is not None else "#"
             return (f'<a data-href="{html.escape(raw_target)}" href="{html.escape(href)}" class="{classes}">'
                     f"{html.escape(label or raw_target)}</a>")
         if match.group("mark"):
             return f"<mark>{html.escape(match.group('marked'))}</mark>"
         tag = match.group("tagname")
-        return f'<a href="#{html.escape(tag)}" class="tag">#{html.escape(tag)}</a>'
+        return f'<a href="#" class="tag" data-tag="{html.escape(tag)}">#{html.escape(tag)}</a>'
 
     def split(content: str, in_link: bool) -> list:
-        """Morceaux (debut, fin, html) a remplacer dans `content`, sans chevauchement."""
         spans = [(m.start(), m.end(), replace(m)) for m in _INLINE_RE.finditer(content)]
         if not in_link:
             for m in _URL_RE.finditer(content):
                 if not any(a < m.end() and m.start() < b for a, b, _ in spans):
                     url = html.escape(m.group("url"))
-                    spans.append((m.start(), m.end(),
-                                  f'<a class="external-link" href="{url}" target="_blank">{url}</a>'))
+                    spans.append((m.start(), m.end(), f'<a class="external-link" href="{url}">{url}</a>'))
         return sorted(spans)
 
-    def rule(state):
+    def inline_rule(state):
         for token in state.tokens:
             if token.type != "inline" or not token.children:
                 continue
-            children = []
-            in_link = 0
+            children, in_link = [], 0
             for child in token.children:
                 if child.type in ("link_open", "link_close"):
                     in_link += 1 if child.type == "link_open" else -1
@@ -390,9 +321,9 @@ def _obsidian_inline(md, resolver: _Resolver):
                         text = Token("text", "", 0)
                         text.content = child.content[pos:start]
                         children.append(text)
-                    html_token = Token("html_inline", "", 0)
-                    html_token.content = markup
-                    children.append(html_token)
+                    raw = Token("html_inline", "", 0)
+                    raw.content = markup
+                    children.append(raw)
                     pos = end
                 if pos < len(child.content):
                     text = Token("text", "", 0)
@@ -400,11 +331,12 @@ def _obsidian_inline(md, resolver: _Resolver):
                     children.append(text)
             token.children = children
 
-    md.core.ruler.after("inline", "obsidian_inline", rule)
+    md.core.ruler.after("inline", "md_inline", inline_rule)
+    return md
 
 
 def _properties_html(front_matter: str) -> str:
-    """Proprietes (front-matter YAML simple : « cle: valeur » et listes « - element »)."""
+    """Proprietes (front-matter YAML simple : « cle: valeur » et listes « - element ») en tableau."""
     rows, key = [], None
     for line in front_matter.splitlines():
         if not line.strip():
@@ -420,100 +352,82 @@ def _properties_html(front_matter: str) -> str:
             rows.append((key, [value] if value else []))
     if not rows:
         return ""
-    body = "".join(
-        f'<div class="metadata-property" data-property-key="{html.escape(k)}">'
-        f'<div class="metadata-property-key"><span class="metadata-property-key-input">{html.escape(k)}</span></div>'
-        f'<div class="metadata-property-value">{html.escape(", ".join(v))}</div></div>'
-        for k, v in rows)
-    return ('<div class="metadata-container"><div class="metadata-properties-heading">'
-            '<div class="metadata-properties-title">Propriétés</div></div>'
-            f'<div class="metadata-content"><div class="metadata-properties">{body}</div></div></div>')
+    body = "".join(f"<tr><th>{html.escape(k)}</th><td>{html.escape(', '.join(v))}</td></tr>" for k, v in rows)
+    return f'<div class="md-properties"><table><tbody>{body}</tbody></table></div>'
 
 
-def _blocks_html(md, tokens, env) -> str:
-    """Chaque bloc de premier niveau dans son <div class="el-…">, comme le mode lecture."""
-    out, i = [], 0
-    while i < len(tokens):
-        token = tokens[i]
-        if token.type == "front_matter":
-            i += 1
-            continue
-        j = i
-        if token.nesting == 1:
-            depth = 0
-            while j < len(tokens):
-                depth += tokens[j].nesting
-                if depth == 0:
-                    break
-                j += 1
-        tag = token.tag or token.type.split("_")[0]
-        if token.type == "fence" or token.type == "code_block":
-            tag = "pre"
-        elif token.type.startswith("footnote"):
-            tag = "section"
-        chunk = md.renderer.render(tokens[i:j + 1], md.options, env)
-        out.append(f'<div class="el-{html.escape(tag)}">{chunk}</div>')
-        i = j + 1
-    return "\n".join(out)
+# Ancienne syntaxe HTML encore ecrite par plusieurs outils Markdown (et par l'ancienne barre) :
+# Chromium ne lui applique pas toujours la couleur dans les contextes Obsidian. Un span CSS est interoperable.
+_FONT_COLOR_RE = re.compile(r"<font\s+color\s*=\s*([\"']?)([^\s>\"']+)\1\s*>(.*?)</font\s*>", re.I | re.S)
+def _normalise_legacy_fonts(text: str) -> str:
+    return _FONT_COLOR_RE.sub(lambda m: f'<span style="color: {m.group(2)}">{m.group(3)}</span>', text)
 
-
-def render_page(note: Path, text: str | None = None) -> str:
-    """Page HTML complete de la note `note` (contenu `text`, sinon lu sur le disque)."""
-    if text is None:
-        text = note.read_text(encoding="utf-8", errors="replace")
-    text = _COMMENT_RE.sub("", text)
-    vault = vault_for(note)
-    appearance = _read_json(vault / ".obsidian" / "appearance.json") if vault else {}
-    app_settings = _read_json(vault / ".obsidian" / "app.json") if vault else {}
-    md = _make_parser()
-    _obsidian_inline(md, _Resolver(note, vault))
+def render_body(note: Path, text: str, *, root: Path | None = None, properties: bool = True) -> str:
+    """HTML d'une note (sans titre ni page autour) : proprietes puis contenu. A appeler hors du fil de l'interface
+    (la resolution par nom peut parcourir la racine une fois)."""
+    text = _normalise_legacy_fonts(_COMMENT_RE.sub("", text))
+    md = _make_parser(Resolver(note, root))
     env: dict = {}
     tokens = md.parse(text, env)
+    body = md.renderer.render(tokens, md.options, env)
+    if not properties:
+        return body
     front = next((t.content for t in tokens if t.type == "front_matter"), "")
-    blocks = _blocks_html(md, tokens, env)
+    return _properties_html(front) + body
 
-    assets = obsidian_assets()
-    links = []
-    if assets is not None:
-        links.append(f'<link rel="stylesheet" href="{_file_url(assets / "app.css")}">')
-    links += [f'<link rel="stylesheet" href="{_file_url(sheet)}">' for sheet in vault_stylesheets(vault, appearance)]
-    prism = assets / "lib" / "prism.min.js" if assets is not None else None
-    script = f'<script src="{_file_url(prism)}"></script>' if prism is not None and prism.is_file() else ""
-    classes, style = _body(appearance, app_settings)
-    readable = " is-readable-line-width" if app_settings.get("readableLineLength", True) else ""
-    title = html.escape(note.stem)
+
+def render_fragment(text: str, note: Path, *, root: Path | None = None) -> str:
+    """Un bloc seul (tableau, callout de l'edition), rendu comme en lecture."""
+    return render_body(note, text, root=root, properties=False)
+
+
+def render_page(note: Path, text: str | None = None, settings: dict | None = None) -> str:
+    """Page HTML complete d'une note pour l'inspecteur : feuille du module Markdown + variables des reglages, meme
+    rendu que le mode lecture du module (coloration des blocs de code comprise)."""
+    if text is None:
+        text, _info = read_note(note)
+    from mdeditor import css_sync, style, web_dir
+    if settings is None:
+        import ui_state
+        settings = ui_state.APPLIED_SETTINGS or {}
+    body = render_body(note, text)
+    # Inspecteur : apercu sans enregistrement, cases inertes.
+    body = body.replace('<input class="task-list-item-checkbox"', '<input class="task-list-item-checkbox" disabled="disabled"')
+    web = web_dir()
+    scripts = ""
+    if "<pre><code class=\"language-" in body:
+        # Coloration des blocs de code : le moteur de l'editeur (CodeMirror) et sa coloration, charges seulement
+        # quand la note en a besoin.
+        names = ("vendor/codemirror.js", "vendor/meta.min.js", "vendor/markdown.js", "vendor/modes.min.js",
+                 "highlight.js")
+        scripts = "".join(f'<script src="{(web / n).as_uri()}"></script>' for n in names)
+        scripts += "<script>MD.highlightAll(document.body)</script>"
+    # Memes couches que le module : habillage des reglages, puis la feuille choisie (Reglages > Markdown > CSS),
+    # avec les classes d'Obsidian. La page defile par `html` (jamais par `body`) : protege dans la 1re couche.
+    imports = "\n".join(f"<style>{style.import_rule(url, layer)}</style>" for url, layer in (
+        ((web / "bullets.css").as_uri(), "md-structure"), ((web / "base.css").as_uri(), "md-theme"),(style.user_css_url(settings), "md-user")) if url)
     return f"""<!doctype html>
-<html><head><meta charset="utf-8"><title>{title}</title>
-{chr(10).join(links)}
-<style>
-/* Page autonome : la note defile dans la page, plus dans l'espace de travail d'Obsidian. */
-/* Le DOCUMENT defile (html) : un body en overflow:auto se retrouvait a 0 px de haut et
-   decoupait toute la note. */
-html {{ height: auto !important; overflow: auto !important; background-color: var(--background-primary); }}
-body {{ height: auto !important; min-height: 100%; overflow: visible !important; contain: none !important;
-  background-color: var(--background-primary); }}
-.app-container, .workspace-leaf-content, .view-content, .markdown-reading-view, .markdown-preview-view {{
-  height: auto !important; overflow: visible !important; }}
-.markdown-preview-view {{ user-select: text; }}
-</style>
-{script}
-</head>
-<body class="{classes}" style="{style}">
-<div class="app-container"><div class="workspace-leaf-content" data-type="markdown" data-mode="preview">
-<div class="view-content"><div class="markdown-reading-view">
-<div class="markdown-preview-view markdown-rendered node-insert-event allow-fold-headings show-indentation-guide show-properties{readable}">
-<div class="markdown-preview-sizer markdown-preview-section">
-<div class="mod-header"><div class="inline-title">{title}</div>{_properties_html(front)}</div>
-{blocks}
-</div></div></div></div></div></div>
+<html><head><meta charset="utf-8"><title>{html.escape(note.stem)}</title>
+<style>{style.LAYER_ORDER}
+@layer md-structure {{ html {{ height: auto !important; overflow: auto !important; margin: 0 !important; }}
+  body {{ height: auto !important; overflow: visible !important; margin: 0 !important; }} }}</style>
+{imports}
+<style>{css_sync.current_injection()}</style>
+<style>{style.css_variables(settings)}</style>
+</head><body class="md-page {style.theme_class(settings)}">
+<div class="md-read md-view is-shown markdown-reading-view" style="position:static">
+<div class="md-sizer markdown-preview-view markdown-rendered">
+<div class="md-title inline-title">{html.escape(note.stem)}</div>
+<div class="md-body md-rendered markdown-preview-sizer markdown-preview-section">{body}</div></div></div>
+{scripts}
 </body></html>"""
 
 
-# -- Edition depuis l'inspecteur : lecture / ecriture fideles du fichier ----------------------------
+# -- Lecture / ecriture fideles ----------------------------------------------------------------------------------------
 
 def read_note(path: Path) -> tuple[str, dict]:
-    """(texte a fins de ligne « \n », infos pour le reecrire a l'identique : encodage, BOM, fins
-    de ligne, date de modification lue)."""
+    """(texte a fins de ligne « \n », infos pour le reecrire a l'identique : encodage, BOM, fins de ligne, date de
+    modification lue)."""
     raw = path.read_bytes()
     bom = raw.startswith(b"\xef\xbb\xbf")
     encoding = "utf-8"
@@ -535,8 +449,8 @@ def changed_on_disk(path: Path, info: dict) -> bool:
 
 
 def write_note(path: Path, text: str, info: dict) -> None:
-    """Reecrit la note avec l'encodage, la BOM et les fins de ligne d'origine ; fichier temporaire
-    puis remplacement : jamais de note a moitie ecrite. Met a jour info["mtime_ns"]."""
+    """Reecrit le fichier avec l'encodage, la BOM et les fins de ligne d'origine ; fichier temporaire puis
+    remplacement : jamais de fichier a moitie ecrit. Met a jour info["mtime_ns"]."""
     data = text.replace("\n", info.get("newline", "\n")).encode(info.get("encoding", "utf-8"), errors="replace")
     if info.get("bom"):
         data = b"\xef\xbb\xbf" + data

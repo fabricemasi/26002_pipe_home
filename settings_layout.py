@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from settings_theme import _set_text_role, _text_label  # noqa: F401
 from settings_store import (
     M,
+    _resolve_color_value,
     _ICONS_DIR,
     _subsection_left_margin,
     _title_box,
@@ -1012,6 +1013,14 @@ def _make_accordion(items: list):
                     other.set_collapsed(True)
         item.head.clicked.connect(_on_clicked)
 
+_TAB_LOOK: dict = {}
+
+
+def set_tab_look(values: dict) -> None:
+    _TAB_LOOK.clear()
+    _TAB_LOOK.update(values)
+
+
 class _TabStrip(QWidget):
     """Barre d'onglets texte (libelles en petites capitales, soulignement
     accent sur l'onglet actif) — reutilisee a 2 niveaux (voir SettingsWindow.
@@ -1045,17 +1054,83 @@ class _TabStrip(QWidget):
         self._refresh()
 
     def _refresh(self):
+        look = _TAB_LOOK
+        # Rien n'a change depuis la derniere fois (reglages et onglet en cours) : aucune feuille de style a
+        # reposer — chaque setStyleSheet repolit son bouton, cher sur une fenetre aux milliers de widgets.
+        try:
+            tab_height = max(16, int(look.get("tabs_height", 36)))
+            spacing = max(0, int(look.get("tabs_spacing", 4)))
+        except (TypeError, ValueError):
+            tab_height, spacing = 36, 4
+        sig = (self._index, M["label_dim"], M["value_fg"], M["section_title"],
+               tuple(sorted((k, repr(v)) for k, v in look.items() if k.startswith("tabs_") or k == "colors")))
+        if sig == getattr(self, "_look_sig", None):
+            return
+        self._look_sig = sig
+        colors = look.get("colors") or {}
+        bg = _resolve_color_value(look.get("tabs_bg_color", "#00000000"), colors)
+        active_bg = _resolve_color_value(look.get("tabs_active_bg_color", "#00000000"), colors)
+        hover_bg = _resolve_color_value(look.get("tabs_hover_bg_color", "#00000000"), colors)
+        fg = _resolve_color_value(look.get("tabs_font_color", M["section_title"]), colors)
+        enabled = look.get("tabs_border_enabled") or {}
+        if not isinstance(enabled, dict):
+            enabled = dict.fromkeys(("top", "right", "bottom", "left"), bool(enabled))
+        border_colors = look.get("tabs_border") or {}
+        if not isinstance(border_colors, dict):
+            border_colors = dict.fromkeys(("top", "right", "bottom", "left"), border_colors)
+        thickness = max(0, int(look.get("tabs_border_thickness", 2)))
+        radius = look.get("tabs_corner_radius") or 0
+        if not isinstance(radius, dict):
+            radius = dict.fromkeys(("top_left", "top_right", "bottom_right", "bottom_left"), radius)
+        corners = " ".join(f"border-{css}-radius: {max(0, int(radius.get(key, 0)))}px;" for key, css in (
+            ("top_left", "top-left"), ("top_right", "top-right"),
+            ("bottom_right", "bottom-right"), ("bottom_left", "bottom-left")))
+        borders = " ".join(
+            f"border-{side}: {thickness}px solid {_resolve_color_value(border_colors.get(side, M['accent']), colors)};"
+            if enabled.get(side) and thickness else f"border-{side}: none;"
+            for side in ("top", "right", "bottom", "left"))
+        family = look.get("tabs_font_family") or ""
+        if family:
+            from browser_core import _resolve_font_family
+            family = _resolve_font_family(family, int(look.get("tabs_font_size", 11)),
+                                          700 if look.get("tabs_font_bold") else 400)
+        # La police est AUSSI posee dans la feuille de style de chaque tab : la feuille globale des boutons
+        # (`QPushButton { font-size... }`) l'emporte sinon sur `setFont` (les polices des tabs ne marchaient pas).
+        font_css = (f'font-family: "{family}"; ' if family else "") + (
+            f"font-size: {max(6, int(look.get('tabs_font_size', 11)))}px; "
+            f"font-weight: {'bold' if look.get('tabs_font_bold', True) else 'normal'}; "
+            f"font-style: {'italic' if look.get('tabs_font_italic', False) else 'normal'};")
+        inactive_enabled = look.get("tabs_inactive_border_enabled") or {}
+        if not isinstance(inactive_enabled, dict):
+            inactive_enabled = dict.fromkeys(("top", "right", "bottom", "left"), bool(inactive_enabled))
+        inactive_colors = look.get("tabs_inactive_border") or {}
+        if not isinstance(inactive_colors, dict):
+            inactive_colors = dict.fromkeys(("top", "right", "bottom", "left"), inactive_colors)
+        inactive_width = max(0, int(look.get("tabs_inactive_border_thickness", 1)))
+        inactive_borders = " ".join(
+            f"border-{side}: {inactive_width}px solid "
+            f"{_resolve_color_value(inactive_colors.get(side, M['panel_border']), colors)};"
+            if inactive_enabled.get(side) and inactive_width else f"border-{side}: none;"
+            for side in ("top", "right", "bottom", "left"))
+        self.layout().setSpacing(spacing)
         for i, btn in enumerate(self._btns):
+            font = _qfont(max(6, int(look.get("tabs_font_size", 11))),
+                          700 if look.get("tabs_font_bold", True) else 400, tracking=0.4)
+            if family:
+                font.setFamily(family)
+            font.setItalic(bool(look.get("tabs_font_italic", False)))
+            btn.setFont(font)
+            btn.setFixedHeight(tab_height)
             if i == self._index:
                 btn.setStyleSheet(
-                    f"QPushButton {{ color: {M['section_title']}; background: transparent; "
-                    f"border: none; border-bottom: 2px solid {M['accent']}; padding: 0 14px; }}"
+                    f"QPushButton {{ color: {fg}; background: {active_bg}; {font_css} "
+                    f"{borders} {corners} padding: 0 14px; }}"
                 )
             else:
                 btn.setStyleSheet(
-                    f"QPushButton {{ color: {M['label_dim']}; background: transparent; "
-                    f"border: none; border-bottom: 2px solid transparent; padding: 0 14px; }}"
-                    f"QPushButton:hover {{ color: {M['value_fg']}; }}"
+                    f"QPushButton {{ color: {M['label_dim']}; background: {bg}; {font_css} "
+                    f"{inactive_borders} {corners} padding: 0 14px; }}"
+                    f"QPushButton:hover {{ color: {M['value_fg']}; background: {hover_bg}; }}"
                 )
 
     def setCurrentIndex(self, index: int):
@@ -2222,12 +2297,19 @@ def _flat_tables_padding(padding: tuple):
 
 
 def _set_flat_tables_style(radius: int | None = None, border: tuple | None = None,
-                           padding: tuple | None = None) -> None:
+                           padding: tuple | None = None, force: bool = False) -> None:
     """radius ; border = (cotes actifs, couleurs, epaisseur) ; padding =
-    (gauche, haut, droite, bas). Un argument omis garde sa valeur."""
+    (gauche, haut, droite, bas). Un argument omis garde sa valeur. Rien de change : aucun tableau n'est
+    refait (sinon chaque restylage de l'inspecteur, `seed_table_look`, refaisait les ~130 tableaux de la
+    fenetre de reglages : ~1 s par changement de reglage, signale « les reglages reagissent des secondes
+    plus tard »)."""
+    changed = False
     for key, value in (("radius", radius), ("border", border), ("padding", padding)):
-        if value is not None:
+        if value is not None and _FLAT_TABLE_STYLE.get(key) != value:
             _FLAT_TABLE_STYLE[key] = value
+            changed = True
+    if not changed and not force:
+        return
     for frame in _flat_tables():
         try:
             _style_flat_table(frame)

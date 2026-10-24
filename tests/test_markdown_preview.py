@@ -1,12 +1,11 @@
-"""Notes Markdown rendues avec le CSS d'Obsidian (markdown_preview) : syntaxe Obsidian, coffre et
-son apparence, extraction de app.css depuis l'archive d'Obsidian. Sans QtWebEngine (HTML seul)."""
+"""Rendu des notes Markdown (markdown_preview) : syntaxe des notes, images et liens resolus depuis la note, page de
+l'inspecteur habillee par la feuille du module Markdown ; ouverture dans l'application Obsidian."""
 import os as _os, sys as _sys  # jamais les vrais reglages / presets de l'utilisateur (tests/_isolate.py)
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 import _isolate  # noqa: E402,F401
 import json
 import os
 import shutil
-import struct
 import sys
 import tempfile
 import unittest
@@ -19,74 +18,74 @@ import markdown_preview as mp
 
 
 @unittest.skipUnless(mp.available(), "markdown-it-py absent")
-class MarkdownPageTest(unittest.TestCase):
+class MarkdownRenderTest(unittest.TestCase):
     def setUp(self):
         self.vault = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.vault, True)
-        settings = self.vault / ".obsidian"
-        (settings / "snippets").mkdir(parents=True)
-        (settings / "appearance.json").write_text(json.dumps({
-            "theme": "obsidian", "accentColor": "#5ca6f5", "textFontFamily": "Inter", "baseFontSize": 16,
-            "enabledCssSnippets": ["second", "absent", "premier"]}), encoding="utf-8")
-        (settings / "snippets" / "premier.css").write_text("h1 { color: red; }", encoding="utf-8")
-        (settings / "snippets" / "second.css").write_text("h2 { color: blue; }", encoding="utf-8")
-        (settings / "snippets" / "inactif.css").write_text("p { color: green; }", encoding="utf-8")
+        (self.vault / ".obsidian").mkdir()
         (self.vault / "images").mkdir()
         (self.vault / "images" / "photo.png").write_bytes(b"\x89PNG")
         (self.vault / "Autre note.md").write_text("x", encoding="utf-8")
         self.note = self.vault / "dossier" / "note.md"
         self.note.parent.mkdir()
+        (self.note.parent / "img").mkdir()
+        (self.note.parent / "img" / "local image.jpg").write_bytes(b"\xff\xd8")
+        mp.forget_index()
 
-    def page(self, text: str) -> str:
+    def body(self, text: str) -> str:
         self.note.write_text(text, encoding="utf-8")
-        with mock.patch.object(mp, "obsidian_assets", return_value=None):
-            return mp.render_page(self.note)
+        return mp.render_body(self.note, text)
 
-    def test_vault_appearance_and_enabled_snippets_in_order(self):
-        page = self.page("# Titre")
-        self.assertEqual(mp.vault_for(self.note), self.vault)
-        sheets = [Path(p).name for p in mp.vault_stylesheets(self.vault, json.loads(
-            (self.vault / ".obsidian" / "appearance.json").read_text()))]
-        self.assertEqual(sheets, ["second.css", "premier.css"])    # ordre d'Obsidian, inactifs et absents exclus
-        self.assertLess(page.index("second.css"), page.index("premier.css"))
-        self.assertNotIn("inactif.css", page)
-        self.assertIn("theme-dark", page)
-        self.assertIn("--accent-h: 211", page)
-        self.assertIn("--font-text-override: 'Inter'", page)
-        self.assertIn("--font-text-size: 16px", page)
-        self.assertIn('class="markdown-preview-view markdown-rendered', page)
-        self.assertIn('<div class="el-h1"><h1>Titre</h1>', page)
-
-    def test_obsidian_syntax(self):
-        page = self.page(
+    def test_note_syntax(self):
+        html = self.body(
             "Lien [[Autre note|vers l'autre]], manquant [[Inconnue]], image ![[photo.png|200]]\n"
             "==fluo== #projet/pipe https://exemple.org/page. %%secret%%\n\n"
             "```py\n[[pas un lien]] ==pas fluo==\n```\n\n"
             "> [!tip]+ Astuce **utile**\n> contenu\n\n> citation simple\n")
-        self.assertIn('class="internal-link">vers l&#x27;autre</a>', page)
-        self.assertIn('class="internal-link is-unresolved">Inconnue</a>', page)
-        self.assertIn('width="200"', page)
-        self.assertIn((self.vault / "images" / "photo.png").resolve().as_uri(), page)
-        self.assertIn("<mark>fluo</mark>", page)
-        self.assertIn('class="tag">#projet/pipe</a>', page)
-        self.assertIn('href="https://exemple.org/page"', page)            # sans le point final
-        self.assertNotIn("secret", page)
-        self.assertIn("[[pas un lien]] ==pas fluo==", page)               # rien dans le code
-        self.assertIn('data-callout="tip"', page)
-        self.assertIn('is-collapsible"', page)
-        self.assertIn('callout-title-inner">Astuce <strong>utile</strong>', page)
-        self.assertIn("<blockquote>", page)                              # une citation reste une citation
+        self.assertIn('class="internal-link">vers l&#x27;autre</a>', html)
+        self.assertIn('class="internal-link is-unresolved">Inconnue</a>', html)
+        self.assertIn('width="200"', html)
+        self.assertIn((self.vault / "images" / "photo.png").resolve().as_uri(), html)   # trouvee par son nom
+        self.assertIn("<mark>fluo</mark>", html)
+        self.assertIn('class="tag" data-tag="projet/pipe">#projet/pipe</a>', html)
+        self.assertIn('href="https://exemple.org/page"', html)            # sans le point final
+        self.assertNotIn("secret", html)
+        self.assertIn("[[pas un lien]] ==pas fluo==", html)               # rien dans le code
+        self.assertIn('class="language-py"', html)
+        self.assertIn('data-callout="tip"', html)
+        self.assertIn('is-collapsible"', html)
+        self.assertIn('callout-title-inner">Astuce <strong>utile</strong>', html)
+        self.assertIn("<blockquote>", html)                              # une citation reste une citation
+
+    def test_relative_images_and_links_resolve_from_the_note(self):
+        html = self.body("![vue|320](img/local%20image.jpg) ![absente](img/rien.png) [lien](../Autre%20note.md)\n"
+                         "![[local image.jpg]]")
+        url = (self.note.parent / "img" / "local image.jpg").resolve().as_uri()
+        self.assertIn(f'src="{url}" alt="vue" width="320"', html)          # sous-dossier, largeur « |320 »
+        self.assertIn('md-image-missing">img/rien.png', html)
+        self.assertIn('data-href="../Autre%20note.md"', html)             # la reference d'origine reste
+        self.assertIn((self.vault / "Autre note.md").resolve().as_uri(), html)
+        self.assertEqual(html.count(url), 2)
 
     def test_properties(self):
-        page = self.page("---\ntype: memo\ntags:\n  - a\n  - b\n---\nTexte")
-        self.assertIn('data-property-key="type"', page)
-        self.assertIn(">a, b<", page)
-        self.assertNotIn("type: memo", page)
+        html = self.body("---\ntype: memo\ntags:\n  - a\n  - b\n---\nTexte")
+        self.assertIn("<th>type</th><td>memo</td>", html)
+        self.assertIn("<td>a, b</td>", html)
+        self.assertNotIn("type: memo", html)
+
+    def test_inspector_page_uses_the_module_style(self):
+        self.note.write_text("# Titre\n\n```python\nx = 1\n```\n", encoding="utf-8")
+        page = mp.render_page(self.note, settings={"md_h1_font_color": "#ff112233"})
+        self.assertIn("base.css", page)
+        self.assertIn("--md-h1-color: var(--h1-color, #112233ff);", page)   # couleur de l'appli -> CSS (Obsidian d'abord)
+        self.assertIn("MD.highlightAll", page)                            # coloration des blocs de code
+        page = mp.render_page(self.note, "Sans code", settings={})
+        self.assertNotIn("codemirror.js", page)                          # CodeMirror seulement si besoin
 
 
 class OpenInObsidianTest(unittest.TestCase):
-    """Double-clic sur une note d'un coffre : Obsidian s'ouvre SUR elle (obsidian://open?path=...) ; une note
-    hors de tout coffre garde son logiciel. Jamais Obsidian lance ici."""
+    """Double-clic sur une note d'un coffre (reglage « Application Obsidian ») : Obsidian s'ouvre SUR elle
+    (obsidian://open?path=...) ; une note hors de tout coffre garde son logiciel. Jamais Obsidian lance ici."""
 
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
@@ -127,34 +126,6 @@ class OpenInObsidianTest(unittest.TestCase):
             json.dumps({"vaults": {"a": {"path": str(vault), "open": True}}}), encoding="utf-8")
         self.assertIsNone(mp.obsidian_open_url(other))               # pas de repli sur le coffre ouvert
         self.assertIsNone(mp.obsidian_open_url(vault / "image.png"))
-
-
-class ObsidianAssetsTest(unittest.TestCase):
-    """app.css et public/ extraits d'une archive asar (format d'Electron), une seule fois."""
-
-    def test_extract_from_asar(self):
-        work = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, work, True)
-        files = {"app.css": b"body { color: red; }", "public/fonts/a.woff2": b"FONT", "app.js": b"js"}
-        blobs, tree, offset = b"", {"files": {}}, 0
-        for name, data in files.items():
-            node = tree
-            parts = name.split("/")
-            for part in parts[:-1]:
-                node = node["files"].setdefault(part, {"files": {}})
-            node["files"][parts[-1]] = {"size": len(data), "offset": str(offset)}
-            blobs += data
-            offset += len(data)
-        header = json.dumps(tree).encode()
-        asar = work / "obsidian.asar"
-        asar.write_bytes(struct.pack("<4I", 4, len(header) + 8, len(header) + 4, len(header)) + header + blobs)
-        with mock.patch.object(mp, "obsidian_asar", return_value=asar), \
-                mock.patch.object(mp, "CACHE_DIR", work / "cache"):
-            assets = mp.obsidian_assets()
-            self.assertEqual((assets / "app.css").read_bytes(), files["app.css"])
-            self.assertEqual((assets / "public" / "fonts" / "a.woff2").read_bytes(), b"FONT")
-            self.assertFalse((assets / "app.js").exists())
-            self.assertEqual(mp.obsidian_assets(), assets)              # deja extrait : reutilise
 
 
 if __name__ == "__main__":

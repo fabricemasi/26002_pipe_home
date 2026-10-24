@@ -82,8 +82,19 @@ class ButtonRowTest(unittest.TestCase):
         return [key for key, _b in win._viewer_row_items()]
 
     def xs(self, win):
-        viewport = win.scroll.viewport()
-        return [b.mapTo(viewport, QPoint(0, 0)).x() for _k, b in win._viewer_row_items()]
+        return [b.mapTo(win, QPoint(0, 0)).x() for _k, b in win._viewer_row_items()]
+
+    def test_navigation_bar_height_keeps_title_and_buttons_at_top(self):
+        ui_state.APPLIED_SETTINGS["navbar_height"] = 90
+        win = pb.PipelineBrowser(self.root)
+        win._idle_preview_scheduler.timer.stop()
+        self.addCleanup(win.deleteLater)
+        win.show()
+        APP.processEvents()
+        self.assertEqual(win.titlebar.height(), app_style.scaled(90))
+        self.assertEqual(win.titlebar.title_label.y(), 0)
+        self.assertEqual(win.titlebar.btn_min.y(), 0)
+        self.assertEqual(win.titlebar.btn_close.y(), 0)
 
     def test_ctrl_drag_moves_a_button_and_keeps_the_order(self):
         win = pb.PipelineBrowser(self.root)
@@ -103,15 +114,17 @@ class ButtonRowTest(unittest.TestCase):
         self.assertTrue(win._project_columns_hidden)
         win._open_focus_gallery()
         settle()
-        self.assertEqual(self.order(win), ["hide", "gallery", "filter"])
+        # Plus de bouton image / planche (demande de l'utilisateur) ; « Récursif » est une icone.
+        self.assertEqual(self.order(win), ["filter", "recursive"])
+        self.assertIsNone(win.image_preview_columns[0].gallery_btn)
+        self.assertEqual(win._recursive_btn._kind, "recursive")
         xs = self.xs(win)
         self.assertEqual(xs, sorted(xs))                                  # de gauche a droite, dans l'ordre
-        button = win._filter_btn
+        button = win._recursive_btn
         clicked = []
         button.clicked.connect(lambda: clicked.append(True))
         first = win._viewer_row_items()[0][1]
-        viewport = win.scroll.viewport()
-        target = first.mapTo(viewport, QPoint(0, 0)) - button.mapTo(viewport, QPoint(0, 0)) + QPoint(2, 5)
+        target = first.mapTo(win, QPoint(0, 0)) - button.mapTo(win, QPoint(0, 0)) + QPoint(2, 5)
         with mock.patch.object(QApplication, "keyboardModifiers", return_value=Qt.ControlModifier):
             QTest.mousePress(button, Qt.LeftButton, Qt.ControlModifier, QPoint(5, 5))
             QTest.mouseMove(button, QPoint(20, 5))
@@ -123,18 +136,28 @@ class ButtonRowTest(unittest.TestCase):
             QTest.mouseRelease(button, Qt.LeftButton, Qt.ControlModifier, target)
         settle(0.1)
         self.assertEqual(clicked, [])                                      # Ctrl + glisser : pas de clic
-        self.assertEqual(self.order(win), ["filter", "hide", "gallery"])
-        self.assertEqual(self.saved[-1], ("viewer_button_order", ["filter", "hide", "gallery"]))
+        self.assertEqual(self.order(win), ["recursive", "filter"])
+        self.assertEqual(self.saved[-1], ("viewer_button_order", ["recursive", "filter"]))
         xs = self.xs(win)
         self.assertEqual(xs, sorted(xs))
-        # Les boutons de la colonne Focus restent visibles et cliquables : la colonne les couvre.
+        # Tous les boutons sont dans le cadre « Visionneuse » de la barre de navigation (demande de l'utilisateur).
         pc = win.image_preview_columns[0]
-        self.assertGreaterEqual(pc.width(), pc.gallery_btn.geometry().right())
+        self.assertIsNone(pc.toggle_btn)
+        self.assertIsNone(pc.hide_btn)
+        group = win.titlebar.viewer_group()
+        self.assertTrue(group.isVisible())
+        self.assertTrue(all(b.parentWidget() is group for _k, b in win._viewer_row_items()))
+        self.assertTrue(group.rect().contains(win._filter_btn.geometry()))
         # Sans Ctrl : clic normal (la fenetre des filtres s'ouvre).
         with mock.patch("settings_quick_style.save_settings"):
-            QTest.mouseClick(button, Qt.LeftButton)
+            QTest.mouseClick(win._filter_btn, Qt.LeftButton)
             self.assertIsNotNone(win._filter_window)
             win._filter_window.close()
+        # Retour aux colonnes : les boutons repartent chez eux, le cadre se cache.
+        win._set_columns_hidden(False, animate=False)
+        settle(0.2)
+        self.assertTrue(group.isHidden())
+        self.assertIs(win._filter_btn.parentWidget(), win.scroll.viewport())
 
 
 if __name__ == "__main__":

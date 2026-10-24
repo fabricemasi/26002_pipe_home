@@ -38,8 +38,8 @@ def tearDownModule():
     v2.load_settings, sw.load_settings = _real
 
 
-PORTED = ("Application", "Dossiers et fichiers à omettre", "LUT", "Polices principales", "Couleurs", "Geometrie",
-          "ICONES", "RACCOURCI")
+PORTED = ("Application", "Dossiers et fichiers à omettre", "LUT", "Polices principales", "Couleurs",
+          "ICONES", "Colonnes", "Raccourci")
 
 
 def open_nodes(win, index: int, titles: tuple):
@@ -66,7 +66,7 @@ class PortedSectionsTest(unittest.TestCase):
         cls.win = v2.SettingsWindowV2()
         cls.labels = [label for label, _title in v2.SCOPES]
         open_nodes(cls.win, 0, PORTED)
-        open_nodes(cls.win, cls.labels.index(PREVIEW_STACK_TITLE), ("Image", "Zone titre", "Bouton repliement"))
+        open_nodes(cls.win, cls.labels.index(PREVIEW_STACK_TITLE), ("Image", "Zone titre"))
         open_nodes(cls.win, cls.labels.index("Projets"), ("Icone de niveaux",))
 
     @classmethod
@@ -83,14 +83,14 @@ class PortedSectionsTest(unittest.TestCase):
                 old._on_columns_tab_changed(index)
         expected = old._current_values()
         values = self.win.wired_values()
-        groups = ("Application", "Omettre", "LUT", "Polices principales", "Geometrie", "Raccourci",
-                  "Icones : Logiciels", "Focus : Zone titre", "Focus : Bouton repliement", "Projets : Icone de niveaux")
+        groups = ("Application", "Omettre", "LUT", "Polices principales", "Raccourci",
+                  "Icones : Logiciels", "Focus : Zone titre", "Projets : Icone de niveaux")
         keys = set()
         for group in groups:
             for spec in v2.CATALOG[group]:
                 keys.update(k for k in (spec.key, *spec.extra_keys) if k in expected)
         keys |= {"colors", "preview_padding", "preview_radius"}
-        self.assertGreater(len(keys), 80)
+        self.assertGreater(len(keys), 65)
         for key in sorted(keys):
             self.assertIn(key, values, key)
             self.assertEqual(values[key], expected[key], key)
@@ -133,13 +133,14 @@ class PortedSectionsTest(unittest.TestCase):
         toggle.setChecked(False)
         self.assertEqual(self.win.wired_values()["window_radius"], 0)
 
-    def test_geometry_restyles_inputs_live(self):
-        holder = field(self.win, "General", "input_frame")
-        holder._v2_parts["radius"].setValue(7)
-        self.win._flush_live()
-        self.assertEqual(settings_v2_app._input_radius(), 7)
-        holder._v2_parts["radius"].setValue(0)
-        self.win._flush_live()
+    def test_new_navigation_and_control_sections_build(self):
+        open_nodes(self.win, 0, ("Barre de navigation", "Bouton", "Tabs", "Zone de saisie"))
+        keys = {spec.key for spec, _widget in self.win.stores["General"]["specs"]
+                if not isinstance(spec, str)}
+        expected = {"navbar_height", "navbar_bottom_enabled", "navbar_title_font_family",
+                    "button_bg_color", "button_border_enabled", "button_shadow_enabled",
+                    "tabs_bg_color", "tabs_corner_radius", "input_bg_color", "input_corner_radius"}
+        self.assertFalse(expected - keys, expected - keys)
 
     def test_add_and_remove_a_software(self):
         logiciels = field(self.win, "General", "custom_softwares")

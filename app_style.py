@@ -451,6 +451,53 @@ _BUTTON_FRAME = True
 _INPUT_RADIUS = 0
 _INPUT_FRAME = True
 _TABLE_RADIUS = 0
+_CONTROL_LOOK: dict = {}
+
+
+def set_control_look(settings: dict) -> None:
+    """Valeurs des sections Bouton et Zone de saisie pour le QSS commun."""
+    global _CONTROL_LOOK
+    _CONTROL_LOOK = settings
+
+
+def _control_border(prefix: str, default_color: str, old_enabled: bool) -> str:
+    look = _CONTROL_LOOK
+    enabled = look.get(f"{prefix}_border_enabled", old_enabled)
+    if not isinstance(enabled, dict):
+        enabled = dict.fromkeys(("top", "right", "bottom", "left"), bool(enabled))
+    colors = look.get(f"{prefix}_border") or {}
+    if not isinstance(colors, dict):
+        colors = dict.fromkeys(("top", "right", "bottom", "left"), colors)
+    width = max(0, int(look.get(f"{prefix}_border_thickness", 1)))
+    return " ".join(f"border-{side}: {width}px solid {resolve_color_ref(colors.get(side), default_color) if enabled.get(side) else 'transparent'};"
+                    if enabled.get(side) and width else f"border-{side}: none;"
+                    for side in ("top", "right", "bottom", "left"))
+
+
+def _control_radius(prefix: str, old_radius: int) -> str:
+    value = _CONTROL_LOOK.get(f"{prefix}_corner_radius")
+    if value is None:
+        value = old_radius
+    if not isinstance(value, dict):
+        value = dict.fromkeys(("top_left", "top_right", "bottom_right", "bottom_left"), value)
+    return " ".join(f"border-{css}-radius: {max(0, int(value.get(key, 0)))}px;"
+                    for key, css in (("top_left", "top-left"), ("top_right", "top-right"),
+                                     ("bottom_right", "bottom-right"), ("bottom_left", "bottom-left")))
+
+
+def _control_font(prefix: str) -> str:
+    look = _CONTROL_LOOK
+    family = look.get(f"{prefix}_font_family") or ""
+    family_css = ""
+    if family:
+        from browser_core import _resolve_font_family
+        resolved = _resolve_font_family(family, int(look.get(f"{prefix}_font_size", 11)),
+                                        700 if look.get(f"{prefix}_font_bold") else 400)
+        family_css = f'font-family: "{resolved.replace(chr(34), "")}";'
+    return (family_css +
+            f"font-size: {scaled(max(6, int(look.get(f'{prefix}_font_size', 11))))}px; "
+            f"font-weight: {'bold' if look.get(f'{prefix}_font_bold') else 'normal'}; "
+            f"font-style: {'italic' if look.get(f'{prefix}_font_italic') else 'normal'};")
 
 
 def set_button_radius(px: int) -> None:
@@ -1121,8 +1168,16 @@ def build_stylesheet() -> str:
     rayon de bordure des boutons — appelee a chaque changement de couleur
     (voir refresh_style) plutot qu'une seule fois au demarrage, pour que la
     previsualisation en direct de la fenetre de parametres fonctionne."""
-    input_border = f"1px solid {C['border_soft']}" if _INPUT_FRAME else "none"
-    button_border = f"1px solid {C['btn_border']}" if _BUTTON_FRAME else "none"
+    input_border = _control_border("input", C["border_soft"], _INPUT_FRAME)
+    button_border = _control_border("button", C["btn_border"], _BUTTON_FRAME)
+    input_radius = _control_radius("input", _INPUT_RADIUS)
+    button_radius = _control_radius("button", _BUTTON_RADIUS)
+    input_bg = resolve_color_ref(_CONTROL_LOOK.get("input_bg_color"), C["well"])
+    button_bg = resolve_color_ref(_CONTROL_LOOK.get("button_bg_color"), C["btn"])
+    input_color = resolve_color_ref(_CONTROL_LOOK.get("input_font_color"), C["text_mono"])
+    button_color = resolve_color_ref(_CONTROL_LOOK.get("button_font_color"), "#c4cacf")
+    input_font = _control_font("input")
+    button_font = _control_font("button")
     # QListWidget (Skin principale niveau 2 / void), PAS Fond (window) : le
     # vide propre a chaque colonne de l'appli principale (QListWidget, seul
     # usage de cette classe hors fenetre de parametres, voir Column) suit
@@ -1135,19 +1190,21 @@ QScrollArea, QScrollArea > QWidget > QWidget {{ background: {C['window']}; }}
 QListWidget {{ background: {C['void']}; border: none; outline: none; }}
 
 QLineEdit {{
-    background: {C['well']};
-    border: {input_border};
-    border-radius: {_INPUT_RADIUS}px;
-    color: {C['text_mono']};
+    background: {input_bg};
+    {input_border}
+    {input_radius}
+    {input_font}
+    color: {input_color};
     padding: 0 8px;
     selection-background-color: {C['accent']};
 }}
 
 QPushButton {{
-    background: {C['btn']};
-    border: {button_border};
-    border-radius: {_BUTTON_RADIUS}px;
-    color: #c4cacf;
+    background: {button_bg};
+    {button_border}
+    {button_radius}
+    {button_font}
+    color: {button_color};
     padding: 0 12px;
 }}
 QPushButton:hover {{ background: {C['btn_hover']}; border-color: {C['btn_hover_bd']}; }}

@@ -99,7 +99,7 @@ class LoaderTest(unittest.TestCase):
             self.assertTrue(pump(10, lambda: str(path) in ready))
         _fitted, full, _natural = loader.get(path)
         self.assertEqual(full.size(), QSize(2400, 1600))
-        self.assertEqual(loader.origin(path), "original")
+        self.assertEqual(loader.origin(path), "Image originale")
 
     def test_new_preview_restarts_decode_that_was_already_pending(self):
         path = self._image("pending.jpg", 800, 600)
@@ -427,6 +427,8 @@ class GalleryTest(unittest.TestCase):
     def test_glide_band_looks_like_the_planche(self):
         # Pendant le glissement, la planche est une image des lignes qui defilent : la meme qu'a l'arret.
         gallery = self._gallery_of(60, QSize(1200, 800))
+        # Les controles d'attributs du survol se cachent pendant le glissement : hors de la comparaison.
+        gallery.attr_editing_allowed = lambda: False
         gallery._scroll_to_row(2)
         gallery.repaint()
         still = gallery.viewport().grab().toImage()

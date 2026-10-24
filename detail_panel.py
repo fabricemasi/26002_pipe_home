@@ -1,5 +1,6 @@
 import json
 import math
+import os
 from datetime import datetime
 from pathlib import Path
 from PySide6.QtCore import QMimeData
@@ -125,6 +126,10 @@ from browser_core import (
     _resolve_font_family,
     _show_resize_width,
     count_entries,
+    entry_is_dir,
+    entry_mtime,
+    entry_size,
+    listed_count,
     human_size,
 )
 from capture_widgets import (
@@ -210,7 +215,7 @@ class _VideoView(QWidget):
 
 class DetailPanel(QWidget):
 
-    FIELDS = ["kind", "size", "modified"]
+    FIELDS = ["kind", "size", "modified", "proxy_source", "full_source"]
     # Double-clic sur l'apercu (image, turntable ou video) : meme effet que le
     # bouton « masquer les colonnes » (voir PipelineBrowser).
     preview_double_clicked = Signal()
@@ -426,6 +431,7 @@ class DetailPanel(QWidget):
         try:
             import lightroom_bridge
             lightroom_bridge._signal_bus().profile_ready.connect(self._on_lightroom_profile_ready)
+            lightroom_bridge._signal_bus().sources_ready.connect(self._on_lightroom_sources)
         except (ImportError, OSError, ValueError):
             pass
 
@@ -1128,7 +1134,12 @@ class DetailPanel(QWidget):
     INFO_TABLE_DIMS = "Inspecteur/Informations#0"
 
     _INFO_ROWS = (("kind", "Type"), ("size", "Taille"), ("modified", "Modifié"),
-                  ("dimensions", "Dimensions · ratio · taille"))
+                  ("dimensions", "Dimensions · ratio · taille"),
+                  # Photos Lightroom (demande de l'utilisateur) : d'ou vient le proxy (colonnes, inspecteur,
+                  # diapositives) et l'image en plein ecran ; lignes masquees pour les autres fichiers.
+                  ("proxy_source", "Source du proxy"),
+                  ("full_source", "Source de l'aperçu plein écran"))
+    _SOURCE_ROWS = ("proxy_source", "full_source")
 
     def _build_info_table(self):
         """Tableau des informations : le tableau Parametre | Valeur des reglages (_flat_cells_table) ;
@@ -1270,7 +1281,7 @@ class DetailPanel(QWidget):
         )
         self.well_label.setPixmap(scaled)
 
-    # -- Notes Markdown : rendu avec le CSS d'Obsidian (markdown_preview) et edition --
+    # -- Notes Markdown : rendu du module Markdown (markdown_preview, habillage de l'onglet Markdown) et edition --
 
     _MD_AUTOSAVE_MS = 800
 
@@ -1373,7 +1384,7 @@ class DetailPanel(QWidget):
         return True
 
     def _show_markdown(self, path: Path) -> bool:
-        """Note .md : lue comme dans Obsidian (son CSS + celui du coffre, voir markdown_preview) ou
+        """Note .md : lue comme dans le mode lecture du module Markdown (meme rendu, memes reglages) ou
         editee en texte source, au choix (bouton Modifier / Lecture, Ctrl+E). Faux si ce n'est pas
         une note ou si QtWebEngine / markdown-it manquent : l'extrait texte brut prend le relais."""
         if path.suffix.lower() not in markdown_preview.MARKDOWN_EXTENSIONS or not markdown_preview.available():
@@ -1408,6 +1419,13 @@ class DetailPanel(QWidget):
             cursor = editor.textCursor()
             cursor.setPosition(min(position, len(text)))
             editor.setTextCursor(cursor)
+
+    def refresh_markdown_style(self):
+        """Onglet Markdown des reglages change : la note affichee en lecture est rendue a nouveau (meme habillage
+        que le module Markdown)."""
+        if getattr(self, "_md_path", None) is not None and not self._md_editing and \
+                getattr(self, "markdown_view", None) is not None and self.markdown_view.isVisible():
+            self._apply_markdown_mode()
 
     def _apply_markdown_mode(self, text: str | None = None):
         """Affiche la note dans le mode courant ; en lecture, rendu du texte `text` (celui de
@@ -1541,31 +1559,45 @@ class DetailPanel(QWidget):
         self.preview_stale_badge.setVisible(bool(key and self._preview_pixmap is not None and key in _STALE_PREVIEW_PATHS))
         self._refresh_preview_origin_badge(key)
 
-    def _refresh_preview_origin_badge(self, path_key: str | None = None):
+    def _refresh_preview_origin_badge(self, path_key: str | None = None, force: bool = False):
+        """Lignes « Source du proxy » / « Source de l'aperçu plein écran » du tableau (plus d'encart
+        au-dessus de l'image) : lues EN FOND (catalogue et Previews.lrdata de Lightroom), relues
+        quand l'aperçu arrive (`force`, la source a pu changer)."""
+        self.preview_origin_badge.hide()
         path_key = path_key or self._current_path
-        if not path_key:
-            self.preview_origin_badge.hide()
+        if not path_key or (not force and path_key == getattr(self, "_sources_asked", None)):
             return
+        self._sources_asked = path_key
         try:
             import lightroom_bridge
-            origin = lightroom_bridge.preview_origin(Path(path_key))
+            if lightroom_bridge.is_managed(Path(path_key)):
+                lightroom_bridge.request_sources(Path(path_key))
         except (ImportError, OSError, ValueError):
-            origin = None
-        labels = {
-            "lightroom": ("APERÇU LIGHTROOM", "#9ed8ff", "#17364a"),
-            "application": ("APERÇU APPLICATION", "#ffd28a", "#493515"),
-        }
-        entry = labels.get(origin)
-        if entry is None:
-            self.preview_origin_badge.hide()
+            pass
+
+    def _on_lightroom_sources(self, path_key: str, proxy: str, full: str):
+        if path_key != self._current_path:
             return
-        title, foreground, background = entry
-        self.preview_origin_badge.setText(title)
-        self.preview_origin_badge.setToolTip("Source de l’aperçu actuellement affiché")
-        self.preview_origin_badge.setStyleSheet(
-            f"color: {foreground}; background: {background}; border-radius: 2px; padding: 1px 5px;"
-        )
-        self.preview_origin_badge.show()
+        for key, text in (("proxy_source", proxy), ("full_source", full)):
+            self.values[key].setText(text)
+            self.values[key].setToolTip(text)
+
+    def _set_source_rows_visible(self, visible: bool):
+        """Lignes des sources : seulement pour une photo d'un dossier associe a Lightroom ; masquees,
+        elles sortent aussi des lignes du tableau (alternance, arrondi du bas)."""
+        meta = self.preview_info_table._flat_rows
+        if not hasattr(self, "_source_rows"):
+            # Ligne du tableau (entree de _flat_rows) qui contient chaque valeur, relevee une fois.
+            self._source_rows = [entry for entry in meta
+                                 if any(entry[0].isAncestorOf(self.values[key]) for key in self._SOURCE_ROWS)]
+        for entry in self._source_rows:
+            if visible and entry not in meta:
+                controls = getattr(self, "_controls_row_meta", None)       # toujours la derniere
+                meta.insert(meta.index(controls) if controls in meta else len(meta), entry)
+            elif not visible and entry in meta:
+                meta.remove(entry)
+            entry[0].setVisible(visible)
+        self._restyle_info_table()
 
     def _on_lightroom_profile_ready(self, path_key: str, profile: str, base_profile: str, error: str):
         if path_key != self._current_path:
@@ -2135,14 +2167,15 @@ class DetailPanel(QWidget):
         """Met en cache le resultat du worker, puis l'affiche s'il est toujours selectionne."""
         if path_str == self._current_path:
             self._restore_lightroom_preview_button()
-            self._refresh_preview_origin_badge(path_str)
+            self._refresh_preview_origin_badge(path_str, force=True)
         self._refresh_render_action_buttons()
         was_requested = path_str == self._preview_request_path or path_str in self._preview_generation_paths
         self._preview_generation_paths.discard(path_str)
         self._auto_preview_paths.discard(path_str)
         path = Path(path_str)
         try:
-            still_current_file = path.stat().st_mtime == mtime
+            from previews import cached_mtime, is_remote_path
+            still_current_file = (cached_mtime(path) if is_remote_path(path) else entry_mtime(path)) == mtime
         except OSError:
             still_current_file = False
         pix = None
@@ -2307,6 +2340,17 @@ class DetailPanel(QWidget):
         self._video_player.setSource(QUrl.fromLocalFile(str(path)))
         self._video_player.play()
 
+    def _fill_folder_count(self, path: str, scan=True):
+        from previews import is_remote_path
+        if getattr(self, "_current_path", None) != path:
+            return                                # selection changee entre-temps
+        count = listed_count(path)
+        if count is None:
+            if not scan or is_remote_path(path):
+                return
+            count = count_entries(Path(path))
+        self.values["size"].setText(f"{count} elements")
+
     def show_path(self, path: Path):
         if getattr(self, "_md_path", None) is not None and Path(self._md_path) != path:
             self._flush_markdown()             # note en cours d'edition : enregistree avant de partir
@@ -2315,16 +2359,24 @@ class DetailPanel(QWidget):
         self._turntable_frame_paths = []
         self._current_path = str(path)
         self._refresh_render_action_buttons()
-        supports_turntable = not path.is_dir() and path.suffix.lower() in TURNTABLE_EXTENSIONS
+        # Type, date et taille repris de la lecture du dossier (`os.scandir`) : chaque `is_dir()` / `stat()`
+        # etait un aller-retour de plus par clic sur un partage reseau (6 par selection, mesure).
+        is_dir = entry_is_dir(path)
+        supports_turntable = not is_dir and path.suffix.lower() in TURNTABLE_EXTENSIONS
         try:
             import lightroom_bridge
-            lightroom_managed = not path.is_dir() and lightroom_bridge.is_managed(path)
+            lightroom_managed = not is_dir and lightroom_bridge.is_managed(path)
         except (ImportError, OSError, ValueError):
             lightroom_managed = False
         self.lightroom_preview_button.setVisible(lightroom_managed)
         self.lightroom_preview_button.setText("Créer l’aperçu Lightroom")
         self.lightroom_preview_button.setEnabled(True)
         self._set_preview_controls_visible(supports_turntable or lightroom_managed)
+        self._set_source_rows_visible(lightroom_managed)
+        if lightroom_managed:
+            for key in self._SOURCE_ROWS:
+                self.values[key].setText("…")
+            self._refresh_preview_origin_badge(str(path), force=True)
         preferred_media = self._preview_media_preferences.get(str(path), "image")
         self.preview_media_buttons.get(preferred_media, self.preview_image_button).setChecked(True)
         self.turntable_controls.setVisible(supports_turntable and preferred_media == "turntable")
@@ -2338,14 +2390,13 @@ class DetailPanel(QWidget):
         self._pdf_path = None
         self.pur_navigation.hide()
         self.name.setText(path.name)
-        is_renderable_3d = not path.is_dir() and path.suffix.lower() in RENDERABLE_3D_EXTENSIONS
+        is_renderable_3d = not is_dir and path.suffix.lower() in RENDERABLE_3D_EXTENSIONS
         self.render_protection_toggle.blockSignals(True)
         self.render_protection_toggle.setChecked(
             is_renderable_3d and _is_preview_protected(path)
         )
         self.render_protection_toggle.blockSignals(False)
         self.render_protection_toggle.setVisible(is_renderable_3d)
-        is_dir = path.is_dir()
         self.name.setFont(role_font("folders" if is_dir else "files", 12, 600, tracking=0.12))
         self.name.setStyleSheet(
             f"color: {role_color('folders' if is_dir else 'files', C['text'])}; background: transparent;"
@@ -2378,7 +2429,7 @@ class DetailPanel(QWidget):
             self._hide_text_views()
             self._show_video(path)
         elif is_text_preview and self._show_markdown(path):
-            # Note Markdown rendue avec le CSS d'Obsidian (voir _show_markdown).
+            # Note Markdown rendue comme le mode lecture du module Markdown (voir _show_markdown).
             self.well.hide()
         elif is_text_preview:
             # Extrait de contenu (voir read_text_preview) plutot que le
@@ -2394,27 +2445,8 @@ class DetailPanel(QWidget):
             if not is_dir:
                 suffix = path.suffix.lower()
                 if suffix in IMAGE_EXTENSIONS:
-                    try:
-                        mtime = path.stat().st_mtime
-                    except OSError:
-                        mtime = None
-                    if lightroom_managed:
-                        # Ne jamais afficher le fichier original à la place du proxy : le
-                        # pont fournit d'abord Lightroom, puis son aperçu de secours local.
-                        self._preview_pixmap = file_image_pixmap(path, asynchronous=True)
-                    else:
-                        stale_pix = None
-                        is_stale = False
-                        if mtime is not None:
-                            stale_pix, is_stale = _read_preview_pixmap(path, mtime)
-                        if is_stale and stale_pix is not None:
-                            self._preview_pixmap = stale_pix
-                            file_image_pixmap(path)  # auto-régénère les caches 2D périmés
-                        else:
-                            pix = QPixmap(str(path))
-                            if not pix.isNull():
-                                self._preview_pixmap = pix
-                            file_image_pixmap(path)  # crée le cache 2D manquant
+                    # Décodage et lecture du cache disque par le worker existant.
+                    self._preview_pixmap = file_image_pixmap(path, asynchronous=True)
                 elif suffix in OBJ_EXTENSIONS | ABC_EXTENSIONS:
                     if str(path) in _MANUAL_3D_PREVIEW_REQUESTS:
                         _MANUAL_3D_PREVIEW_REQUESTS.discard(str(path))
@@ -2507,17 +2539,20 @@ class DetailPanel(QWidget):
                         self._preview_pixmap = pix
             self._update_preview()
             self._refresh_preview_stale_badge(path)
-        try:
-            info = path.stat()
-            modified = datetime.fromtimestamp(info.st_mtime).strftime("%Y-%m-%d %H:%M")
-        except OSError:
-            info, modified = None, "-"
-        if path.is_dir():
+        stamp = entry_mtime(path)
+        modified = datetime.fromtimestamp(stamp).strftime("%Y-%m-%d %H:%M") if stamp is not None else "-"
+        if is_dir:
             kind = "Dossier"
-            size = f"{count_entries(path)} elements"
+            # Nombre d'elements : repris de la lecture du dossier par la colonne qui s'ouvre juste apres (meme
+            # clic, avant le retour a la boucle) ; sinon compte a ce moment-la. Jamais une 2e lecture du dossier.
+            size = "…"
+            # La colonne le fournit à son arrivée ; attendre ne doit jamais
+            # déclencher une seconde énumération sur le fil de l'interface.
+            QTimer.singleShot(0, self, lambda p=str(path): self._fill_folder_count(p, scan=False))
         else:
             kind = (path.suffix[1:].upper() + " file") if path.suffix else "Fichier"
-            size = human_size(info.st_size) if info else "-"
+            file_size = entry_size(path)
+            size = human_size(file_size) if file_size is not None else "-"
         self.values["kind"].setText(kind)
         self.values["size"].setText(size)
         self.values["modified"].setText(modified)
@@ -2538,7 +2573,8 @@ class DetailPanel(QWidget):
 # de l'appli, sauvegarde a la fermeture et restaure au demarrage suivant.
 # ==========================================================================
 
-WINDOW_STATE_PATH = DATA_DIR / "pipeline_window_state.json"
+WINDOW_STATE_PATH = Path(os.environ.get("PIPELINE_MAIN_WINDOW_STATE_FILE",
+                                       str(DATA_DIR / "pipeline_window_state.json")))
 
 def load_window_state() -> dict:
     try:

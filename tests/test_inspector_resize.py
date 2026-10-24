@@ -11,6 +11,7 @@ from unittest.mock import patch
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt, QEvent, QPointF, QPoint
 from PySide6.QtGui import QMouseEvent
+from PySide6.QtTest import QTest
 
 APP = QApplication.instance() or QApplication([])
 import pipeline_browser as p
@@ -27,12 +28,15 @@ class InspectorResizeTest(unittest.TestCase):
             window.setGeometry(10, 10, 780, 560)
             window.show()
             APP.processEvents()
+            window._toggle_inspector()
+            window.scroll.horizontalScrollBar().setValue(window.scroll.horizontalScrollBar().maximum())
+            APP.processEvents()
             try:
                 panel = window.detail
                 handle = panel._resize_handle
                 for y in (5, panel.height() // 2, panel.height() - 5):
                     point = QPoint(handle.width() - 1, y)
-                    self.assertIs(QApplication.widgetAt(panel.mapToGlobal(point)), handle)
+                    self.assertIs(panel.childAt(point), handle)
                 width = panel.width()
                 point = QPoint(handle.width() - 1, panel.height() // 2)
                 origin = panel.mapToGlobal(point)
@@ -45,6 +49,27 @@ class InspectorResizeTest(unittest.TestCase):
                     QApplication.sendEvent(panel, QMouseEvent(QEvent.MouseButtonRelease, QPointF(point),
                         QPointF(origin + QPoint(20, 0)), Qt.LeftButton, Qt.NoButton, Qt.NoModifier))
                     self.assertFalse(panel._resizing)
+            finally:
+                window.hide()
+                window.deleteLater()
+                APP.processEvents()
+
+    def test_inspector_is_hidden_by_default_and_toggled_with_i(self):
+        with tempfile.TemporaryDirectory(prefix="inspector_shortcut_") as work:
+            window = p.PipelineBrowser(Path(work))
+            window._idle_preview_scheduler.timer.stop()
+            window.show()
+            APP.processEvents()
+            try:
+                self.assertTrue(window.detail.isHidden())
+                window.activateWindow()
+                window.setFocus()
+                QTest.keyClick(window, Qt.Key_I)
+                APP.processEvents()
+                self.assertFalse(window.detail.isHidden())
+                QTest.keyClick(window, Qt.Key_I)
+                APP.processEvents()
+                self.assertTrue(window.detail.isHidden())
             finally:
                 window.hide()
                 window.deleteLater()

@@ -47,6 +47,7 @@ from app_style import (
 import ui_state
 from config import (
     IMAGE_EXTENSIONS,
+    PREVIEWABLE_EXTENSIONS,
     RENDERABLE_3D_EXTENSIONS,
     THUMBNAIL_COLUMN_LABELS,
     _MANUAL_3D_PREVIEW_MODE,
@@ -54,6 +55,8 @@ from config import (
     _STALE_PREVIEW_PATHS,
 )
 from previews import (
+    _PREVIEW_DECODE_MANAGER,
+    is_remote_path,
     software_icon_key,
 )
 from config import (
@@ -115,8 +118,11 @@ from browser_core import (
     col_spacing,
     col_width,
     count_entries,
+    entry_is_dir,
+    entry_size,
     human_size,
     list_entries,
+    remember_entry,
     load_layout_settings,
     load_project_columns,
     load_shortcuts,
@@ -166,30 +172,76 @@ class _MediaCountSignals(QObject):
 class _MediaCountTask(QRunnable):
     """Parcours les médias sans bloquer le fil de l'interface."""
 
-    def __init__(self, generation: int, folders: list[Path]):
+    def __init__(self, generation: int, folders: list[Path], entry_counts=False):
         super().__init__()
         self.generation = generation
         self.folders = folders
         self.signals = _MediaCountSignals()
+        import threading
+        self.cancelled = threading.Event()
+        self.entry_counts = entry_counts
 
     def run(self):
+        if self.cancelled.is_set():
+            return
         try:
             import lightroom_bridge
             counts = lightroom_bridge.folder_media_counts(self.folders)
         except (ImportError, OSError, ValueError):
             counts = {}
-        self.signals.finished.emit(self.generation, counts)
+        # Cles = chemins tels qu'affiches (la resolution, un acces disque par ligne, est faite ICI, en fond).
+        shown = {}
+        for folder in self.folders:
+            if self.cancelled.is_set():
+                return
+            try:
+                key = str(Path(folder).resolve())
+            except (OSError, ValueError):
+                continue
+            if key in counts:
+                shown[str(folder)] = counts[key]
+        entries = {}
+        if self.entry_counts:
+            for folder in self.folders:
+                if self.cancelled.is_set():
+                    return
+                if not is_remote_path(folder):
+                    entries[str(folder)] = count_entries(folder, _STATUS_FOLDER_SET)
+        if not self.cancelled.is_set():
+            self.signals.finished.emit(self.generation, (shown, entries))
 
 
 _MEDIA_COUNT_POOL = QThreadPool()
 _MEDIA_COUNT_POOL.setMaxThreadCount(2)
 
 
+def _shortcut_present(target: Path) -> bool:
+    """Un raccourci s'affiche si sa cible existe. Cible RESEAU : affiché sans la tester (un partage lent ou
+    absent figeait la colonne, parfois plusieurs secondes) ; son état (inaccessible) se voit en l'ouvrant."""
+    from previews import is_remote_path
+    if is_remote_path(target):
+        remember_entry(target, True)
+        return bool(str(target))
+    if target.is_dir():
+        remember_entry(target, True)
+        return True
+    return False
+
+
 class Column(QWidget):
+
+    # Valeurs de classe : le filtre d'événements peut être appelé PENDANT __init__ (avant ces attributs) ; il
+    # levait alors une AttributeError à chaque événement de construction.
+    _group_kind = None
+    _group_header_widgets = ()
 
     selected = Signal(object, object)   # (Column, Path | None)
     activated = Signal(object)          # Path
     view_requested = Signal(object)     # Path : double-clic sur une image (visionneuse de l'appli)
+    folder_view_requested = Signal(object)   # Path : double-clic sur un dossier (visionneuse sur son contenu)
+    folder_gallery_requested = Signal(object)  # Path : menu « Ouvrir la visionneuse à cet endroit » (planche)
+    recursive_requested = Signal(bool)       # menu « Récursif » : photos des sous-dossiers aussi
+    loaded = Signal()                      # contenu disponible, sélection/navigation différée
 
     def __init__(self, directory: Path, title: str, parent=None,
                  source_dirs: list[Path] | None = None, display_title: str | None = None,
@@ -203,8 +255,27 @@ class Column(QWidget):
                  show_dirs: bool = True, show_files: bool = True,
                  omit_dirs: frozenset = frozenset(), omit_files: frozenset = frozenset(),
                  only_recognized_software: bool = False,
-                 on_group_maximize=None, on_group_equalize=None):
+                 on_group_maximize=None, on_group_equalize=None, async_load: bool = False):
         super().__init__(parent)
+        self._async_load = async_load
+        self._loaded_data = None
+        self._load_key = None
+        self.loading = False
+        self._load_error = ""
+        self._row_iterator = None
+        self._row_timer = QTimer(self)
+        self._row_timer.setSingleShot(True)
+        self._row_timer.timeout.connect(self._advance_rows)
+        self._load_timer = QTimer(self)
+        self._load_timer.setSingleShot(True)
+        self._load_timer.timeout.connect(self._start_load)
+        self._revalidate_timer = QTimer(self)
+        self._revalidate_timer.setInterval(5000)
+        self._revalidate_timer.timeout.connect(self._revalidate_if_visible)
+        if async_load:
+            from column_loading import loader
+            loader().ready.connect(self._column_data_ready)
+            self._revalidate_timer.start()
         self._media_counts_generation = 0
         self.directory = directory
         # Filtre "que des repertoires logiciel reconnus" (voir refresh()) —
@@ -242,7 +313,7 @@ class Column(QWidget):
         # activee sur ce dossier precis. CALCULEE AVANT _folder_row_height
         # ci-dessous (voir sa remarque) : la lecture de "row_height" en
         # depend desormais.
-        layout_data = load_layout_settings(directory)
+        layout_data = {} if async_load else load_layout_settings(directory)
         self._pin_active = bool(layout_data.get("pinned", False))
         self._pin_column_width = layout_data.get("pinned_column_width") if self._pin_active else None
         self._pin_row_height = layout_data.get("pinned_row_height") if self._pin_active else None
@@ -551,13 +622,15 @@ class Column(QWidget):
         header_outer_layout.addWidget(header_fill)
 
         self.list = FileListWidget(self)
+        if async_load:
+            from PySide6.QtWidgets import QListView
+            self.list.setLayoutMode(QListView.Batched)
+            self.list.setBatchSize(128)
         self.list.setFrameShape(QFrame.NoFrame)
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.list.setMouseTracking(True)
-        # Uniforme seulement pour les colonnes a vignettes (toutes les lignes
-        # font PROJECT_ROW_HEIGHT) : dans les colonnes classiques, un fichier
-        # image peut desormais prendre une hauteur differente des autres
-        # lignes (voir RowDelegate), donc les hauteurs n'y sont plus uniformes.
+        # Hauteur commune dans les deux délégués ; seuls les espaces ajoutés
+        # à une ligne et les lignes collées en bas empêchent l'optimisation.
         self.sync_uniform_sizes()
         # L'espacement entre lignes est gere a la main dans les delegates
         # (voir ROW_SPACING) plutot que via QListView.setSpacing(), qui
@@ -726,7 +799,10 @@ class Column(QWidget):
         self.refresh_header()
         self.refresh_colors()
 
-        self.refresh()
+        if async_load:
+            self._start_load(force=False)
+        else:
+            self.refresh()
 
     def set_active(self, active: bool):
         if self.is_active != active:
@@ -1349,8 +1425,112 @@ class Column(QWidget):
             self.unsetCursor()
         super().leaveEvent(event)
 
+    def cancel_loading(self):
+        """Retrait d'une colonne : aucune attente du disque, aucun résultat tardif."""
+        self._load_timer.stop()
+        self._revalidate_timer.stop()
+        self._row_timer.stop()
+        self._row_iterator = None
+        self._media_counts_generation += 1
+        task = getattr(self, "_media_task", None)
+        if task is not None:
+            task.cancelled.set()
+        if self._load_key is not None:
+            from column_loading import loader
+            loader().cancel(self._load_key, self)
+        self._load_key = None
+        self.loading = False
+
+    def _revalidate_if_visible(self):
+        if not self.loading and self.isVisible() and not self.visibleRegion().isEmpty():
+            self._start_load(force=False)
+
+    def _start_load(self, force=True):
+        from column_loading import loader
+        service = loader()
+        directories = self._source_dirs if self._source_dirs is not None else [self.directory]
+        # Le dossier stable d'un groupe peut être absent des sources fusionnées.
+        directories = list(dict.fromkeys([*directories, self.directory]))
+        exclude = None if self._source_dirs is not None else _STATUS_FOLDER_SET
+        key = service.key(directories, exclude)
+        if self._load_key is not None and self._load_key != key:
+            service.cancel(self._load_key, self)
+        self._load_key = key
+        cached = service.cached(key)
+        if not force and cached is not None:
+            if cached is not self._loaded_data:
+                self._apply_column_data(cached)
+            if time.monotonic() - cached.stamp < service.FRESH_S:
+                return
+        self.loading = True
+        self._load_error = ""
+        self.list.setToolTip("Actualisation en cours…" if self.list.count() else "Lecture du dossier…")
+        service.request(key, directories, exclude, self, force=force)
+
+    def _column_data_ready(self, key, data, error):
+        if key != self._load_key:
+            return
+        from column_loading import loader
+        directories = self._source_dirs if self._source_dirs is not None else [self.directory]
+        directories = list(dict.fromkeys([*directories, self.directory]))
+        exclude = None if self._source_dirs is not None else _STATUS_FOLDER_SET
+        if key != loader().key(directories, exclude):
+            self._start_load(force=False)       # preset / configuration changés pendant la lecture
+            return
+        if data is not None and self._source_dirs is None and data.errors.get(str(self.directory)):
+            error, data = data.errors[str(self.directory)], None
+        self.loading = False
+        self._load_error = error
+        self.list.setToolTip(error)
+        if data is not None:
+            self._apply_column_data(data)
+        else:
+            self.loaded.emit()
+
+    def _apply_column_data(self, data):
+        previous = self._loaded_data
+        self._loaded_data = data
+        self._load_error = data.errors.get(str(self.directory), "") if self._source_dirs is None else ""
+        self.list.setToolTip(self._load_error)
+        if previous is not None and all(getattr(previous, name) == getattr(data, name)
+                                        for name in ("entries", "layouts", "shortcuts", "info", "lightroom", "errors")):
+            self.loaded.emit()
+            return
+        for path, info in data.info.items():
+            remember_entry(path, *info)
+        self.reload_pin_state(data.layouts.get(str(self.directory), {}))
+        self._row_timer.stop()
+        self._render_entries()
+
+    def _layout_for(self, directory):
+        if self._async_load:
+            return self._loaded_data.layouts.get(str(directory), {}) if self._loaded_data else {}
+        return load_layout_settings(directory)
+
+    def _entries_for(self, directory, exclude=None):
+        if self._async_load:
+            paths = self._loaded_data.entries.get(str(directory), ())
+            return [p for p in paths if p.name.lower() not in exclude] if exclude else paths
+        return list_entries(directory, exclude)
+
+    def _shortcuts_for(self, directory):
+        if self._async_load:
+            return self._loaded_data.shortcuts.get(str(directory), ())
+        return load_shortcuts(directory)
+
     def refresh(self):
+        if self._async_load:
+            # Coalesce les demandes d'un même geste / rafraîchissement global.
+            self._load_timer.start(0)
+            return
+        self._render_entries()
+
+    def _render_entries(self):
+        task = getattr(self, "_media_task", None)
+        if task is not None:
+            task.cancelled.set()
         current = self.current_path()
+        self._selection_before_load = current
         self.list.blockSignals(True)
         self.list.clear()
         aliases: dict[str, str] = {}      # nom d'affichage des raccourcis (cle = chemin cible)
@@ -1368,20 +1548,20 @@ class Column(QWidget):
                 # ROLE_SOURCE_STEP) : PAS d'etiquette -> pas de palier non
                 # plus (LOGICIELS, source_labels=None).
                 step = (i + 2) if self._source_labels else None
-                entries.extend((path, label, step, False) for path in list_entries(source))
+                entries.extend((path, label, step, False) for path in self._entries_for(source))
                 # Raccourcis propres a CHAQUE source (voir _add_shortcut, qui
                 # enregistre dans la source choisie) : sinon un raccourci cree
                 # depuis IN/OVER/OUT/LOGICIELS restait invisible.
-                for shortcut in load_shortcuts(source):
+                for shortcut in self._shortcuts_for(source):
                     target = Path(shortcut.get("target", ""))
-                    if target.is_dir():
+                    if self._async_load or _shortcut_present(target):
                         entries.append((target, label, step, True))
                         if shortcut.get("name"):
                             aliases[str(target)] = str(shortcut["name"])
             # Ordre choisi a la main (voir save_item_order) : rangé dans la 1re source, sous une cle
             # propre a CETTE colonne (la meme source peut etre affichee ailleurs avec son propre ordre).
             store, key = self._order_store()
-            order = load_layout_settings(store).get(key) if store is not None else None
+            order = self._layout_for(store).get(key) if store is not None else None
             if isinstance(order, list) and order:
                 rank = {k: i for i, k in enumerate(order)}
                 entries.sort(key=lambda e: rank.get(item_order_key(store, e[0]), len(rank)))
@@ -1394,7 +1574,7 @@ class Column(QWidget):
                 # avoir que des repertoires logiciel".
                 entries = [
                     (path, label, step, is_shortcut) for path, label, step, is_shortcut in entries
-                    if path.is_dir() and software_icon_key(path.name) is not None
+                    if entry_is_dir(path) and software_icon_key(path.name) is not None
                 ]
         else:
             # Colonnes REELLES (Type/Projets/Sous-projet/toute colonne "de
@@ -1405,7 +1585,7 @@ class Column(QWidget):
             # l'utilisateur, "si a l'interieur des colonnes de set il y a
             # un repertoire in out ou over, il n'apparaisse pas dans la
             # colonne concernee".
-            entries = [(path, None, None, False) for path in list_entries(self.directory, _STATUS_FOLDER_SET)]
+            entries = [(path, None, None, False) for path in self._entries_for(self.directory, _STATUS_FOLDER_SET)]
             # Raccourcis (voir load_shortcuts/ROLE_IS_SHORTCUT, Column._on_
             # context_menu "Ajouter un raccourci") : dossiers d'AILLEURS sur
             # le disque, affiches comme s'ils etaient physiquement ICI —
@@ -1415,16 +1595,16 @@ class Column(QWidget):
             # au meme endroit que les autres repertoires de l'emplacement
             # actuel". Cible manquante (dossier deplace/supprime depuis) :
             # ignoree silencieusement, pas d'entree fantome.
-            for shortcut in load_shortcuts(self.directory):
+            for shortcut in self._shortcuts_for(self.directory):
                 target = Path(shortcut.get("target", ""))
-                if target.is_dir():
+                if self._async_load or _shortcut_present(target):
                     entries.append((target, None, None, True))
                     if shortcut.get("name"):
                         aliases[str(target)] = str(shortcut["name"])
             # Ordre choisi a la main (colonne Type, voir FileListWidget/save_item_order) ; tri
             # stable : une entree inconnue de l'ordre (nouveau dossier) garde son rang par defaut,
             # apres celles qui y sont.
-            order = load_layout_settings(self.directory).get("item_order")
+            order = self._layout_for(self.directory).get("item_order")
             if isinstance(order, list) and order:
                 rank = {key: i for i, key in enumerate(order)}
                 entries.sort(key=lambda e: rank.get(item_order_key(self.directory, e[0]), len(rank)))
@@ -1437,7 +1617,7 @@ class Column(QWidget):
                 or GLOBAL_OMIT_DIR_NAMES or GLOBAL_OMIT_FILE_NAMES or GLOBAL_OMIT_FILE_EXTENSIONS):
             filtered = []
             for path, label, step, is_shortcut in entries:
-                is_dir = path.is_dir()
+                is_dir = entry_is_dir(path)
                 if is_dir and not self._show_dirs:
                     continue
                 if not is_dir and not self._show_files:
@@ -1460,73 +1640,113 @@ class Column(QWidget):
         # « Positionner au bas de la colonne » : ces lignes passent apres les autres (tri stable, leur
         # ordre entre elles est garde), puis sync_bottom_gap les colle en bas.
         bottom = self._item_bottom(space_store)
+        self._rows_known_uniform = not bool(spaces or spaces_below or bottom)
+        self._bottom_known_empty = not bottom
+        # Les deux délégués ont maintenant une hauteur commune, images comprises.
+        # Poser cette propriété AVANT l'insertion évite de recalculer les N
+        # sizeHint à chaque tranche d'un gros dossier (156 797 appels / 5 000 lignes).
+        self.list.setUniformItemSizes(not bool(spaces or spaces_below or bottom))
         if bottom:
             entries.sort(key=lambda e: item_order_key(space_store, e[0]) in bottom)
         self._media_counts_generation += 1
         media_generation = self._media_counts_generation
-        media_folders = [path for path, _label, _step, _shortcut in entries if path.is_dir()]
-        for path, label, step, is_shortcut in entries:
-            # Un raccourci peut porter un NOM D'AFFICHAGE (clic droit > Renommer le raccourci) : le
-            # dossier cible garde le sien.
-            item = QListWidgetItem(aliases.get(str(path)) if is_shortcut and str(path) in aliases else path.name)
-            item.setData(ROLE_PATH, str(path))
-            is_dir = path.is_dir()
-            item.setData(ROLE_ISDIR, is_dir)
-            item.setData(ROLE_SOURCE_LABEL, label)
-            item.setData(ROLE_SOURCE_STEP, step)
-            item.setData(ROLE_IS_SHORTCUT, is_shortcut)
-            item.setData(ROLE_LIGHTROOM_SHORTCUT,
-                         bool(is_shortcut and (path / ".pipeline_lightroom.json").is_file()))
-            item.setData(ROLE_MEDIA_COUNTS, None)
-            if space_store is not None:
-                item.setData(ROLE_SPACE_ABOVE, int(spaces.get(item_order_key(space_store, path), 0) or 0))
-                item.setData(ROLE_SPACE_BELOW, int(spaces_below.get(item_order_key(space_store, path), 0) or 0))
-                title = titles.get(item_order_key(space_store, path))
-                if isinstance(title, dict) and title.get("text"):
-                    item.setData(ROLE_TITLE_ABOVE, title)
-                if item_order_key(space_store, path) in bottom:
-                    item.setData(ROLE_PIN_BOTTOM, True)
-            meta = ""
-            if not is_dir:
-                try:
-                    meta = human_size(path.stat().st_size)
-                except OSError:
-                    pass
-            elif self.has_thumbnails:
-                count = count_entries(path, _STATUS_FOLDER_SET)
-                meta = f"{count} element{'s' if count != 1 else ''}"
-            item.setData(ROLE_META, meta)
-            self.list.addItem(item)
-            if current and path == current:
-                self.list.setCurrentItem(item)
-        self.list.blockSignals(False)
-        self.sync_uniform_sizes()
-        self.sync_bottom_gap()
-        # Les lignes peintes à l'écran demandent leurs aperçus à la volée ;
-        # amorcer quelques fichiers évite cependant un dossier vide au premier affichage.
+        media_folders = [path for path, _label, _step, _shortcut in entries if entry_is_dir(path)]
+        def rows():
+            for path, label, step, is_shortcut in entries:
+                # Un raccourci peut porter un NOM D'AFFICHAGE (clic droit > Renommer le raccourci) : le
+                # dossier cible garde le sien.
+                item = QListWidgetItem(aliases.get(str(path)) if is_shortcut and str(path) in aliases else path.name)
+                item.setData(ROLE_PATH, str(path))
+                is_dir = entry_is_dir(path)
+                item.setData(ROLE_ISDIR, is_dir)
+                item.setData(ROLE_SOURCE_LABEL, label)
+                item.setData(ROLE_SOURCE_STEP, step)
+                item.setData(ROLE_IS_SHORTCUT, is_shortcut)
+                item.setData(ROLE_LIGHTROOM_SHORTCUT,
+                             bool(is_shortcut and (str(path) in self._loaded_data.lightroom if self._async_load
+                                  else not is_remote_path(path) and (path / ".pipeline_lightroom.json").is_file())))
+                item.setData(ROLE_MEDIA_COUNTS, None)
+                if space_store is not None:
+                    okey = item_order_key(space_store, path)
+                    item.setData(ROLE_SPACE_ABOVE, int(spaces.get(okey, 0) or 0))
+                    item.setData(ROLE_SPACE_BELOW, int(spaces_below.get(okey, 0) or 0))
+                    title = titles.get(okey)
+                    if isinstance(title, dict) and title.get("text"):
+                        item.setData(ROLE_TITLE_ABOVE, title)
+                    if okey in bottom:
+                        item.setData(ROLE_PIN_BOTTOM, True)
+                meta = ""
+                if not is_dir:
+                    size = entry_size(path)
+                    if size is not None:
+                        meta = human_size(size)
+                elif self.has_thumbnails and not self._async_load and not is_remote_path(path):
+                    # Réseau : pas de lecture de chaque sous-dossier pour « N éléments » (un aller-retour par ligne).
+                    count = count_entries(path, _STATUS_FOLDER_SET)
+                    meta = f"{count} element{'s' if count != 1 else ''}"
+                item.setData(ROLE_META, meta)
+                self.list.addItem(item)
+                if current and path == current and self.current_path() is None:
+                    self.list.setCurrentItem(item)
+                yield
+            self.list.blockSignals(False)
+            self.sync_uniform_sizes()
+            self.sync_bottom_gap()
+            # Les lignes peintes à l'écran demandent leurs aperçus à la volée ;
+            # amorcer quelques fichiers évite cependant un dossier vide au premier affichage.
+            try:
+                import lightroom_bridge
+                lightroom_bridge.request_previews(path for path, _label, _step, _shortcut in entries)
+            except (ImportError, OSError, ValueError):
+                pass
+            if media_folders:
+                task = self._media_task = _MediaCountTask(media_generation, media_folders,
+                                                         entry_counts=self.has_thumbnails and self._async_load)
+                task.signals.finished.connect(self._apply_media_counts)
+                _MEDIA_COUNT_POOL.start(task)
+
+        self._row_iterator = rows()
+        if self._async_load:
+            self.loading = True
+            self.list.blockSignals(False)
+            self._advance_rows()
+        else:
+            for _ in self._row_iterator:
+                pass
+
+    def _advance_rows(self):
+        started = time.perf_counter()
+        self.list.blockSignals(True)
         try:
-            import lightroom_bridge
-            lightroom_bridge.request_previews(path for path, _label, _step, _shortcut in entries)
-        except (ImportError, OSError, ValueError):
-            pass
-        if media_folders:
-            task = _MediaCountTask(media_generation, media_folders)
-            task.signals.finished.connect(self._apply_media_counts)
-            _MEDIA_COUNT_POOL.start(task)
+            while time.perf_counter() - started < 0.006:
+                next(self._row_iterator)
+        except StopIteration:
+            self._row_iterator = None
+            self.loading = False
+            self._row_timer.stop()
+            if self._selection_before_load is not None and self.current_path() is None:
+                self.selected.emit(self, None)
+            self.loaded.emit()
+        finally:
+            self.list.blockSignals(False)
+        if self._row_iterator is not None:
+            self._row_timer.start(0)
 
     def _apply_media_counts(self, generation: int, media_counts: dict):
         """Applique uniquement les résultats de la dernière actualisation."""
         if generation != self._media_counts_generation:
             return
+        entries = {}
+        if isinstance(media_counts, tuple):
+            media_counts, entries = media_counts
         for index in range(self.list.count()):
             item = self.list.item(index)
             if not item.data(ROLE_ISDIR):
                 continue
-            try:
-                key = str(Path(item.data(ROLE_PATH)).resolve())
-            except (OSError, TypeError, ValueError):
-                continue
-            item.setData(ROLE_MEDIA_COUNTS, media_counts.get(key))
+            item.setData(ROLE_MEDIA_COUNTS, media_counts.get(str(item.data(ROLE_PATH))))
+            count = entries.get(str(item.data(ROLE_PATH)))
+            if count is not None:
+                item.setData(ROLE_META, f"{count} element{'s' if count != 1 else ''}")
 
     def _order_store(self) -> tuple[Path | None, str]:
         """(dossier, cle) ou s'enregistre l'ordre choisi a la main : le dossier de la colonne
@@ -1542,10 +1762,13 @@ class Column(QWidget):
         """Hauteurs de ligne uniformes (optimisation Qt des colonnes a vignettes) SAUF si une ligne a
         un espace au-dessus : Qt donnerait alors a toutes la hauteur de la premiere, et l'espace
         serait pris SUR la ligne (ligne ecrasee, fond et apercu tronques)."""
+        if self._async_load and getattr(self, "_rows_known_uniform", False):
+            self.list.setUniformItemSizes(True)
+            return
         spaced = any(int(self.list.item(i).data(ROLE_SPACE_ABOVE) or 0) or int(self.list.item(i).data(ROLE_SPACE_BELOW) or 0)
                      or self.list.item(i).data(ROLE_PIN_BOTTOM)
                      for i in range(self.list.count()))
-        self.list.setUniformItemSizes(bool(self.has_thumbnails) and not spaced)
+        self.list.setUniformItemSizes(not spaced)
 
     # -- « Positionner au bas de la colonne » (clic droit sur une ligne) --
     # Les lignes marquees (`item_bottom` du .pipeline_layout.json, liste de cles, `item_bottom@<titre>`
@@ -1558,7 +1781,7 @@ class Column(QWidget):
     def _item_bottom(self, store: Path | None) -> set:
         if store is None:
             return set()
-        keys = load_layout_settings(store).get(self._bottom_key())
+        keys = self._layout_for(store).get(self._bottom_key())
         return {str(k) for k in keys} if isinstance(keys, list) else set()
 
     def set_item_bottom(self, item, pinned: bool):
@@ -1581,7 +1804,8 @@ class Column(QWidget):
         la liste - hauteur de toutes les lignes (jamais negatif : liste plus haute que la colonne =
         lignes simplement a la fin). Appele apres chaque refresh, redimensionnement de la liste et
         changement de hauteur de ligne."""
-        if getattr(self, "_syncing_bottom", False):
+        if (getattr(self, "_syncing_bottom", False)
+                or self._async_load and getattr(self, "_bottom_known_empty", False)):
             return
         lst = self.list
         first = None
@@ -1617,7 +1841,7 @@ class Column(QWidget):
     def _item_spaces(self, store: Path | None, below: bool = False) -> dict:
         if store is None:
             return {}
-        spaces = load_layout_settings(store).get(self._spaces_key(below))
+        spaces = self._layout_for(store).get(self._spaces_key(below))
         return spaces if isinstance(spaces, dict) else {}
 
     def set_item_space(self, item, height: int, below: bool = False):
@@ -1672,7 +1896,7 @@ class Column(QWidget):
     def _item_titles(self, store: Path | None) -> dict:
         if store is None:
             return {}
-        titles = load_layout_settings(store).get(self._titles_key())
+        titles = self._layout_for(store).get(self._titles_key())
         return titles if isinstance(titles, dict) else {}
 
     def _item_key(self, item) -> str | None:
@@ -2068,10 +2292,10 @@ class Column(QWidget):
         if self._pin_btn is not None:
             self._pin_btn.setIcon(QIcon(_pin_icon_pixmap(self._pin_active, 14)))
 
-    def reload_pin_state(self):
+    def reload_pin_state(self, data=None):
         """Preset change : les valeurs de punaise sont celles du NOUVEAU preset (demande de l'utilisateur,
         voir browser_core.PIN_LAYOUT_KEYS) — relues et appliquees sur place (memes regles que __init__)."""
-        data = load_layout_settings(self.directory)
+        data = load_layout_settings(self.directory) if data is None else data
         self._pin_active = bool(data.get("pinned", False))
         self._pin_column_width = data.get("pinned_column_width") if self._pin_active else None
         self._pin_row_height = data.get("pinned_row_height") if self._pin_active else None
@@ -2090,7 +2314,7 @@ class Column(QWidget):
                 if isinstance(data.get(key), (int, float)):
                     setattr(self, attr, int(data[key]))
         self._refresh_pin_icon()
-        self.setFixedWidth(self._pin_column_width or self._user_width or col_width(self.style_title))
+        self.setFixedWidth(0 if self.collapsed else self._pin_column_width or self._user_width or col_width(self.style_title))
         self.list.doItemsLayout()
         self.list.viewport().update()
 
@@ -2242,6 +2466,11 @@ class Column(QWidget):
         if not item.data(ROLE_ISDIR) and opens_in_viewer(path):
             self.view_requested.emit(path)
             return
+        if item.data(ROLE_ISDIR):
+            # Un dossier s'ouvre dans la visionneuse (demande de l'utilisateur) ; sans photo a montrer,
+            # PipelineBrowser le laisse a l'explorateur comme avant.
+            self.folder_view_requested.emit(path)
+            return
         self.activated.emit(path)
 
     def preview_source(self, path: Path):
@@ -2270,6 +2499,8 @@ class Column(QWidget):
             menu.setFont(font(11, 400))
             act_new_folder = menu.addAction("Nouveau dossier")
             act_new_text_file = menu.addAction("Nouveau document texte") if self._show_files else None
+            # Board facon Miro (paquet board/) : fichier .mro (JSON), ouvert dans l'appli au double-clic.
+            act_new_board = menu.addAction("Créer un mro") if self._show_files else None
             act_add_shortcut = menu.addAction("Ajouter un raccourci...")
             act_paste = None
             if QApplication.clipboard().mimeData().hasUrls():
@@ -2291,6 +2522,8 @@ class Column(QWidget):
                 QTimer.singleShot(0, self._create_folder)
             elif chosen is act_new_text_file:
                 QTimer.singleShot(0, self._create_text_file)
+            elif act_new_board is not None and chosen is act_new_board:
+                QTimer.singleShot(0, self._create_board_file)
             elif chosen is act_add_shortcut:
                 # 150ms (PAS 0) : ce menu ouvre un QFileDialog (via
                 # _add_shortcut), pas seulement une QInputDialog — voir
@@ -2309,8 +2542,20 @@ class Column(QWidget):
         act_open = menu.addAction("Ouvrir")
         act_rename = menu.addAction("Renommer le raccourci…" if is_shortcut else "Renommer")
         act_reveal = menu.addAction("Afficher dans l'explorateur")
+        act_viewer = act_recursive = None
+        if item.data(ROLE_ISDIR):
+            # Visionneuse sur CE dossier, directement en planche (aucune image en focus), et « Récursif » :
+            # les photos des sous-dossiers aussi (même réglage que le bouton de la visionneuse).
+            act_viewer = menu.addAction("Ouvrir la visionneuse à cet endroit")
+            act_recursive = menu.addAction("Récursif (photos des sous-dossiers)")
+            act_recursive.setCheckable(True)
+            act_recursive.setChecked(bool((ui_state.APPLIED_SETTINGS or {}).get("viewer_recursive", False)))
         act_render_preview_low = None
         act_render_preview_high = None
+        act_auto_preview = None
+        if not item.data(ROLE_ISDIR):
+            act_auto_preview = menu.addAction("Créer un aperçu automatique")
+            act_auto_preview.setEnabled(path.suffix.lower() in PREVIEWABLE_EXTENSIONS)
         if path.is_file() and path.suffix.lower() in RENDERABLE_3D_EXTENSIONS:
             menu.addSeparator()
             act_render_preview_low = menu.addAction("Générer un rendu low poly")
@@ -2416,8 +2661,19 @@ class Column(QWidget):
         # le dossier CIBLE) ; "Retirer le raccourci" retire seulement l'ENTREE.
         act_remove_shortcut = menu.addAction("Retirer le raccourci") if is_shortcut else None
         act_lightroom = menu.addAction("Associer ce dossier à Lightroom…") if is_shortcut and path.is_dir() else None
+        act_obsidian_app = None
+        if not item.data(ROLE_ISDIR) and path.suffix.lower() == ".md":
+            import markdown_preview
+            if markdown_preview.vault_containing(path) is not None:
+                act_obsidian_app = menu.addAction("Ouvrir dans l'application Obsidian")
         act_add_shortcut = menu.addAction("Ajouter un raccourci...")
         chosen = menu.exec(self.list.mapToGlobal(pos))
+        if act_viewer is not None and chosen is act_viewer:
+            QTimer.singleShot(0, lambda p=path: self.folder_gallery_requested.emit(p))
+            return
+        if act_recursive is not None and chosen is act_recursive:
+            self.recursive_requested.emit(act_recursive.isChecked())
+            return
         if chosen is act_bottom:
             pinned = act_bottom.isChecked()
             QTimer.singleShot(0, lambda it=item: self.set_item_bottom(it, pinned))
@@ -2436,6 +2692,8 @@ class Column(QWidget):
                 self._rename_item(path)
         elif chosen is act_reveal:
             reveal_in_file_manager(path)
+        elif act_auto_preview is not None and chosen is act_auto_preview:
+            QTimer.singleShot(0, lambda p=path: self._create_automatic_preview(p))
         elif act_render_preview_low is not None and chosen is act_render_preview_low:
             try:
                 path_key = str(path)
@@ -2474,6 +2732,12 @@ class Column(QWidget):
             self.refresh()
         elif act_lightroom is not None and chosen is act_lightroom:
             self._configure_lightroom_folder(path)
+        elif act_obsidian_app is not None and chosen is act_obsidian_app:
+            import markdown_preview
+            url = markdown_preview.obsidian_open_url(path)
+            if url:
+                from PySide6.QtGui import QDesktopServices
+                QDesktopServices.openUrl(QUrl(url))
         elif chosen is act_add_shortcut:
             QTimer.singleShot(150, self._add_shortcut)
 
@@ -2535,6 +2799,14 @@ class Column(QWidget):
                 self.list.viewport().update(self.list.visualItemRect(shortcut_item))
                 break
         self.list.viewport().update()
+
+    def _create_automatic_preview(self, path: Path):
+        """Lance le décodeur habituel en fond, y compris pour les MKV à la demande."""
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return
+        _PREVIEW_DECODE_MANAGER.request(path, mtime, force_render=True)
 
     def _add_context_slider(self, menu: QMenu, label_text: str, value: int, vmin: int, vmax: int, on_change):
         """Ligne "slider + valeur px en temps reel" du menu contextuel
@@ -2695,6 +2967,47 @@ class Column(QWidget):
             if it.data(ROLE_PATH) == str(new_path):
                 self.list.setCurrentItem(it)
                 break
+
+    def _create_board_file(self, name: str | None = None):
+        """« Créer un mro » (voir _on_context_menu) : un board vierge (paquet board/, JSON), meme mecanique que
+        _create_text_file (nom, caracteres interdits, niveau d'une colonne fusionnee) ; il est selectionne,
+        le double-clic l'ouvre dans l'appli."""
+        import board
+        if name is None:
+            name, ok = QInputDialog.getText(self, "Créer un mro", "Nom du board :", QLineEdit.Normal, "Nouveau board")
+            if not ok:
+                return None
+        name = (name or "").strip()
+        if not name:
+            return None
+        if any(ch in name for ch in '\\/:*?"<>|'):
+            QMessageBox.warning(self, "Créer un mro", "Le nom contient des caracteres interdits.")
+            return None
+        if not name.lower().endswith(board.EXTENSION):
+            name += board.EXTENSION
+        target_dir = self.directory
+        if self._source_dirs is not None and self._source_labels and len(self._source_dirs) > 1:
+            choice, ok_level = QInputDialog.getItem(
+                self, "Créer un mro", "A quel niveau enregistrer ce board ?", self._source_labels, 0, False)
+            if not ok_level:
+                return None
+            target_dir = self._source_dirs[self._source_labels.index(choice)]
+        new_path = target_dir / name
+        if new_path.exists():
+            QMessageBox.warning(self, "Créer un mro", f"« {name} » existe deja.")
+            return None
+        try:
+            board.create_board_file(new_path)
+        except OSError as exc:
+            QMessageBox.warning(self, "Créer un mro", f"Impossible de creer le board :\n{exc}")
+            return None
+        self.refresh()
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            if it.data(ROLE_PATH) == str(new_path):
+                self.list.setCurrentItem(it)
+                break
+        return new_path
 
     def _add_shortcut(self):
         """"Ajouter un raccourci" (voir _on_context_menu, ROLE_IS_SHORTCUT/

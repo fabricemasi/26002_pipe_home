@@ -49,6 +49,9 @@ from settings_theme import (  # noqa: F401 (reexportes)
 from settings_menu import Menu, menu_row  # noqa: F401 (reexporte : menus contextuels)
 from settings_store import (
     M,
+    input_bg,
+    input_border_decl,
+    input_height,
     _CORNERS,
     _SLIDER_STYLE,
     _coerce_corner_radius,
@@ -422,6 +425,19 @@ class _MiniSlider(QWidget):
             self._press_global_x = None
         super().mouseReleaseEvent(event)
 
+    def mouseDoubleClickEvent(self, event):
+        """Double-clic SUR le curseur (la poignée) : `knob_double_clicked` (ex. valeur d'origine) ; ailleurs, le
+        double-clic reste un clic (le curseur vient sous le pointeur)."""
+        handler = getattr(self, "knob_double_clicked", None)
+        if event.button() == Qt.LeftButton and handler is not None:
+            x = event.position().toPoint().x()
+            if abs(x - round(self._pct() * self.width())) <= _SLIDER_STYLE["thumb_w"] // 2 + 3:
+                self._press_global_x = None
+                handler()
+                event.accept()
+                return
+        self.mousePressEvent(event)
+
     def _paint_bordered(self, p: QPainter, rect: QRect, radius, border_on,
                          border_colors: dict, fill_layers, key=None):
         """Peint `rect` (rail ou selecteur) avec, cote par cote actif, une
@@ -605,8 +621,11 @@ class _SliderField(QWidget):
     valueChanged = Signal(int)
 
     def __init__(self, minimum: int, maximum: int, value: int, unit: str = "px",
-                 slider_width: int = 170, box_width: int = 68, parent=None):
+                 slider_width: int = 170, box_width: int = 68, parent=None, scale: int = 1):
         super().__init__(parent)
+        # `scale` (10, 100…) : valeur ENTIERE stockee, affichee / saisie avec des decimales (valeur / scale) —
+        # ex. exposition en stops au centieme (module video).
+        self._scale = max(1, int(scale))
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
@@ -623,11 +642,15 @@ class _SliderField(QWidget):
         box_l.setContentsMargins(7, 0, 7, 0)
         box_l.setSpacing(4)
         self._min, self._max = minimum, maximum
-        self.value_label = QLineEdit(str(value))
+        self.value_label = QLineEdit(self._text(value))
         self.value_label.setFont(_qfont(11, 400, mono=True))
         self.value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.value_label.setFrame(False)
-        self.value_label.setValidator(QIntValidator(self.value_label))
+        if self._scale == 1:
+            self.value_label.setValidator(QIntValidator(self.value_label))
+        else:
+            self.value_label.setValidator(QDoubleValidator(minimum / self._scale, maximum / self._scale,
+                                                           len(str(self._scale)) - 1, self.value_label))
         self.value_label.setStyleSheet(f"background: transparent; border: none; padding: 0; color: {M['value_text']};")
         self.value_label.editingFinished.connect(self._on_text_edited)
         unit_label = QLabel(unit)
@@ -637,10 +660,31 @@ class _SliderField(QWidget):
         layout.addWidget(self.slider)
         layout.addWidget(box)
         self.slider.valueChanged.connect(self._on_change)
+        self._reset_value = None
+        self._marked = False
+
+    def set_reset_value(self, value: int | None):
+        """Valeur d'ORIGINE (propre à ce réglage, pas forcément 0) : la case de valeur prend un contour orange
+        (couleur « modifié » du thème, `M["dirty_fg"]`) tant que la valeur en diffère, et un double-clic sur la
+        poignée du curseur l'y ramène. None : rien de tout cela."""
+        self._reset_value = None if value is None else int(value)
+        self.slider.knob_double_clicked = None if value is None else self.reset
+        self._update_mark()
+
+    def reset(self):
+        if self._reset_value is not None:
+            self.setValue(self._reset_value)
+
+    def _update_mark(self):
+        marked = self._reset_value is not None and self.slider.value() != self._reset_value
+        if marked != self._marked:
+            self._marked = marked
+            self._refresh_box_style()
 
     def _refresh_box_style(self):
+        border = f"border: 1px solid {M['dirty_fg']};" if getattr(self, "_marked", False) else input_border_decl()
         self.box.setStyleSheet(
-            f"#SliderValueBox {{ background: {M['field_bg']}; border: 1px solid {M['field_border']}; "
+            f"#SliderValueBox {{ background: {input_bg()}; {border} "
             f"border-radius: {self._radius}px; }}"
         )
 
@@ -652,18 +696,26 @@ class _SliderField(QWidget):
         self._radius = max(0, int(radius))
         self._refresh_box_style()
 
+    def _text(self, value: int) -> str:
+        if self._scale == 1:
+            return str(value)
+        return f"{value / self._scale:.{len(str(self._scale)) - 1}f}"
+
     def _on_change(self, value: int):
-        self.value_label.setText(str(value))
+        self.value_label.setText(self._text(value))
+        if self._reset_value is not None:
+            self._update_mark()
         self.valueChanged.emit(value)
 
     def _on_text_edited(self):
-        text = self.value_label.text().strip()
+        text = self.value_label.text().strip().replace(",", ".")
         try:
-            value = max(self._min, min(self._max, int(text)))
+            raw = round(float(text) * self._scale) if self._scale != 1 else int(text)
+            value = max(self._min, min(self._max, raw))
         except ValueError:
             value = self.slider.value()
         self.slider.setValue(value)
-        self.value_label.setText(str(self.slider.value()))
+        self.value_label.setText(self._text(self.slider.value()))
 
     def value(self) -> int:
         return self.slider.value()
@@ -722,7 +774,7 @@ class _RatioSliderField(QWidget):
 
     def _refresh_box_style(self):
         self.box.setStyleSheet(
-            f"#SliderValueBox {{ background: {M['field_bg']}; border: 1px solid {M['field_border']}; "
+            f"#SliderValueBox {{ background: {input_bg()}; {input_border_decl()} "
             f"border-radius: {self._radius}px; }}"
         )
 
@@ -919,6 +971,8 @@ class _SelectField(QPushButton):
         self._radius = _input_radius()
         _register_input(self)
         self.setFixedSize(width, 25)
+        if input_height():
+            self.setFixedHeight(input_height())           # Reglages > Zone de saisie > Hauteur
         self.setCursor(Qt.ArrowCursor)
         self.setFocusPolicy(Qt.NoFocus)
         self.setFont(_qfont(11, 400))
@@ -928,7 +982,7 @@ class _SelectField(QPushButton):
 
     def _refresh_style(self):
         self.setStyleSheet(
-            f"QPushButton {{ background: {M['field_bg']}; border: 1px solid {M['field_border']}; "
+            f"QPushButton {{ background: {input_bg()}; {input_border_decl()} "
             f"border-radius: {self._radius}px; "
             f"color: {M['value_fg']}; text-align: left; padding: 0 8px; }}"
             f"QPushButton:hover {{ border-color: {M['field_border_hover']}; }}"
@@ -3240,7 +3294,7 @@ class _ColorPickerPopup(QWidget):
         hex_box.setObjectName("HexBox")
         hex_box.setAttribute(Qt.WA_StyledBackground, True)
         hex_box.setStyleSheet(
-            f"#HexBox {{ background: {M['field_bg']}; border: 1px solid {M['field_border']}; "
+            f"#HexBox {{ background: {input_bg()}; {input_border_decl()} "
             f"border-radius: {self._input_radius}px; }}"
         )
         hex_l = QHBoxLayout(hex_box)
@@ -3349,7 +3403,7 @@ class _ColorPickerPopup(QWidget):
         # Valeur SAISISSABLE (demande de l'utilisateur : les textes du selecteur n'etaient pas
         # modifiables) : zone de saisie sans cadre dans la boite, entiers seulement (voir _wire_value).
         box.setStyleSheet(
-            f"#ValBox {{ background: {M['field_bg']}; border: 1px solid {M['field_border']}; "
+            f"#ValBox {{ background: {input_bg()}; {input_border_decl()} "
             f"border-radius: {self._input_radius}px; }}"
             "#ValBox QLineEdit { border: none; padding: 0; margin: 0; }"
         )
@@ -4398,7 +4452,7 @@ class _ShortcutField(QLineEdit):
 
     def _restyle(self):
         self.setStyleSheet(
-            f"QLineEdit {{ background: {M['field_bg']}; border: 1px solid {M['field_border']}; "
+            f"QLineEdit {{ background: {input_bg()}; {input_border_decl()} "
             f"border-radius: {self._radius}px; color: {M['value_fg']}; padding: 0 6px; }}"
             f"QLineEdit:focus {{ border: 1px solid {M['accent_border']}; }}")
 
