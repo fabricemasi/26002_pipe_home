@@ -19,11 +19,12 @@ from __future__ import annotations
 import math
 import time
 from collections import OrderedDict
-from fractions import Fraction
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPointF, QRect, QRectF, QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QColor, QIcon, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPolygonF, QPixmap, QUndoStack, QUndoCommand
+from PySide6.QtGui import (
+    QColor, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPolygonF, QPixmap, QUndoStack, QUndoCommand,
+)
 from PySide6.QtWidgets import (QFileDialog, QHBoxLayout, QLabel, QLineEdit, QSlider, QStackedLayout, QMenu, QComboBox, QSpinBox,
                                QVBoxLayout, QWidget)
 
@@ -362,26 +363,6 @@ class _MoodboardCanvas(QWidget):
             return pix
         return self.pixmaps.get(index)
 
-    def render_full_board(self):
-        """Rend toutes les cases à leur taille de base, hors zoom et cadrage du viewport."""
-        size = self.board_size()
-        result = QPixmap(max(1, size.width()), max(1, size.height()))
-        result.fill(QColor("#202020"))
-        p = QPainter(result)
-        for n, index in enumerate(self.frames):
-            row, col = divmod(n, self.columns)
-            rect = QRectF(self.gap + col * (self.cell.width() + self.gap),
-                          self.gap + row * (self.cell.height() + self.gap),
-                          self.cell.width(), self.cell.height())
-            pix = self._pixmap_for(index)
-            if pix is not None and not pix.isNull():
-                p.drawPixmap(rect, pix, QRectF(pix.rect()))
-            if index == self.current:
-                p.setPen(QPen(QColor("#ff3030"), 3))
-                p.setBrush(Qt.NoBrush)
-                p.drawRect(rect.adjusted(1, 1, -1, -1))
-        p.end()
-        return result
 
 from video import color as vcolor
 from video import media as vmedia

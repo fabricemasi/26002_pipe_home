@@ -686,11 +686,6 @@ class _CacheDirIndex:
 _CACHE_INDEX = _CacheDirIndex()
 
 
-def warm_cache_index():
-    """Lit le dossier du cache une fois (appelé en fond au démarrage)."""
-    _CACHE_INDEX.warm()
-
-
 def _turntable_cache_path(path: Path, mtime: float, profiles_snapshot=None, render_mode: str = "low") -> Path:
     signature = _file_image_cache_signature(path, render_mode=render_mode, profiles_snapshot=profiles_snapshot)
     digest = hashlib.sha1(f"turntable:{_TURNTABLE_CACHE_VERSION}:{_PREVIEW_CACHE_VERSION}:{path.resolve()}:{mtime}:{signature}".encode()).hexdigest()
@@ -870,7 +865,6 @@ def prune_unused_previews(path: Path, mtime: float | None = None, entries: list 
     d'anciens reglages de rendu (profil, modele Blender) qui ne servent plus ni a
     l'affichage courant ni de repli « perime ». Garde LOW et HIGH actuels et la
     derniere image enregistree. Retourne le nombre d'elements supprimes."""
-    cache = FILE_IMAGE_DISK_CACHE_DIR
     prefix = _cache_label(path) + "__"
     try:
         mtime = path.stat().st_mtime if mtime is None else mtime
@@ -926,7 +920,6 @@ def sweep_preview_cache(dry_run: bool = False) -> dict:
     alors que son dossier existe, retire aussi tous ses apercus. Les sources dont le
     dossier est introuvable (disque debranche) ne sont jamais touchees."""
     result = {"inutiles": 0, "orphelins": 0}
-    cache = FILE_IMAGE_DISK_CACHE_DIR
     listing = _CACHE_INDEX.with_prefix("")
     if not listing:
         return result
@@ -2668,8 +2661,6 @@ report(35, "Maillage prêt; préparation du rendu")
                     return None
                 time.sleep(0.1)
             if proc.returncode != 0:
-                if source_is_hdf5 and progress_callback:
-                    progress_callback(99, "Import refusé : archive HDF5 héritée; réexport requis en Ogawa")
                 return None
             if not meshfile.is_file() or meshfile.stat().st_size == 0:
                 return None
@@ -4881,7 +4872,6 @@ class _PreviewDecodeManager(QObject):
             except (OSError, ValueError):
                 pass
             return
-        global _AUTOMATIC_RENDER_PROFILE
         profile_override = None
         profiles_snapshot = None
         if force_render and path.suffix.lower() in RENDERABLE_3D_EXTENSIONS:

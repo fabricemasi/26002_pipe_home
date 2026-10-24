@@ -15,7 +15,7 @@ import math
 import os
 import re
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 

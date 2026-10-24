@@ -26,7 +26,7 @@ import shutil
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer
-from PySide6.QtGui import QColor, QFontMetrics, QIcon, QPixmap
+from PySide6.QtGui import QFontMetrics, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMenu, QProxyStyle, QStyle, QWidget,
     QWidgetAction,

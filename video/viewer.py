@@ -1101,9 +1101,6 @@ def create_viewer(preference: str = "auto", parent=None):
 # Informations en surimpression
 # ==========================================================================
 
-INFO_CATEGORIES = ("Média", "Image", "Lecture", "Affichage", "Pixel")
-
-
 class InfoOverlay(QWidget):
     """Panneau d'infos posé PAR-DESSUS l'image (coin choisi, marges) : fond semi-transparent, texte, catégories.
     Transparent à la souris : la navigation passe à travers ; le masquer ne bouge pas l'image."""

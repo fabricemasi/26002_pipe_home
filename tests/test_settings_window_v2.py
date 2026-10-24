@@ -24,7 +24,6 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 app = QApplication.instance() or QApplication([])
 
-import settings_window as sw
 import settings_store
 import settings_window_v2 as v2
 
@@ -45,9 +44,11 @@ def build(wired=v2.WIRED_SECTIONS):
 class EquivalenceTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.old = sw.SettingsWindow(mode="tout")
-        cls.old_values = cls.old._current_values()
-        cls.win = build(ALL_EQUIVALENT)
+        # Valeurs de l'ancienne fenetre v1 (retiree), figees avec les reglages par defaut : _v1_reference.py.
+        from _v1_reference import VALUES
+        cls.old_values = VALUES
+        with mock.patch.object(v2, "load_settings", lambda: copy.deepcopy(settings_store.DEFAULT_SETTINGS)):
+            cls.win = build(ALL_EQUIVALENT)
         cls.new_values = cls.win.wired_values()
 
     def test_every_value_read_by_v2_matches_the_old_window(self):
@@ -77,7 +78,6 @@ class SaveTest(unittest.TestCase):
             mock.patch.object(v2, "save_settings", lambda s: (self.written.append(copy.deepcopy(s)),
                                                               self.disk.update(copy.deepcopy(s)))),
             mock.patch.object(v2, "_load_presets", lambda: self.presets),
-            mock.patch.object(v2, "_save_presets", lambda p: self.presets.update(p)),
             # update_active_preset (appele a l'enregistrement) lit / ecrit les presets par settings_store : sans
             # ces doublures, le preset ACTIF de l'utilisateur (« fab ») recevait les valeurs du test (signale).
             mock.patch.object(settings_store, "_load_presets", lambda: self.presets),

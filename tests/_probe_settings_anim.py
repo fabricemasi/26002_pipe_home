@@ -92,5 +92,5 @@ if prof:
 scenario("reglages ouverts")
 if prof:
     pr.disable(); pstats.Stats(pr).sort_stats("tottime").print_stats(25)
-w._settings_dialog.close(); w._settings_dialog_general.close(); pump(800)
+w._settings_dialog_v2.close(); pump(800)
 scenario("reglages fermes")

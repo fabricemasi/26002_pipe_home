@@ -31,7 +31,6 @@ from PySide6.QtWidgets import (
     QSpacerItem,
     QVBoxLayout,
     QWidget,
-    QWidgetAction,
 )
 from app_style import (
     SEMANTIC_COLOR_SLOTS,
@@ -42,10 +41,7 @@ from app_style import (
     installed_font_families,
     ITEM_FONT_ROLE_LABELS,
 )
-from settings_theme import (  # noqa: F401 (reexportes)
-    _input_radius, _qfont, _register_input, _register_radius, _set_button_radius, _set_input_radius,
-    _set_text_role, _text_label,
-)
+from settings_theme import _input_radius, _qfont, _register_input, _register_radius, _set_text_role
 from settings_menu import Menu, menu_row  # noqa: F401 (reexporte : menus contextuels)
 from settings_store import (
     M,
@@ -1332,8 +1328,6 @@ def _resolve_toggle_key(key: str | None) -> str:
         return _TOGGLE_STYLE
     return next(iter(_TOGGLE_STYLES), "toggle1")
 
-def _active_toggle_style() -> dict:
-    return _toggle_style_dict(_resolve_toggle_key(_TOGGLE_STYLE))
 
 def _sync_toggle_shape_style(target: dict, settings: dict, prefix: str) -> None:
     """Recopie les reglages `{prefix}_*` de `settings` dans `target`

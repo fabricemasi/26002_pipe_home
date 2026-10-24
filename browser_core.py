@@ -6,14 +6,11 @@ import time
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
-from PySide6.QtCore import (
-    QElapsedTimer, QEvent, QObject, QPoint, QPointF, QRect, QSize, Qt, QTimer, QUrl, Signal,
-)
+from PySide6.QtCore import QElapsedTimer, QEvent, QObject, QPoint, QRect, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QColor,
     QCursor,
     QDesktopServices,
-    QLinearGradient,
     QPainter,
     QPen,
     QPixmap,
@@ -67,7 +64,10 @@ from config import (
     THUMBNAIL_FILENAME,
     THUMBNAIL_MAX_DIM,
 )
-from previews import cached_mtime as _previews_mtime, forget_mtime as _forget_mtime
+from previews import (
+    cached_mtime as _previews_mtime,
+    forget_mtime as _forget_mtime,
+)
 from previews import (
     SOFTWARE_ICONS,
     UI_ICON_FILE_DEFAULT,
@@ -261,8 +261,6 @@ def _pin_icon_pixmap(active: bool, size: int) -> QPixmap:
 # toutes les applications du pipeline.
 # ==========================================================================
 
-COLUMN_WIDTH = 220
-
 COLUMN_MIN_WIDTH = 120
 
 COLUMN_MAX_WIDTH = 640
@@ -302,12 +300,6 @@ _WIDGET_SIZE_MAX = 16777215
 ROW_RESIZE_MIN_HEIGHT = 14
 
 ROW_RESIZE_MAX_HEIGHT = 80
-
-ROW_HEIGHT = 24
-
-ROW_SPACING = 1            # espace (px) entre les lignes, dans toutes les colonnes
-
-TOPBAR_HEIGHT = 40
 
 STATUS_HEIGHT = 24
 
@@ -427,8 +419,6 @@ def col_img_pad(title: str) -> int:
     # affiche bien 0.
     return scaled(COLUMN_SETTINGS[_col_key(title)]["img_pad"], minimum=0)
 
-def col_img_radius(title: str) -> int:
-    return scaled(COLUMN_SETTINGS[_col_key(title)]["img_radius"], minimum=0)
 
 # ==========================================================================
 # Scan disque
@@ -1616,18 +1606,13 @@ def _show_row_resize_indicator(column: "Column", row_index: int, height: int) ->
     label.raise_()
 
 def _live_dialog_values(win) -> dict | None:
-    """Valeurs EN COURS (apercu non enregistre) de la fenetre de reglages ouverte — v1 (`_settings_dialog`)
-    ou v2 (`_settings_dialog_v2`) — ou None si aucune n'est visible."""
-    for attr, reader in (("_settings_dialog", "_current_values"), ("_settings_dialog_v2", "current_values")):
-        dialog = getattr(win, attr, None)
-        if dialog is None:
-            continue
-        try:
-            if dialog.isVisible():
-                return getattr(dialog, reader)()
-        except RuntimeError:
-            continue
-    return None
+    """Valeurs EN COURS (apercu non enregistre) de la fenetre de reglages ouverte (`_settings_dialog_v2`),
+    ou None si elle n'est pas visible."""
+    dialog = getattr(win, "_settings_dialog_v2", None)
+    try:
+        return dialog.current_values() if dialog is not None and dialog.isVisible() else None
+    except RuntimeError:
+        return None
 
 def _persist_row_height(win, title: str, new_height: int) -> None:
     """Enregistre `new_height` comme hauteur de ligne EFFECTIVE de `title`
@@ -1836,12 +1821,6 @@ class _FadeOverlay(QWidget):
         _fine_timer(True)
         self._timer.start()
 
-    def set_background(self, color):
-        """Fond opaque peint sous la capture : pour un fondu au-dessus de vrais widgets
-        encore visibles (ils sont masques par le fond au lieu de l'etre deja)."""
-        self._background = color
-        self.setAttribute(Qt.WA_OpaquePaintEvent, color is not None)
-
     STAGGER = 0.45    # part de la duree sur laquelle s'etale le depart des colonnes
 
     def set_spans(self, spans: list):
@@ -2028,7 +2007,6 @@ class _SlideOverlay(QWidget):
         covered_left = left_x + left_w
         painter.setCompositionMode(QPainter.CompositionMode_Source)
         # bandes de fond non couvertes (entre les deux captures, apres la capture de droite)
-        gap_start = max(0, min(covered_left, right_x))
         if right_x > covered_left:
             painter.fillRect(QRect(max(0, covered_left), 0, right_x - max(0, covered_left), height), self._bg)
         end = right_x + right_w

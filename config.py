@@ -169,11 +169,6 @@ _PUR_IMAGE_INDEX_CACHE: dict[str, tuple[float, list[tuple[int, int, str]]]] = {}
 # pour ces lignes : l'image EST le fichier.
 SHOW_FILE_IMAGE_PREVIEWS = True
 
-# Fenetres de reglages v1 (« Parametres visuels » / « Parametres generaux », settings_window.py)
-# DESACTIVEES a la demande de l'utilisateur : un seul bouton de reglages, qui ouvre la v2
-# (settings_window_v2.py). PipelineBrowser.open_settings redirige vers la v2 tant que c'est faux.
-SETTINGS_V1_ENABLED = False
-
 PREVIEW_MIN_HEIGHT = 104   # hauteur de la vignette sans image (ou image tres petite)
 PREVIEW_MAX_HEIGHT = 1200  # affichage natif des apercus OBJ/ABC en 1200 x 1200 px
 
@@ -184,7 +179,6 @@ PREVIEW_MAX_HEIGHT = 1200  # affichage natif des apercus OBJ/ABC en 1200 x 1200 
 THUMBNAIL_COLUMN_LABELS = {"Projets", "Sous-projet"}
 THUMBNAIL_FILENAME = ".thumbnail.png"
 THUMBNAIL_MAX_DIM = 1024   # taille max (px) a laquelle une vignette perso est enregistree
-PROJECT_ROW_HEIGHT = 64    # hauteur de ligne (vignette carree + texte a droite)
 
 # Logos de logiciel (colonne "Logiciels") : badge colore genere a la volee
 # (pas de fichier image) par defaut, identifie par le nom du dossier (HOUDINI,

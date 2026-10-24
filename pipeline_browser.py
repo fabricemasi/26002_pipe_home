@@ -1,7 +1,6 @@
 import json
 import os
 import sys
-from datetime import datetime
 from pathlib import Path
 import threading
 import time
@@ -25,9 +24,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
-    QAbstractScrollArea,
     QAbstractItemView,
-    QCheckBox,
     QFileDialog,
     QFrame,
     QGraphicsDropShadowEffect,
@@ -55,7 +52,6 @@ from app_style import (
     auto_collapse_set_columns,
     column_gap,
     build_stylesheet,
-    refresh_style,
     resize_hit_test,
     role_color,
     role_font,
@@ -68,8 +64,6 @@ import config as _config
 import ui_state
 from config import (
     COLUMN_LABELS,
-    SETTINGS_V1_ENABLED,
-    IMAGE_EXTENSIONS,
     RAW_EXTENSIONS,
     PREVIEWABLE_EXTENSIONS,
     RENDERABLE_3D_EXTENSIONS,
@@ -92,13 +86,8 @@ from settings_store import (
     save_settings,
 )
 from settings_widgets import (
-    Menu, menu_row,
-    shadow_look,
-    TOGGLE_STYLE_LISTENERS, _Toggle, make_space_actions, set_space_above, set_space_below, space_target,
-    widget_at_path, widget_path,
-)
-from settings_window import (
-    SettingsWindow,
+    Menu, shadow_look, TOGGLE_STYLE_LISTENERS, _Toggle, make_space_actions, set_space_above, set_space_below,
+    space_target, widget_at_path, widget_path,
 )
 from browser_core import (
     COLUMN_SETTINGS,
@@ -113,7 +102,6 @@ from browser_core import (
     STATUS_FOLDERS,
     STATUS_HEIGHT,
     TITLEBAR_HEIGHT,
-    TOPBAR_HEIGHT,
     WORK_DIR_TYPES,
     _WIDGET_SIZE_MAX,
     _hide_resize_width,
@@ -162,7 +150,9 @@ import file_attributes
 import file_filters
 from focus import thumbnail as focus_thumbnail
 import focus as _focus
-from config import PUR_PREVIEW_EXTENSIONS
+from config import (
+    PUR_PREVIEW_EXTENSIONS,
+)
 import previews as _previews
 import software_launch
 import shiboken6
@@ -183,7 +173,6 @@ from browser_core import (
     entry_is_dir,
 )
 from previews import (
-    sweep_preview_cache,
     sweep_preview_cache_if_due,
 )
 
@@ -2041,20 +2030,6 @@ class _InterfaceMoveMode(QObject):
     def _is_table(widget) -> bool:
         return isinstance(widget, QAbstractItemView) or widget.objectName() == "TableFrame"
 
-    @staticmethod
-    def _is_micro_widget(widget) -> bool:
-        """Ignore les conteneurs techniques entre le tableau et son contenu."""
-        if isinstance(widget, (QAbstractItemView, QScrollArea, QAbstractScrollArea)):
-            return False
-        if widget.objectName() in {"qt_scrollarea_viewport", "qt_scrollarea_hcontainer", "qt_scrollarea_vcontainer"}:
-            return False
-        if widget.inherits("QAbstractButton") or widget.inherits("QLabel"):
-            return True
-        name = f"{widget.objectName()} {widget.__class__.__name__}".lower()
-        return (widget.objectName() in {"TableCell", "Toggle", "Cell"}
-                or widget.__class__.__name__.startswith("_Toggle")
-                or "header" in name or "cell" in name)
-
     def _cell_ancestor(self, widget):
         """Cellule qui borne un élément interne du tableau, en-têtes compris."""
         parent = widget.parentWidget()
@@ -2369,32 +2344,6 @@ class _InterfaceMoveMode(QObject):
         key = self._position_key(widget)
         if key:
             self.position_overrides.pop(key, None)
-
-    def _widget_at(self, global_pos: QPoint):
-        widget = QApplication.widgetAt(global_pos)
-        if widget is None or widget.window() is not self.browser:
-            return None, None
-        chain = []
-        while widget is not None and widget is not self.browser:
-            if widget in self.frames.values() or widget is self.window_frame:
-                widget = widget.parentWidget()
-                continue
-            chain.append(widget)
-            widget = widget.parentWidget()
-        table = next((item for item in chain if self._is_table(item)), None)
-        # Les textes d'en-tête sont transparents aux événements souris pour
-        # laisser fonctionner le redimensionnement des colonnes. On les
-        # retrouve donc explicitement dans la cellule correspondant au clic.
-        for item in chain:
-            cells = getattr(item, "_cells", None)
-            if cells and hasattr(item, "_column_spans"):
-                local = item.mapFromGlobal(global_pos)
-                spans = item._column_spans()
-                for index, cell in enumerate(cells):
-                    if index < len(spans) and spans[index][0] <= local.x() < spans[index][1]:
-                        return cell, table
-        micro = next((item for item in chain if self._is_micro_widget(item)), None)
-        return (micro if micro is not None else table), table
 
     def _select(self, widget):
         self._clear_selection()
@@ -3401,7 +3350,7 @@ class PipelineBrowser(QMainWindow):
         # Symbol...) ne le rendait de facon fiable a cette taille — meme
         # correctif que pour les boutons min/max/close de TitleBar.
         self.btn_settings = IconButton("gear", role_color("buttons", "#c4cacf"), C["text"])
-        # Fenetres v1 desactivees (config.SETTINGS_V1_ENABLED) : ce bouton n'est plus dans la barre.
+        # Ancien bouton de la fenetre v1 (retiree) : cache, garde pour les chemins de widgets enregistres.
         self.btn_style = IconButton("sliders", role_color("buttons", "#c4cacf"), C["text"])
         # Repli / depli des colonnes de set (ex bouton de la colonne Focus), maintenant dans la barre.
         self.btn_collapse = IconButton("dchevron_right", role_color("buttons", "#c4cacf"), C["text"])
@@ -3435,7 +3384,7 @@ class PipelineBrowser(QMainWindow):
                               f"QPushButton:hover {{ background: {C['hover']}; }}")
         self.btn_browse.setToolTip("Parcourir…")
         self.btn_presets.setToolTip("Gérer les presets…")
-        self.btn_settings.setToolTip("Parametres generaux" if SETTINGS_V1_ENABLED else "Parametres")
+        self.btn_settings.setToolTip("Parametres")
         self.btn_collapse.setToolTip("Replier les colonnes de set")
         self.btn_collapse.clicked.connect(lambda: self._toggle_project_columns())
         _HoverPrime(self.btn_collapse, self._prime_slide_snapshot)      # capture preparee des le survol
@@ -3444,11 +3393,6 @@ class PipelineBrowser(QMainWindow):
         self.btn_browse.clicked.connect(self.browse_root)
         self.btn_presets.clicked.connect(self._open_preset_manager)
         self.btn_settings.clicked.connect(lambda: self.open_settings("general"))
-        self.btn_style.clicked.connect(lambda: self.open_settings("visuel"))
-        # Clic droit : fenetre de reglages v2 (maquette comparative, voir
-        # settings_window_v2.py) — n'affecte pas la fenetre reelle.
-        self.btn_style.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.btn_style.customContextMenuRequested.connect(self._open_settings_v2_menu)
         # Chemin ouvert a la derniere fermeture (voir closeEvent, go_to_last_place).
         self._last_place: Path | None = None
 
@@ -8567,16 +8511,8 @@ class PipelineBrowser(QMainWindow):
         window.move(anchor)
         window.show()
 
-    def _open_settings_v2_menu(self, pos):
-        from PySide6.QtWidgets import QMenu
-        menu = Menu(self)
-        action = menu.addAction("Reglages v2 (comparaison de conception)")
-        if menu.exec(self.btn_style.mapToGlobal(pos)) is action:
-            self.open_settings_v2()
-
     def open_settings_v2(self):
-        """Ouvre la maquette comparative (settings_window_v2.py) : le temps de
-        construction et le nombre de widgets s'affichent en bas de fenetre."""
+        """Ouvre la fenetre de reglages (settings_window_v2.py), gardee en memoire d'une ouverture a l'autre."""
         import settings_window_v2
         existing = getattr(self, "_settings_dialog_v2", None)
         try:
@@ -8764,70 +8700,8 @@ class PipelineBrowser(QMainWindow):
         self.titlebar.set_load_progress(int(fraction * 100))
 
     def open_settings(self, mode: str = "visuel"):
-        """Ouvre l'une des deux fenetres de reglages : "visuel" (aspect de
-        l'application, attribut `_settings_dialog` lu par browser_core pour
-        les valeurs en direct) ou "general" (tout le reste). Deja ouverte :
-        on la ramene au premier plan. Fermee, elle est seulement cachee et
-        reutilisee a l'ouverture suivante (voir SettingsWindow.reopen) ; un
-        RuntimeError (objet Qt detruit) est absorbe ici. La premiere
-        construction est longue et traite des evenements : le drapeau
-        `_settings_opening` ignore tout appel pendant ce temps."""
-        if not SETTINGS_V1_ENABLED:
-            self.open_settings_v2()
-            return
-        if getattr(self, "_settings_opening", False):
-            return
-        attr = "_settings_dialog_general" if mode == "general" else "_settings_dialog"
-        existing = getattr(self, attr, None)
-        if existing is not None:
-            try:
-                still_visible = existing.isVisible()
-            except RuntimeError:
-                still_visible = False
-            if still_visible:
-                existing.raise_()
-                existing.activateWindow()
-                return
-        self._settings_opening = True
-        self.btn_settings.setEnabled(False)
-        self.btn_style.setEnabled(False)
-        try:
-            if existing is not None:
-                try:
-                    stale = existing.is_stale()
-                except RuntimeError:
-                    stale = True
-                if stale:
-                    # L'habillage a change sur le disque depuis sa construction
-                    # (reopen() ne le rejouerait pas) : on la reconstruit.
-                    try:
-                        existing.deleteLater()
-                    except RuntimeError:
-                        pass
-                    existing = None
-            if existing is not None:
-                # Fenetre deja construite, simplement cachee a sa fermeture
-                # (pas de WA_DeleteOnClose) : la reconstruire coute plusieurs
-                # secondes, la remettre a zero quelques dizaines de ms.
-                try:
-                    existing.reopen()
-                    existing.show()
-                    existing.raise_()
-                    existing.activateWindow()
-                    return
-                except RuntimeError:   # objet Qt detruit entre-temps
-                    pass
-            dialog = SettingsWindow(self, mode=mode)
-            # Non modale : la fenetre principale reste interactive et se
-            # met a jour en direct pendant qu'on ajuste les parametres.
-            dialog.settingsChanged.connect(self._apply_settings)
-            dialog.settingsSaved.connect(self._apply_settings)
-            setattr(self, attr, dialog)
-            dialog.show()
-        finally:
-            self._settings_opening = False
-            self.btn_settings.setEnabled(True)
-            self.btn_style.setEnabled(True)
+        """Ouvre la fenetre de reglages (v2 ; l'ancienne fenetre v1 a ete retiree)."""
+        self.open_settings_v2()
 
     def _apply_settings(self, settings: dict, changed_keys: set | None = None):
         """Applique des reglages (live, pendant qu'on les ajuste dans la

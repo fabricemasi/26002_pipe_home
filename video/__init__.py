@@ -51,18 +51,6 @@ def is_media_file(path) -> bool:
     return suffix in VIDEO_EXTENSIONS or suffix in IMAGE_EXTENSIONS
 
 
-def missing_dependencies() -> list[str]:
-    """Bibliothèques absentes (message clair dans le module, jamais de plantage)."""
-    out = []
-    for module, name in (("av", "PyAV (vidéos)"), ("OpenImageIO", "OpenImageIO (EXR, TIFF, DPX)"),
-                         ("PyOpenColorIO", "OpenColorIO (colorimétrie)"), ("numpy", "numpy")):
-        try:
-            __import__(module)
-        except Exception:                                   # noqa: BLE001
-            out.append(name)
-    return out
-
-
 def preload():
     """Importe les bibliothèques et modules du module (fil de fond, une fois) et charge la configuration OCIO par
     défaut : la 1re ouverture n'attend plus ~1,5 s d'imports. Ne crée aucun widget."""

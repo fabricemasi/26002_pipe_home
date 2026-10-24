@@ -23,12 +23,13 @@ from pathlib import Path
 
 from PySide6.QtCore import QEasingCurve, QEvent, QPointF, QPropertyAnimation, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF
-from PySide6.QtWidgets import (QAbstractButton, QFileDialog, QFontDialog, QGraphicsOpacityEffect, QGridLayout,
-                               QHBoxLayout, QInputDialog, QLabel, QMessageBox, QPlainTextEdit, QPushButton,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QAbstractButton, QFileDialog, QFontDialog, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QInputDialog,
+    QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
+)
 
 from . import export, miro_io, model, serialization
-from .items import BoardItem, CommentItem, ConnectorItem, max_radius, shape_path
+from .items import BoardItem, CommentItem, max_radius, shape_path
 from .scene import BoardScene
 from .view import DRAW_TOOLS, ERASER_SIZES, BoardView
 

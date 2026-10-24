@@ -722,10 +722,6 @@ def read_block(text: str) -> dict:
     return found
 
 
-def css_value(decl: Decl, values: dict, out: dict | None = None) -> str | None:
-    return decl.fwd(style.variables(values) if out is None else out, values)
-
-
 def _with_block(text: str) -> str:
     if block_span(text) is not None:
         return text

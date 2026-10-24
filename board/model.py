@@ -76,7 +76,6 @@ DEFAULTS: dict[str, dict] = {
     # (il le suit ; `dx` / `dy` = sa place par rapport au coin haut gauche de l'element).
     "comment": {"target": "", "dx": 0.0, "dy": 0.0, "resolved": False, "messages": []},
 }
-ITEM_TYPES = tuple(DEFAULTS)
 COMMON = {"x": 0.0, "y": 0.0, "z": 0.0, "rotation": 0.0, "locked": False, "link": ""}
 ROTATABLE = ("shape", "text", "image")
 PAGE_DEFAULTS = {"background": None, "grid": True, "export_background": "page", "export_grid": False,

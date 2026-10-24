@@ -60,12 +60,7 @@ from previews import (
 from settings_store import (
     _coerce_side_enabled,
 )
-from settings_widgets import (
-    _paint_bordered_rect,
-    _radius_any,
-    _radius_dict,
-    _radius_shrink,
-)
+from settings_widgets import _paint_bordered_rect, _radius_any, _radius_dict
 from browser_core import (
     COLUMN_MAX_WIDTH,
     COLUMN_MIN_WIDTH,
@@ -84,6 +79,7 @@ from capture_widgets import (
     _PreviewBlock,
     _RoundedCornersEffect,
     _column_suppress_left,
+    update_card_mask,
 )
 
 
@@ -587,14 +583,7 @@ class PreviewColumn(QWidget):
             self._fit_height_to_content()
 
     def _update_card_mask(self):
-        """MEME mecanisme que Column._update_card_mask (voir sa docstring)."""
-        self._outer_layout.activate()
-        radius = _radius_dict(self.card._radius)
-        self._card_effect.setRadius(radius)
-        self._card_effect.setEnabled(self.card._thickness <= 0)
-        inner_radius = _radius_shrink(radius, self.card._thickness + 1)
-        self._inner_effect.setRadius(_radius_dict(inner_radius))
-        self._inner_effect.setEnabled(self.card._thickness > 0)
+        update_card_mask(self)
 
     def refresh_colors(self):
         self.header_fill.setStyleSheet(column_header_qss("PreviewColumnHeader", self.column_title))

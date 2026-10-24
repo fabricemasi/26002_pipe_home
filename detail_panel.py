@@ -4,8 +4,9 @@ import os
 from datetime import datetime
 from pathlib import Path
 from PySide6.QtCore import QMimeData
-from PySide6.QtGui import QImage
-from PySide6.QtWidgets import QMenu
+from PySide6.QtGui import (
+    QImage,
+)
 from PySide6.QtCore import (
     QEvent, QPoint, QRect, QSize, Qt, QTimer, QUrl, Signal,
 )
@@ -110,14 +111,7 @@ from settings_store import (
     load_settings,
 )
 from settings_theme import _set_text_role
-from settings_widgets import (
-    Menu, menu_row,
-    _MiniSlider,
-    _Toggle,
-    _radius_dict,
-    _radius_shrink,
-    _sync_toggle_style,
-)
+from settings_widgets import Menu, _MiniSlider, _Toggle, _sync_toggle_style
 from browser_core import (
     DETAIL_PANEL_MAX_WIDTH,
     DETAIL_PANEL_MIN_WIDTH,
@@ -135,6 +129,7 @@ from browser_core import (
 from capture_widgets import (
     _ColumnCard,
     _RoundedCornersEffect,
+    update_card_mask,
 )
 from preview_column import (
     _PUR_EXPORT_POOL,
@@ -790,15 +785,7 @@ class DetailPanel(QWidget):
         return column_padding_for(INSPECTOR_TITLE)["left"] <= 0
 
     def _update_card_mask(self):
-        """MEME mecanisme que Column._update_card_mask (voir sa docstring
-        pour le detail du double decoupage anti-aliase)."""
-        self._outer_layout.activate()
-        radius = _radius_dict(self.card._radius)
-        self._card_effect.setRadius(radius)
-        self._card_effect.setEnabled(self.card._thickness <= 0)
-        inner_radius = _radius_shrink(radius, self.card._thickness + 1)
-        self._inner_effect.setRadius(_radius_dict(inner_radius))
-        self._inner_effect.setEnabled(self.card._thickness > 0)
+        update_card_mask(self)
 
     # -- redimensionnement par glisser-deposer sur la bordure gauche,
     # comme n'importe quelle colonne (voir Column.resize_begin/update/end) --
@@ -2248,64 +2235,6 @@ class DetailPanel(QWidget):
         self._update_preview()
         if path_str == self._current_path and self._selected_preview_media() == "turntable":
             self._select_preview_media()
-
-    def show_loading_step(self, label: str, depth: int = 0):
-        """Reutilise le "puits" de l'Inspecteur (self.well/well_label, le
-        "carre noir" a cote des metadonnees) comme indicateur de
-        chargement PENDANT la construction de la fenetre de parametres
-        (voir SettingsWindow._report_loading_step, appele entre chaque
-        section) — voir la remarque de l'utilisateur, "la fenetre de
-        settings est toujours tres longue a charger ... peux tu faire une
-        sorte d'animation dans le champ apercu de l'inspecteur et afficher
-        tous les elements que tu charges en temps reel". Chaque etape
-        s'AJOUTE a la suite des precedentes (jamais remplacee), comme un
-        fichier LOG qui se construit ligne par ligne dans un terminal —
-        voir la remarque de l'utilisateur, "fait ca comme si c'etait un
-        vieil ordinateur qui balancait des lignes de code dans un
-        terminal, ne supprime pas les etapes d'avant mais met les
-        suivantes a la ligne"."""
-        if not getattr(self, "_loading_log_lines", None):
-            self._loading_log_lines = []
-            # self.well est CACHE par defaut (voir clear()/show_path()) tant
-            # qu'aucun fichier/dossier n'est selectionne dans l'appli — sans
-            # ce show() explicite, l'animation restait invisible des que la
-            # fenetre de parametres s'ouvrait sans rien de selectionne au
-            # prealable.
-            self.well.show()
-            self.well_label.setPixmap(QPixmap())
-            self.well_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-            self.well_label.setWordWrap(False)
-            # Police CODE de l'appli (mono_family, voir font()), vert pur
-            # (0,255,0) et SANS lissage (smoothing="none", voir font()) —
-            # voir la remarque de l'utilisateur, "je veux que la police
-            # soit code de l'appli, qu'elle soit verte 0,255,0 et qu'elle
-            # ne soit pas lissee".
-            self.well_label.setFont(font(9, 400, mono=True, smoothing="none"))
-            self.well_label.setStyleSheet(
-                "background: transparent; border: none; color: rgb(0, 255, 0); padding: 6px;")
-        # Indentation par niveau (tab = 2 caracteres, voir _report_
-        # construction_step cote settings_window) — voir la remarque de
-        # l'utilisateur, "quand tu load les settings, incrémente les
-        # differents niveaux de settings (tab = 2 carac)".
-        self._loading_log_lines.append(f"{'  ' * max(0, depth)}> {label}")
-        self.well_label.setText("\n".join(self._loading_log_lines))
-        self.well_label.adjustSize()
-        # Se redimensionne selon le contenu, jusqu'a 1000px maxi (PAS une
-        # hauteur fixe) — voir la remarque de l'utilisateur, "je veux que
-        # le carre d'apercu soit plus haut que ca, qu'il se redimensionne
-        # si besoin jusqu'a une hauteur de 1000px maxi".
-        needed = self.well_label.sizeHint().height() + 12
-        self.well.setMinimumHeight(max(PREVIEW_MIN_HEIGHT, min(1000, needed)))
-
-    def clear_loading_step(self):
-        """Restaure l'apparence normale du puits (voir show_loading_step) —
-        _update_preview() y remet la vignette REELLEMENT selectionnee
-        (ou rien), pas besoin de la memoriser a part."""
-        self._loading_log_lines = []
-        self.well_label.setAlignment(Qt.AlignCenter)
-        self.well_label.setWordWrap(False)
-        self.well_label.setStyleSheet("background: transparent; border: none;")
-        self._update_preview()
 
     def _on_render_protection_toggled(self, protected: bool):
         if not self._current_path:

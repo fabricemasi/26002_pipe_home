@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
-    QMenu,
     QMessageBox,
     QVBoxLayout,
     QWidget,
@@ -42,11 +41,7 @@ from previews import (
     _cover_crop_rect,
 )
 from settings_widgets import (
-    Menu, menu_row, DRAG_GHOST_OPACITY,
-    _paint_bordered_rect,
-    _radius_any,
-    _radius_dict,
-    _rounded_rect_path,
+    Menu, DRAG_GHOST_OPACITY, _paint_bordered_rect, _radius_any, _radius_dict, _radius_shrink, _rounded_rect_path,
     attach_shadow,
 )
 from browser_core import (
@@ -583,8 +578,6 @@ class FileListWidget(QListWidget):
 PREVIEW_TITLE_HEIGHT = 52   # hauteur fixe de la barre de titre (grand intitule "affiche"), au-dessus de chaque image empilee
 
 PREVIEW_STATUS_HEIGHT = 26  # hauteur de la rangee d'indicateurs in/over/out, au-dessus du titre
-
-PREVIEW_HEADER_HEIGHT = PREVIEW_STATUS_HEIGHT + PREVIEW_TITLE_HEIGHT
 
 class _SquarePreviewImage(QLabel):
     """Image bord a bord (aucune marge) avec les bords de la colonne, de
@@ -1345,6 +1338,19 @@ class _RoundedCornersEffect(QGraphicsEffect):
         mp.drawPixmap(0, 0, mask)
         mp.end()
         painter.drawPixmap(offset, masked)
+
+def update_card_mask(owner) -> None:
+    """Decoupe arrondie de la carte d'une colonne d'apercu / de l'inspecteur (MEME mecanisme que
+    Column._update_card_mask, voir sa docstring) : `owner` a `_outer_layout`, `card` (_ColumnCard),
+    `_card_effect` (sans bordure) et `_inner_effect` (contenu, avec bordure)."""
+    owner._outer_layout.activate()
+    radius = _radius_dict(owner.card._radius)
+    owner._card_effect.setRadius(radius)
+    owner._card_effect.setEnabled(owner.card._thickness <= 0)
+    inner_radius = _radius_shrink(radius, owner.card._thickness + 1)
+    owner._inner_effect.setRadius(_radius_dict(inner_radius))
+    owner._inner_effect.setEnabled(owner.card._thickness > 0)
+
 
 class _ColumnCard(QWidget):
     """Porte le fond/la bordure REELS d'une colonne (voir Column.card) —

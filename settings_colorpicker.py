@@ -12,14 +12,10 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QWidget,
 )
-from settings_store import (
-    M,
-)
 from settings_widgets import (
     DRAG_GHOST_OPACITY,
     _ColorPickerPopup,
     _ColorSwatchButton,
-    _qfont,
 )
 
 
@@ -163,35 +159,3 @@ class _ColorField(QWidget):
     def setValue(self, value: str):
         self._value = value
         self._refresh()
-
-class _CheckSquare(QWidget):
-    """Petite case carree — purement decorative ici (voir _EdgeCheckItem :
-    le clic est capte par la ligne entiere, pas par la case elle-meme)."""
-
-    def __init__(self, checked: bool = False, parent=None):
-        super().__init__(parent)
-        self._checked = checked
-        self.setFixedSize(14, 14)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-
-    def isChecked(self) -> bool:
-        return self._checked
-
-    def setChecked(self, checked: bool):
-        if checked != self._checked:
-            self._checked = checked
-            self.update()
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, False)
-        bg = QColor(M["accent"] if self._checked else M["field_bg"])
-        bd = QColor(M["accent_border"] if self._checked else M["field_border"])
-        p.setPen(bd)
-        p.setBrush(bg)
-        p.drawRect(0, 0, 13, 13)
-        if self._checked:
-            p.setPen(QColor(M["bold_mark_fg"]))
-            p.setFont(_qfont(9, 700, mono=True))
-            p.drawText(0, 0, 13, 13, Qt.AlignCenter, "\u2713")
-        p.end()

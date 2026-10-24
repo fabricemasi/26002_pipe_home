@@ -15,13 +15,12 @@ from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QLabel,
-    QMenu,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
-from settings_theme import _set_text_role, _text_label  # noqa: F401
+from settings_theme import _set_text_role
 from settings_store import (
     M,
     _resolve_color_value,
@@ -30,29 +29,13 @@ from settings_store import (
     _title_box,
     _title_color,
     _title_font,
-    _title_gap,
     _title_gap_next,
     _title_indent,
 )
 from settings_widgets import (
-    Menu, menu_row, DRAG_GHOST_OPACITY,
-    _DualFontSelectField,
-    _selection_color,
-    _SliderField,
-    _Toggle,
-    _apply_stylesheet_cached,
-    _qfont,
-    _inner_h_edge,
-    _paint_bordered_rect,
-    _app_dpr,
-    _hidpi_pixmap,
-    _paint_inner_vlines,
-    _TableRow,
-    _restyle_table_row,
-    _set_dimmed,
-    _table_frame,
-    _hide_width_badges,
-    _width_badges,
+    Menu, DRAG_GHOST_OPACITY, _DualFontSelectField, _selection_color, _SliderField, _Toggle,
+    _apply_stylesheet_cached, _qfont, _inner_h_edge, _paint_bordered_rect, _app_dpr, _hidpi_pixmap,
+    _paint_inner_vlines, _TableRow, _restyle_table_row, _table_frame, _hide_width_badges, _width_badges,
     add_context_extras,
 )
 
@@ -98,40 +81,7 @@ def _label_block_natural_width(label_block: QWidget) -> int:
     label = label_block.findChild(QLabel)
     return label.sizeHint().width() if label is not None else 0
 
-def _section_preview_wrap(widget: QWidget) -> QWidget:
-    """Centre horizontalement `widget` (aucune largeur imposee, garde sa
-    taille naturelle) au-dessus du tableau de reglages d'une section — voir
-    Colonnes/Tableaux/Toggles/Sliders (SettingsWindow._section_headers/
-    _section_tables/_section_toggles/_section_slider), qui l'utilisent
-    chacun pour leur apercu de l'element concerne par la section (voir la
-    remarque de l'utilisateur, "un apercu de l'element concerne par la
-    section, juste avant le tableau des parametres... centre en
-    horizontal")."""
-    wrap = QWidget()
-    wrap.setStyleSheet("background: transparent;")
-    layout = QHBoxLayout(wrap)
-    layout.setContentsMargins(0, 0, 0, 18)
-    layout.addStretch(1)
-    layout.addWidget(widget)
-    layout.addStretch(1)
-    return wrap
 
-class _Row(QWidget):
-    """Ligne de reglage : libelle(+note) a gauche, controle a droite. Pas de
-    filet de separation entre les lignes d'un groupe (juge parasite a
-    l'usage — voir la remarque de l'utilisateur, capture a l'appui)."""
-
-    def __init__(self, label: str, control: QWidget, note: str = "", parent=None):
-        super().__init__(parent)
-        self.setAttribute(Qt.WA_StyledBackground, True)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(14)
-        layout.setAlignment(Qt.AlignVCenter)
-        layout.addWidget(_label_block(label, note), 1)
-        control.setParent(self)
-        layout.addWidget(control, 0, Qt.AlignVCenter)
-        self.setMinimumHeight(32)
 
 _SVG_PIXMAP_CACHE: dict[tuple[str, int, str], QPixmap] = {}
 
@@ -215,24 +165,6 @@ class _Chevron(QWidget):
         pix = _tinted_svg_pixmap(name, glyph, self._color, self.devicePixelRatioF())
         p.drawPixmap(QPointF((self.width() - glyph) // 2, 0), pix)     # pixel entier : copie 1:1
         p.end()
-
-# Espacement entre deux sections (voir SettingsWindow._build_content, qui
-# pose un spaceur dedie apres chaque _Section plutot qu'un
-# QVBoxLayout.setSpacing uniforme) : plein quand la section au-dessus est
-# deployee, quasi nul quand elle est repliee (voir _Section.collapsedChanged
-# — son corps est deja masque, rien ne justifie plus un grand espacement)
-# — pas 0 pile : une marge minimale separe visuellement deux bandeaux-titre
-# consecutifs, sans quoi ils se touchent litteralement.
-_SECTION_GAP_EXPANDED = 34
-
-_SECTION_GAP_COLLAPSED = 2
-
-# Espace AVANT la section "Logiciel" (voir SettingsWindow._section_logiciels)
-# — voir la remarque de l'utilisateur, "en derniere position mais avec un
-# espace plus important entre cette section et celle d'avant" : un simple
-# multiple de _SECTION_GAP_EXPANDED plutot qu'une constante independante,
-# pour rester coherent si ce dernier est un jour ajuste.
-_SECTION_GAP_EXPANDED_LOGICIEL = _SECTION_GAP_EXPANDED * 2
 
 class _SectionHeader(QWidget):
     """Bandeau titre d'une _Section/_SubSection. Seule la largeur du titre
@@ -339,25 +271,6 @@ def _activate_layout_tree(widget: QWidget):
     if lay is not None:
         lay.invalidate()
         lay.activate()
-
-# Fenetre de parametres EN COURS DE CONSTRUCTION (voir SettingsWindow.
-# __init__/_report_loading_step) : global, PAS un parametre a threader
-# dans les dizaines de call sites de _Section/_SubSection — chacune
-# rapporte ainsi AUTOMATIQUEMENT son propre titre a l'indicateur de
-# chargement de l'Inspecteur (voir _report_construction_step ci-dessous),
-# quel que soit le niveau d'imbrication (section OU sous-section) — voir
-# la remarque de l'utilisateur, "decris pas seulement les tabs mais
-# toutes les sections et sous sections aussi".
-_ACTIVE_LOADING_WINDOW = None
-
-
-def _set_active_loading_window(window) -> None:
-    global _ACTIVE_LOADING_WINDOW
-    _ACTIVE_LOADING_WINDOW = window
-
-def _report_construction_step(title: str, depth: int = 0):
-    if _ACTIVE_LOADING_WINDOW is not None:
-        _ACTIVE_LOADING_WINDOW._report_loading_step(title, depth=depth)
 
 # Parent par defaut des _Section construites SANS parent explicite (voir
 # _section_host, SettingsWindow._build_content) : une section qui nait deja
@@ -600,7 +513,6 @@ class _Section(_BodyMixin, QWidget):
 
     def __init__(self, title: str, note: str = "", parent=None):
         super().__init__(parent if parent is not None else _SECTION_HOST)
-        _report_construction_step(title)
         self._title_text = title
         self._collapsed = False
         self._layout = QVBoxLayout(self)
@@ -759,10 +671,6 @@ class _SubSection(_BodyMixin, QWidget):
 
     def __init__(self, title: str, level: int = 2, parent=None):
         super().__init__(parent)
-        # depth = level-1 pour l'Inspecteur (voir _report_construction_step,
-        # "tab = 2 carac" par niveau, remarque de l'utilisateur, "incremente
-        # les differents niveaux de settings").
-        _report_construction_step(title, depth=max(1, level - 1))
         self._title_text = title
         self._collapsed = False
         layout = QVBoxLayout(self)
@@ -924,65 +832,6 @@ def _ancestors(widget: QWidget):
     while parent is not None:
         yield parent
         parent = parent.parentWidget()
-
-# Espacement entre 2 _SubSection empilees — MEME principe que _SECTION_GAP_*/
-# SettingsWindow._build_content (un spaceur dedie, plein entre 2 sous-groupes
-# DEPLIES, quasi nul des que celui du dessus est REPLIE) mais des valeurs
-# plus discretes : un sous-groupe reste un repere de second niveau, pas une
-# section a part entiere — voir _stack_subsections/la remarque de
-# l'utilisateur, "je veux que tu normalises l'espacement entre les sections
-# ... comme tu l'avais fait pour les sections".
-_SUBSECTION_GAP_EXPANDED = 32
-
-_SUBSECTION_GAP_COLLAPSED = 0
-
-def _make_gap_spacer(item, level: int, multiplier: int = 1) -> QWidget:
-    """Spaceur sous `item` (titre de `level`) : hauteur lue dans les reglages
-    TITRE (_title_gap), replie ou deplie, mise a jour au repli/depli et par
-    _refresh_gap_spacers (apercu en direct)."""
-    spacer = QWidget()
-    spacer.setStyleSheet("background: transparent;")
-    item._gap_spacer = (spacer, level, multiplier)
-    _refresh_gap_spacer(item)
-    item.collapsedChanged.connect(lambda _c, i=item: _refresh_gap_spacer(i))
-    return spacer
-
-def _refresh_gap_spacer(item):
-    spacer, level, multiplier = item._gap_spacer
-    spacer.setFixedHeight(_title_gap(level, item.is_collapsed()) * multiplier)
-
-def _refresh_gap_spacers(root: QWidget):
-    for item in root.findChildren(QWidget):
-        if hasattr(item, "_gap_spacer"):
-            _refresh_gap_spacer(item)
-
-def _stack_subsections(layout: QVBoxLayout, subsections: list[_SubSection]):
-    """Empile plusieurs _SubSection dans `layout` (deja cree, vide) avec un
-    espacement ADAPTATIF entre chaque paire — voir _SUBSECTION_GAP_*
-    ci-dessus. Ne remplace PAS le cablage vers un eventuel _Section.
-    refresh_min_height/_activate_layout_tree englobant (voir les
-    appelants) : ce spaceur ne fait QUE gerer l'espace VISUEL entre les
-    sous-groupes, independamment du recalcul de hauteur globale.
-
-    setSpacing(0) — PAS laisse a la valeur par defaut du style (~6px,
-    QStyle::PM_LayoutVerticalSpacing) : sans ca, cette valeur s'ajoutait
-    EN PLUS du spaceur dedie de CHAQUE cote (avant ET apres), doublant
-    l'ecart REPLIE malgre un spaceur a 0 — voir la remarque de
-    l'utilisateur, "base toi sur ce que tu avais fait sur les sections"
-    (_Section/SettingsWindow._build_content n'ont ce probleme que parce
-    que leur layout EXTERIEUR a deja son propre setSpacing(0) explicite)."""
-    layout.setSpacing(0)
-    for i, sub in enumerate(subsections):
-        # Repliee a l'ouverture (voir la remarque de l'utilisateur, "je
-        # veux que toutes les sections (y compris sous sections) soient
-        # repliees a l'ouverture de la fenetre de settings").
-        sub.set_collapsed(True)
-        layout.addWidget(sub)
-        if i == len(subsections) - 1:
-            continue
-        spacer = _make_gap_spacer(sub, sub._level)
-        layout.addWidget(spacer)
-    _make_accordion(subsections)
 
 def _make_accordion(items: list):
     """Regroupe plusieurs _Section/_SubSection SOEURS en accordeon : en
@@ -1166,6 +1015,21 @@ def _restyle_table_head(head: QWidget, radius: int = 0):
         f"#TableHead {{ background: {bg}; border-bottom: {_inner_h_edge()}; "
         f"border-top-left-radius: {radius}px; border-top-right-radius: {radius}px; }}",
     )
+
+def _finish_reorder(owner) -> None:
+    """Fin d'un deplacement par _ReorderOverlay (colonnes d'un entete, sous-cellules) : l'element tire
+    passe a l'emplacement vise. `owner` a `_reorder` (l'overlay), `_order` et `setOrder`."""
+    overlay, owner._reorder = owner._reorder, None
+    owner.unsetCursor()
+    gap = overlay.target
+    overlay.hide()
+    overlay.deleteLater()
+    if gap is None:
+        return
+    order = [i for i in owner._order if i != overlay.source]
+    order.insert(gap - (1 if gap > owner._order.index(overlay.source) else 0), overlay.source)
+    owner.setOrder(order)
+
 
 class _ReorderOverlay(QWidget):
     """Couche posee sur le tableau pendant un deplacement (colonne, sous-cellule, ligne) — MEMES regles
@@ -1651,16 +1515,7 @@ class _ResizableTableHeader(QWidget):
         self._reorder.follow(x)
 
     def _end_reorder(self):
-        overlay, self._reorder = self._reorder, None
-        self.unsetCursor()
-        gap = overlay.target
-        overlay.hide()
-        overlay.deleteLater()
-        if gap is None:
-            return
-        order = [i for i in self._order if i != overlay.source]
-        order.insert(gap - (1 if gap > self._order.index(overlay.source) else 0), overlay.source)
-        self.setOrder(order)
+        _finish_reorder(self)
 
     def mouseMoveEvent(self, event):
         if self._resizing_index is not None:
@@ -2283,19 +2138,6 @@ def apply_part_looks(frame: QWidget) -> None:
         widget.update()
 
 
-@contextmanager
-def _flat_tables_padding(padding: tuple):
-    """Padding pose sur les tableaux construits PENDANT ce bloc seulement
-    (fenetre "general", qui n'a pas la section Tableaux pour l'appliquer) :
-    le reglage partage n'est pas modifie pour les autres fenetres."""
-    previous = _FLAT_TABLE_STYLE["padding"]
-    _FLAT_TABLE_STYLE["padding"] = padding
-    try:
-        yield
-    finally:
-        _FLAT_TABLE_STYLE["padding"] = previous
-
-
 def _set_flat_tables_style(radius: int | None = None, border: tuple | None = None,
                            padding: tuple | None = None, force: bool = False) -> None:
     """radius ; border = (cotes actifs, couleurs, epaisseur) ; padding =
@@ -2428,84 +2270,6 @@ def _build_flat_table(
     # voir la remarque de l'utilisateur, capture a l'appui, "corrige
     # l'ecrasement du tableau ... que tu le prennes systematiquement en
     # compte pour tous les tableaux".
-    _attach_flat_head(frame, layout, resizer, rows_widgets, label_blocks)
-    _register_flat_table(frame, row_meta)   # avant le verrou : le padding courant change la hauteur
-    _lock_min_height(frame)
-    return frame, row_meta, resizer
-
-def _set_label_block_dim(label_block: QWidget, dim: bool):
-    """Grise (ou re-eclaircit) le texte d'un _label_block — voir
-    _build_override_flat_table, un toggle OFF grise le libelle de sa ligne
-    ("ce qui grisera la ligne", remarque de l'utilisateur)."""
-    color = M["label_dim"] if dim else M["row_label"]
-    for label in label_block.findChildren(QLabel):
-        label.setStyleSheet(f"color: {color}; background: transparent;")
-
-def _build_override_flat_table(
-    rows: list[tuple[str, QWidget, "_Toggle"]],
-) -> tuple[QWidget, list[tuple[QWidget, str, bool]], _FlatColumnResizer]:
-    """Meme construction que _build_flat_table (tableau ferme SANS entete),
-    mais chaque ligne est precedee d'un toggle1 (voir Colonnes > Type,
-    SettingsWindow._build_column_type_page — la remarque de l'utilisateur,
-    "juste devant le texte de chaque parametre, tu mets un toggle 1 en off,
-    ce qui grisera la ligne") : OFF grise le libelle ET desactive le
-    controle (la ligne suit alors la valeur GENERALE, voir
-    SettingsWindow._apply_column_type_preview) ; ON re-eclaircit le libelle
-    et active le controle, dont la propre valeur prend alors le relai — "le
-    fait de mettre le toggle en ON overide le parametre et la modification
-    est apportee en temps reel". Le toggle reste HORS de la cellule
-    redimensionnable (voir _FlatColumnResizer.wire ci-dessous, appele sur
-    le SEUL label_block comme dans _build_flat_table) : sa largeur est
-    fixe, glisser la frontiere libelle/controle ne doit faire bouger que le
-    texte, pas le toggle."""
-    frame, layout = _table_frame()
-    _prestyle_flat_frame(frame)
-    row_meta: list[tuple[QWidget, str, bool]] = []
-    label_blocks: list[QWidget] = []
-    rows_widgets: list[QWidget] = []
-    for i, (label, control, toggle) in enumerate(rows):
-        bg = M["table_row_a"] if i % 2 else M["table_row_b"]
-        row, row_l = _table_row(bg, first=(i == 0))
-        _prestyle_flat_row(row, i, len(rows))
-        row_meta.append((row, bg, i == 0))
-        row_l.setContentsMargins(14, 8, 14, 8)
-        row_l.setSpacing(14)
-        # Toggle + libelle RAPPROCHES l'un de l'autre (6px, pas les 14px du
-        # reste de la ligne) dans leur propre petite boite — voir la
-        # remarque de l'utilisateur, "approche les textes des parametre
-        # proche des toggles" — plutot que le rythme uniforme de
-        # _build_flat_table, pense pour des cellules independantes.
-        toggle_label_box = QWidget()
-        toggle_label_box.setStyleSheet("background: transparent;")
-        toggle_label_l = QHBoxLayout(toggle_label_box)
-        toggle_label_l.setContentsMargins(0, 0, 0, 0)
-        toggle_label_l.setSpacing(6)
-        toggle_label_l.addWidget(toggle, 0, Qt.AlignVCenter)
-        label_block = _label_block(label)
-        toggle_label_l.addWidget(label_block, 0)
-        row_l.addWidget(toggle_label_box, 0)
-        row_l.addStretch(1)
-        row_l.addWidget(control, 0, Qt.AlignVCenter)
-        label_blocks.append(label_block)
-        rows_widgets.append(row)
-
-        def _sync_override(checked: bool, control=control, label_block=label_block):
-            _set_dimmed(control, not checked)
-            _set_label_block_dim(label_block, not checked)
-
-        toggle.toggled.connect(_sync_override)
-        _sync_override(toggle.isChecked())
-        _lock_min_height(row)
-        layout.addWidget(row)
-    natural_width = max((_label_block_natural_width(lb) for lb in label_blocks), default=_FlatColumnResizer._MIN_WIDTH)
-    resizer = _FlatColumnResizer(natural_width)
-    for row, label_block in zip(rows_widgets, label_blocks):
-        resizer.wire(row, label_block)
-    # Verrouille aussi le CADRE entier — voir _build_flat_table, meme
-    # necessite/memes raisons (systematique pour tous les tableaux, voir
-    # la remarque de l'utilisateur, "corrige l'ecrasement du tableau ...
-    # que tu le prennes systematiquement en compte pour tous les
-    # tableaux").
     _attach_flat_head(frame, layout, resizer, rows_widgets, label_blocks)
     _register_flat_table(frame, row_meta)   # avant le verrou : le padding courant change la hauteur
     _lock_min_height(frame)

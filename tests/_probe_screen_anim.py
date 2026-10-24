@@ -45,7 +45,7 @@ def scen(label, n=4):
 scen("fermes")
 w.open_settings("visuel"); pump(1500)
 scen("visuel_ouvert")
-d = w._settings_dialog
+d = w._settings_dialog_v2
 d.move(w.x() + w.width() + 2000, d.y()); pump(500)
 scen("visuel_hors_fenetre")
 d.move(w.x() + 300, w.y() + 200); d.showMinimized(); pump(800)

@@ -7,7 +7,6 @@ import html
 import re
 from urllib.parse import unquote
 from PySide6.QtCore import QObject, Signal, QUrl, Qt, QProcess, QAbstractTableModel, QModelIndex, QByteArray
-from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QProgressBar, QDialog,
                                QTableView, QHeaderView, QLineEdit, QComboBox)
 

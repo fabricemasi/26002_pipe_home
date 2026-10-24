@@ -281,23 +281,6 @@ def working_space(config) -> str:
     return config.getRoleColorSpace(ocio.ROLE_SCENE_LINEAR) or colorspace_names(config)[0]
 
 
-def guess_input_space(config, kind: str, info_space: str = "", defaults: dict | None = None) -> str:
-    """Espace d'entrée PROPOSÉ (jamais présenté comme détecté) : réglage par défaut du type de média, sinon
-    l'espace écrit dans le fichier s'il existe dans la configuration."""
-    defaults = defaults or {}
-    names = colorspace_names(config)
-    wanted = defaults.get(kind) or ""
-    if wanted in names:
-        return wanted
-    if info_space and info_space in names:
-        return info_space
-    for candidate in (("Linear Rec.709 (sRGB)", "ACEScg", "scene_linear") if kind in ("exr", "hdr")
-                      else ("sRGB Encoded Rec.709 (sRGB)", "sRGB", "Gamma 2.4 Encoded Rec.709")):
-        if candidate in names:
-            return candidate
-    return working_space(config)
-
-
 @dataclass
 class OcioSetup:
     config_path: str

@@ -120,11 +120,6 @@ class Timeline(QWidget):
             self.setFixedHeight(base)
         self.update()
 
-    def set_thumb_height(self, value):
-        self.thumb_h = self._clamp_thumb(value)
-        self._apply_height()
-        self._views_changed()
-
     def set_media(self, count: int, first_number: int, fps: Fraction, tc_start: int = 0, missing=(),
                   keep_thumbs: bool = False):
         self.count = max(1, int(count))

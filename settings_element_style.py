@@ -1452,7 +1452,6 @@ def targets_for(widget: QWidget) -> list:
     except ImportError:
         pass
     if getattr(widget, "part", "") in {"media-photo", "media-video"} and hasattr(widget, "view"):
-        from browser_core import ROLE_PATH
         view = widget.view
         column = _column_for_view(view)
         path = str(widget.key)

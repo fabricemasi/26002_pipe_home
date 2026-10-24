@@ -304,11 +304,6 @@ def _title_indent(level: int) -> int:
     style = _TITLE_LEVEL_STYLE.get(level) or _TITLE_LEVEL_DEFAULTS[3]
     return max(0, int(style.get("indent", 0)))
 
-def _title_gap(level: int, collapsed: bool) -> int:
-    """Espace sous un titre de `level`, avant le titre suivant : `collapsed`
-    = titre replie, sinon deplie (voir _stack_subsections/_make_gap_spacer)."""
-    style = _TITLE_LEVEL_STYLE.get(level) or _TITLE_LEVEL_DEFAULTS[3]
-    return max(0, int(style.get("gap_collapsed" if collapsed else "gap_expanded", 0)))
 
 def _title_gap_next(level: int) -> int:
     """Espace entre un titre deplie de `level` et son contenu (le titre du

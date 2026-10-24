@@ -1261,13 +1261,6 @@ def apply_style(app) -> None:
 # fenetres de premier niveau de l'appli (navigateur, parametres...).
 # ==========================================================================
 
-# Rayon utilise quand le toggle "coins arrondis" (fenetre de parametres,
-# General) est active — plus de slider en pixels : Windows ne propose de
-# toute facon que rond/pas-rond cote DWM (voir apply_dwm_frame), un choix
-# fin en pixels n'avait donc de sens que sur le radius peint cote QSS, pas
-# sur le rendu natif qui l'accompagne forcement en pratique.
-WINDOW_ROUNDED_RADIUS = 12
-
 def apply_dwm_frame(widget, radius: int, border_hex: str, resizable: bool = False) -> None:
     """Sur Windows 11, le compositeur (DWM) arrondit et colore DEJA de
     lui-meme toute fenetre de premier niveau sans decoration (voir

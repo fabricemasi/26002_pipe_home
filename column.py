@@ -9,7 +9,6 @@ from PySide6.QtCore import (
 from PySide6.QtGui import (
     QCursor,
     QIcon,
-    QPixmap,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -27,7 +26,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QVBoxLayout,
     QWidget,
-    QWidgetAction,
 )
 from app_style import (
     C,
@@ -68,6 +66,7 @@ from settings_widgets import (
     Menu, menu_row,
     _radius_dict,
     _radius_shrink,
+    _SliderField,
     run_space_menu_hooks,
 )
 from browser_core import (
@@ -108,7 +107,6 @@ from browser_core import (
     _prompt_reset_thumbnail,
     _resolve_font_family,
     _row_preview_left_x,
-    _save_thumbnail_pixmap_for,
     _show_resize_width,
     _show_row_resize_indicator,
     _step_badge_rect,
@@ -887,10 +885,6 @@ class Column(QWidget):
         if self.collapsed or not columns_resizable():
             return False
         return self.width() - COLUMN_RESIZE_MARGIN <= x <= self.width()
-
-    @property
-    def is_resizing(self) -> bool:
-        return self._resizing
 
     def resize_begin(self, global_x: int):
         self._resizing = True
@@ -2815,14 +2809,9 @@ class Column(QWidget):
         _SliderField de la fenetre de parametres (slider + boite de
         saisie px, deja avec sa valeur en temps reel) — voir la remarque
         de l'utilisateur, "je veux que le style [du slider] soit celui des
-        settings" (remplace l'ancien QSlider habille a la main). Import
-        DIFFERE (jamais au niveau module, meme raison que settings_window
-        important pipeline_browser) : sans danger ici, appele bien apres
-        que les deux modules soient charges. Ligne alignee comme toutes celles des menus
-        contextuels (settings_menu.menu_row)."""
-        import settings_window as sw
-
-        field = sw._SliderField(vmin, vmax, value, slider_width=120, box_width=60)
+        settings" (remplace l'ancien QSlider habille a la main). Ligne alignee
+        comme toutes celles des menus contextuels (settings_menu.menu_row)."""
+        field = _SliderField(vmin, vmax, value, slider_width=120, box_width=60)
         field.valueChanged.connect(on_change)
         menu_row(menu, label_text, field)
 
@@ -3043,9 +3032,6 @@ class Column(QWidget):
 
     def _capture_thumbnail(self, path: Path):
         _prompt_capture_thumbnail(self, path, lambda: self.list.viewport().update())
-
-    def _save_thumbnail_pixmap(self, path: Path, pix: QPixmap):
-        _save_thumbnail_pixmap_for(path, pix, self, lambda: self.list.viewport().update())
 
     def _reset_thumbnail(self, path: Path):
         _prompt_reset_thumbnail(self, path, lambda: self.list.viewport().update())

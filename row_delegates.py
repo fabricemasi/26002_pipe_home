@@ -66,7 +66,6 @@ from browser_core import (
     load_project_columns,
     project_step_count,
     has_project_thumbnail,
-    project_thumbnail_path,
     project_thumbnail_pixmap,
 )
 

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import copy
 import json
-import math
 
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QImage, QPainter, QPen, QPixmap, QTransform, QUndoStack

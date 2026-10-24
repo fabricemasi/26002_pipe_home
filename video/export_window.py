@@ -5,7 +5,6 @@ suivent le format et le codec : les encodeurs absents du FFmpeg installé ne son
 est installé."""
 from __future__ import annotations
 
-from fractions import Fraction
 from pathlib import Path
 
 import os

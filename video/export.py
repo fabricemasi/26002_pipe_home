@@ -23,7 +23,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 

@@ -29,6 +29,7 @@ from PySide6.QtGui import QKeySequence, QShortcut, QTextCursor
 
 from settings_layout import (
     _ReorderOverlay,
+    _finish_reorder,
     _TABLE_HEAD, _lock_min_height, _prestyle_flat_frame, _prestyle_flat_row, _register_cells_table,
     _ResizableTableHeader, _reflow_ancestors, _style_flat_table, _table_row, _wire_resizable_columns,
 )
@@ -196,10 +197,6 @@ class _LinesField(QPlainTextEdit):
                 seen.add(line.casefold())
                 out.append(line)
         return out
-
-    def set_lines(self, lines):
-        self.setPlainText(chr(10).join(lines))
-        self.fit_rows()
 
     def _line_prefix(self) -> str:
         cursor = self.textCursor()
@@ -592,16 +589,7 @@ class SplitCell(QWidget):
         self.setCursor(Qt.ClosedHandCursor)
 
     def _end_reorder(self):
-        overlay, self._reorder = self._reorder, None
-        self.unsetCursor()
-        gap = overlay.target
-        overlay.hide()
-        overlay.deleteLater()
-        if gap is None:
-            return
-        order = [i for i in self._order if i != overlay.source]
-        order.insert(gap - (1 if gap > self._order.index(overlay.source) else 0), overlay.source)
-        self.setOrder(order)
+        _finish_reorder(self)
 
     # -- justification : propre a chaque sous-cellule --
 

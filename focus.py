@@ -1038,9 +1038,6 @@ class FocusOverlay(QWidget):
     def zoomed(self) -> bool:
         return self._zoom_goal > 1.001 or self._zoom > 1.001
 
-    def zoom_level(self) -> float:
-        return self._zoom_goal
-
     def _max_zoom(self) -> float:
         actual = self._actual_zoom()
         return max(4.0, min(40.0, actual * 4.0))
@@ -1060,10 +1057,6 @@ class FocusOverlay(QWidget):
 
     def zoom_reset(self):
         self._zoom_to(1.0, None)
-
-    def zoom_actual(self, anchor: QPointF | None = None):
-        """Anime vers la taille reelle de l'image (1 pixel image = 1 pixel logique)."""
-        self._zoom_to(self._actual_zoom(), anchor)
 
     def zoom_toggle_actual(self, anchor: QPointF | None = None):
         """Ajustee <-> taille reelle (sans effet si l'image tient deja a sa taille reelle)."""
@@ -2198,11 +2191,6 @@ def attr_gap() -> int:
     return scaled(5)
 
 
-def attr_band() -> int:
-    """Hauteur reservee au-dessus et au-dessous de la photo pour ses attributs."""
-    return attr_unit() + attr_gap() + scaled(2)
-
-
 def attr_inset() -> int:
     """Retrait des attributs par rapport au calque des icones (0 : leur padding, Reglages > Visionneuse >
     Cellules > « Padding des icônes d'attribut », fait le reste)."""
@@ -2298,7 +2286,6 @@ def _paint_attrs(painter: QPainter, room: QRect, attrs: dict, look: dict, hovere
         rating = int(attrs.get("rating") or 0)
         if rating:
             lit = layout["stars"][:rating]
-            group = lit[0].united(lit[-1])
             for rect in lit:
                 _paint_star(painter, rect, True)
         color = int(attrs.get("color") or 0)
@@ -2352,13 +2339,11 @@ def _paint_attr_controls(painter: QPainter, room: QRect, attrs: dict, hover: tup
     shown = rating
     if hover and hover[0] == "star":
         shown = hover[1]
-    group = layout["stars"][0].united(layout["stars"][-1])
     for i, rect in enumerate(layout["stars"]):
         _paint_star(painter, rect, i < shown, preview=bool(hover and hover[0] == "star" and i >= rating))
     # Couleurs
     palette = filter_colors()
     swatches = layout["colors"][:len(palette)]
-    group = swatches[0].united(swatches[-1])
     for i, slot in enumerate(swatches):
         inner = QRectF(slot).adjusted(scaled(2.5), scaled(2.5), -scaled(2.5), -scaled(2.5))
         if hover and hover[0] == "color" and hover[1] == i + 1:
@@ -2576,12 +2561,6 @@ class FocusGallery(QListWidget):
 
     def _apply_grid(self):
         self._layout_table()
-
-    def natural_cell(self) -> QSize:
-        """Cellule sans aimantation : vignette + nom + padding des cellules des tableaux."""
-        pad = self._look["padding"]
-        return QSize(self.TILE + pad["left"] + pad["right"],
-                     self.TILE + self.label_height() + pad["top"] + pad["bottom"])
 
     def _plan(self, tile: float) -> tuple:
         """Decoupage retenu. Les cases ont TOUJOURS la taille du decoupage qui remplit l'ecran

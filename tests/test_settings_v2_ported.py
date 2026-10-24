@@ -19,23 +19,22 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 app = QApplication.instance() or QApplication([])
 
 import settings_v2_app
-import settings_window as sw
 import settings_window_v2 as v2
 from app_style import PREVIEW_STACK_TITLE
 from settings_store import DEFAULT_SETTINGS as _DEFAULTS
 from settings_widgets import _SliderField, _Toggle
+from _v1_reference import VALUES_PROJETS as V1_VALUES
 
 v2.AUTOSAVE = False
-_real = (v2.load_settings, sw.load_settings)
+_real = v2.load_settings
 
 
 def setUpModule():
     v2.load_settings = lambda: copy.deepcopy(_DEFAULTS)
-    sw.load_settings = lambda: copy.deepcopy(_DEFAULTS)
 
 
 def tearDownModule():
-    v2.load_settings, sw.load_settings = _real
+    v2.load_settings = _real
 
 
 PORTED = ("Application", "Dossiers et fichiers à omettre", "LUT", "Polices principales", "Couleurs",
@@ -75,13 +74,8 @@ class PortedSectionsTest(unittest.TestCase):
         app.processEvents()
 
     def test_values_match_the_v1_window(self):
-        old = sw.SettingsWindow(mode="tout")
-        self.addCleanup(old.deleteLater)
-        # La page Projets de la v1 n'est construite qu'a l'ouverture (avant : valeurs du disque).
-        for index, (_tab, real_title) in old._columns_subpage_specs.items():
-            if real_title == "Projets":
-                old._on_columns_tab_changed(index)
-        expected = old._current_values()
+        # Valeurs lues par l'ancienne fenetre v1 (retiree), onglet Projets ouvert, figees : _v1_reference.py.
+        expected = V1_VALUES
         values = self.win.wired_values()
         groups = ("Application", "Omettre", "LUT", "Polices principales", "Raccourci",
                   "Icones : Logiciels", "Focus : Zone titre", "Projets : Icone de niveaux")

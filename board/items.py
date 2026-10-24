@@ -994,10 +994,6 @@ def asset_pixmap(board_path, name: str) -> QPixmap | None:
     return pixmap
 
 
-def forget_pixmap(board_path, name: str):
-    _PIXMAPS.pop((str(board_path), name), None)
-
-
 class ImageItem(BoardItem):
     KEEP_RATIO = True
 

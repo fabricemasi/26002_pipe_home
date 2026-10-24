@@ -21,8 +21,6 @@ de la liste des noeuds pour ce qui reste a porter. Tout est branche : apercu
 en direct, enregistrement (les onglets de surcharge ecrivent dans les
 dictionnaires de surcharge, comme la v1). Audit controle par controle :
 `python tests/_probe_v2_params.py`.
-
-Mesure : `python tests/_probe_settings_compare.py`.
 """
 from __future__ import annotations
 
@@ -38,10 +36,8 @@ from PySide6.QtGui import QFontMetrics
 import copy
 from pathlib import Path
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QGraphicsOpacityEffect, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox,
-    QScrollArea, QStackedWidget,
-    QVBoxLayout, QWidgetAction,
-    QWidget,
+    QApplication, QDialog, QGraphicsOpacityEffect, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QMenu,
+    QMessageBox, QScrollArea, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from settings_cells import (
@@ -59,29 +55,25 @@ from settings_layout import (
     _ancestors, _flat_tables, _reflow_all,
     _section_host, _seed_flat_tables_style, _set_flat_tables_style,
 )
-from settings_colorpicker import _ColorField
 from settings_sections import (
-    _CellPaddingField, _CompactAppOrCustomColorField, _CornerRadiusField, _CornerRadiusSliders,
-    _HeaderColorField, _InnerLineField, _ITEM_TEXT_FIELD_SPECS, _SidePaddingField, _ToggleSideColorsField,
-    _font_choices,
+    _CellPaddingField, _CompactAppOrCustomColorField, _CornerRadiusField, _CornerRadiusSliders, _InnerLineField,
+    _ITEM_TEXT_FIELD_SPECS, _SidePaddingField, _ToggleSideColorsField, _font_choices,
 )
 from settings_store import (
-    M, MARKDOWN_DEFAULTS, _coerce_corner_radius, _coerce_side_enabled, _load_presets, _load_window_geometry, _resolve_color_value,
-    _ICONS_DIR, _save_presets, _save_window_geometry, import_toggle_image, toggle_style_list, update_active_preset,
-    _subsection_left_margin, _title_color, _title_font, _title_indent, _sync_dynamic_M, _sync_slider_style, _sync_title_level_style, load_settings, save_settings,
+    M, MARKDOWN_DEFAULTS, _coerce_corner_radius, _coerce_side_enabled, _load_presets, _load_window_geometry,
+    _resolve_color_value, _ICONS_DIR, _save_window_geometry, import_toggle_image, toggle_style_list,
+    update_active_preset, _subsection_left_margin, _title_color, _title_font, _title_indent, _sync_dynamic_M,
+    _sync_slider_style, _sync_title_level_style, load_settings, save_settings,
 )
-from settings_theme import (
-    _input_radius, _qfont, _register_input, _set_button_radius, _set_input_radius, _set_text_role, _text_label,
-)
+from settings_theme import _qfont, _set_button_radius, _set_input_radius, _set_text_role, _text_label
 from settings_widgets import (
-    Menu, menu_row,
-    _AppOrCustomColorField, _Btn, _DualFontSelectField, _FontSelectField, _MiniSlider,
-    _OverrideSmoothingField, _RatioSliderField, _ResizeBadgePositionField, _RowBorderField, _ShortcutField, _SliderField, _TableFrame, _Toggle, _ToggleStylePicker,
-    _DIMMED_OPACITY, _SelectField, _set_dimmed, _toggle_icon_pixmap, _toggle_image_pixmap,
-    _TABLE_DIMS, _TABLE_SELECTION, _TOGGLE_STYLE_NAMES, _set_table_dims, _set_table_inner_border, _set_table_shadow, shadow_look,
-    _sync_toggle_style, TOGGLE_STYLE_LISTENERS,
-    CONTEXT_MENU_EXTRAS, make_space_actions, set_space_above, set_space_below, space_target, widget_at_path,
-    widget_path, toggle_animation_left_ms,
+    Menu, _Btn, _DualFontSelectField, _FontSelectField, _MiniSlider, _OverrideSmoothingField, _RatioSliderField,
+    _ResizeBadgePositionField, _RowBorderField, _ShortcutField, _SliderField, _TableFrame, _Toggle,
+    _ToggleStylePicker, _DIMMED_OPACITY, _SelectField, _set_dimmed, _toggle_icon_pixmap, _toggle_image_pixmap,
+    _TABLE_DIMS, _TABLE_SELECTION, _TOGGLE_STYLE_NAMES, _set_table_dims, _set_table_inner_border,
+    _set_table_shadow, shadow_look, _sync_toggle_style, TOGGLE_STYLE_LISTENERS, CONTEXT_MENU_EXTRAS,
+    make_space_actions, set_space_above, set_space_below, space_target, widget_at_path, widget_path,
+    toggle_animation_left_ms,
 )
 from settings_window import (_NoSqueezeScrollArea, _OmitListField, _PanelFrame, _SettingsTitleBar, _omit_file_values,
                              install_extra_window, seed_extra_window_look, shadow_margins)
@@ -154,9 +146,6 @@ CATALOG: dict[str, list[Spec]] = {
         Spec("header_font_size", "Hauteur de police du titre", "slider", 10, {"min": 6, "max": 24}),
     ],
 }
-
-ALL_GROUPS = ("Colonnes", "Entetes")
-
 
 _TYPE_OR_GENERAL = ("Type", None)          # le General montre les memes lignes de texte que "Type"
 
@@ -4429,9 +4418,6 @@ class SettingsWindowV2(QDialog):
                 continue
             inner.layout().activate()
             _fit_inner(scroller)
-
-    def _seed_table_look(self):
-        seed_table_look(self.settings)
 
     def _on_element_style_saved(self, key: str, value):
         try:
