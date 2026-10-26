@@ -58,8 +58,11 @@ def read_column(directories, exclude):
         for shortcut in core.load_shortcuts(directory):
             target = Path(shortcut["target"])
             # Les raccourcis réseau restent visibles, même serveur hors ligne.
-            if is_remote_path(target) or target.is_dir():
-                core.remember_entry(target, True)
+            if is_remote_path(target) or target.exists():
+                # La cache d'entrée est aussi relue par la peinture : marquer
+                # un fichier comme dossier le ferait disparaître des filtres
+                # et lui donnerait le mauvais menu contextuel.
+                core.remember_entry(target, True if is_remote_path(target) else target.is_dir())
                 shortcuts.append(shortcut)
                 if not is_remote_path(target) and (target / ".pipeline_lightroom.json").is_file():
                     data.lightroom.add(str(target))

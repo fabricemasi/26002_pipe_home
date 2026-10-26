@@ -29,6 +29,11 @@ def _render(scene, painter: QPainter, target: QRectF, source: QRectF, transparen
         item.setVisible(False)
     background = QColor(scene.background)
     scene.exporting = True
+    hairlines = not getattr(scene, "cad_lineweights", True)
+    if hairlines:
+        scene.cad_style_changed()                       # export : les VRAIES epaisseurs, quel que soit l'affichage
+    if scene.cad_layer is not None:
+        scene.cad_layer.exporting(True)                 # rendu GPU : les entites CAD se peignent le temps de l'export
     scene.export_grid = bool(scene.page.get("export_grid", False))
     if transparent:
         scene.background = QColor(Qt.transparent)
@@ -39,6 +44,10 @@ def _render(scene, painter: QPainter, target: QRectF, source: QRectF, transparen
         scene.render(painter, target, source, Qt.KeepAspectRatio)
     finally:
         scene.exporting = False
+        if hairlines:
+            scene.cad_style_changed()
+        if scene.cad_layer is not None:
+            scene.cad_layer.exporting(False)
         scene.background = background
         for item in hidden:
             item.setVisible(True)

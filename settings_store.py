@@ -534,6 +534,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # apply_all_settings) mais sans aucun champ pour les regler jusqu'ici.
     "preview_padding": {"left": 0, "top": 0, "right": 0, "bottom": 0},
     "preview_padding_linked": True,
+    "preview_image_ratio": 1.0,    # ratio (largeur/hauteur) de l'image de la colonne Focus
     "preview_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
     "preview_radius_linked": True,
     "preview_title_zone_height": 52,
@@ -739,8 +740,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Bouton « Récursif » de la visionneuse / planche (etat temps reel) : toutes les photos du dossier,
     # sous-dossiers compris (PipelineBrowser._toggle_recursive).
     "viewer_recursive": False,
-    # Module « Board » (board/, .mro) : magnetisme GENERAL (Reglages > MRO ; Alt tenu = sans). Seuil en pixels
+    # Module « Board » (board/, .mro) : magnetisme GENERAL (Reglages > Module MRO ; Alt tenu = sans). Seuil en pixels
     # d'ecran (meme effet a tout zoom). Les reglages propres a un board (couleur du canvas...) sont dans le .mro.
+    # Double-clic sur un dessin DXF / DWG dans une colonne : ouvert dans le module MRO (lu, jamais reecrit).
+    "board_open_cad_drawings": True,
     "board_snap_enabled": True,
     "board_snap_objects": True,
     "board_snap_grid": False,
@@ -749,6 +752,50 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "board_snap_distance": 6,
     # Presets des outils de dessin du board (etat temps reel) : {outil: [{color, width, opacity?} x 3]}.
     "board_pen_presets": {},
+    # Module CAD du board (board/cad*.py, Reglages > Module CAD et sa fenetre « accrochages et suivi ») :
+    # bascules (F3 OSNAP, F7 grille, F8 ORTHO, F9 accrochage a la grille, F10 polaire, F11 suivi, F12 saisie
+    # dynamique), modes d'accrochage, distances en pixels d'ECRAN (meme effet a tout zoom).
+    "board_cad_osnap": True,
+    "board_cad_osnap_end": True, "board_cad_osnap_mid": True, "board_cad_osnap_cen": True,
+    "board_cad_osnap_gcen": False, "board_cad_osnap_qua": False, "board_cad_osnap_int": True,
+    "board_cad_osnap_appint": False, "board_cad_osnap_ext": True, "board_cad_osnap_per": False,
+    "board_cad_osnap_tan": False, "board_cad_osnap_nea": False, "board_cad_osnap_par": False,
+    "board_cad_osnap_node": False, "board_cad_osnap_ins": False,
+    "board_cad_aperture": 10,
+    "board_cad_markers": True, "board_cad_marker_size": 12, "board_cad_marker_color": "#ff7a00",
+    "board_cad_tooltips": True, "board_cad_magnet": True,
+    "board_cad_ortho": False, "board_cad_polar": False, "board_cad_polar_increment": "45",
+    "board_cad_polar_custom": 45,
+    "board_cad_otrack": False, "board_cad_track_polar": True,
+    "board_cad_dyn": True,
+    "board_cad_grid_snap": False,
+    "board_cad_unit": "mm",                       # unite de mesure (mm, cm, m, km) ; override par dessin
+    "board_cad_linetypes": [],                    # types de ligne (vide = ceux d'origine, board.cad_model)
+    # Grille unique du board et du CAD (Reglages > Module MRO > Grille) : pas en centiemes, intensite en dixiemes de %
+    "board_grid_step": 400, "board_grid_unit": "board", "board_grid_factor": 4, "board_grid_fade_start": 12,
+    "board_grid_fade_full": 60, "board_grid_style": "lines", "board_grid_thickness": 1, "board_grid_auto_color": True,
+    "board_grid_intensity": 66, "board_grid_color": "#11000000", "board_grid_levels": 12, "board_grid_dot_size": 2,
+    "board_grid_origin_x": 0, "board_grid_origin_y": 0, "board_grid_axes": False, "board_grid_axes_color": "#66ff2f2f",
+    "board_grid_axes_thickness": 1,
+    "board_cad_pickbox": 5, "board_cad_grip_size": 8, "board_cad_pickadd": False,
+    "board_cad_crosshair": True, "board_cad_crosshair_size": 40, "board_cad_crosshair_full": False,
+    "board_cad_crosshair_auto_color": True, "board_cad_crosshair_color": "#1a1a1a", "board_cad_crosshair_memory": True,
+    "board_cad_dim_text": 250, "board_cad_dim_arrow": 250, "board_cad_dim_gap": 100, "board_cad_dim_over": 125,
+    "board_cad_dim_scale": 100, "board_cad_dim_arrow_kind": "triangle", "board_cad_dim_decimals": 2,   # cotations (centiemes d'unite de mesure)
+    "board_cad_hatch_pattern": "lines", "board_cad_hatch_angle": 45, "board_cad_hatch_spacing": 300,
+    "board_cad_hatch_alpha": 35,                   # hachures : motif, angle, espacement (centiemes d'unite de mesure), opacite du plein
+    "board_cad_text_height": 250, "board_cad_text_font": "Arial", "board_cad_text_justify": "L",
+    "board_cad_mtext_justify": "TL", "board_cad_text_spacing": 100,   # textes : hauteur (centiemes d'unite de mesure), police, justifications, interligne (%)
+    "board_cad_pgp_path": "",                      # fichier .pgp d'AutoCAD : alias de commandes du CAD (board/cad_aliases.py)
+    "board_cad_gpu": False,                        # rendu GPU (OpenGL) des entites CAD (board/cad_gpu.py)
+    "board_cad_bar_color": "#0a0a0a",              # fond de la barre d'outils et de la barre de commande du CAD
+    "board_zoom_speed": 15, "board_zoom_fine": 3,           # zoom du board : % par cran de molette (Maj = fin)
+    "board_cad_precision": 4,
+    "board_cad_lineweights": True,                 # affichage des epaisseurs de ligne (faux : simples lignes d'un pixel, comme AutoCAD)
+    "board_cad_aa_filter": 75,                     # largeur du filtre de reduction du suréchantillonnage (% de pixel, rayon)
+    "board_cad_aa_samples": "8",                   # suréchantillonnage du rendu GPU : 1 (aucun), 2, 4, 8, 16, 32, 64
+    "board_cad_antialiasing": True, "board_cad_linear_blend": True, "board_cad_crisp_lines": True, "board_cad_dense_px": 4,
+    "board_cad_grip_color": "#2f6bff", "board_cad_track_color": "#18a058", "board_cad_ghost_color": "#5f6b78",
     "viewer_focus_image_border": {"top": "#5f666b", "right": "#5f666b", "bottom": "#5f666b", "left": "#5f666b"},
     "viewer_focus_image_border_thickness": 1,
     "viewer_focus_image_border_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
@@ -934,23 +981,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "item_selection_idle_radius_linked": True,
     "item_selection_idle_edge_border_override": False,
     "item_selection_idle_edge_border": True,
-    # Colonnes > Type (voir SettingsWindow._build_column_type_page) : vide
-    # par defaut — AUCUNE ligne surchargee, la colonne "Type" suit alors
-    # EXACTEMENT le style general ci-dessus (voir la remarque de
-    # l'utilisateur, "je veux que tu appliques exactement le style de
-    # colonne (GENERAL/COLONNES) sur la colonne TYPE").
+    # Largeur et hauteur de ligne enregistrees par le glisser des bordures de colonne (seules cles lues,
+    # voir browser_core._persist_column_width / _persist_row_height) : "Type" dans les deux premiers
+    # dictionnaires, Projets / Sous-projet / Focus imbriques par titre dans les deux suivants.
     "column_type_overrides": {},
     "column_type_override_enabled": {},
-    "column_type_override_linked": {},
-    # Meme principe que column_type_overrides ci-dessus, mais pour
-    # Projets/Sous-projet (voir SettingsWindow._build_column_override_page/
-    # _override_store) — cles "Type" historiques JAMAIS renommees (retro-
-    # compatibilite avec les presets/settings.json existants), Projets/
-    # Sous-projet imbriques par titre reel de colonne dans ces 3 nouvelles
-    # cles plutot que de dupliquer 3 nouvelles cles PAR colonne.
     "column_overrides_by_title": {},
     "column_override_enabled_by_title": {},
-    "column_override_linked_by_title": {},
     "header_font_family": "",   # fige : plus d'UI (voir remarque de tete de fichier)
     "input_frame": True,
     "input_radius": 0,
@@ -1445,7 +1482,7 @@ del _sides_key
 _DYNAMIC_KEY = re.compile(r"^toggle(?:[3-9]\d*|[1-9]\d+)_")
 
 
-# Module « Board » (board/) — Reglages > MRO > Barres d'outils : apparence d'origine par defaut (palette des
+# Module « Board » (board/) — Reglages > Module MRO > Barres d'outils : apparence d'origine par defaut (palette des
 # panneaux des reglages : fond #16181a, filet #2a2e32 d'un pixel, angles droits ; texte #d6d9dc).
 DEFAULT_SETTINGS.update({
     "board_toolbar_bg_color": "#16181a",
@@ -1467,7 +1504,7 @@ DEFAULT_SETTINGS.update({
     "board_toolbar_focus_radius": 6, "board_toolbar_hover_color": "#232729",
     "board_toolbar_hover_radius": 6,
 })
-# Reglages > MRO > Menus contextuels : les MEMES reglages que Menu contextuel, propres au board (`board_<cle>`),
+# Reglages > Module MRO > Menus contextuels : les MEMES reglages que Menu contextuel, propres au board (`board_<cle>`),
 # chacun avec son interrupteur d'override (`board_ovr_<cle>`, coupe = suit le menu de l'appli).
 BOARD_MENU_KEYS = tuple(k for k in DEFAULT_SETTINGS if k.startswith("ctx_menu"))
 for _key in BOARD_MENU_KEYS:
@@ -1871,7 +1908,32 @@ def load_settings(startup: bool = False) -> dict[str, Any]:
                              ("input_corner_radius", "input_radius")):
         if settings.get(new_key) is None:
             settings[new_key] = settings.get(old_key, 0)
+    _prune_column_overrides(settings, raw)
     return settings
+
+
+# Seules cles de surcharge de colonne encore lues : celles que le glisser des bordures enregistre.
+_COLUMN_SIZE_KEYS = ("item_column_width", "item_row_height")
+
+
+def _prune_column_overrides(settings: dict, raw: dict) -> None:
+    """Les onglets de surcharge des colonnes n'existent plus : ne garde des surcharges que la largeur et
+    la hauteur de ligne (colonnes Type / Projets / Sous-projet / Focus). Le ratio d'image de Focus,
+    anciennement surcharge, devient `preview_image_ratio` (repris une fois s'il n'etait pas enregistre)."""
+    focus_over = (settings.get("column_overrides_by_title") or {}).get("Focus") or {}
+    focus_on = (settings.get("column_override_enabled_by_title") or {}).get("Focus") or {}
+    if "preview_image_ratio" not in raw and focus_on.get("item_image_ratio") and "item_image_ratio" in focus_over:
+        settings["preview_image_ratio"] = focus_over["item_image_ratio"]
+    for over_key, on_key, by_title in (("column_type_overrides", "column_type_override_enabled", False),
+                                       ("column_overrides_by_title", "column_override_enabled_by_title", True)):
+        for key in (over_key, on_key):
+            data = settings.get(key) or {}
+            if by_title:
+                data = {title: {k: v for k, v in (sub or {}).items() if k in _COLUMN_SIZE_KEYS}
+                        for title, sub in data.items() if title in ("Projets", "Sous-projet", "Focus")}
+            else:
+                data = {k: v for k, v in data.items() if k in _COLUMN_SIZE_KEYS}
+            settings[key] = data
 
 # ---------------------------------------------------------------------------------------------------
 # Presets (data/pipeline_settings.presets.json, {nom: valeurs}) : menu deroulant de la fenetre

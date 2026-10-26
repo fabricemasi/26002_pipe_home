@@ -380,6 +380,14 @@ class BoardItem(QGraphicsObject):
             scene = self.scene()
             if scene is not None and hasattr(scene, "item_moved"):
                 scene.item_moved(self)
+        elif change in (QGraphicsItem.ItemZValueHasChanged, QGraphicsItem.ItemSceneChange,
+                        QGraphicsItem.ItemSceneHasChanged):
+            # Lignes CAD peintes par lots (cad_items.CadLayer) : un element qui change de hauteur, arrive ou
+            # part peut couper ou rejoindre un lot.
+            layer = getattr(value if change == QGraphicsItem.ItemSceneHasChanged else self.scene(), "cad_layer",
+                            None)
+            if layer is not None:
+                layer.structure_changed()
         return super().itemChange(change, value)
 
     # -- redimensionnement / rotation a la souris --

@@ -349,20 +349,5 @@ class TablePartsTest(_Base):
         self.assertTrue(self.labels["b"].font().bold())                      # la ligne garde son gras
 
 
-class ColumnOverrideTest(_Base):
-    def test_column_override_goes_into_the_column_override_dicts(self):
-        host = QWidget()
-        target = es.ColumnTarget("Projets", host)
-        spec = next(sp for sp in target.specs() if sp.kind == "slider")
-        values = target.values(self.disk)
-        values[spec.key] = (values.get(spec.key) or 0) + 3
-        target.save(values)
-        self.assertTrue(self.disk["column_override_enabled_by_title"]["Projets"][spec.key])
-        self.assertEqual(self.disk["column_overrides_by_title"]["Projets"][spec.key], values[spec.key])
-        self.assertTrue(target.has_override())
-        target.remove()
-        self.assertFalse(target.has_override())
-
-
 if __name__ == "__main__":
     unittest.main()

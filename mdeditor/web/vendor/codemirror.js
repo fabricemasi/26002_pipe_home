@@ -6,6 +6,10 @@
 //
 // You can find some technical background for some of the code below
 // at http://marijnhaverbeke.nl/blog/#cm-internals .
+//
+// [Pipeline Browser] Modifications locales (defilement du module Markdown, octobre 2026), reperables par
+// « [Pipeline Browser] » : options « nativeScroller » (scrollGap, maybeClipScrollbars) et « estimateLineHeight »
+// (estimateHeight). Sans ces options, comportement d'origine.
 
 (function (global, factory) {
   typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory() :
@@ -2315,7 +2319,9 @@
     return data
   }
 
-  function scrollGap(cm) { return scrollerGap - cm.display.nativeBarWidth }
+  // [Pipeline Browser] option « nativeScroller » : la barre native du scroller est VISIBLE (pas de marge cachee de
+  // 50 px sous le cadre, pas de barres miroir) ; la zone affichee est alors exactement sa zone cliente.
+  function scrollGap(cm) { return cm.options.nativeScroller ? 0 : scrollerGap - cm.display.nativeBarWidth }
   function displayWidth(cm) {
     return cm.display.scroller.clientWidth - scrollGap(cm) - cm.display.barWidth
   }
@@ -2936,6 +2942,9 @@
   function estimateHeight(cm) {
     var th = textHeight(cm.display), wrapping = cm.options.lineWrapping;
     var perLine = wrapping && Math.max(5, cm.display.scroller.clientWidth / charWidth(cm.display) - 3);
+    // [Pipeline Browser] option « estimateLineHeight(line, estimation, perLine, th) » : l'editeur donne une meilleure
+    // estimation (hauteur deja mesuree, titres, images…) ; la barre de defilement ne saute plus en cours de route.
+    var hook = cm.options.estimateLineHeight;
     return function (line) {
       if (lineIsHidden(cm.doc, line)) { return 0 }
 
@@ -2944,10 +2953,8 @@
         if (line.widgets[i].height) { widgetsHeight += line.widgets[i].height; }
       } }
 
-      if (wrapping)
-        { return widgetsHeight + (Math.ceil(line.text.length / perLine) || 1) * th }
-      else
-        { return widgetsHeight + th }
+      var height = wrapping ? widgetsHeight + (Math.ceil(line.text.length / perLine) || 1) * th : widgetsHeight + th;
+      return hook ? hook(line, height, perLine, th) : height
     }
   }
 
@@ -4061,7 +4068,7 @@
     if (!display.scrollbarsClipped && display.scroller.offsetWidth) {
       display.nativeBarWidth = display.scroller.offsetWidth - display.scroller.clientWidth;
       display.heightForcer.style.height = scrollGap(cm) + "px";
-      display.sizer.style.marginBottom = -display.nativeBarWidth + "px";
+      display.sizer.style.marginBottom = (cm.options.nativeScroller ? 0 : -display.nativeBarWidth) + "px";
       display.sizer.style.borderRightWidth = scrollGap(cm) + "px";
       display.scrollbarsClipped = true;
     }

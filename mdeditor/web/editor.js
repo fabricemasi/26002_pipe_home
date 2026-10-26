@@ -203,65 +203,129 @@
   // -- 2. Edition visuelle --------------------------------------------------------------------------------------------
   const INLINE_KINDS = ["strong", "em", "strikethrough", "highlight", "code", "comment"];
   const hasClass = (type, cls) => (" " + (type || "") + " ").indexOf(" " + cls + " ") >= 0;
+  // Classes « md-… » d'une ligne, triees : depuis CodeMirror (ligne affichee) ou depuis les jetons du mode.
+  const lineClassKey = (textClass) => [...new Set(textClass.split(/\s+/).filter((c) => c.startsWith("md-")))].sort().join(" ");
+  const tokenClassKey = (tokens) => {
+    const out = new Set();
+    for (const t of tokens) for (const m of (t.type || "").matchAll(/\bline-(md-[\w-]+)/g)) out.add(m[1]);
+    return [...out].sort().join(" ");
+  };
+  // Tailles des images deja chargees (adresse -> [largeur, hauteur]) : une image redessinee (ligne refaite, note
+  // rouverte) a sa place reservee avant d'etre decodee, la ligne ne change pas de hauteur a son arrivee.
+  const IMAGE_SIZES = new Map();
+  // Images dessinees avant de connaitre leur taille (adresse -> references faibles) : la recoivent des qu'elle arrive.
+  const UNSIZED_IMAGES = new Map();
+
+  /** Largeur / hauteur posees sur l'image (taille demandee « 300 » / « 300x200 », sinon la taille de l'image) : la
+      place est reservee avant le decodage. Rend vrai si la hauteur est connue. */
+  function sizeImage(img, size, known) {
+    let w = null, h = null;
+    if (size && /^\s*\d+(x\d+)?\s*$/.test(size)) [w, h] = size.trim().split("x");
+    if (known && !w) [w, h] = known;
+    else if (known && w && !h) h = Math.round(w * known[1] / known[0]);
+    if (w) img.setAttribute("width", w);
+    if (h) img.setAttribute("height", h);
+    return !!h;
+  }
+
+  function imageSizeArrived(src, size) {
+    IMAGE_SIZES.set(src, size);
+    const waiting = UNSIZED_IMAGES.get(src);
+    if (!waiting) return;
+    UNSIZED_IMAGES.delete(src);
+    for (const ref of waiting) { const img = ref.deref(); if (img) sizeImage(img, img.dataset.size, size); }
+  }
 
   const NAV_KEYS = { 33: "PageUp", 34: "PageDown", 35: "End", 36: "Home", 37: "ArrowLeft", 38: "ArrowUp",
     39: "ArrowRight", 40: "ArrowDown" };
 
+  // Passage de fond : tranches courtes quand la page est libre (jamais pendant un defilement).
+  const idle = window.requestIdleCallback ? (fn) => requestIdleCallback(fn, { timeout: 250 }) : (fn) => setTimeout(fn, 16);
+  const SWEEP_SLICE_MS = 5, SWEEP_CHUNK = 40, SCROLL_QUIET_MS = 200, TOKEN_STEP = 250;
+
+  /* DEFILEMENT STABLE (refonte d'octobre 2026). La hauteur d'une ligne ne depend JAMAIS de la position du
+     defilement : TOUT le document est decore (pres de l'ecran tout de suite, le reste par un passage de fond), et
+     rien n'est retire quand une ligne sort de l'ecran. Chaque changement de decoration passe par `mutate` : la ligne
+     en haut de la vue garde sa place a l'ecran (CodeMirror ne recale le defilement que pour les lignes qu'il affiche ;
+     une ligne masquee ou decoree hors de l'ecran change aussi la hauteur au-dessus). */
   class LivePreview {
     constructor(cm, host) {
       this.cm = cm;
-      this.host = host;            // resolution des fichiers, rendu des blocs, navigation (app.js)
+      this.host = host;            // resolution des fichiers, rendu des blocs, navigation (app.js), hauteurs (Editor)
       this.enabled = true;
       this.states = new WeakMap(); // etat PROPRE A CHAQUE DOCUMENT
-      this.useDoc(cm.getDoc());
       this._timer = null;
-      // Un widget qui change de taille (image decodee, bloc rendu) : seule SA ligne est remesuree.
+      this._sweepQueued = false;
+      this._scrolledAt = 0;
+      this.useDoc(cm.getDoc());
+      // Un widget qui change de taille (image decodee, bloc rendu) : SA ligne est remesuree dans le rappel meme
+      // (avant l'affichage : le contenu ne saute pas une image plus tard), seulement si CodeMirror ne l'a pas deja
+      // mesuree a cette hauteur (premier rendu de la ligne).
       this._sized = new WeakMap();
-      this._pendingSized = new Set();
       this._observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver((entries) => {
+        const list = [];
         for (const entry of entries) {
           const marker = this._sized.get(entry.target);
-          if (marker) this._pendingSized.add(marker);
+          if (!marker || !entry.target.isConnected) continue;
+          const found = marker.find();
+          if (!found) continue;
+          const line = this.cm.getLineHandle(found.from.line);
+          const node = this.host.lineNode(line, true);
+          if (node && Math.abs(node.getBoundingClientRect().height - line.height) < 0.5) continue;
+          list.push(marker);
         }
-        if (!this._sizedFrame) {
-          this._sizedFrame = requestAnimationFrame(() => {
-            this._sizedFrame = 0;
-            const list = [...this._pendingSized];
-            this._pendingSized.clear();
-            if (list.length) this.cm.operation(() => { for (const m of list) if (m.find()) m.changed(); });
-          });
-        }
+        if (list.length) this.mutate(() => { for (const m of list) if (m.find()) m.changed(); });
       }) : null;
-      cm.on("changes", () => { this.state.scanDirty = true; this.schedule(); });
-      cm.on("cursorActivity", () => { this.enterTable(); this.schedule(); });
+      cm.on("changes", () => {
+        this.state.scanDirty = true;
+        this.state.repaint = true;
+        this.schedule();
+        this.sweep();
+      });
+      cm.on("cursorActivity", () => {
+        this.enterTable();
+        this.state.repaint = true;
+        this.schedule();
+      });
       // Seules les touches de deplacement font entrer le curseur dans un tableau (pas l'ouverture d'une note).
       cm.on("keydown", (c, ev) => {
         const key = ev.key || NAV_KEYS[ev.keyCode] || "";
         this._navKey = /^(Arrow|Page|Home|End)/.test(key) ? key : null;
       });
-      cm.on("viewportChange", () => this.schedule());
-      cm.on("focus", () => this.schedule());
-      cm.on("fold", () => this.schedule());
-      cm.on("unfold", () => this.schedule());
-      cm.on("blur", () => this.schedule());
+      // Le defilement lui-meme est celui du navigateur : ici, seulement les lignes qui arrivent dans la zone. Elles
+      // sont decorees AUSSITOT que CodeMirror les affiche (meme tache, avant la peinture) : jamais une image en texte
+      // brut puis decoree, ce qui changeait deux fois leur hauteur (le contenu reculait pendant un glisser de barre).
+      cm.on("scroll", () => { this._scrolledAt = performance.now(); });
+      window.addEventListener("resize", () => { this._scrolledAt = performance.now(); });   // idem : CodeMirror remesure
+      cm.on("viewportChange", () => this.refreshNow());
+      for (const name of ["focus", "fold", "unfold", "blur"]) cm.on(name, () => {
+        this.state.repaint = true;
+        this.schedule();
+      });
     }
 
     useDoc(doc) {
       let state = this.states.get(doc);
       if (!state) {
         state = { blocks: [], blockMarks: new Map(), lineMarks: new Map(), active: new Set(), scanDirty: true, enabled: null,
-          tableMarks: new Map(), rawTables: new Set() };
+          tableMarks: new Map(), rawTables: new Set(), viewportKey: null, repaint: true, version: 0,
+          sweepAt: null, sweepLeft: 0, estimateAt: null, estimateLeft: 0, blockAt: 0 };
         this.states.set(doc, state);
       }
       this.state = state;
       if (state.enabled !== null && state.enabled !== this.enabled) { this.clearAll(); state.scanDirty = true; }
       state.enabled = this.enabled;
+      state.viewportKey = null;
+      state.repaint = true;
+      this.sweep();
     }
 
     visibleRange(margin) {
-      const cm = this.cm;
-      const top = cm.getDoc().scrollTop || 0;
-      const height = cm.getScrollerElement().clientHeight || 1200;
+      // Position REELLE du scroller : pendant un saut, CodeMirror annonce les lignes affichees (viewportChange) avant
+      // de mettre a jour la sienne — l'ancienne zone etait decoree, la nouvelle restait brute.
+      const cm = this.cm, scroller = cm.getScrollerElement();
+      const top = scroller.scrollTop || 0;
+      const height = scroller.clientHeight || 1200;
       const from = cm.lineAtHeight(top, "local"), to = cm.lineAtHeight(top + height, "local") + 1;
       return [Math.max(0, from - margin), Math.min(cm.lineCount(), to + margin)];
     }
@@ -271,6 +335,13 @@
       this._timer = requestAnimationFrame(() => { this._timer = null; this.refresh(); });
     }
 
+    refreshNow() {
+      if (this._refreshing) return;
+      if (this._timer) { cancelAnimationFrame(this._timer); this._timer = null; }
+      this._refreshing = true;
+      try { this.refresh(); } finally { this._refreshing = false; }
+    }
+
     setEnabled(on) {
       if (this.enabled === on) return;
       this.enabled = on;
@@ -278,11 +349,21 @@
       this.clearAll();
       this.state.scanDirty = true;
       this.refresh();
+      this.sweep();
+    }
+
+    /** Fichiers de la racine connus (liens resolus, images) : toutes les lignes seront refaites (l'ecran tout de
+        suite, le reste en fond), sans rien retirer d'abord. */
+    invalidate() {
+      this.state.version++;
+      this.state.repaint = true;
+      this.schedule();
+      this.sweep();
     }
 
     clearAll() {
       const st = this.state;
-      this.cm.operation(() => {
+      this.mutate(() => {
         for (const entry of st.blockMarks.values()) entry.marker.clear();
         st.blockMarks.clear();
         for (const entry of st.tableMarks.values()) { entry.dropping = true; entry.widget.destroy(); entry.marker.clear(); }
@@ -303,107 +384,288 @@
       return lines;
     }
 
+    /** UNE operation de decoration ; la ligne du haut de la vue reste a la meme place a l'ecran. */
+    mutate(fn) {
+      const cm = this.cm;
+      if (!cm.display.wrapper.offsetHeight || !cm.lineCount()) { cm.operation(fn); return; }
+      // Position REELLE du scroller (celle du document ne suit qu'a l'evenement « scroll » : CodeMirror, qui recale
+      // lui-meme pour les lignes affichees, la change directement — la comparer doublait la correction).
+      const scroller = cm.getScrollerElement(), top = scroller.scrollTop;
+      const no = cm.lineAtHeight(top, "local");
+      const handle = cm.getLineHandle(no);
+      const offset = top - cm.heightAtLine(no, "local");
+      // Recalage DANS l'operation : CodeMirror rend directement au bon endroit, puis compense lui-meme ce qu'il mesure
+      // (apres coup, il rendait d'abord a l'ancienne position et les deux corrections se melaient).
+      cm.operation(() => {
+        fn();
+        const now = handle.lineNo();
+        if (now == null) return;
+        const want = Math.max(0, cm.heightAtLine(now, "local") + offset);
+        if (Math.abs(want - top) > 0.5) cm.scrollTo(null, want);
+      });
+    }
+
     refresh() {
       if (!this.enabled || !this.host.isMarkdown()) return;
       const cm = this.cm, st = this.state;
       const t0 = performance.now();
-      cm.operation(() => {
-        if (!st.scanDirty && st.blocks.some((b) => b.to >= cm.lineCount())) st.scanDirty = true;
-        if (st.scanDirty) { st.blocks = scanBlocks(cm.getDoc()); st.scanDirty = false; }
-        const active = this.activeLines();
+      const [from, to] = this.visibleRange(20);
+      const viewportKey = from + ":" + to;
+      // Un defilement qui n'amene aucune nouvelle ligne : rien a faire (le navigateur a deja deplace les pixels).
+      if (!st.scanDirty && !st.repaint && st.viewportKey === viewportKey) return;
+      const active = this.activeLines();
+      // Curseur a l'ecran avant (navigation, frappe) : il y reste, meme si une ligne decoree au-dessus de lui change
+      // de hauteur (bloc rendu, image).
+      const keepCursor = this.cursorInView();
+      let overflow = false;
+      this.mutate(() => {
+        if (st.scanDirty) this.rescan();
         const sel = cm.listSelections();
-        this.refreshBlocks(active);
-        const [from, to] = this.visibleRange(20);
-        const covered = this.coveredLines();
-        for (let i = from; i < to; i++) {
-          if (covered.has(i)) continue;
-          this.refreshLine(i, cm.getLineHandle(i), active.has(i), sel);
-        }
-        for (const [handle, entry] of st.lineMarks) {
-          if (handle.lineNo() === null || covered.has(handle.lineNo())) {
-            for (const mark of entry.marks) mark.clear();
-            st.lineMarks.delete(handle);
-          }
+        this.refreshRange(from, to, active, sel);
+        // Lignes que le curseur vient de quitter ou d'atteindre hors de la zone : refaites aussi (au-dela de 200, le
+        // passage de fond s'en charge).
+        const n = cm.lineCount();
+        let extra = 0;
+        for (const set of [st.active, active]) for (const i of set) {
+          if (i >= from && i < to || i >= n) continue;
+          if (++extra > 200) { overflow = true; break; }
+          this.refreshRange(i, i + 1, active, sel);
         }
       });
+      st.active = active;
+      st.viewportKey = viewportKey;
+      st.repaint = false;
+      if (keepCursor && !this.cursorInView()) cm.scrollIntoView(null, 40);
+      if (overflow) this.sweep();
       MD.metrics && MD.metrics.add("lp", performance.now() - t0);
       // Un tableau recale (ligne ajoutee / retiree) : sa cellule active reprend la main apres la mise a jour.
       if (this._refocus) { const w = this._refocus; this._refocus = null; w.focusActive(); }
     }
 
-    coveredLines() {
-      const out = new Set();
-      for (const entry of this.state.blockMarks.values()) for (let i = entry.block.from; i <= entry.block.to; i++) out.add(i);
-      for (const entry of this.state.tableMarks.values()) {
-        const f = entry.marker.find();
-        if (f) for (let i = f.from.line; i <= f.to.line; i++) out.add(i);
-      }
-      return out;
+    cursorInView() {
+      const cm = this.cm;
+      if (!cm.hasFocus()) return false;
+      const c = cm.cursorCoords(null, "local"), scroller = cm.getScrollerElement(), top = scroller.scrollTop;
+      return c.top >= top && c.bottom <= top + scroller.clientHeight;
     }
 
-    refreshBlocks(active) {
+    /** Relance le passage de fond sur tout le document, en partant de l'ecran : decorations et estimations. */
+    sweep() {
+      const st = this.state;
+      st.sweepLeft = this.cm.lineCount();
+      st.sweepAt = null;
+      st.blockAt = 0;
+      this.reestimate();
+    }
+
+    /** Estimations seules (nouvelles mesures, nouvelle largeur, tailles d'images) : passage leger, sans decoration. */
+    reestimate() {
+      const st = this.state;
+      st.estimateLeft = this.cm.lineCount();
+      st.estimateAt = null;
+      this.queueSweep(0);
+    }
+
+    queueSweep(delay) {
+      if (this._sweepQueued) return;
+      this._sweepQueued = true;
+      const go = () => idle(() => { this._sweepQueued = false; this.sweepSlice(); });
+      if (delay) setTimeout(go, delay); else go();
+    }
+
+    sweepSlice() {
+      const st = this.state, cm = this.cm;
+      if (!st.sweepLeft && !st.estimateLeft && st.blockAt >= st.blocks.length || !this.enabled || !this.host.isMarkdown()) return;
+      // Editeur cache (lecture) : reprise a son affichage (`resume`). Defilement en cours : la main lui reste.
+      if (!cm.display.wrapper.offsetHeight) return;
+      if (performance.now() - this._scrolledAt < SCROLL_QUIET_MS) { this.queueSweep(SCROLL_QUIET_MS); return; }
+      const t0 = performance.now();
+      this.mutate(() => {
+        if (st.scanDirty) this.rescan();
+        const n = cm.lineCount();
+        const start = () => this.visibleRange(0)[0];
+        const active = this.activeLines(), sel = cm.listSelections();
+        let resized = false;
+        // 0. Blocs (callouts, tableaux) de tout le document : peu nombreux, ce sont eux qui changent le plus la
+        // hauteur ; rendus avant qu'une ligne brute ne s'affiche jamais.
+        while (st.blockAt < st.blocks.length && performance.now() - t0 < SWEEP_SLICE_MS) {
+          const b = st.blocks[st.blockAt++];
+          this.refreshRange(b.from, b.to + 1, active, sel);
+        }
+        // 1. Estimations (rapide : quelques microsecondes par ligne).
+        if (st.estimateAt == null || st.estimateAt >= n) st.estimateAt = st.estimateAt == null ? start() : 0;
+        while (st.estimateLeft > 0 && performance.now() - t0 < SWEEP_SLICE_MS) {
+          const a = st.estimateAt, b = Math.min(n, a + SWEEP_CHUNK * 10, a + st.estimateLeft);
+          for (let i = a; i < b; i++) if (this.host.estimate(cm.getLineHandle(i))) resized = true;
+          st.estimateLeft -= b - a;
+          st.estimateAt = b >= n ? 0 : b;
+        }
+        // 2. Decorations des lignes.
+        if (st.sweepAt == null || st.sweepAt >= n) st.sweepAt = st.sweepAt == null ? start() : 0;
+        while (st.sweepLeft > 0 && performance.now() - t0 < SWEEP_SLICE_MS) {
+          const a = st.sweepAt, b = Math.min(n, a + SWEEP_CHUNK, a + st.sweepLeft);
+          // Etat EXACT du mode (blocs de code longs) : CodeMirror le calcule depuis la derniere ligne connue ; loin
+          // devant, il est avance par paquets (un seul appel rejouait des milliers de lignes : 50 ms d'un bloc).
+          const frontier = cm.getDoc().modeFrontier;
+          if (frontier != null && a > frontier + TOKEN_STEP) { cm.getLineTokens(frontier + TOKEN_STEP, true); continue; }
+          this.refreshRange(a, b, active, sel, true);
+          for (let i = a; i < b; i++) if (this.host.estimate(cm.getLineHandle(i))) resized = true;
+          st.sweepLeft -= b - a;
+          st.sweepAt = b >= n ? 0 : b;
+        }
+        // Hauteurs estimees changees HORS de CodeMirror : il doit reposer les lignes affichees (sinon elles restaient
+        // a l'ancienne place pendant que le defilement etait recale, et le contenu bougeait).
+        if (resized && cm.curOp) cm.curOp.forceUpdate = true;
+      });
+      MD.metrics && MD.metrics.add("sweep", performance.now() - t0);
+      if (st.sweepLeft > 0 || st.estimateLeft > 0 || st.blockAt < st.blocks.length) this.queueSweep(0);
+      else this.pruneLineMarks();
+    }
+
+    /** Editeur de nouveau affiche : le passage de fond reprend. */
+    resume() {
+      const st = this.state;
+      if (st.sweepLeft > 0 || st.estimateLeft > 0 || st.blockAt < st.blocks.length) this.queueSweep(0);
+      this.state.repaint = true;
+      this.schedule();
+    }
+
+    pruneLineMarks() {
+      for (const [handle, entry] of this.state.lineMarks) {
+        if (handle.lineNo() !== null) continue;
+        for (const mark of entry.marks) mark.clear();
+        this.state.lineMarks.delete(handle);
+      }
+    }
+
+    /** Blocs (callouts, tableaux) repris du texte ; le rendu des blocs disparus est retire. */
+    rescan() {
+      const st = this.state, doc = this.cm.getDoc();
+      st.blocks = scanBlocks(doc);
+      st.scanDirty = false;
+      st.blockAt = 0;
+      const starts = new Set(st.blocks.map((b) => doc.getLineHandle(b.from)));
+      for (const [handle, entry] of st.blockMarks) if (!starts.has(handle)) this.dropBlock(handle, entry);
+      for (const [handle, entry] of st.tableMarks) if (!starts.has(handle)) this.dropTable(handle, entry);
+    }
+
+    /** Lignes [a, b) : blocs qui les touchent (en entier), puis chaque ligne hors d'un bloc rendu. */
+    refreshRange(a, b, active, sel, precise) {
+      const cm = this.cm, blocks = this.state.blocks;
+      b = Math.min(b, cm.lineCount());
+      let lo = 0, hi = blocks.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (blocks[mid].to < a) lo = mid + 1; else hi = mid;
+      }
+      const covered = [];
+      for (let k = lo; k < blocks.length && blocks[k].from < b; k++) {
+        const blk = blocks[k];
+        a = Math.min(a, blk.from);
+        b = Math.max(b, blk.to + 1);
+        if (this.refreshBlock(blk, active)) covered.push(blk);
+      }
+      let c = 0;
+      for (let i = a; i < b; i++) {
+        while (c < covered.length && covered[c].to < i) c++;
+        if (c < covered.length && covered[c].from <= i) continue;
+        this.refreshLine(i, cm.getLineHandle(i), active.has(i), sel, precise);
+      }
+    }
+
+    /** Callout (ou tableau) : rendu tant que le curseur n'y est pas. Rend vrai si ses lignes sont couvertes. */
+    refreshBlock(b, active) {
+      if (b.type === "table") return this.refreshTable(b, active);
       const doc = this.cm.getDoc(), st = this.state;
-      const keep = new Set(), tables = new Set();
-      for (const b of st.blocks) {
-        if (b.type === "table") { this.refreshTable(b, active, tables); continue; }
-        let revealed = false;
-        for (let i = b.from; i <= b.to; i++) if (active.has(i)) { revealed = true; break; }
-        if (revealed) continue;
-        const text = doc.getRange({ line: b.from, ch: 0 }, { line: b.to, ch: doc.getLine(b.to).length });
-        const key = b.type + ":" + b.from + ":" + text;
-        keep.add(key);
-        if (st.blockMarks.has(key)) continue;
-        for (let i = b.from; i <= b.to; i++) {
-          const handle = doc.getLineHandle(i);
-          const entry = st.lineMarks.get(handle);
-          if (entry) { for (const mark of entry.marks) mark.clear(); st.lineMarks.delete(handle); }
-        }
-        const el = this.renderBlock(b, text);
-        let marker;
-        try {
-          marker = doc.markText({ line: b.from, ch: 0 }, { line: b.to, ch: doc.getLine(b.to).length },
-            { replacedWith: el, handleMouseEvents: false, clearOnEnter: true, inclusiveLeft: false, inclusiveRight: false });
-        } catch (err) {
-          continue;
-        }
-        marker.on("clear", () => {
-          const current = st.blockMarks.get(key);
-          if (current && current.marker === marker) st.blockMarks.delete(key);
-          if (this._observer) this._observer.unobserve(el);
-        });
-        this.watchSize(el, marker);
-        st.blockMarks.set(key, { marker, block: b });
+      const handle = doc.getLineHandle(b.from);
+      const table = st.tableMarks.get(handle);
+      if (table) this.dropTable(handle, table);
+      let revealed = false;
+      for (let i = b.from; i <= b.to; i++) if (active.has(i)) { revealed = true; break; }
+      const entry = st.blockMarks.get(handle);
+      if (revealed) {
+        if (entry) this.dropBlock(handle, entry);
+        return false;
       }
-      for (const [key, entry] of st.blockMarks) if (!keep.has(key)) { st.blockMarks.delete(key); entry.marker.clear(); }
-      for (const [handle, entry] of st.tableMarks) {
-        if (tables.has(handle)) continue;
-        st.tableMarks.delete(handle);
-        entry.dropping = true;
-        entry.widget.destroy();
-        if (this.activeTable === entry.widget) this.activeTable = null;
-        entry.marker.clear();
+      const text = doc.getRange({ line: b.from, ch: 0 }, { line: b.to, ch: doc.getLine(b.to).length });
+      if (entry) {
+        const f = entry.marker.find();
+        if (entry.text === text && f && f.from.line === b.from && f.to.line === b.to) return true;
+        this.dropBlock(handle, entry);
       }
+      this.clearLineMarks(b);
+      const record = { marker: null, text };
+      const el = this.renderBlock(b, text, () => {
+        const f = record.marker && record.marker.find();
+        return f ? f.from.line : b.from;
+      });
+      try {
+        record.marker = doc.markText({ line: b.from, ch: 0 }, { line: b.to, ch: doc.getLine(b.to).length },
+          { replacedWith: el, handleMouseEvents: false, clearOnEnter: true, inclusiveLeft: false, inclusiveRight: false });
+      } catch (err) {
+        return false;
+      }
+      record.marker.on("clear", () => {
+        if (st.blockMarks.get(handle) === record) st.blockMarks.delete(handle);
+        if (this._observer) this._observer.unobserve(el);
+      });
+      this.watchSize(el, record.marker);
+      st.blockMarks.set(handle, record);
+      return true;
+    }
+
+    /** Bloc (callout, tableau) qui sera rendu a la ligne `no` (d'apres le texte, meme pas encore decore), sinon null :
+        l'estimation des hauteurs compte deja le bloc rendu. Un bloc ou se trouve le curseur reste du texte. */
+    blockAt(no) {
+      if (!this.enabled) return null;
+      const blocks = this.state.blocks;
+      let lo = 0, hi = blocks.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (blocks[mid].to < no) lo = mid + 1; else hi = mid;
+      }
+      const b = blocks[lo];
+      if (!b || b.from > no) return null;
+      for (const i of this.state.active) if (i >= b.from && i <= b.to) return null;
+      return b;
+    }
+
+    dropBlock(handle, entry) {
+      this.state.blockMarks.delete(handle);
+      entry.marker.clear();
+    }
+
+    dropTable(handle, entry) {
+      this.state.tableMarks.delete(handle);
+      entry.dropping = true;
+      entry.widget.destroy();
+      if (this.activeTable === entry.widget) this.activeTable = null;
+      entry.marker.clear();
     }
 
     // -- Tableaux : toujours en cellules (table.js), sauf source demandee (« </> ») tant que le curseur y reste ----
-    refreshTable(b, active, tables) {
+    refreshTable(b, active) {
       const doc = this.cm.getDoc(), st = this.state;
       const handle = doc.getLineHandle(b.from);
+      const callout = st.blockMarks.get(handle);
+      if (callout) this.dropBlock(handle, callout);
       if (st.rawTables.has(handle)) {
         let inside = false;
         for (let i = b.from; i <= b.to; i++) if (active.has(i)) { inside = true; break; }
-        if (inside) return;
+        if (inside) return false;
         st.rawTables.delete(handle);
       }
       const text = doc.getRange({ line: b.from, ch: 0 }, { line: b.to, ch: doc.getLine(b.to).length });
-      if (!MD.tableModel.parseTable(text).valid) return;      // syntaxe incomplete : texte tel quel
-      tables.add(handle);
       const entry = st.tableMarks.get(handle);
+      if (!MD.tableModel.parseTable(text).valid) {           // syntaxe incomplete : texte tel quel
+        if (entry) this.dropTable(handle, entry);
+        return false;
+      }
       if (entry) {
         const f = entry.marker.find();
         if (f && f.from.line === b.from && f.from.ch === 0 && f.to.line === b.to && f.to.ch === doc.getLine(b.to).length) {
           entry.widget.update(text);
-          return;
+          return true;
         }
         // Lignes ajoutees / retirees : meme widget, recale sur les nouvelles lignes.
         const refocus = !!(entry.widget.active && entry.widget.nested);
@@ -412,18 +674,19 @@
         entry.dropping = false;
         this.clearLineMarks(b);
         const marker = this.markTable(b, entry.widget.el, handle);
-        if (!marker) { st.tableMarks.delete(handle); entry.widget.destroy(); tables.delete(handle); return; }
+        if (!marker) { st.tableMarks.delete(handle); entry.widget.destroy(); return false; }
         entry.marker = entry.widget.marker = marker;
         entry.widget.update(text);
         if (refocus) this._refocus = entry.widget;
-        return;
+        return true;
       }
       this.clearLineMarks(b);
       const widget = new MD.TableWidget(this, text);
       const marker = this.markTable(b, widget.el, handle);
-      if (!marker) { tables.delete(handle); return; }
+      if (!marker) { widget.destroy(); return false; }
       widget.marker = marker;
       st.tableMarks.set(handle, { marker, widget });
+      return true;
     }
 
     clearLineMarks(b) {
@@ -520,7 +783,7 @@
     }
 
 
-    renderBlock(b, text) {
+    renderBlock(b, text, lineOf) {
       const el = document.createElement("div");
       el.className = "md-block md-rendered md-block-" + b.type + " cm-embed-block markdown-rendered" +
         (b.type === "table" ? " cm-table-widget" : b.type === "callout" ? " cm-callout" : "");
@@ -528,7 +791,7 @@
         if (ev && ev.target.closest("a, input, button")) return;
         if (ev) ev.preventDefault();
         this.cm.focus();
-        this.cm.setCursor({ line: b.from, ch: 0 });
+        this.cm.setCursor({ line: lineOf(), ch: 0 });       // ligne du bloc MAINTENANT (lignes ajoutees au-dessus)
       };
       this.host.renderFragment(text, el);
       const button = document.createElement("div");
@@ -547,7 +810,9 @@
       this._observer.observe(el);
     }
 
-    refreshLine(i, handle, isActive, sel) {
+    /** `precise` (passage de fond, dans l'ordre du document) : etat exact du mode ; a l'ecran, celui que CodeMirror
+        utilise pour afficher la ligne (jamais un long calcul au milieu d'un defilement). */
+    refreshLine(i, handle, isActive, sel, precise) {
       const cm = this.cm, st = this.state;
       const text = handle.text;
       const cursors = [];
@@ -558,19 +823,30 @@
           cursors.push([lo.line < i ? 0 : lo.ch, hi.line > i ? text.length : hi.ch]);
         }
       }
-      const lineClass = (handle.styleClasses && handle.styleClasses.textClass) || "";
+      // Classes de la ligne (titre, bloc de code, liste…) : celles de CodeMirror si elle a deja ete affichee, sinon
+      // tirees des jetons du mode (le passage de fond decore aussi les lignes jamais affichees). Meme forme dans les
+      // deux cas : une ligne decoree hors de l'ecran n'est pas refaite quand elle s'affiche.
+      const entry = st.lineMarks.get(handle);
+      const textClass = handle.styleClasses && handle.styleClasses.textClass;
+      let tokens = null;
+      let lineClass = textClass != null ? lineClassKey(textClass) : (entry && entry.text === text ? entry.lineClass : null);
+      if (lineClass == null) {
+        try { tokens = cm.getLineTokens(i, !!precise); } catch (err) { return; }
+        lineClass = tokenClassKey(tokens);
+      }
       const heading = /\bmd-h[1-6]\b/.test(lineClass);
       const folded = heading && cm.isFolded({ line: i, ch: text.length });
-      const sig = text + "\u0000" + (isActive ? "A" : "") + (folded ? "F" : "") + cursors.map((c) => c.join(",")).join(";");
-      const entry = st.lineMarks.get(handle);
+      const sig = st.version + "\u0000" + lineClass + "\u0000" + text + "\u0000" + (isActive ? "A" : "") + (folded ? "F" : "") +
+        cursors.map((c) => c.join(",")).join(";");
       if (entry && entry.sig === sig) return;
       if (entry) for (const mark of entry.marks) mark.clear();
       const marks = [];
-      st.lineMarks.set(handle, { sig, marks });
+      st.lineMarks.set(handle, { sig, marks, text, lineClass });
       if (!text) return;
       const touched = (from, to) => cursors.some(([a, b]) => a <= to && b >= from);
-      let tokens;
-      try { tokens = cm.getLineTokens(i, true); } catch (err) { return; }
+      if (!tokens) {
+        try { tokens = cm.getLineTokens(i, !!precise); } catch (err) { return; }
+      }
       const doc = cm.getDoc();
       const hide = (from, to, group) => {
         if (to <= from) return;
@@ -821,10 +1097,15 @@
       img.draggable = false;
       img.loading = "lazy";
       img.addEventListener("error", () => { wrap.className = "md-image is-unresolved"; wrap.textContent = label; });
-      if (size && /^\s*\d+(x\d+)?\s*$/.test(size)) {
-        const [w, h] = size.trim().split("x");
-        img.setAttribute("width", w);
-        if (h) img.setAttribute("height", h);
+      img.addEventListener("load", () => {
+        if (img.naturalWidth && IMAGE_SIZES.size < 4000) imageSizeArrived(src, [img.naturalWidth, img.naturalHeight]);
+      });
+      if (size) img.dataset.size = size;
+      if (!sizeImage(img, size, IMAGE_SIZES.get(src))) {
+        // Reference faible : une ligne refaite laisse partir son ancienne image.
+        if (UNSIZED_IMAGES.size > 2000) UNSIZED_IMAGES.clear();
+        const waiting = UNSIZED_IMAGES.get(src) || new Set();
+        if (waiting.size < 50) { waiting.add(new WeakRef(img)); UNSIZED_IMAGES.set(src, waiting); }
       }
       wrap.appendChild(img);
       return wrap;
@@ -862,6 +1143,11 @@
       const cm = this.cm = CodeMirror(host, {
         value: "", mode: "pfm", theme: "obsidian", lineWrapping: true, inputStyle: "contenteditable", spellcheck: false, tabSize: 4,
         indentUnit: 4, indentWithTabs: true, viewportMargin: 10, cursorScrollMargin: 40, dragDrop: true,
+        // UN scroller natif (sa barre, sa molette, son clavier) : ni barres miroir ni marge cachee (correctif
+        // « nativeScroller » de vendor/codemirror.js, geometrie dans structure.css).
+        scrollbarStyle: "null", nativeScroller: true,
+        // Hauteur des lignes jamais affichees : voir estimateLine.
+        estimateLineHeight: (line, height, perLine, th) => this.estimateLine(line, height, perLine, th),
         autoCloseBrackets: "()[]{}``", undoDepth: 1000,
         extraKeys: {
           "Enter": (c) => this.kind === "markdown" ? c.execCommand("newlineAndIndentContinueMarkdownList") : c.execCommand("newlineAndIndent"),
@@ -876,6 +1162,23 @@
         }
       });
       cm.on("renderLine", (c, line, elt) => this.decorateLine(line, elt));
+      cm.on("update", () => this.rememberHeights());
+      // Redimensionnement : la ligne en haut de la vue y reste. Le texte se replie autrement des le changement de
+      // taille, CodeMirror ne remesure que 100 ms apres le dernier evenement (« refresh » de son setSize) : la ligne
+      // est relevee au 1er evenement (modele encore a l'ancienne largeur), reposee quand il remesure.
+      window.addEventListener("resize", () => {
+        if (this._resizeAnchor || !cm.display.wrapper.offsetHeight || !cm.lineCount()) return;
+        const top = cm.getDoc().scrollTop, no = cm.lineAtHeight(top, "local"), line = cm.getLineHandle(no);
+        this._resizeAnchor = { line, ratio: line.height ? (top - cm.heightAtLine(no, "local")) / line.height : 0 };
+      });
+      cm.on("refresh", () => {
+        const anchor = this._resizeAnchor;
+        this._resizeAnchor = null;
+        const no = anchor && anchor.line.lineNo();
+        if (no == null) return;
+        cm.scrollTo(null, cm.heightAtLine(no, "local") + anchor.ratio * anchor.line.height);
+        this.lp.reestimate();                     // nouvelle largeur : estimations reposees sur le reste du document
+      });
       // Classes d'Obsidian sur l'editeur (cm-editor, cm-content) ; « cm-active » suit la ligne du curseur.
       cm.getWrapperElement().classList.add("cm-editor");
       cm.display.lineDiv.classList.add("cm-content");
@@ -893,6 +1196,8 @@
         openLink: (target) => MD.openLink(target),
         openExternal: (url) => MD.call("openExternal", url),
         renderFragment: (text, el) => MD.renderFragment(text, el),
+        lineNode: (handle, whole) => this.lineNode(handle, whole),
+        estimate: (handle) => this.settleEstimate(handle),
         // Frappe dans une cellule de tableau (ecrite dans la note un peu plus tard) : la note est deja modifiee.
         edited: () => {
           const entry = this.docs.get(this.path);
@@ -968,22 +1273,219 @@
         les lignes ne sont redessinees que si l'une d'elles a change de largeur (une couleur ne coute rien). */
     styleChanged(light) {
       this._styleFull = this._styleFull || !light;
+      this._stylePending = true;
       if (this._styleFrame) return;                // plusieurs messages de style dans la meme image : un seul passage
       this._styleFrame = requestAnimationFrame(() => {
         this._styleFrame = 0;
-        const full = this._styleFull;
-        this._styleFull = false;
-        const cache = this._markerWidths;
-        let moved = full;
-        if (!full && cache) {
-          for (const entry of cache.values()) {
-            const width = this.measureMarker(...entry.args);
-            if (Math.abs(width - entry.width) > 0.01) { entry.width = width; moved = true; }
-          }
-        }
-        if (full && cache) cache.clear();
-        if (moved) this.cm.refresh();
+        this.applyStyleChange();
       });
+    }
+
+    /** Passage de styleChanged ; rend vrai s'il a refait l'affichage. Editeur cache (lecture) : rien ne se mesure,
+        c'est fait a son affichage (shown). */
+    applyStyleChange() {
+      if (!this._stylePending || !this.cm.display.wrapper.offsetHeight) return false;
+      this._stylePending = false;
+      const full = this._styleFull;
+      this._styleFull = false;
+      const cache = this._markerWidths;
+      let moved = full;
+      if (!full && cache) {
+        for (const entry of cache.values()) {
+          const width = this.measureMarker(...entry.args);
+          if (Math.abs(width - entry.width) > 0.01) { entry.width = width; moved = true; }
+        }
+      }
+      if (full && cache) cache.clear();
+      if (full) this.forgetHeights();               // polices, tailles, espacements : les hauteurs mesurees sont perimees
+      if (moved) this.cm.refresh();
+      return moved;
+    }
+
+    /** L'editeur redevient visible (lecture -> edition). CodeMirror ne rend rien tant qu'il est cache : il est
+        remis a jour sans refresh (qui jetterait toutes les hauteurs mesurees pour des estimations) — comme il le fait
+        lui-meme quand la fenetre change de taille — et le scroller, remis a 0 par l'affichage, retrouve sa position. */
+    shown() {
+      const cm = this.cm, top = cm.getDoc().scrollTop;
+      if (!this.applyStyleChange()) cm.operation(() => { cm.setSize(); cm.scrollTo(null, top); });
+      this.lp.resume();
+    }
+
+    // -- Hauteurs des lignes ------------------------------------------------------------------------------------------
+    // CodeMirror n'affiche que les lignes proches de l'ecran ; les autres ont une hauteur ESTIMEE, et la barre de
+    // defilement en depend. Pour qu'elle ne saute pas : (1) une ligne deja mesuree garde sa mesure tant que son
+    // texte, la largeur et le style n'ont pas change (meme apres un refresh ou un retour sur la note) ; (2) une ligne
+    // jamais affichee est estimee d'apres les lignes du meme genre deja mesurees (titres, lignes vides, code,
+    // images, blocs rendus, texte : hauteur d'une rangee + hauteur par rangee repliee), et le passage de fond de
+    // l'edition visuelle pose cette estimation sur tout le document.
+
+    layoutKey() {
+      const width = this.cm.display.lineDiv.clientWidth || this._lastWidth || 0;
+      return this._layoutVersion + ":" + width;
+    }
+
+    forgetHeights() {
+      this._layoutVersion = (this._layoutVersion || 0) + 1;
+      this._heightStats = null;
+    }
+
+    rememberHeights() {
+      const cm = this.cm, width = cm.display.lineDiv.clientWidth;
+      if (!width) return;
+      this._lastWidth = width;
+      this._perLine = Math.max(5, cm.display.scroller.clientWidth / cm.defaultCharWidth() - 3);
+      const key = this.layoutKey();
+      const memo = this._heights || (this._heights = new WeakMap());
+      if (!this._heightStats || this._heightStats.key !== key) this._heightStats = { key, kinds: {} };
+      const kinds = this._heightStats.kinds;
+      let changed = false;
+      for (const view of cm.display.view) {
+        const line = view.line;
+        if (view.hidden || !line || !line.height) continue;
+        const known = memo.get(line);
+        if (known && known.h === line.height && known.text === line.text && known.key === key) continue;
+        memo.set(line, { h: line.height, text: line.text, key });
+        if (this.kind !== "markdown" || line.widgets) continue;     // titre de la note au-dessus : hors modele
+        const shape = this.lineShape(line);
+        if (shape.kind === "raw-block") continue;
+        let kind = shape.kind, value = line.height;
+        if (kind === "image") {
+          // Image de taille connue, place reservee (ou deja chargee) : on apprend ce que la ligne ajoute a l'image.
+          const img = view.node.querySelector(".md-image img");
+          const pixels = shape.size && img && (img.complete && img.naturalWidth || img.hasAttribute("height")) &&
+            this.imageLineHeight(shape.size, shape.param, true);
+          if (!pixels) continue;
+          kind = "image-extra";
+          value = line.height - pixels;
+        }
+        const s = kinds[kind] || (kinds[kind] = { base: 0, nb: 0, row: 0, nr: 0 });
+        const before = s.base;
+        if (shape.rows <= 1) { s.nb = Math.min(s.nb + 1, 40); s.base += (value - s.base) / s.nb; }
+        else if (s.nb) { s.nr = Math.min(s.nr + 1, 40); s.row += ((value - s.base) / (shape.rows - 1) - s.row) / s.nr; }
+        if (s.nb === 1 || Math.abs(s.base - before) > Math.max(2, before * 0.05)) changed = true;
+      }
+      // Les estimations ont nettement change (premieres lignes mesurees d'un genre) : elles sont reposees sur le
+      // reste du document par le passage de fond (regroupe : une fois par demi-seconde au plus).
+      if (changed && !this._resettle) this._resettle = setTimeout(() => { this._resettle = null; this.lp.reestimate(); }, 500);
+    }
+
+    /** Genre d'une ligne pour l'estimation : bloc rendu (callout, tableau ; par nombre de lignes), image seule sur sa
+        ligne (taille connue ou non), bloc de code, ligne vide, titre, texte (rangees = longueur / largeur). */
+    lineShape(line, estimating) {
+      if (line.markedSpans) for (const span of line.markedSpans) {
+        const m = span.marker;
+        if (m.replacedWith && m.lines.length > 1) return { kind: "block" + Math.min(m.lines.length, 12), rows: 1 };
+      }
+      // Bloc pas encore rendu (decoration de fond pas arrivee jusque-la) : estime comme rendu ; pour apprendre, ces
+      // lignes ne comptent pas (elles s'affichent encore en texte).
+      const no = this.kind === "markdown" ? line.lineNo() : null, block = no != null && this.lp.blockAt(no);
+      if (block) {
+        const kind = "block" + Math.min(block.to - block.from + 1, 12);
+        if (!estimating) return { kind: "raw-block", rows: 1 };
+        return no === block.from ? { kind, rows: 1 } : { kind: "hidden", rows: 1, head: kind };
+      }
+      const cls = (line.styleClasses && line.styleClasses.textClass) || "";
+      if (/\bmd-codeblock-(begin|end)\b/.test(cls)) return { kind: "fence", rows: 1 };
+      if (/\bmd-codeblock\b/.test(cls)) return { kind: "code", rows: this.rowsOf(line.text) };
+      const text = line.text;
+      if (!text.trim()) return { kind: "blank", rows: 1 };
+      const h = /^(#{1,6})\s/.exec(text);
+      if (h) return { kind: "h" + h[1].length, rows: this.rowsOf(text) };
+      const image = text.indexOf("![") >= 0 && (/^\s*!\[\[([^\]|]+)(?:\|([^\]]*))?\]\]\s*$/.exec(text) ||
+        /^\s*!\[[^\]|]*(?:\|([^\]]*))?\]\(([^)\s]+)[^)]*\)\s*$/.exec(text));
+      if (image) {
+        const wiki = image[0].trimStart().startsWith("![[");
+        const target = wiki ? image[1] : image[2], param = wiki ? image[2] : image[1];
+        const src = /^[a-z][\w+.-]*:/i.test(target) ? target : MD.resolveFile(wiki ? target : safeDecode(target));
+        return { kind: "image", rows: 1, size: IMAGE_SIZES.get(src), param };
+      }
+      return { kind: "text", rows: this.rowsOf(text) };
+    }
+
+    rowsOf(text) {
+      return this.cm.options.lineWrapping ? Math.ceil(text.length / (this._perLine || 80)) || 1 : 1;
+    }
+
+    /** Hauteur d'une ligne-image de taille connue : largeur affichee (taille demandee, bornee par la largeur maximale
+        des images, mesuree une fois dans la page avec la feuille en cours) x proportions, + ce que la ligne ajoute. */
+    imageLineHeight(size, param, imageOnly) {
+      const key = this.layoutKey();
+      let m = this._imageMetrics;
+      if (!m || m.key !== key) {
+        const pre = document.createElement("pre");
+        pre.className = "CodeMirror-line cm-line";
+        pre.innerHTML = '<span class="md-image"><img width="100000" height="1"></span>' +
+          '<span class="md-image"><img width="100" height="50"></span>';
+        this.cm.display.measure.appendChild(pre);
+        const [wide, small] = pre.querySelectorAll("img");
+        const max = wide.getBoundingClientRect().width;
+        wide.remove();
+        m = this._imageMetrics = { key, max, extra: Math.max(0, pre.getBoundingClientRect().height - small.getBoundingClientRect().height) };
+        pre.remove();
+        if (!max) { this._imageMetrics = null; return null; }
+      }
+      const [nw, nh] = size;
+      const asked = /^\s*(\d+)(?:x(\d+))?\s*$/.exec(param || "");
+      const w = Math.min(asked ? Number(asked[1]) : nw, m.max);
+      const ratio = asked && asked[2] ? Number(asked[2]) / Number(asked[1]) : nh / nw;
+      if (imageOnly) return Math.round(w * ratio);
+      const learned = this._heightStats && this._heightStats.kinds["image-extra"];
+      return Math.round(w * ratio) + (learned && learned.nb ? learned.base : m.extra);
+    }
+
+    /** Option estimateLineHeight de CodeMirror (refresh, changement de document, nouvelles lignes). */
+    estimateLine(line, height, perLine, th) {
+      const memo = this._heights && this._heights.get(line);
+      if (memo && memo.text === line.text && memo.key === this.layoutKey()) return memo.h;
+      if (this.kind !== "markdown") return height;
+      const shape = this.lineShape(line, true);
+      if (shape.kind === "hidden") {                 // ligne interieure d'un bloc : 0 si la hauteur du bloc est connue
+        const head = this._heightStats && this._heightStats.kinds[shape.head];
+        return head && head.nb ? 0 : height;
+      }
+      if (shape.size) {
+        const computed = this.imageLineHeight(shape.size, shape.param);
+        if (computed) return computed;
+      }
+      const s = this._heightStats && this._heightStats.kinds[shape.kind];
+      if (!s || !s.nb) return shape.kind === "image" ? Math.max(height, 240) : height;
+      return Math.max(1, s.base + (shape.rows - 1) * (s.nr ? s.row : th));
+    }
+
+    /** Dimensions des images de la note (lues par Python dans leur entete) : leurs lignes sont reestimees. */
+    requestImageSizes() {
+      if (this.kind !== "markdown") return;
+      const urls = new Set(), doc = this.cm.getDoc(), path = this.path;
+      const re = /!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]|!\[[^\]]*\]\(([^)\s]+)[^)]*\)/g;
+      doc.eachLine((line) => {
+        if (line.text.indexOf("![") < 0) return;
+        let m;
+        re.lastIndex = 0;
+        while ((m = re.exec(line.text))) {
+          const src = m[1] != null ? MD.resolveFile(m[1]) : MD.resolveFile(safeDecode(m[2]));
+          if (src && src.startsWith("file:") && !IMAGE_SIZES.has(src)) urls.add(src);
+        }
+      });
+      if (!urls.size) return;
+      MD.call("imageSizes", [...urls]).then((sizes) => {
+        if (!sizes || sizes.__error__) return;
+        for (const [src, size] of Object.entries(sizes)) imageSizeArrived(src, size);
+        if (this.path === path) this.lp.reestimate();
+      }).catch(() => {});
+    }
+
+    /** Passage de fond : une ligne hors de l'ecran recoit l'estimation la plus juste (meme calcul que CodeMirror pour
+        sa hauteur : la ligne puis ses parents dans l'arbre du document). */
+    settleEstimate(line) {
+      if (!this._heightStats) return false;
+      if (!line.height && line.markedSpans && line.markedSpans.some((sp) => sp.marker.collapsed)) return false;   // masquee
+      const no = line.lineNo(), display = this.cm.display;
+      if (no == null || no >= display.viewFrom && no < display.viewTo) return false;   // affichee : mesuree
+      const height = this.estimateLine(line, line.height, this._perLine, this.cm.defaultTextHeight());
+      const diff = height - line.height;
+      if (Math.abs(diff) < 0.5) return false;
+      for (let node = line; node; node = node.parent) node.height += diff;
+      return true;
     }
 
     markActiveLine() {
@@ -996,8 +1498,8 @@
       if (after) after.classList.add("cm-active");
     }
 
-    lineNode(handle) {
-      for (const view of this.cm.display.view) if (view.line === handle) return view.text;
+    lineNode(handle, whole) {
+      for (const view of this.cm.display.view) if (view.line === handle) return whole ? view.node : view.text;
       return null;
     }
 
@@ -1037,6 +1539,7 @@
         }
         this.lp.refresh();
       });
+      this.requestImageSizes();
       MD.metrics.add("editor_open", performance.now() - t0);
     }
 

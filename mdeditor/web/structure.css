@@ -25,9 +25,9 @@ html, body { margin: 0 !important; padding: 0 !important; height: 100% !importan
   border-bottom: var(--md-page-border-bottom) !important; border-left: var(--md-page-border-left) !important;
   border-radius: var(--md-page-radius) !important; pointer-events: none; }
 .md-view.is-shown { display: block !important; }
-.md-read { overflow-y: auto !important; overflow-x: hidden !important; }
-/* En edition, CodeMirror dessine sa propre barre : le decalage la pousse aussi vers l'interieur. */
-.md-edit .CodeMirror-vscrollbar { right: var(--md-scroll-offset) !important; }
+/* DEFILEMENT DE LA LECTURE : un seul scroller natif, la zone elle-meme. L'ancrage du navigateur garde la lecture en
+   place quand une image se charge au-dessus ; la place de la barre est reservee (rien ne bouge quand elle apparait). */
+.md-read { overflow-y: auto !important; overflow-x: hidden !important; overflow-anchor: auto !important; }
 .md-notice { position: fixed !important; right: 16px !important; bottom: 16px !important; z-index: 50 !important;
   max-width: 420px !important; padding: 8px 14px !important; border-radius: 6px !important;
   background: var(--md-bg-secondary) !important; color: var(--md-text-color) !important; font-size: 13px !important;
@@ -47,35 +47,42 @@ html, body { margin: 0 !important; padding: 0 !important; height: 100% !importan
   background: transparent; color: inherit; direction: ltr !important; font-family: inherit; }
 .CodeMirror-lines { padding: 0; cursor: text; min-height: 1px; }
 /* Les lignes (aussi « .cm-line » pour les feuilles d'Obsidian) : leur police, leur couleur, leur padding se reglent ;
-   leur role dans la mesure de CodeMirror (blanc, marges, empilement) ne se change pas. */
+   leur role dans la mesure de CodeMirror (blanc, marges, empilement) ne se change pas. « flow-root » : les marges de
+   ce qu'une ligne contient (images, blocs rendus) restent DANS la ligne — sinon elles debordaient sur les voisines,
+   la hauteur mesuree par CodeMirror n'etait pas celle de l'ecran et curseur / defilement derivaient. */
 .CodeMirror pre.CodeMirror-line, .CodeMirror pre.CodeMirror-line-like { padding: 0; border-radius: 0;
   border-width: 0; background: transparent; font-family: inherit; font-size: inherit; margin: 0 !important;
   white-space: pre !important; word-wrap: normal !important; line-height: inherit; color: inherit;
   z-index: 2 !important; position: relative !important; overflow: visible !important;
-  display: block !important; float: none !important; -webkit-tap-highlight-color: transparent;
+  display: flow-root !important; float: none !important; -webkit-tap-highlight-color: transparent;
   font-variant-ligatures: contextual; }
 .CodeMirror-wrap pre.CodeMirror-line, .CodeMirror-wrap pre.CodeMirror-line-like {
   word-wrap: break-word !important; white-space: pre-wrap !important; word-break: normal !important; }
 .CodeMirror-code { outline: none !important; padding: 0 !important; margin: 0 !important; border: 0 !important;
   position: static !important; max-width: none !important; width: auto !important; }
-.CodeMirror-scrollbar-filler, .CodeMirror-gutter-filler { background-color: transparent; }
 .CodeMirror-gutters { white-space: nowrap; position: absolute !important; left: 0; top: 0; min-height: 100%;
   z-index: 3 !important; }
 .CodeMirror-linenumber { padding: 0 12px 0 8px; min-width: 24px; text-align: right; white-space: nowrap; }
 .CodeMirror-cursor { border-right: none !important; width: 0 !important; position: absolute !important;
   pointer-events: none !important; }
 @keyframes cm-blink { 0% {} 50% { background-color: transparent; } 100% {} }
-.CodeMirror-scroll { overflow: scroll !important; margin-bottom: -50px; margin-right: -50px; padding-bottom: 50px;
-  height: 100% !important; outline: none !important; position: relative !important; z-index: 0 !important; }
-.CodeMirror-sizer { position: relative !important; border-right: 50px solid transparent; }
+/* DEFILEMENT DE L'EDITION : UN seul scroller natif, celui de CodeMirror (option « nativeScroller » : pas de marge
+   cachee de 50 px ni de barres miroir), exactement de la taille de la zone visible — ni marge ni padding sur lui
+   (CodeMirror ne les compte pas : la page est posee sur le contenu, voir base.css), sinon le bas de la barre et le
+   curseur passent sous le cadre. Pas d'ancrage du navigateur : CodeMirror recale lui-meme le defilement quand une
+   ligne au-dessus change de hauteur (les deux corrections s'additionnaient). La barre reserve toujours sa place :
+   le retour a la ligne ne change pas quand elle apparait. */
+.CodeMirror-scroll { overflow-x: auto !important; overflow-y: auto !important; margin: 0 !important;
+  padding: 0 !important; border: 0 none !important; box-sizing: border-box !important;
+  height: 100% !important; outline: none !important; position: relative !important; z-index: 0 !important;
+  overflow-anchor: none !important; scrollbar-gutter: stable !important; }
+.CodeMirror-wrap .CodeMirror-scroll { overflow-x: hidden !important; }
+/* Notes : la place de la barre est reservee des DEUX cotes, le texte reste centre (marges egales). */
+.md-edit:not(.is-code) .CodeMirror-scroll, .md-read { scrollbar-gutter: stable both-edges !important; }
+.CodeMirror-sizer { position: relative !important; border-right: 0 none transparent; }
 .CodeMirror-vscrollbar, .CodeMirror-hscrollbar, .CodeMirror-scrollbar-filler, .CodeMirror-gutter-filler {
-  position: absolute !important; z-index: 6 !important; display: none; outline: none; }
-.CodeMirror-vscrollbar { right: 0; top: 0; overflow-x: hidden !important; overflow-y: scroll !important; }
-.CodeMirror-hscrollbar { bottom: 0; left: 0; overflow-y: hidden !important; overflow-x: scroll !important; }
-.CodeMirror-scrollbar-filler { right: 0; bottom: 0; }
-.CodeMirror-gutter-filler { left: 0; bottom: 0; }
-.CodeMirror-gutter { white-space: normal; height: 100%; display: inline-block; vertical-align: top;
-  margin-bottom: -50px; }
+  display: none !important; }
+.CodeMirror-gutter { white-space: normal; height: 100%; display: inline-block; vertical-align: top; }
 .CodeMirror-gutter-wrapper { position: absolute !important; z-index: 4 !important; background: none !important;
   border: none !important; }
 .CodeMirror-gutter-background { position: absolute !important; top: 0; bottom: 0; z-index: 4; }
@@ -83,7 +90,7 @@ html, body { margin: 0 !important; padding: 0 !important; height: 100% !importan
 .CodeMirror-gutter-wrapper ::selection { background-color: transparent; }
 .CodeMirror-linebackground { position: absolute !important; left: 0; right: 0; top: 0; bottom: 0; z-index: 0; }
 .CodeMirror-linewidget { position: relative !important; z-index: 2 !important; padding: 0.1px; }
-.CodeMirror-scroll, .CodeMirror-sizer, .CodeMirror-gutter, .CodeMirror-gutters, .CodeMirror-linenumber {
+.CodeMirror-sizer, .CodeMirror-gutter, .CodeMirror-gutters, .CodeMirror-linenumber {
   box-sizing: content-box !important; }
 .CodeMirror-measure { position: absolute !important; width: 100% !important; height: 0 !important;
   overflow: hidden !important; visibility: hidden !important; }
@@ -99,7 +106,6 @@ div.CodeMirror-dragcursors { visibility: visible; }
 .md-cell-editor .CodeMirror-scroll { height: auto !important; overflow: visible !important; margin: 0 !important;
   padding: 0 !important; }
 .md-cell-editor .CodeMirror-sizer { border-right: none !important; }
-.md-cell-editor .CodeMirror-vscrollbar, .md-cell-editor .CodeMirror-hscrollbar { display: none !important; }
 .cm-force-border { padding-right: .1px; }
 .cm-tab { display: inline-block; text-decoration: inherit; }
 .CodeMirror-widget { display: inline; }

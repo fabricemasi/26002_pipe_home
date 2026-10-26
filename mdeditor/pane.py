@@ -40,6 +40,7 @@ AUTOSAVE_MS = 800
 FADE_MS = 160
 MAX_TEXT_BYTES = 16 * 1024 * 1024
 NAMES_MAX = 6000                     # noms de fichiers envoyes a la page (images, notes) pour les liens par nom
+IMAGE_SIZES_MAX = 800                # images dont la page demande les dimensions (hauteur reservee a l'edition)
 NAME_EXTENSIONS = markdown_preview.IMAGE_EMBED_EXTENSIONS | {".md", ".markdown", ".pdf"}
 
 # Branche par l'appli : settings() -> reglages appliques, save_state(cle, valeur) -> etat temps reel.
@@ -498,6 +499,26 @@ class MarkdownPane(QWidget):
                 return markdown_preview.render_body(note, text or "")
             return markdown_preview.render_fragment(text or "", note)
         self._in_background(work, lambda html: self._reply(req_id, html))
+        return _ASYNC
+
+    def op_imageSizes(self, req_id, urls):
+        """Dimensions des images d'une note (adresses file:/// deja resolues par la page), lues dans leur ENTETE en
+        fond, sans decodage : l'editeur reserve leur hauteur avant qu'elles soient affichees (barre de defilement
+        juste, rien ne saute). Une image absente ou illisible est omise."""
+        urls = [u for u in (urls or []) if isinstance(u, str) and u.startswith("file:")][:IMAGE_SIZES_MAX]
+
+        def work():
+            from PySide6.QtGui import QImageReader
+            out = {}
+            for url in urls:
+                local = QUrl(url).toLocalFile()
+                if not local:
+                    continue
+                size = QImageReader(local).size()
+                if size.isValid() and size.width() > 0 and size.height() > 0:
+                    out[url] = [size.width(), size.height()]
+            return out
+        self._in_background(work, lambda sizes: self._reply(req_id, sizes))
         return _ASYNC
 
     def op_openLink(self, req_id, source, target):

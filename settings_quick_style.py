@@ -96,11 +96,15 @@ class QuickStyleWindow(QDialog):
                 self._rows.append((item.label, widget, lambda w, sp=item: v2.read_spec(sp, w)))
             else:
                 self._rows.append(tuple(item))
-        self.table = v2._flat_cells_table([(label, widget, None) for label, widget, _r in self._rows])
+        # Une ligne fournie par l'appelant peut porter un 4e element : l'interrupteur d'override, pose dans la 1re
+        # colonne AVANT le libelle (il grise la ligne quand il est eteint).
+        self.table = v2._flat_cells_table([(row[0], row[1], row[3] if len(row) > 3 else None) for row in self._rows])
         self.table._dims_key = self._dims_key
         normalize_toggles(self.table)
-        for _label, widget, _r in self._rows:
-            v2._connect_changed(widget, self._emit)
+        for row in self._rows:
+            v2._connect_changed(row[1], self._emit)
+            if len(row) > 3 and row[3] is not None:
+                v2._connect_changed(row[3], self._emit)
         self._dims_timer = QTimer(self)
         self._dims_timer.setSingleShot(True)
         self._dims_timer.setInterval(self._SAVE_DELAY)
@@ -323,8 +327,8 @@ class QuickStyleWindow(QDialog):
 
     def style(self) -> dict:
         out = {}
-        for _label, widget, reader in self._rows:
-            out.update(reader(widget))
+        for row in self._rows:
+            out.update(row[2](row[1]))
         return out
 
     def _emit(self):

@@ -176,6 +176,19 @@ class ColumnLoadingTest(unittest.TestCase):
         self.assertIn("Alias", [col.list.item(i).text() for i in range(col.list.count())])
         self.assertEqual(layout.read_bytes(), before)
 
+    def test_file_shortcut_is_loaded_like_a_folder_shortcut(self):
+        target = self.root.parent / "shortcut_target.mov"
+        target.write_bytes(b"video")
+        core.add_shortcut(self.root, target)
+        col = self.column()
+        wait_for(lambda: not col.loading)
+        rows = {Path(col.list.item(i).data(core.ROLE_PATH)): col.list.item(i)
+                for i in range(col.list.count())}
+        item = rows[target]
+        self.assertTrue(item.data(core.ROLE_IS_SHORTCUT))
+        self.assertFalse(item.data(core.ROLE_ISDIR))
+        self.assertEqual(item.data(core.ROLE_META), "5 B")
+
     def test_snapshot_cache_is_bounded(self):
         service = loading.loader()
         service.MAX_FOLDERS = 2

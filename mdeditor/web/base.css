@@ -168,9 +168,10 @@ input.task-list-item-checkbox:checked::after, .md-checkbox:checked::after { cont
 /* -- (4) Edition markdown (CodeMirror 5, mode « pfm ») ---------------------------------------------------------- */
 .md-edit .CodeMirror { font-family: var(--md-text-font); font-size: var(--md-text-size);
   line-height: var(--md-line-height); color: var(--md-text-color); }
-.md-edit:not(.is-code) .CodeMirror-scroll { box-sizing: border-box; padding: var(--md-page-padding);
-  padding-bottom: 40vh; }
-.md-edit:not(.is-code) .CodeMirror-sizer > div { max-width: var(--md-content-width); margin: 0 auto; }
+/* Marges de la page et espace apres la derniere ligne : sur le contenu (CodeMirror les compte), jamais sur le
+   scroller (structure.css). */
+.md-edit:not(.is-code) .CodeMirror-sizer > div { max-width: var(--md-content-width); margin: 0 auto;
+  box-sizing: content-box; padding: var(--md-page-padding); padding-bottom: 40vh; }
 .md-edit:not(.is-code) .md-above { max-width: var(--md-content-width); margin: 0 auto; }
 .md-edit .md-above .md-title { outline: none; }
 .md-edit:not(.is-code) :where(pre.CodeMirror-line) { padding: 0 2px; }   /* faible : les lignes typees (titres…) l'emportent */

@@ -9,44 +9,88 @@ Zoomer fait donc apparaitre / s'effacer les niveaux en continu, sans saut ; chaq
 entier de la TUILE de grille (pinceau calee sur le monde, refaite seulement au zoom : aucun calcul de lignes
 par image, pas de scintillement pendant le deplacement).
 
-MAGNETISME (Reglages > MRO, `snap` ; Alt tenu = sans) : bords et centres des elements visibles, grille (le
+MAGNETISME (Reglages > Module MRO, `snap` ; Alt tenu = sans) : bords et centres des elements visibles, grille (le
 niveau de grille le plus fin affiche), en deplacement comme en redimensionnement ; seuil en pixels d'ecran
 (meme effet a tout zoom) ; guides magenta le long des alignements."""
 from __future__ import annotations
 
 import copy
 import json
+import math
 
-from PySide6.QtCore import QLineF, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QImage, QPainter, QPen, QPixmap, QTransform, QUndoStack
+from PySide6.QtCore import QLineF, QPointF, QRect, QRectF, Qt, Signal
+from PySide6.QtGui import QBrush, QColor, QImage, QPaintEngine, QPainter, QPen, QPixmap, QTransform, QUndoStack
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene
 
-from . import model, serialization
+from . import cad_items, cad_model, model, serialization  # noqa: F401 - cad_items : enregistre le type « cad_line »
+from .cad_items import unit_of
 from .commands import StateCommand
 from .items import BoardItem, CommentItem, ConnectorItem, FrameItem, InkItem, make_item
 
 GRID_BASE = 4.0
 GRID_FACTOR = 4.0
 FRAME_Z = -100000.0
+INDEX_MIN = 2000.0                      # demi-etendue minimale de l'index de la scene (voir BoardScene.fit_index)
 PAGE = "__page__"
 CLIPBOARD_MIME = "application/x-pipeline-board"
 SNAP_DEFAULTS = {"enabled": True, "objects": True, "grid": False, "guides": True, "resize": True, "distance": 6}
 
 
-def first_grid_step(scale: float) -> float:
-    """Pas du niveau de grille le plus fin a considerer au zoom `scale` (puissances de 4 de GRID_BASE, vers le
+# Grille UNIQUE du board et du module CAD (Reglages > Module MRO > Grille, cles `board_grid_*`) : niveaux de pas
+# `base` x `factor`^n ; un niveau apparait en fondu entre `start` et `full` pixels d'ecran ; couleur automatique
+# (noire sur un canvas clair, blanche sur un sombre, `intensity` = opacite d'un niveau plein) ou choisie (son
+# opacite = celle d'un niveau plein) ; lignes ou points ; pas en unites du board ou dans l'unite de mesure du CAD.
+# Un dessin CAD peut imposer son pas (reglages du dessin : `page["cad"]["grid_step"]`, unite de mesure).
+GRID_LOOK = {"step": GRID_BASE, "unit": "board", "factor": GRID_FACTOR, "start": 12.0, "full": 60.0, "levels": 12,
+             "auto_color": True, "intensity": 0.066, "color": "#11000000", "style": "lines", "thickness": 1,
+             "dot": 2, "origin": (0.0, 0.0), "axes": False, "axes_color": "#66ff2f2f", "axes_thickness": 1}
+
+
+def grid_look(settings: dict) -> dict:
+    """Habillage de la grille d'apres les reglages de l'appli (`board_grid_*`)."""
+    g = (settings or {}).get
+    from app_style import resolve_color_ref
+
+    def number(key, default, low, high, divide=1.0):
+        try:
+            value = float(g(key, default))
+        except (TypeError, ValueError):
+            value = default
+        return max(low, min(high, value)) / divide
+    start = number("board_grid_fade_start", 12, 1, 400)
+    return {"step": number("board_grid_step", 400, 1, 1e8, 100.0),
+            "unit": "cad" if g("board_grid_unit") == "cad" else "board",
+            "factor": int(number("board_grid_factor", 4, 2, 10)),
+            "start": start, "full": max(start + 1.0, number("board_grid_fade_full", 60, 2, 800)),
+            "levels": int(number("board_grid_levels", 12, 1, 12)),
+            "auto_color": bool(g("board_grid_auto_color", True)),
+            "intensity": number("board_grid_intensity", 66, 1, 1000, 1000.0),
+            "color": resolve_color_ref(g("board_grid_color", "#11000000"), "#11000000"),
+            "style": g("board_grid_style") if g("board_grid_style") in ("dots", "crosses") else "lines",
+            "thickness": int(number("board_grid_thickness", 1, 1, 6)),
+            "dot": int(number("board_grid_dot_size", 2, 1, 12)),
+            "origin": (number("board_grid_origin_x", 0, -1e9, 1e9, 100.0),
+                       number("board_grid_origin_y", 0, -1e9, 1e9, 100.0)),
+            "axes": bool(g("board_grid_axes", False)),
+            "axes_color": resolve_color_ref(g("board_grid_axes_color", "#66ff2f2f"), "#66ff2f2f"),
+            "axes_thickness": int(number("board_grid_axes_thickness", 1, 1, 6))}
+
+
+def first_grid_step(scale: float, base: float = GRID_BASE, factor: float = GRID_FACTOR,
+                    full: float = 60.0) -> float:
+    """Pas du niveau de grille le plus fin a considerer au zoom `scale` (puissances de `factor` de `base`, vers le
     bas pour les forts zooms — 2 000 % — et vers le haut pour les faibles — 0,1 %)."""
-    step = GRID_BASE
-    while step * scale > 48.0:
-        step /= GRID_FACTOR
+    step = base
+    while step * scale > full * 0.8:
+        step /= factor
     while step * scale < 3.0:
-        step *= GRID_FACTOR
+        step *= factor
     return step
 
 
-def grid_alpha(spacing_px: float) -> float:
+def grid_alpha(spacing_px: float, start: float = 12.0, full: float = 60.0) -> float:
     """Intensite (0-1) d'un niveau de grille selon son pas a l'ecran (voir l'entete)."""
-    t = max(0.0, min(1.0, (spacing_px - 12.0) / 48.0))
+    t = max(0.0, min(1.0, (spacing_px - start) / max(1e-9, full - start)))
     return t * t * (3 - 2 * t)
 
 
@@ -70,18 +114,25 @@ class BoardScene(QGraphicsScene):
         self.visible_rect = QRectF()
         self.guides: list[QLineF] = []
         self.highlight: QRectF | None = None        # objet vise par l'extremite d'une fleche tiree
+        self.cad_unit = "mm"                        # module CAD : unite generale (Reglages > Module CAD > Unites)
+        self.grid_settings: dict = {}               # Reglages > Module MRO > Grille (BoardPane.apply_settings)
+        self._grid_look = None                      # (cle, habillage) : reglages generaux + overrides du dessin
+        self.cad_layer = None                       # module CAD : lignes peintes par lots (cad_items.CadLayer)
         self.undo = QUndoStack(self)
         self.undo.indexChanged.connect(self._on_undo_index)
         self.undo.cleanChanged.connect(self._on_undo_index)
         self.commands: list[StateCommand] = []
         self._items: dict[str, BoardItem] = {}
+        self._zoomers: list | None = None           # cadres et fleches (zone dependant du zoom), voir set_zoom
         self._foreign: list[dict] = []
         self._extra: dict = {}
         self._pending = None
         self._live = None
         self._move_before = None
         self.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
-        self.setSceneRect(-500000, -500000, 1000000, 1000000)
+        # Etendue de l'INDEX (arbre BSP) : calee sur le contenu, voir fit_index. La zone de defilement est celle de la
+        # vue (BoardView._fit_scroll_area), independante.
+        self.setSceneRect(-INDEX_MIN, -INDEX_MIN, 2 * INDEX_MIN, 2 * INDEX_MIN)
 
     def _on_undo_index(self, *_args):
         self.contentChanged.emit()
@@ -93,6 +144,22 @@ class BoardScene(QGraphicsScene):
     def board_items(self) -> list[BoardItem]:
         return list(self._items.values())
 
+    def fit_index(self, rect: QRectF):
+        """Etendue de la scene = celle de son index spatial (arbre BSP de Qt, profondeur selon le nombre
+        d'elements). Elle etait fixee a 10^6 unites : tout un dessin tombait dans UNE case de l'index et chaque
+        recherche (peinture d'une partie, element sous la souris) testait des milliers d'elements, en appelant le
+        `boundingRect` Python de chacun (mesure, 5 000 lignes CAD : ~2 600 par bande de 3 pixels, ~7 ms). Elle suit
+        maintenant le contenu, agrandie par paliers (marge de moitie) : l'index n'est refait que rarement. Un element
+        hors de l'etendue reste trouve par Qt (cases du bord), seulement plus lentement."""
+        if rect.isNull() or not rect.isValid():
+            return
+        current = self.sceneRect()
+        if current.contains(rect):
+            return
+        target = current.united(rect)
+        pad = max(INDEX_MIN, 0.5 * max(target.width(), target.height()))
+        self.setSceneRect(target.adjusted(-pad, -pad, pad, pad))
+
     def _add(self, data: dict) -> BoardItem:
         item = make_item(data)
         if item.kind == "frame" and item.zValue() > FRAME_Z / 2:
@@ -101,13 +168,16 @@ class BoardScene(QGraphicsScene):
             item.setZValue(1e7 + item.zValue() % 1e6)
         self.addItem(item)
         self._items[item.item_id] = item
+        self._zoomers = None
         item.sync()
+        self.fit_index(item.scene_rect())
         if isinstance(item, CommentItem):
             item.follow_target()
         return item
 
     def _remove(self, item_id):
         item = self._items.pop(item_id, None)
+        self._zoomers = None
         if item is not None:
             if item.text_item is not None and item.text_item.editing():
                 item.text_item.stop()
@@ -127,7 +197,7 @@ class BoardScene(QGraphicsScene):
         self.commit_live()
         for item_id, state in states.items():
             if item_id == PAGE:
-                self.set_page(state or {}, record=False)
+                self.set_page(state or {}, record=False, replace=True)
             elif state is None:
                 self._remove(item_id)
             elif item_id in self._items:
@@ -244,6 +314,7 @@ class BoardScene(QGraphicsScene):
         self.push(before, after, "Supprimer")
 
     def item_moved(self, item):
+        self.fit_index(item.scene_rect())
         if isinstance(item, (ConnectorItem, CommentItem)):
             return
         for other in self._items.values():
@@ -266,14 +337,23 @@ class BoardScene(QGraphicsScene):
         deplacement identique (images gardees), zoom ~40 -> ~47 ms par cran — retire (bug signale)."""
         if zoom != self.zoom:
             self.zoom = zoom
-            for item in self._items.values():
-                if item.isSelected() or isinstance(item, (FrameItem, ConnectorItem)):
+            # Seuls les elements dont la zone depend du zoom (selectionnes : poignees ; cadres ; fleches) :
+            # parcourir tous les elements a chaque cran coutait ~8 ms a 5 000 elements.
+            if self._zoomers is None:
+                self._zoomers = [i for i in self._items.values() if isinstance(i, (FrameItem, ConnectorItem))]
+            for item in self._zoomers:
+                item.zoom_changed()
+            for item in self.selectedItems():
+                if isinstance(item, BoardItem) and not isinstance(item, (FrameItem, ConnectorItem)):
                     item.zoom_changed()
 
     # -- page (reglages du .mro) --
-    def set_page(self, page: dict, record: bool = True, text: str = "Réglages de la page"):
+    def set_page(self, page: dict, record: bool = True, text: str = "Réglages de la page", replace: bool = False):
+        """`page` fondue dans les reglages de la page ; `replace` (annulation) : `page` EST l'etat complet — une cle
+        absente de l'etat d'avant (page « cad » creee par le 1er reglage du dessin) disparait."""
         new = dict(model.PAGE_DEFAULTS)
-        new.update(self.page)
+        if not replace:
+            new.update(self.page)
         new.update(page)
         if record:
             self.commit_live()
@@ -285,10 +365,19 @@ class BoardScene(QGraphicsScene):
         for item in self._items.values():
             if isinstance(item, CommentItem):
                 item.sync()
+            elif getattr(item, "CAD", False):
+                item.page_changed()                  # calques (ByLayer, visibilite, verrou) relus
         self.update()
         self.pageChanged.emit()
         if record:
             self.push(before, {PAGE: dict(self.page)}, text)
+
+    def cad_style_changed(self):
+        """Reglages generaux du CAD (types de ligne, unite) changes : proprietes des lignes relues (seules celles dont
+        l'aspect change sont refaites)."""
+        for item in self._items.values():
+            if getattr(item, "CAD", False):
+                item.page_changed()
 
     def grid_ink(self) -> QColor:
         """Lignes de la grille : noires sur un fond clair (Miro), blanches sur un fond sombre."""
@@ -522,12 +611,52 @@ class BoardScene(QGraphicsScene):
     def _threshold(self) -> float:
         return float(self.snap.get("distance", 6)) / max(0.05, self.zoom)
 
+    @property
+    def grid_look(self) -> dict:
+        """Habillage EFFECTIF de la grille : Reglages > Module MRO > Grille, remplaces par ceux du dessin (reglages du
+        dessin, `page["cad"]["overrides"]`). Garde tant que ni l'un ni l'autre ne change."""
+        raw = self.page.get("cad")
+        cached = self._grid_look
+        if cached is None or cached[0] is not raw or cached[1] is not self.grid_settings:
+            own = {k: v for k, v in cad_model.drawing_overrides(raw).items() if k.startswith("board_grid_")}
+            cached = self._grid_look = (raw, self.grid_settings, grid_look({**self.grid_settings, **own}))
+        return cached[2]
+
+    def _grid_scale(self) -> float:
+        """Unites du board par unite du pas de la grille (unite du board, ou unite de mesure du CAD)."""
+        return unit_of(self, cad_model.page_cad(self.page)) if self.grid_look["unit"] == "cad" else 1.0
+
+    def grid_base(self) -> float:
+        """Pas de base de la grille, en unites du board."""
+        return self.grid_look["step"] * self._grid_scale()
+
+    def grid_origin(self) -> tuple[float, float]:
+        """Origine de la grille dans la scene (Y du reglage vers le HAUT, comme le CAD)."""
+        ox, oy = self.grid_look["origin"]
+        k = self._grid_scale()
+        return ox * k, -oy * k
+
+    def grid_snap(self, value: float, axis: int, step: float | None = None) -> float:
+        """Ligne de grille la plus proche (axe 0 = x, 1 = y de la scene) : magnetisme du board."""
+        step = step or self.grid_step()
+        origin = self.grid_origin()[axis]
+        return round((value - origin) / step) * step + origin
+
     def grid_step(self) -> float:
-        """Pas du niveau de grille le plus fin affiche (le magnetisme de grille suit ce qu'on voit)."""
-        step = first_grid_step(self.zoom)
-        while grid_alpha(step * self.zoom) < 0.25:
-            step *= GRID_FACTOR
+        """Pas du niveau de grille le plus fin affiche (le magnetisme de grille, du board comme du CAD, suit ce
+        qu'on voit)."""
+        look = self.grid_look
+        step = first_grid_step(self.zoom, self.grid_base(), look["factor"], look["full"])
+        while grid_alpha(step * self.zoom, look["start"], look["full"]) < 0.25:
+            step *= look["factor"]
         return step
+
+    def set_grid_settings(self, settings: dict):
+        """Reglages generaux de la grille (cles `board_grid_*`)."""
+        values = {k: v for k, v in (settings or {}).items() if k.startswith("board_grid_")}
+        if values != self.grid_settings:
+            self.grid_settings = values
+            self.update()
 
     def _candidates(self, exclude: set) -> list[QRectF]:
         """Cadres des elements visibles vers lesquels aimanter ; calcules UNE fois par geste (ils ne bougent
@@ -539,6 +668,7 @@ class BoardScene(QGraphicsScene):
         area = self.visible_rect if self.visible_rect.isValid() else QRectF(-1e5, -1e5, 2e5, 2e5)
         rects = [i.scene_rect() for i in self._items.values()
                  if i.item_id not in exclude and not isinstance(i, (ConnectorItem, CommentItem, InkItem))
+                 and not getattr(i, "CAD", False)
                  and i.isVisible() and i.scene_rect().intersects(area)]
         self._snap_cache = (key, rects)
         return rects
@@ -574,8 +704,8 @@ class BoardScene(QGraphicsScene):
                                 threshold)
         if self.snap.get("grid", False):
             step = self.grid_step()
-            gx = self._best((rect.left(),), (round(rect.left() / step) * step,), threshold)
-            gy = self._best((rect.top(),), (round(rect.top() / step) * step,), threshold)
+            gx = self._best((rect.left(),), (self.grid_snap(rect.left(), 0, step),), threshold)
+            gy = self._best((rect.top(),), (self.grid_snap(rect.top(), 1, step),), threshold)
             if gx and (best_x is None or abs(gx[0]) < abs(best_x[0])):
                 best_x = (gx[0], None)
             if gy and (best_y is None or abs(gy[0]) < abs(best_y[0])):
@@ -624,8 +754,8 @@ class BoardScene(QGraphicsScene):
         ys = [v for o in others for v in (o.top(), o.center().y(), o.bottom())]
         if self.snap.get("grid", False):
             step = self.grid_step()
-            xs += [round(scene_rect.left() / step) * step, round(scene_rect.right() / step) * step]
-            ys += [round(scene_rect.top() / step) * step, round(scene_rect.bottom() / step) * step]
+            xs += [self.grid_snap(scene_rect.left(), 0, step), self.grid_snap(scene_rect.right(), 0, step)]
+            ys += [self.grid_snap(scene_rect.top(), 1, step), self.grid_snap(scene_rect.bottom(), 1, step)]
         guides = []
         left, top, right, bottom = scene_rect.left(), scene_rect.top(), scene_rect.right(), scene_rect.bottom()
         for side in handle:
@@ -680,8 +810,8 @@ class BoardScene(QGraphicsScene):
         ys = [v for o in others for v in (o.top(), o.center().y(), o.bottom())]
         if self.snap.get("grid", False):
             step = self.grid_step()
-            xs += [round(scene_rect.left() / step) * step, round(scene_rect.right() / step) * step]
-            ys += [round(scene_rect.top() / step) * step, round(scene_rect.bottom() / step) * step]
+            xs += [self.grid_snap(scene_rect.left(), 0, step), self.grid_snap(scene_rect.right(), 0, step)]
+            ys += [self.grid_snap(scene_rect.top(), 1, step), self.grid_snap(scene_rect.bottom(), 1, step)]
         moving_x = scene_rect.left() if "l" in handle else scene_rect.right()
         moving_y = scene_rect.top() if "t" in handle else scene_rect.bottom()
         fixed_x = scene_rect.right() if "l" in handle else scene_rect.left()
@@ -719,54 +849,152 @@ class BoardScene(QGraphicsScene):
         """(pinceau, None) de la grille au zoom `scale` : une TUILE (image) qui contient tous les niveaux
         visibles sur la periode du premier niveau plein ; posee par le pinceau, calee EXACTEMENT sur les
         coordonnees du monde (la tuile est mise a l'echelle de sa periode : aucun ecart avec les objets ni avec
-        le magnetisme de grille). Refaite seulement quand le zoom change (petite image, < 1 ms)."""
-        levels = []
-        step = first_grid_step(scale)
-        previous = 0.0
-        for _level in range(12):
-            alpha = grid_alpha(step * scale)
-            gain = alpha - previous
-            if gain > 0.004:
-                levels.append((step, gain))
-            previous = max(previous, alpha)
-            if alpha >= 0.999:
-                break
-            step *= GRID_FACTOR
-        period = step                                       # premier niveau plein : la grille se repete
+        le magnetisme de grille). Refaite seulement quand le zoom change (petite image, < 1 ms). Sert aux styles
+        points / croix et hors de l'ecran ; a l'ecran, les LIGNES : `_paint_grid_fast`."""
+        look = self.grid_look
+        levels, period, ink, strength = self._grid_levels(scale)
         size = max(4, int(round(period * scale)))
-        ink = self.grid_ink()
-        key = (size, period, tuple((s, round(g, 3)) for s, g in levels), ink.rgba())
+        origin = self.grid_origin()
+        key = (size, period, tuple((s, round(g, 3)) for s, g in levels), ink.rgb(), round(strength, 4),
+               look["style"], look["thickness"], look["dot"], origin)
         cached = getattr(self, "_tile", None)
         if cached is not None and cached[0] == key:
             return cached[1]
         image = QImage(size, size, QImage.Format_ARGB32_Premultiplied)
         image.fill(Qt.transparent)
         painter = QPainter(image)
+        thick = look["thickness"]
         for level_step, gain in levels:
             color = QColor(ink)
-            # 0.066 = noir a 6,6 % = #e2e2e2 sur #f2f2f2 (ligne pleine mesuree) ; les niveaux s'ajoutent.
-            color.setAlphaF(min(1.0, 0.066 * gain))
+            color.setAlphaF(min(1.0, strength * gain))
             count = int(round(period / level_step))
-            for n in range(count):
-                x = int(round(n * size / count))
-                painter.fillRect(x, 0, 1, size, color)
-                painter.fillRect(0, x, size, 1, color)
+            spots = [int(round(n * size / count)) for n in range(count)]
+            if look["style"] == "dots":                     # points aux croisements
+                dot = look["dot"]
+                for x in spots:
+                    for y in spots:
+                        painter.fillRect(x - dot // 2, y - dot // 2, dot, dot, color)
+                continue
+            if look["style"] == "crosses":                  # croix aux croisements
+                arm = look["dot"] + 1
+                for x in spots:
+                    for y in spots:
+                        painter.fillRect(x - arm, y, 2 * arm + thick, thick, color)
+                        painter.fillRect(x, y - arm, thick, 2 * arm + thick, color)
+                continue
+            for x in spots:
+                painter.fillRect(x, 0, thick, size, color)
+                painter.fillRect(0, x, size, thick, color)
         painter.end()
         brush = QBrush(QPixmap.fromImage(image))
-        brush.setTransform(QTransform.fromScale(period / size, period / size))
+        brush.setTransform(QTransform().translate(origin[0], origin[1]).scale(period / size, period / size))
         self._tile = (key, brush)
         return brush
 
+    def _grid_levels(self, scale: float) -> tuple:
+        """(niveaux visibles [(pas, gain d'intensite)], periode = pas du 1er niveau plein, encre, intensite)."""
+        look = self.grid_look
+        levels = []
+        step = first_grid_step(scale, self.grid_base(), look["factor"], look["full"])
+        previous = 0.0
+        for _level in range(look["levels"]):
+            alpha = grid_alpha(step * scale, look["start"], look["full"])
+            gain = alpha - previous
+            if gain > 0.004:
+                levels.append((step, gain))
+            previous = max(previous, alpha)
+            if alpha >= 0.999:
+                break
+            step *= look["factor"]
+        period = step                                       # premier niveau plein : la grille se repete
+        if look["auto_color"]:
+            # 0.066 = noir a 6,6 % = #e2e2e2 sur #f2f2f2 (ligne pleine mesuree) ; les niveaux s'ajoutent.
+            ink, strength = self.grid_ink(), look["intensity"]
+        else:
+            ink = QColor(look["color"])
+            strength = ink.alphaF()
+        return levels, period, ink, strength
+
+    GRID_MAX_LINES = 4000                                   # au-dela (jamais : apparition a 12 px), tuile
+
+    def _paint_grid_fast(self, painter, rect: QRectF, scale: float) -> bool:
+        """Fond + grille en LIGNES d'un seul geste, a l'ecran (pas en export). Le pinceau de la tuile, mis a l'echelle
+        et lisse, puis le fond coutaient ~5,5 ms par peinture complete en 2400 x 1300 (un tiers d'un cran de zoom a
+        5 000 lignes) — et des lignes verticales tracees une a une, plus encore (le moteur remplit un trait vertical
+        pixel par pixel, ~75 us chacun). Ici : une BANDE de quelques rangees = le fond avec les verticales deja
+        melangees, RECOPIEE (mode Source, aucun melange) sur toute la hauteur, puis les horizontales (rectangles d'une
+        rangee : rapides). Chaque ligne tombe sur un pixel entier. False = cas non couvert (export, autre moteur,
+        ecran HiDPI, fond translucide, style points / croix, trop de lignes) : fond + tuile."""
+        look = self.grid_look
+        if (self.exporting or look["style"] != "lines" or self.background.alpha() < 255
+                or painter.paintEngine() is None or painter.paintEngine().type() != QPaintEngine.Raster
+                or abs((painter.device().devicePixelRatioF() or 1.0) - 1.0) > 1e-6):
+            return False
+        levels, _period, ink, strength = self._grid_levels(scale)
+        transform = painter.worldTransform()
+        dx, dy = transform.dx(), transform.dy()
+        ox, oy = self.grid_origin()
+        thick = max(1, int(look["thickness"]))
+        device = transform.mapRect(rect)
+        left, top = math.floor(device.left()), math.floor(device.top())
+        width, height = math.ceil(device.right()) - left, math.ceil(device.bottom()) - top
+        if width <= 0 or height <= 0:
+            return True
+        band_rows = 32
+        band = QImage(width, band_rows, QImage.Format_ARGB32_Premultiplied)
+        band.fill(self.background)
+        band_painter = QPainter(band)
+        rows = []
+        for level_step, gain in levels:
+            x0, x1 = math.ceil((rect.left() - ox) / level_step), math.floor((rect.right() - ox) / level_step)
+            y0, y1 = math.ceil((rect.top() - oy) / level_step), math.floor((rect.bottom() - oy) / level_step)
+            if (x1 - x0) + (y1 - y0) > self.GRID_MAX_LINES:
+                band_painter.end()
+                return False
+            color = QColor(ink)
+            color.setAlphaF(min(1.0, strength * gain))
+            for k in range(x0, x1 + 1):
+                band_painter.fillRect(math.floor((ox + k * level_step) * scale + dx + 0.5) - left, 0, thick,
+                                      band_rows, color)
+            rows += [(QRect(left, math.floor((oy + k * level_step) * scale + dy + 0.5), width, thick), color)
+                     for k in range(y0, y1 + 1)]
+        band_painter.end()
+        brush = QBrush(band)
+        brush.setTransform(QTransform.fromTranslate(left, top))
+        painter.save()
+        painter.resetTransform()
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        painter.setCompositionMode(QPainter.CompositionMode_Source)
+        painter.fillRect(QRect(left, top, width, height), brush)          # recopie, sans melange
+        painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        for r, color in rows:
+            painter.fillRect(r, color)
+        painter.restore()
+        return True
+
     def drawBackground(self, painter, rect):
-        painter.fillRect(rect, self.background)
-        if (self.exporting and not self.export_grid) or not self.page.get("grid", True):
-            return
         transform = painter.worldTransform()
         scale = transform.m11() or 1.0
+        grid = not ((self.exporting and not self.export_grid) or not self.page.get("grid", True))
         if transform.m12() or transform.m21():
+            painter.fillRect(rect, self.background)
             return                                         # vue tournee : jamais le cas ici
-        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        painter.fillRect(rect, self._grid_tile(scale))
+        if not (grid and self._paint_grid_fast(painter, rect, scale)):
+            painter.fillRect(rect, self.background)
+            if grid:
+                painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+                painter.fillRect(rect, self._grid_tile(scale))
+        if grid:
+            look = self.grid_look
+            if look["axes"]:                                # axes passant par l'origine de la grille
+                ox, oy = self.grid_origin()
+                pen = QPen(QColor(look["axes_color"]), look["axes_thickness"])
+                pen.setCosmetic(True)
+                painter.setPen(pen)
+                if rect.left() <= ox <= rect.right():
+                    painter.drawLine(QPointF(ox, rect.top()), QPointF(ox, rect.bottom()))
+                if rect.top() <= oy <= rect.bottom():
+                    painter.drawLine(QPointF(rect.left(), oy), QPointF(rect.right(), oy))
 
     def drawForeground(self, painter, rect):
         if self.exporting:

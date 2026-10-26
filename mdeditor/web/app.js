@@ -221,7 +221,9 @@
     const previous = S.mode;
     S.mode = mode;
     const edit = $("md-edit"), read = $("md-read");
-    // Position gardee d'un mode a l'autre (proportion du defilement).
+    // Les deux vues ont chacune leur scroller natif. Entre elles, les hauteurs ne
+    // sont pas identiques : la position proportionnelle est le seul repere stable.
+    // Elle est lue une fois au changement de mode, jamais pendant le defilement.
     let ratio = 0;
     if (opts.keepScroll !== false && previous !== mode) {
       if (previous === "edit") {
@@ -235,7 +237,7 @@
     read.classList.toggle("is-shown", mode === "reading");
     MD.toolbar.sync();
     if (mode === "edit") {
-      MD.editor.cm.refresh();
+      MD.editor.shown();
       if (opts.keepScroll !== false && previous !== mode) {
         const info = MD.editor.cm.getScrollInfo();
         MD.editor.cm.scrollTo(null, ratio * Math.max(0, info.height - info.clientHeight));
@@ -268,6 +270,9 @@
     if (S.rendered === text) return Promise.resolve();
     const t0 = performance.now();
     const path = S.current.path;
+    // Le rendu arrive en fond et remplace la page : la lecture reste ou elle etait (jamais renvoyee en haut).
+    const read = $("md-read");
+    const previousTop = read.scrollTop;
     return MD.call("render", path, text, true).then((html) => {
       if (!S.current || S.current.path !== path) return;
       const body = $("md-read-body");
@@ -276,6 +281,7 @@
       fixRelative(body);
       MD.highlightAll(body);
       S.rendered = text;
+      if (S.mode === "reading") read.scrollTop = previousTop;
       MD.metrics.add("reading", performance.now() - t0);
     }).catch((err) => MD.notice(err.message));
   }
@@ -357,7 +363,7 @@
       }
       case "toolbar": MD.toolbar.configure(message.data); MD.toolbar.sync(); break;
       case "open": open(message.info); break;
-      case "names": if (S.current && message.path === S.current.path) { S.names = message.names; MD.editor.lp.clearAll(); MD.editor.lp.refresh(); } break;
+      case "names": if (S.current && message.path === S.current.path) { S.names = message.names; MD.editor.lp.invalidate(); MD.editor.requestImageSizes(); } break;
       case "mode": setMode(message.mode); break;
       case "toggleMode": MD.toggleMode(); break;
       case "reload":
@@ -390,7 +396,8 @@
   }
 
   function onWheel(ev) {
-    // Fichiers de code : Ctrl + molette = taille du texte (retenue).
+    // Fichiers de code : Ctrl + molette = taille du texte (retenue). Ecoute posee sur l'EDITEUR seulement (dont
+    // CodeMirror ecoute deja la molette) : la lecture garde un defilement entierement natif, sans passer par la page.
     if (!(ev.ctrlKey && S.current && S.current.kind !== "markdown")) return;
     ev.preventDefault();
     MD.call("zoomCode", ev.deltaY < 0 ? 1 : -1);
@@ -412,7 +419,7 @@
     MD.toolbar = new MD.Toolbar($("md-toolbar"));
     $("md-read").addEventListener("click", onReadingClick);
     document.addEventListener("keydown", onKey, true);
-    document.addEventListener("wheel", onWheel, { passive: false, capture: true });
+    $("md-edit").addEventListener("wheel", onWheel, { passive: false });
     document.addEventListener("mouseup", (ev) => {
       if (ev.button === 3 || ev.button === 4) { ev.preventDefault(); flushText(); MD.call("go", ev.button === 3 ? -1 : 1); }
     });

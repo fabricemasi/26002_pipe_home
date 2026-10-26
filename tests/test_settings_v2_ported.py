@@ -1,7 +1,7 @@
 """Sections de la v1 portees dans la fenetre de reglages v2 : Application, omissions, LUT, Polices
-principales, Couleurs, Geometrie, ICONES, RACCOURCI ; onglets Focus (Image, Zone titre, Bouton
-repliement) et Projets (Icone de niveaux). Memes valeurs que la v1 sur les memes reglages, lignes
-propres a une colonne ecrites dans les cles generales (pas dans les surcharges), pastilles liees."""
+principales, Couleurs, Geometrie, ICONES, RACCOURCI ; General > Colonnes speciales (Colonne Focus :
+Image, Zone titre ; Colonne Projets : Icone de niveaux). Memes valeurs que la v1 sur les memes
+reglages, lignes propres a une colonne ecrites dans les cles generales, pastilles liees."""
 import os as _os, sys as _sys  # jamais les vrais reglages / presets de l'utilisateur (tests/_isolate.py)
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 import _isolate  # noqa: E402,F401
@@ -20,7 +20,6 @@ app = QApplication.instance() or QApplication([])
 
 import settings_v2_app
 import settings_window_v2 as v2
-from app_style import PREVIEW_STACK_TITLE
 from settings_store import DEFAULT_SETTINGS as _DEFAULTS
 from settings_widgets import _SliderField, _Toggle
 from _v1_reference import VALUES_PROJETS as V1_VALUES
@@ -38,7 +37,8 @@ def tearDownModule():
 
 
 PORTED = ("Application", "Dossiers et fichiers à omettre", "LUT", "Polices principales", "Couleurs",
-          "ICONES", "Colonnes", "Raccourci")
+          "ICONES", "Colonnes", "Raccourci", "Colonnes spéciales", "Colonne Projets", "Colonne Focus",
+          "Image", "Zone titre", "Icône de niveaux")
 
 
 def open_nodes(win, index: int, titles: tuple):
@@ -65,8 +65,6 @@ class PortedSectionsTest(unittest.TestCase):
         cls.win = v2.SettingsWindowV2()
         cls.labels = [label for label, _title in v2.SCOPES]
         open_nodes(cls.win, 0, PORTED)
-        open_nodes(cls.win, cls.labels.index(PREVIEW_STACK_TITLE), ("Image", "Zone titre"))
-        open_nodes(cls.win, cls.labels.index("Projets"), ("Icone de niveaux",))
 
     @classmethod
     def tearDownClass(cls):
@@ -74,7 +72,7 @@ class PortedSectionsTest(unittest.TestCase):
         app.processEvents()
 
     def test_values_match_the_v1_window(self):
-        # Valeurs lues par l'ancienne fenetre v1 (retiree), onglet Projets ouvert, figees : _v1_reference.py.
+        # Valeurs lues par l'ancienne fenetre v1 (retiree), figees : _v1_reference.py.
         expected = V1_VALUES
         values = self.win.wired_values()
         groups = ("Application", "Omettre", "LUT", "Polices principales", "Raccourci",
@@ -90,18 +88,14 @@ class PortedSectionsTest(unittest.TestCase):
             self.assertEqual(values[key], expected[key], key)
 
     def test_column_own_rows_write_general_keys(self):
-        """Focus > Zone titre : propre a la colonne, sans toggle ; la valeur va dans la cle generale,
-        jamais dans les surcharges. Le Ratio, lui, reste une surcharge."""
-        label = PREVIEW_STACK_TITLE
-        height = field(self.win, label, "preview_title_zone_height")
+        """Colonne Focus > Zone titre et Image : propres a la colonne, la valeur va dans la cle generale."""
+        height = field(self.win, "General", "preview_title_zone_height")
         slider = height if isinstance(height, _SliderField) else height.findChild(_SliderField)
         slider.setValue(77)
         values = self.win.wired_values()
         self.assertEqual(values["preview_title_zone_height"], 77)
-        per_title = values["column_overrides_by_title"].get(label, {})
-        self.assertNotIn("preview_title_zone_height", per_title)
-        self.assertIn("item_image_ratio", self.win.stores[label]["toggles"])
-        self.assertNotIn("preview_title_zone_height", self.win.stores[label]["toggles"])
+        self.assertIn("preview_image_ratio", values)
+        self.assertNotIn("preview_title_zone_height", self.win.stores["General"]["toggles"])
         slider.setValue(52)
 
     def test_skin_accent_and_focused_selection_are_independent(self):
@@ -146,12 +140,11 @@ class PortedSectionsTest(unittest.TestCase):
         self.assertNotIn("MONOUTIL", [e["key"] for e in self.win.wired_values()["custom_softwares"]])
 
     def test_every_ported_toggle_is_type_2_without_text(self):
-        for label in ("General", PREVIEW_STACK_TITLE, "Projets"):
-            for spec, widget in self.win.stores[label]["specs"]:
-                if isinstance(spec, str):
-                    continue
-                for toggle in [widget] * isinstance(widget, _Toggle) + widget.findChildren(_Toggle):
-                    self.assertFalse(toggle.text() if hasattr(toggle, "text") else "", spec.key)
+        for spec, widget in self.win.stores["General"]["specs"]:
+            if isinstance(spec, str):
+                continue
+            for toggle in [widget] * isinstance(widget, _Toggle) + widget.findChildren(_Toggle):
+                self.assertFalse(toggle.text() if hasattr(toggle, "text") else "", spec.key)
 
 
 if __name__ == "__main__":

@@ -18,27 +18,29 @@ AUTOMATIQUE 800 ms apres chaque changement (et a la fermeture, avec la vue) ; im
 dossier du board aux moments surs (voir `serialization`)."""
 from __future__ import annotations
 
+import math
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QEasingCurve, QEvent, QPointF, QPropertyAnimation, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF
+from PySide6.QtCore import QEasingCurve, QEvent, QPointF, QPropertyAnimation, QRect, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
     QAbstractButton, QFileDialog, QFontDialog, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QInputDialog,
     QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
-from . import export, miro_io, model, serialization
+from . import cad_aliases, cad_model, export, miro_io, model, serialization
 from .items import BoardItem, CommentItem, max_radius, shape_path
 from .scene import BoardScene
-from .view import DRAW_TOOLS, ERASER_SIZES, BoardView
+from .view import DRAW_TOOLS, ERASER_SIZES, BoardView, paint_render_badge
 
 AUTOSAVE_MS = 800
 FADE_MS = 160
 TOOLS = [("select", "Sélection (V)"), ("hand", "Main (H, ou Espace)"), ("sticky", "Post-it (N)"),
          ("text", "Texte (T)"), ("shape", "Formes (S ; R rectangle, O ellipse)"), ("connector", "Connecteur (L)"),
          ("draw", "Dessin à main levée (P)"), ("comment", "Commentaire (C)"), ("frame", "Cadre (F)"),
-         ("image", "Image depuis un fichier…")]
+         ("image", "Image depuis un fichier…"),
+         ("cad", "Mode CAD — dessin technique 2D (lignes, calques, accrochages, barre de commande)")]
 DRAW_BAR = [("pen", "Stylo"), ("highlighter", "Surligneur"), ("smart", "Dessin intelligent (formes reconnues)"),
             ("eraser", "Gomme (traits entiers)"), ("precision_eraser", "Gomme de précision (coupe les traits)"),
             ("lasso", "Lasso (sélection à main levée)")]
@@ -53,10 +55,10 @@ DEFAULT_PRESETS = {
               {"color": "#3663f7", "width": 4.0}],
 }
 COLOR_KEYS = {"sticky": "color", "shape": "fill", "frame": "fill"}
-# Icones reglables (Reglages > MRO > Icones) : un glyphe peint par defaut ; une icone perso la remplace.
+# Icones reglables (Reglages > Module MRO > Icones) : un glyphe peint par defaut ; une icone perso la remplace.
 # `ICON_PROVIDER(kind, taille)` -> QPixmap | None est pose par l'appli (le paquet ne connait pas ses icones).
 ICON_PROVIDER = None
-# `SETTING_WRITER(cle, valeur)` est pose par l'appli : enregistre un reglage de l'appli (Reglages > MRO) et le
+# `SETTING_WRITER(cle, valeur)` est pose par l'appli : enregistre un reglage de l'appli (Reglages > Module MRO) et le
 # fait suivre a la fenetre de reglages ; sans lui, le changement ne vaut que pour la session.
 SETTING_WRITER = None
 ICON_ROWS = model.ICON_ROWS
@@ -75,6 +77,10 @@ TEXT_KINDS = ("sticky", "text", "shape")
 
 def paint_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
     """Icones des outils et commandes (traits, comme les glyphes des boutons de l'appli)."""
+    if kind.startswith("cad"):
+        from .cad_ui import paint_cad_glyph              # module CAD : ses icones
+        paint_cad_glyph(painter, kind, rect, color)
+        return
     pen = QPen(color, 1.4)
     pen.setCapStyle(Qt.RoundCap)
     pen.setJoinStyle(Qt.RoundJoin)
@@ -174,6 +180,12 @@ def paint_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
             ang = math.radians(i * 45)
             painter.drawLine(QPointF(cx + math.cos(ang) * r * 0.7, cy + math.sin(ang) * r * 0.7),
                              QPointF(cx + math.cos(ang) * r, cy + math.sin(ang) * r))
+    elif kind == "grid":                                    # grille : 3 x 3 cases
+        r = s * 1.2
+        for n in range(4):
+            v = -r + n * 2 * r / 3
+            painter.drawLine(QPointF(cx + v, cy - r), QPointF(cx + v, cy + r))
+            painter.drawLine(QPointF(cx - r, cy + v), QPointF(cx + r, cy + v))
     elif kind == "invert":                                  # negatif : disque a moitie plein
         r = s * 1.2
         painter.drawEllipse(QPointF(cx, cy), r, r)
@@ -244,8 +256,45 @@ def paint_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
         painter.drawEllipse(QPointF(cx, cy), radius, radius)
 
 
+# Generation des dessins gardes des boutons : changee quand les icones perso changent (refresh_glyph_buttons).
+_GLYPH_GENERATION = 0
+
+
+def look_key(look) -> object:
+    """Cle d'un habillage de barre (toolbar_look) pour les dessins gardes des boutons ; sans « key », l'objet
+    lui-meme (garde vivant par la cle : son identifiant ne peut pas resservir)."""
+    if not isinstance(look, dict):
+        return None
+    return look.get("key") or _IdentityKey(look)
+
+
+class _IdentityKey:
+    __slots__ = ("obj",)
+
+    def __init__(self, obj):
+        self.obj = obj
+
+    def __eq__(self, other):
+        return isinstance(other, _IdentityKey) and other.obj is self.obj
+
+    def __hash__(self):
+        return id(self.obj)
+
+
+def refresh_glyph_buttons(root):
+    """Icones perso changees (Reglages > Module MRO / CAD > Icones) : boutons du board redessines."""
+    global _GLYPH_GENERATION
+    _GLYPH_GENERATION += 1
+    for button in root.findChildren(_GlyphButton):
+        button.update()
+
+
 class _GlyphButton(QAbstractButton):
-    """Bouton peint (outils, commandes, zoom) : glyphe, fond accent quand il est choisi, survol."""
+    """Bouton peint (outils, commandes, zoom) : glyphe, fond accent quand il est choisi, survol.
+
+    Dessin GARDE en image (`paint_key` : etat, taille, habillage, icones) : les barres sont posees sur le board,
+    Qt les repeint a CHAQUE image du board (deplacement, zoom) ; refaire leurs glyphes et chercher leurs icones
+    coutait ~8 ms par image (mesure : ~45 boutons, sonde _probe_cad_latency « pan »)."""
 
     def __init__(self, kind: str, tip: str, parent=None, size: int = 34):
         super().__init__(parent)
@@ -280,8 +329,28 @@ class _GlyphButton(QAbstractButton):
         super().leaveEvent(event)
 
     def paintEvent(self, event):
-        from app_style import C
+        ratio = self.devicePixelRatioF() or 1.0
+        key = (_GLYPH_GENERATION, ICON_PROVIDER, self.width(), self.height(), ratio, self.isEnabled(),
+               self.underMouse(), self.paint_key())
+        kept = getattr(self, "_painted", None)
+        if kept is None or kept[0] != key:
+            pixmap = QPixmap(max(1, math.ceil(self.width() * ratio)), max(1, math.ceil(self.height() * ratio)))
+            pixmap.setDevicePixelRatio(ratio)
+            pixmap.fill(Qt.transparent)
+            content = QPainter(pixmap)
+            self.paint_content(content)
+            content.end()
+            self._painted = kept = (key, pixmap)
         painter = QPainter(self)
+        painter.drawPixmap(0, 0, kept[1])
+        painter.end()
+
+    def paint_key(self) -> tuple:
+        """Ce dont depend le dessin, en plus de la taille, du survol et de l'etat actif (voir paintEvent)."""
+        return (self.kind, self._on, self._swatch, self._ring, look_key(getattr(self.parentWidget(), "look", None)))
+
+    def paint_content(self, painter):
+        from app_style import C
         painter.setRenderHint(QPainter.Antialiasing, True)
         rect = QRectF(self.rect()).adjusted(2, 2, -2, -2)
         if self._swatch is not None:
@@ -300,7 +369,6 @@ class _GlyphButton(QAbstractButton):
                                     QColor(0, 0, 0, 110 if self.underMouse() else 40), 2.0 if self._on else 1.2))
                 painter.setBrush(QColor(self._swatch))
                 painter.drawEllipse(inner)
-            painter.end()
             return
         look = getattr(self.parentWidget(), "look", None)
         if self._on or self.underMouse():
@@ -325,8 +393,12 @@ class _GlyphButton(QAbstractButton):
             target.moveCenter(rect.center())
             painter.drawPixmap(target, pixmap, QRectF(pixmap.rect()))
         else:
-            paint_glyph(painter, self.kind, rect, QColor(negative(C["text"], invert)))
-        painter.end()
+            paint_glyph(painter, self.kind, rect, QColor(self.glyph_ink(invert)))
+
+    def glyph_ink(self, invert: bool) -> str:
+        """Couleur du glyphe peint (sans icone choisie) : texte de l'appli, en negatif si la barre l'est."""
+        from app_style import C
+        return negative(C["text"], invert)
 
 
 class _TextButton(QPushButton):
@@ -342,6 +414,46 @@ class _TextButton(QPushButton):
             self.setFixedWidth(width)
 
 
+class _RenderBadge(QWidget):
+    """Encart en haut a droite : mode de rendu REEL du board, mis a jour des qu'il change (`BoardView.renderModeChanged`) :
+    OPEN GL (vert) quand la couche GPU est active, CLASSIQUE (rouge) sinon ; fond noir a 15 %, coins de 3 px. Rendu
+    classique : ce widget le peint ; rendu OpenGL : il est cache et la couche GPU peint l'encart a sa place
+    (`BoardView.gpu_badge`)."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._gl = False
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        font = self.font()
+        font.setPixelSize(12)
+        font.setBold(True)
+        self.setFont(font)
+        self._fit()
+
+    def set_gl(self, on: bool):
+        if bool(on) != self._gl:
+            self._gl = bool(on)
+            self._fit()
+            self.update()
+            parent = self.parentWidget()
+            if parent is not None and hasattr(parent, "_place_chrome"):
+                try:
+                    parent._place_chrome()
+                except AttributeError:                      # barres pas encore toutes creees (construction)
+                    pass
+
+    def label(self) -> str:
+        return "OPEN GL" if self._gl else "CLASSIQUE"
+
+    def _fit(self):
+        width = self.fontMetrics().horizontalAdvance(self.label())
+        self.resize(width + 20, self.fontMetrics().height() + 10)
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        paint_render_badge(painter, self.rect(), self._gl)
+
+
 class _ZoomLabel(_GlyphButton):
     """Pourcentage du zoom ; clic = 100 %."""
 
@@ -350,9 +462,12 @@ class _ZoomLabel(_GlyphButton):
         self._view = view
         self.setFixedWidth(58)
 
-    def paintEvent(self, event):
+    def paint_key(self) -> tuple:
+        pane = self.parent().parent() if self.parent() is not None else None
+        return (format_zoom(self._view.zoom()), look_key(getattr(pane, "toolbar_style", None)))
+
+    def paint_content(self, painter):
         from app_style import C, role_font
-        painter = QPainter(self)
         if self.underMouse():
             painter.setRenderHint(QPainter.Antialiasing, True)
             painter.setPen(Qt.NoPen)
@@ -363,7 +478,6 @@ class _ZoomLabel(_GlyphButton):
         painter.setPen(QColor(look["text"] if look else C["text"]))
         painter.setFont(look["font"] if look else role_font("info", 12))
         painter.drawText(self.rect(), Qt.AlignCenter, format_zoom(self._view.zoom()))
-        painter.end()
 
 
 def format_zoom(zoom: float) -> str:
@@ -632,7 +746,7 @@ def negative_pixmap(pixmap):
 
 
 def toolbar_look(settings: dict) -> dict:
-    """Habillage des barres d'outils (Reglages > MRO > Barres d'outils, cles `board_toolbar_*`) ; sans reglage :
+    """Habillage des barres d'outils (Reglages > Module MRO > Barres d'outils, cles `board_toolbar_*`) ; sans reglage :
     l'apparence d'origine (palette des panneaux des reglages)."""
     from settings_store import DEFAULT_SETTINGS
     from settings_menu import _border, _corners, _font, _sides
@@ -688,17 +802,29 @@ class _ToolbarFrame(QWidget):
             pass
 
     def paintEvent(self, event):
+        # Dessin garde en image (repeint a chaque image du board qu'elle recouvre, voir _GlyphButton).
         from settings_widgets import _paint_bordered_vector
+        ratio = self.devicePixelRatioF() or 1.0
+        key = (self.width(), self.height(), ratio, look_key(self.look))
+        kept = getattr(self, "_painted", None)
+        if kept is None or kept[0] != key:
+            pixmap = QPixmap(max(1, math.ceil(self.width() * ratio)), max(1, math.ceil(self.height() * ratio)))
+            pixmap.setDevicePixelRatio(ratio)
+            pixmap.fill(Qt.transparent)
+            content = QPainter(pixmap)
+            content.setRenderHint(QPainter.Antialiasing, True)
+            look = self.look
+            _paint_bordered_vector(content, self.rect(), dict(look["radius"]), look["sides"], look["thickness"],
+                                   look["border_colors"], QColor(look["bg"]))
+            content.end()
+            self._painted = kept = (key, pixmap)
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        look = self.look
-        _paint_bordered_vector(painter, self.rect(), dict(look["radius"]), look["sides"], look["thickness"],
-                               look["border_colors"], QColor(look["bg"]))
+        painter.drawPixmap(0, 0, kept[1])
         painter.end()
 
 
 def _bar(parent, vertical: bool):
-    """Barre d'outils flottante du board (habillee par Reglages > MRO > Barres d'outils)."""
+    """Barre d'outils flottante du board (habillee par Reglages > Module MRO > Barres d'outils)."""
     frame = _ToolbarFrame(parent)
     layout = (QVBoxLayout if vertical else QHBoxLayout)(frame)
     layout.setContentsMargins(7, 7, 7, 7)
@@ -948,6 +1074,7 @@ class BoardPane(QWidget):
     def __init__(self, parent: QWidget, settings: dict | None = None):
         super().__init__(parent)
         self.path: Path | None = None
+        self.source: Path | None = None         # dessin DXF / DWG ouvert (jamais reecrit), voir open_import
         self._mtime = None
         self._dirty = False
         self._saved_view = None
@@ -964,6 +1091,7 @@ class BoardPane(QWidget):
         self.scene = BoardScene(parent=self)
         self.view = BoardView(self.scene, self, opengl=bool(self._settings.get("board_opengl", False)))
         self.scene.contentChanged.connect(self._on_changed)
+        self.view.gpuFailed.connect(self._on_gpu_failed)
         self.scene.pageChanged.connect(self._on_page_changed)
         self._context_timer = QTimer(self)
         self._context_timer.setSingleShot(True)
@@ -983,14 +1111,17 @@ class BoardPane(QWidget):
         self._presets = self._load_presets()
         self._preset_index = {"pen": 0, "highlighter": 0, "smart": 0}
         self._draw_tool = "pen"
+        self.cad = None                         # module CAD (board/cad.py), cree au 1er usage
+        self._cad_export_units = "mm"           # unites du dernier export DXF / DWG (session)
+        self.view.cad = None
         self._build_chrome()
         self.apply_settings(self._settings)
         parent.installEventFilter(self)
         self.hide()
 
-    # -- reglages de l'appli (Reglages > MRO) --
+    # -- reglages de l'appli (Reglages > Module MRO) --
     def apply_settings(self, settings: dict):
-        """Magnetisme et barres d'outils (Reglages > MRO) : appliques tout de suite ; les barres ne sont
+        """Magnetisme et barres d'outils (Reglages > Module MRO) : appliques tout de suite ; les barres ne sont
         refaites que si leur habillage a change."""
         self._settings = dict(settings or {})
         look = toolbar_look(self._settings)
@@ -1005,9 +1136,56 @@ class BoardPane(QWidget):
             "resize": bool(self._settings.get("board_snap_resize", True)),
             "distance": int(self._settings.get("board_snap_distance", 6) or 6),
         }
+        self.scene.set_grid_settings(self._settings)
+        speed = self._settings.get("board_zoom_speed", 15)
+        fine = self._settings.get("board_zoom_fine", 3)
+        self.view.zoom_step = 1.0 + max(1, min(100, int(speed if isinstance(speed, (int, float)) else 15))) / 100.0
+        self.view.zoom_fine_step = 1.0 + max(1, min(50, int(fine if isinstance(fine, (int, float)) else 3))) / 100.0
+        # Types de ligne et unite du CAD : generaux, lus par les lignes meme sans le mode CAD (dessin d'un board).
+        restyle = cad_model.set_linetypes(self._settings.get("board_cad_linetypes"))
+        unit = cad_model.unit_key(self._settings.get("board_cad_unit"))
+        if unit != self.scene.cad_unit:
+            self.scene.cad_unit = unit
+            restyle = True
+        if restyle:
+            self.scene.cad_style_changed()
+            self.scene.update()
+        pgp = str(self._settings.get("board_cad_pgp_path", "") or "").strip()
+        if pgp != cad_aliases._state["path"]:
+            cad_aliases.install(pgp)                              # alias de commandes du fichier .pgp choisi
+        gpu = bool(self._settings.get("board_cad_gpu", False))
+        if gpu != (getattr(self.view, "gpu", None) is not None):
+            if not self.view.set_gpu(gpu) and gpu:
+                self._settings["board_cad_gpu"] = False          # OpenGL indisponible : rendu par lots du processeur
+        if self.cad is not None:
+            self.cad.apply_settings(self._settings)
+
+    def _on_gpu_failed(self, message: str):
+        """Rendu GPU impossible : le reglage est remis a faux (pas de nouvel essai a chaque ouverture) et signale."""
+        self._settings["board_cad_gpu"] = False
+        if self.cad is not None:
+            self.cad.message(f"Rendu GPU du CAD indisponible ({message}) : rendu par le processeur.", error=True)
+        writer = SETTING_WRITER
+        if writer is not None:
+            try:
+                writer("board_cad_gpu", False)
+            except Exception:                        # noqa: BLE001 - la session garde la valeur
+                pass
+
+    def toggle_grid(self):
+        """Bouton de la barre d'outils (et F7 du CAD) : grille de ce board, la MEME pour le board et le CAD (reglage
+        de la page, annulable)."""
+        on = not bool(self.scene.page.get("grid", True))
+        self.scene.set_page({"grid": on}, text="Grille")
+        self.view.setFocus()
+
+    def _sync_grid_button(self):
+        button = getattr(self, "_grid_button", None)
+        if button is not None:
+            button.set_on(bool(self.scene.page.get("grid", True)))
 
     def toggle_invert(self):
-        """Bouton de la barre d'outils : icones et textes en negatif (meme reglage que Reglages > MRO > Barres
+        """Bouton de la barre d'outils : icones et textes en negatif (meme reglage que Reglages > Module MRO > Barres
         d'outils), applique tout de suite puis enregistre par l'appli."""
         on = not bool(self._settings.get("board_toolbar_invert", False))
         self.apply_settings(dict(self._settings, board_toolbar_invert=on))
@@ -1029,10 +1207,12 @@ class BoardPane(QWidget):
             for button in bar.findChildren(_GlyphButton):
                 button.update()                             # icones (negatif) repeintes
         self._style_bar_texts()
+        if self.cad is not None:
+            self.cad.ui.set_look(look)
         self._place_chrome()
 
     def _style_bar_texts(self):
-        """Police et couleur des textes des barres (Reglages > MRO > Barres d'outils > Police)."""
+        """Police et couleur des textes des barres (Reglages > Module MRO > Barres d'outils > Police)."""
         look = getattr(self, "toolbar_style", None)
         if look is None:
             return
@@ -1094,6 +1274,12 @@ class BoardPane(QWidget):
         page.clicked.connect(self._open_page_menu)
         tools.addWidget(page)
         self._page_button = page
+        grid = _GlyphButton("grid", "Grille (ce board ; F7 en mode CAD)", self._toolbar)
+        grid.clicked.connect(self.toggle_grid)
+        tools.addWidget(grid)
+        self._grid_button = grid
+        self.scene.pageChanged.connect(self._sync_grid_button)
+        self._sync_grid_button()
         invert = _GlyphButton("invert", "Icônes et textes en négatif", self._toolbar)
         invert.clicked.connect(self.toggle_invert)
         tools.addWidget(invert)
@@ -1126,6 +1312,9 @@ class BoardPane(QWidget):
         self._zoombar, zoom = _bar(self, False)
         minus = _GlyphButton("minus", "Dézoomer (-)", self._zoombar, 30)
         minus.clicked.connect(lambda: self.view.zoom_by(1 / 1.25))
+        self._badge = _RenderBadge(self)
+        self.view.renderModeChanged.connect(self._badge.set_gl)
+        self._badge.set_gl(self.view.gpu_active())
         self._zoom_label = _ZoomLabel(self.view, self._zoombar)
         self._zoom_label.clicked.connect(lambda: self.view.set_zoom(1.0))
         plus = _GlyphButton("plus", "Zoomer (+)", self._zoombar, 30)
@@ -1140,7 +1329,38 @@ class BoardPane(QWidget):
         self._comment_panel = CommentPanel(self)
         self._sync_tools(self.view.tool)
 
+    # -- module CAD --
+    def toggle_cad(self, on: bool | None = None):
+        """Bouton CAD : active / desactive le mode CAD sur ce board (les entites CAD restent visibles)."""
+        on = (self.cad is None or not self.cad.active) if on is None else on
+        if on and self.cad is None:
+            from .cad import CadController
+            self.cad = CadController(self)
+            self.view.cad = self.cad
+            look = getattr(self, "toolbar_style", None)
+            if look is not None:
+                self.cad.ui.set_look(look)
+        if self.cad is None:
+            return
+        if on:
+            self.view.set_tool("select")
+            self._contextbar.hide()
+            self.cad.activate()
+        else:
+            self.cad.deactivate()
+            self._sync_context_bar()
+        self._sync_tools(self.view.tool)
+        self.view.setFocus()
+
+    def cad_active(self) -> bool:
+        return self.cad is not None and self.cad.active
+
     def _on_tool_button(self, kind: str):
+        if kind == "cad":
+            self.toggle_cad()
+            return
+        if self.cad_active():
+            self.toggle_cad(False)                  # un outil du board : retour au board
         if kind == "image":
             self.insert_image_dialog()
             return
@@ -1157,8 +1377,10 @@ class BoardPane(QWidget):
         self.view.setFocus()
 
     def _sync_tools(self, tool: str):
+        cad = self.cad_active()
         for kind, button in self._tool_buttons.items():
-            button.set_on(kind == tool or (kind == "draw" and tool in DRAW_TOOLS))
+            button.set_on(cad if kind == "cad" else (not cad and (kind == tool or (kind == "draw"
+                                                                                  and tool in DRAW_TOOLS))))
         drawing = tool in DRAW_TOOLS
         self._drawbar.setVisible(drawing)
         if drawing:
@@ -1291,7 +1513,7 @@ class BoardPane(QWidget):
         self.scene.commit_live()
         items = [i for i in self._selected() if not isinstance(i, CommentItem)]
         self._clear_context_bar()
-        if not items:
+        if not items or self.cad_active():          # mode CAD : ses propres proprietes (panneau, barre)
             self._contextbar.hide()
             return
         kinds = {i.kind for i in items}
@@ -1878,6 +2100,8 @@ class BoardPane(QWidget):
     def eventFilter(self, obj, event):
         if obj is self.parentWidget() and event.type() == QEvent.Resize:
             self.fit()
+        elif self.cad_active() and obj is self.view and event.type() == QEvent.KeyPress:
+            return False                            # mode CAD : Echap, lettres... vont au controleur CAD
         elif obj is self.view and event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape:
             if not self.view.editing_text() and not self._selected() and self.view.tool == "select" \
                     and self.view._draft is None:
@@ -1898,6 +2122,9 @@ class BoardPane(QWidget):
             return
         self.setGeometry(parent.rect())
         self.view.setGeometry(self.rect())
+        if self.cad is not None:
+            self.cad.overlay.setGeometry(self.view.viewport().rect())
+            self.cad.overlay.invalidate()
         self._place_chrome()
 
     def _place_chrome(self):
@@ -1912,9 +2139,27 @@ class BoardPane(QWidget):
         self._zoombar.move(self.width() - self._zoombar.width() - margin,
                            self.height() - self._zoombar.height() - margin)
         self._contextbar.move(max(margin, (self.width() - self._contextbar.width()) // 2), margin)
+        self._badge.move(self.width() - self._badge.width() - margin, margin)
+        self._sync_badge()
         for panel in (self._toolbar, self._drawbar, self._title, self._zoombar, self._contextbar,
-                      self._comment_panel):
+                      self._comment_panel, self._badge):
             panel.raise_()
+        if self.cad_active():
+            self.cad.ui.place()
+
+    def _sync_badge(self):
+        """Rendu OpenGL : l'encart est peint par la couche GPU (le widget se cache) ; classique : le widget."""
+        gl = self._badge._gl and self.view.gpu_active()
+        self._badge.setVisible(not gl)
+        rect = None
+        if gl:
+            top_left = self.view.viewport().mapFrom(self, self._badge.pos())
+            rect = QRect(top_left, self._badge.size())
+        if rect != self.view.gpu_badge:
+            self.view.gpu_badge = rect
+            layer = getattr(self.view, "gpu", None)
+            if layer is not None:
+                layer.request()
 
     def _on_zoom(self, _zoom: float):
         self._zoom_label.update()
@@ -1931,7 +2176,10 @@ class BoardPane(QWidget):
         except (OSError, serialization.BoardError) as exc:
             QMessageBox.warning(self, "Board illisible", f"{path.name} :\n{exc}")
             return False
-        self.path, self._mtime = path, mtime
+        if self.cad is not None:
+            self.cad.end_command()
+            self.cad.last_point = self.cad.last_line_end = None
+        self.path, self._mtime, self.source = path, mtime, None
         self.scene.board_path = path
         self.scene.load_data(data)
         self._saved_view = data.get("view") or {}
@@ -1940,6 +2188,53 @@ class BoardPane(QWidget):
         self._set_dirty(False)
         # Restes d'imports interrompus / annules : seulement plus anciens que le board (dossier synchronise).
         QTimer.singleShot(0, lambda: self._sweep_orphans(mtime))
+        return True
+
+    def open_import(self, data: dict, source: Path) -> bool:
+        """Dessin DXF / DWG lu par `cad_import` (hors du fil de l'interface) : board en MEMOIRE, le dessin d'origine
+        n'est jamais reecrit. Modifie, il est propose en `.mro` a cote a la fermeture (`confirm_leave`) ; images non
+        disponibles tant qu'il n'est pas enregistre (pas de dossier d'images)."""
+        if self.cad is not None:
+            self.cad.end_command()
+            self.cad.last_point = self.cad.last_line_end = None
+        self.path, self._mtime, self.source = None, None, Path(source)
+        self.scene.board_path = None
+        self.scene.load_data(model.normalize(data))
+        self._saved_view = data.get("view") or {}
+        self._saved_assets = set()
+        self._name.setText(self.source.name)
+        self._set_dirty(False)
+        return True
+
+    def companion_path(self) -> Path | None:
+        """`.mro` propose pour garder un dessin importe : a cote, « plan.mro », sinon « plan_dxf.mro », « plan_dxf_2.mro »..."""
+        if self.source is None:
+            return None
+        candidate = self.source.with_suffix(model.EXTENSION)
+        base = f"{self.source.stem}_{self.source.suffix.lstrip('.').lower()}"
+        n = 1
+        while candidate.exists():
+            candidate = self.source.with_name(f"{base}{'' if n == 1 else f'_{n}'}{model.EXTENSION}")
+            n += 1
+        return candidate
+
+    def save_import_as_board(self, target: Path | None = None) -> bool:
+        """Dessin importe enregistre en board : il devient un board ordinaire (enregistrement automatique...)."""
+        target = Path(target) if target is not None else self.companion_path()
+        if target is None:
+            return False
+        data = self.scene.to_data(self._current_view())
+        try:
+            serialization.save(target, data)
+        except OSError as exc:
+            QMessageBox.warning(self, "Enregistrement impossible", f"{target.name} :\n{exc}")
+            return False
+        self.path, self._mtime, self.source = target, target.stat().st_mtime_ns, None
+        self.scene.board_path = target
+        self._saved_view = data.get("view") or {}
+        self._saved_assets = model.referenced_assets(data)
+        self._name.setText(target.stem)
+        self._set_dirty(False)
         return True
 
     def _sweep_orphans(self, board_mtime_ns):
@@ -1977,7 +2272,8 @@ class BoardPane(QWidget):
             self._state.setText("modifié")
         else:
             _set_text_role(self._state, "value_muted")
-            self._state.setText("enregistré" if self.path is not None else "")
+            self._state.setText("enregistré" if self.path is not None else
+                                "importé, non enregistré" if self.source is not None else "")
         self._title.adjustSize()
 
     def is_dirty(self) -> bool:
@@ -2050,9 +2346,25 @@ class BoardPane(QWidget):
         """Avant de fermer : enregistre (contenu et vue) puis retire les images qui ne servent plus (la pile
         d'annulation disparait). Echec : on demande s'il faut fermer quand meme (rien n'est retire)."""
         self._comment_panel.close_panel()
+        if self.cad is not None:
+            self.cad.end_command()                  # segments deja traces : gardes, dans l'annulation
         if self.view.editing_text():
             self.scene.focusItem().clearFocus()
         self.scene.commit_live()
+        if self.path is None and self.source is not None:
+            if not self._dirty:
+                return True
+            target = self.companion_path()
+            box = QMessageBox(QMessageBox.Question, "Dessin modifié",
+                              f"« {self.source.name} » a été modifié dans le board (le fichier d'origine n'est jamais "
+                              f"réécrit).\nL'enregistrer en board « {target.name} » à côté ?", parent=self)
+            keep = box.addButton("Enregistrer en .mro", QMessageBox.AcceptRole)
+            drop = box.addButton("Fermer sans enregistrer", QMessageBox.DestructiveRole)
+            box.addButton("Annuler", QMessageBox.RejectRole)
+            box.exec()
+            if box.clickedButton() is keep:
+                return self.save_import_as_board(target)
+            return box.clickedButton() is drop
         if self.save(with_view=True):
             self.cleanup_assets(closing=True)
             return True
@@ -2062,11 +2374,15 @@ class BoardPane(QWidget):
 
     # -- actions de la barre de navigation --
     def undo(self):
+        if self.cad is not None:
+            self.cad.before_history()
         self.view.finish_text_edit()
         self.scene.commit_live()
         self.scene.undo.undo()
 
     def redo(self):
+        if self.cad is not None:
+            self.cad.before_history()
         self.view.finish_text_edit()
         self.scene.undo.redo()
 
@@ -2086,16 +2402,64 @@ class BoardPane(QWidget):
         self.view.setFocus()
 
     def export_dialog(self):
-        if self.path is None:
+        base = self.path or self.source
+        if base is None:
             return
-        target, _ = QFileDialog.getSaveFileName(self, "Exporter le board (image)", str(self.path.with_suffix(".png")),
-                                                "Image PNG (*.png);;Image SVG (*.svg);;Document PDF (*.pdf)")
+        target, chosen = QFileDialog.getSaveFileName(
+            self, "Exporter le board", str(base.with_suffix(".png")),
+            "Image PNG (*.png);;Image SVG (*.svg);;Document PDF (*.pdf);;"
+            "Dessin DXF — lignes CAD (*.dxf);;Dessin DWG — lignes CAD (*.dwg)")
         if not target:
+            return
+        suffix = Path(target).suffix.lower()
+        if suffix not in (".png", ".svg", ".pdf", ".dxf", ".dwg"):    # nom tape sans extension : celle du filtre
+            suffix = "." + chosen.rsplit("*.", 1)[-1].rstrip(")")
+            target = str(Path(target).with_suffix(suffix))
+        if suffix in (".dxf", ".dwg"):
+            self.export_cad(target)
             return
         try:
             export.export(self.scene, target)
         except Exception as exc:                            # noqa: BLE001 - message a l'utilisateur
             QMessageBox.warning(self, "Export impossible", str(exc))
+
+    def export_cad(self, target: str | None = None, suffix: str = ".dxf"):
+        """Lignes CAD et calques en DXF (ou DWG par ODA File Converter) ; unites demandees (voir cad_export)."""
+        from PySide6.QtWidgets import QInputDialog
+        from . import cad_export
+        if target is None:
+            base = self.path or self.source
+            if base is None:
+                return
+            label = "Dessin DWG (*.dwg)" if suffix == ".dwg" else "Dessin DXF (*.dxf)"
+            target, _ = QFileDialog.getSaveFileName(self, "Exporter les lignes CAD", str(base.with_suffix(suffix)),
+                                                    label)
+            if not target:
+                return
+            if Path(target).suffix.lower() != suffix:
+                target = str(Path(target).with_suffix(suffix))
+        labels = [label for label, _f, _u in cad_export.UNITS.values()]
+        keys = list(cad_export.UNITS)
+        if self._cad_export_units in keys:
+            last = keys.index(self._cad_export_units)
+        else:                                       # 1er export : l'unite de mesure du dessin
+            drawing = cad_model.drawing_unit(cad_model.page_cad(self.scene.page), self.scene.cad_unit)
+            last = keys.index(drawing) if drawing in keys else 0
+        choice, ok = QInputDialog.getItem(self, "Unités du fichier", "Unités du dessin exporté :", labels, last, False)
+        if not ok:
+            return
+        units = keys[labels.index(choice)]
+        self._cad_export_units = units
+        try:
+            if Path(target).suffix.lower() == ".dwg":
+                cad_export.export_dwg(self.scene, target, units)
+            else:
+                cad_export.export_dxf(self.scene, target, units)
+        except Exception as exc:                            # noqa: BLE001 - message a l'utilisateur
+            QMessageBox.warning(self, "Export impossible", str(exc))
+            return
+        if self.cad is not None:
+            self.cad.message(f"Exporté : {Path(target).name}")
 
     # -- apparition / disparition : fondu court, l'effet est retire a la fin --
     def fade_in(self):

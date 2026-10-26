@@ -3093,6 +3093,11 @@ def settings_window_v2_preload_enabled() -> bool:
     return not os.environ.get("PIPELINE_NO_PREBUILD")
 
 
+class _DrawingRelay(QObject):
+    """Retour d'une lecture de dessin DXF / DWG faite dans un fil a part (signal en file d'attente)."""
+    done = Signal(object, object, object)               # donnees du board, compte rendu, erreur
+
+
 class PipelineBrowser(QMainWindow):
     _bulk_navigation = False        # _navigate_to en cours : niveaux intermediaires sans fondu ni animation
 
@@ -3375,6 +3380,7 @@ class PipelineBrowser(QMainWindow):
         self._md_open = False                    # module Markdown / code (paquet mdeditor/) ouvert
         self._editor_buttons = []
         self._board = None
+        self._drawing_relay = None               # lecture de dessin DXF / DWG en cours (_open_cad_drawing)
         self._board_buttons = []
         for btn in (self.btn_browse, self.btn_presets, self.btn_settings, self.btn_collapse, self.btn_viewer,
                     self.btn_text_editor, self.btn_board, self.btn_video):
@@ -3628,7 +3634,6 @@ class PipelineBrowser(QMainWindow):
         _previews._PREVIEW_DECODE_MANAGER.turntable_ready.connect(self._preview_cache_finished)
         import settings_element_style       # clic droit > « Override settings » sur les elements des reglages
         settings_element_style.add_listener(self._on_element_style_saved)
-        settings_element_style.TARGET_RESOLVERS.append(self._override_targets)
 
     def _update_preview_cache_progress(self, visible: bool, completed: int, total: int, message: str):
         """Affiche l'avancement du cache automatique sans interrompre l'interface."""
@@ -7931,21 +7936,6 @@ class PipelineBrowser(QMainWindow):
             timer.timeout.connect(lambda: self._apply_settings(dict(ui_state.APPLIED_SETTINGS or {})))
         timer.start()
 
-    def _override_targets(self, widget):
-        """« Override settings » sur une colonne de la fenetre (settings_element_style.TARGET_RESOLVERS) :
-        ses tableaux de surcharge (onglet de la colonne dans les reglages)."""
-        import settings_element_style as es
-        if widget is None or widget.window() is not self:
-            return []
-        node = widget
-        while node is not None and not isinstance(node, (Column, PreviewColumn)):
-            node = node.parentWidget()
-        if node is None:
-            return []
-        title = getattr(node, "style_title", None) or node.column_title
-        shown = getattr(node, "display_title", None) or node.column_title
-        return [es.ColumnTarget(title, node, str(shown))]
-
     def _sync_viewer_toggle_keys(self):
         applied = ui_state.APPLIED_SETTINGS or {}
         for setting, shortcut in (getattr(self, "_viewer_toggle_keys", None) or {}).items():
@@ -7967,8 +7957,11 @@ class PipelineBrowser(QMainWindow):
             for store in (dialog.stores.values() if dialog is not None and dialog.isVisible() else ()):
                 for spec, widget in store.get("specs", ()):
                     if getattr(spec, "key", None) == setting:
-                        widget.setChecked(enabled)
-        except RuntimeError:
+                        if isinstance(enabled, bool) and hasattr(widget, "setChecked"):
+                            widget.setChecked(enabled)
+                        elif isinstance(enabled, (int, float)) and hasattr(widget, "setValue"):
+                            widget.setValue(int(enabled))   # curseur (module CAD : fenetre des accrochages)
+        except (RuntimeError, TypeError):
             pass
         settings = load_settings()
         settings[setting] = enabled
@@ -8391,6 +8384,9 @@ class PipelineBrowser(QMainWindow):
         if board.is_board_file(path):                     # board facon Miro : ouvert DANS l'appli
             if self._open_board(path):
                 return
+        if board.is_cad_drawing(path) and (ui_state.APPLIED_SETTINGS or {}).get("board_open_cad_drawings", True):
+            self._open_cad_drawing(path)                  # dessin DXF / DWG : module MRO (lu en fond)
+            return
         if self._md_opens_on_double_click(path):
             if self._open_md_editor(path):                # module Markdown / code : note ou fichier DANS l'appli
                 return
@@ -8779,7 +8775,7 @@ class PipelineBrowser(QMainWindow):
                 self._video.apply_settings(ui_state.APPLIED_SETTINGS or settings)
             return
         if changed and all(k.startswith("board_") for k in changed):
-            # Reglages > MRO (magnetisme du board) : rien d'autre a refaire que le board ouvert.
+            # Reglages > Module MRO (magnetisme du board) : rien d'autre a refaire que le board ouvert.
             if isinstance(ui_state.APPLIED_SETTINGS, dict):
                 ui_state.APPLIED_SETTINGS.update({k: settings.get(k) for k in changed})
             if getattr(self, "_board", None) is not None:
@@ -8974,8 +8970,8 @@ class PipelineBrowser(QMainWindow):
         self.btn_viewer.set_alert(self._mode_on_color() if viewer_open else None)
         import board
         on_board = self._board is not None
-        self._set_button_usable(self.btn_board, on_board or (not viewer_open and is_file
-                                                             and board.is_board_file(path)))
+        self._set_button_usable(self.btn_board, on_board or (not viewer_open and is_file and (
+            board.is_board_file(path) or board.is_cad_drawing(path))))
         self.btn_board.set_alert(self._mode_on_color() if on_board else None)
         import video
         on_video = getattr(self, "_video", None) is not None
@@ -9449,7 +9445,7 @@ class PipelineBrowser(QMainWindow):
 
     @staticmethod
     def _board_icon(kind: str, size: int):
-        """Icone perso d'un bouton du board (Reglages > MRO > Icones), sinon None (glyphe peint)."""
+        """Icone perso d'un bouton du board (Reglages > Module MRO > Icones), sinon None (glyphe peint)."""
         from previews import custom_ui_icon_pixmap
         return custom_ui_icon_pixmap(f"ui_board_{kind}", size)
 
@@ -9461,15 +9457,57 @@ class PipelineBrowser(QMainWindow):
         _column, path = self._selected_path()
         if path is not None and path.is_file() and board.is_board_file(path):
             self._open_board(path)
+        elif path is not None and path.is_file() and board.is_cad_drawing(path):
+            self._open_cad_drawing(path)
 
-    def _open_board(self, path: Path) -> bool:
+    def _open_cad_drawing(self, path: Path):
+        """Dessin DXF / DWG dans le module MRO (demande de l'utilisateur) : lu et converti HORS du fil de
+        l'interface (`board.cad_import`, conversion ODA pour un DWG : plusieurs secondes possibles), puis ouvert
+        comme un board en memoire (le dessin d'origine n'est jamais reecrit ; voir `BoardPane.open_import`)."""
+        import threading
+        from board import cad_import
+        path = Path(path)
+        if self._board is not None and self._board.source == path:
+            return
+        relay = _DrawingRelay(self)
+        self._drawing_relay = relay                        # seule la derniere demande est ouverte
+        relay.done.connect(lambda data, report, error: self._cad_drawing_read(relay, path, data, report, error))
+        self.path_label.setText(f"Lecture de {path.name}…")
+
+        def work():
+            try:
+                data, report = cad_import.read_drawing(path)
+                relay.done.emit(data, report, None)
+            except cad_import.DrawingError as exc:
+                relay.done.emit(None, None, str(exc))
+            except Exception as exc:                        # noqa: BLE001 - fichier inattendu : message
+                relay.done.emit(None, None, f"{type(exc).__name__} : {exc}")
+        threading.Thread(target=work, name="lecture DXF", daemon=True).start()
+
+    def _cad_drawing_read(self, relay, path: Path, data, report, error):
+        relay.deleteLater()
+        if relay is not self._drawing_relay:
+            return                                          # une autre ouverture a ete demandee depuis
+        self._drawing_relay = None
+        from board import cad_import
+        if error is not None:
+            self.path_label.setText(f"{path.name} : {error}")
+            return
+        if self._open_board(path, imported=data):
+            self.path_label.setText(cad_import.describe(report))
+
+    def _open_board(self, path: Path, imported: dict | None = None) -> bool:
         """Le board recouvre les colonnes (comme l'editeur de texte) ; ses boutons dans le cadre « Board » de la
-        barre de navigation. Un autre board ouvert est d'abord enregistre et ferme."""
+        barre de navigation. Un autre board ouvert est d'abord enregistre et ferme. `imported` : dessin DXF / DWG
+        deja lu (`_open_cad_drawing`), ouvert en memoire."""
         import board.ui
         from board.ui import BoardPane
         board.ui.ICON_PROVIDER = self._board_icon
         board.ui.SETTING_WRITER = self._write_setting_now
-        # Overrides des menus du board (Reglages > MRO > Menus contextuels) : la correspondance des lignes est
+        import board.cad_export
+        from previews import _oda_file_converter
+        board.cad_export.ODA_PROVIDER = _oda_file_converter     # meme recherche que les apercus DWG
+        # Overrides des menus du board (Reglages > Module MRO > Menus contextuels) : la correspondance des lignes est
         # dans le catalogue des reglages (deja charge par le prechargement de la fenetre, sinon ~0,1 s une fois).
         import settings_window_v2  # noqa: F401
         if self._project_columns_hidden:
@@ -9478,12 +9516,12 @@ class PipelineBrowser(QMainWindow):
             return False
         self._close_video()
         if self._board is not None:
-            if self._board.path == Path(path):
+            if (self._board.source if imported is not None else self._board.path) == Path(path):
                 return True
             if not self._close_board():
                 return False
         pane = BoardPane(self.scroll.viewport(), ui_state.APPLIED_SETTINGS or {})
-        if not pane.open(path):
+        if not (pane.open_import(imported, path) if imported is not None else pane.open(path)):
             pane.deleteLater()
             return False
         self._board = pane
@@ -9719,7 +9757,27 @@ def _main_toggle_style_listener(toggle, key):
 TOGGLE_STYLE_LISTENERS.append(_main_toggle_style_listener)
 
 
+def _install_error_log():
+    """Exceptions Python non rattrapees (dont celles des fonctions appelees par Qt : peinture, souris…) : ecrites aussi
+    dans `data/error_log.txt` (`pythonw` n'a pas de console). Aucun gestionnaire d'exceptions Windows (`faulthandler`
+    fait planter QtWebEngine)."""
+    import traceback
+    log = Path(__file__).with_name("data") / "error_log.txt"
+    previous = sys.excepthook
+
+    def hook(kind, value, trace):
+        try:
+            with open(log, "a", encoding="utf-8") as handle:
+                handle.write("\n--- " + time.strftime("%Y-%m-%d %H:%M:%S") + " ---\n")
+                handle.write("".join(traceback.format_exception(kind, value, trace)))
+        except OSError:
+            pass
+        previous(kind, value, trace)
+    sys.excepthook = hook
+
+
 def main():
+    _install_error_log()
     _install_qt_message_filter()
     settings = load_settings(startup=True)      # le preset par defaut devient le preset actif
     apply_all_settings(settings)

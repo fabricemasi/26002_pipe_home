@@ -214,14 +214,17 @@ _MEDIA_COUNT_POOL.setMaxThreadCount(2)
 
 
 def _shortcut_present(target: Path) -> bool:
-    """Un raccourci s'affiche si sa cible existe. Cible RESEAU : affiché sans la tester (un partage lent ou
-    absent figeait la colonne, parfois plusieurs secondes) ; son état (inaccessible) se voit en l'ouvrant."""
+    """Un raccourci fichier ou dossier s'affiche si sa cible existe.
+
+    Les cibles réseau restent visibles sans test : un partage absent ne doit
+    jamais bloquer le rendu d'une colonne.
+    """
     from previews import is_remote_path
     if is_remote_path(target):
         remember_entry(target, True)
         return bool(str(target))
-    if target.is_dir():
-        remember_entry(target, True)
+    if target.exists():
+        remember_entry(target, target.is_dir())
         return True
     return False
 
@@ -1581,8 +1584,9 @@ class Column(QWidget):
             # colonne concernee".
             entries = [(path, None, None, False) for path in self._entries_for(self.directory, _STATUS_FOLDER_SET)]
             # Raccourcis (voir load_shortcuts/ROLE_IS_SHORTCUT, Column._on_
-            # context_menu "Ajouter un raccourci") : dossiers d'AILLEURS sur
-            # le disque, affiches comme s'ils etaient physiquement ICI —
+            # context_menu "Ajouter un raccourci") : fichiers et dossiers
+            # d'AILLEURS sur le disque, affiches comme s'ils etaient
+            # physiquement ICI —
             # propres a CE dossier (jamais pour une colonne du groupe IN/
             # OVER/OUT/LOGICIELS, source_dirs deja exclu par ce `else`) —
             # voir la remarque de l'utilisateur, "faire comme si il etait
@@ -3000,12 +3004,9 @@ class Column(QWidget):
 
     def _add_shortcut(self):
         """"Ajouter un raccourci" (voir _on_context_menu, ROLE_IS_SHORTCUT/
-        load_shortcuts/add_shortcut) : va chercher un repertoire A
-        N'IMPORTE QUEL autre emplacement du disque et l'affiche comme s'il
-        etait physiquement dans CE dossier — voir la remarque de
-        l'utilisateur, "aller chercher un repertoire dans un emplacement
-        autre ... et de faire comme si il etait au meme endroit que les
-        autres repertoires de l'emplacement actuel"."""
+        load_shortcuts/add_shortcut) : va chercher un fichier ou un
+        repertoire n'importe ou sur le disque et l'affiche comme s'il etait
+        physiquement dans ce dossier."""
         target_dir = self.directory
         if self._source_dirs is not None and self._source_labels and len(self._source_dirs) > 1:
             # MEME choix de niveau que _create_folder, MEME raison (colonne
@@ -3017,12 +3018,24 @@ class Column(QWidget):
             if not ok_level:
                 return
             target_dir = self._source_dirs[self._source_labels.index(choice)]
-        chosen = QFileDialog.getExistingDirectory(self, "Choisir un repertoire", str(target_dir))
-        if not chosen:
+        kind, accepted = QInputDialog.getItem(
+            self, "Ajouter un raccourci", "Type de raccourci :",
+            ("Fichier", "Répertoire"), 0, False,
+        )
+        if not accepted:
             return
-        chosen_path = Path(chosen)
+        if kind == "Répertoire":
+            selected = QFileDialog.getExistingDirectory(self, "Choisir un répertoire", str(target_dir))
+        else:
+            selected, _unused = QFileDialog.getOpenFileName(
+                self, "Choisir un fichier", str(target_dir), "Tous les fichiers (*)")
+        if not selected:
+            return
+        chosen_path = Path(selected)
+        if not chosen_path.exists():
+            return
         if chosen_path == target_dir or chosen_path.parent == target_dir:
-            QMessageBox.warning(self, "Ajouter un raccourci", "Ce repertoire est deja ici.")
+            QMessageBox.warning(self, "Ajouter un raccourci", "Cet élément est deja ici.")
             return
         add_shortcut(target_dir, chosen_path)
         self.refresh()

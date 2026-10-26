@@ -3825,6 +3825,12 @@ def _decode_video_frame(path: Path, max_dim: int, cancel_event=None) -> QImage |
     return image
 
 
+def _oda_environment() -> dict:
+    """Environnement d'ODA File Converter : une application Qt, que les variables Qt de NOTRE processus
+    (`QT_QPA_PLATFORM`, `QT_PLUGIN_PATH`…) empechent de demarrer (« no Qt platform plugin could be initialized »)."""
+    return {k: v for k, v in os.environ.items() if not k.upper().startswith("QT_")}
+
+
 def _oda_file_converter() -> str | None:
     """Trouve ODA File Converter, necessaire pour convertir un DWG en DXF."""
     configured = os.environ.get("ODA_FILE_CONVERTER")
@@ -3987,7 +3993,7 @@ def _render_dwg_with_oda(path: Path, max_dim: int, progress_callback=None, cance
             log_stream = log_path.open("w", encoding="utf-8", errors="replace")
             if progress_callback:
                 progress_callback(8, "Conversion DWG vers DXF")
-            kwargs = {"stdout": log_stream, "stderr": log_stream}
+            kwargs = {"stdout": log_stream, "stderr": log_stream, "env": _oda_environment()}
             if sys.platform == "win32":
                 kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             proc = subprocess.Popen(

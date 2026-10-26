@@ -85,6 +85,36 @@ class ColorHelpTest(unittest.TestCase):
             self.help._tick()
         self.assertFalse(self.help.popup.isVisible())
 
+    def test_no_application_wide_event_filter(self):
+        # Un filtre sur toute l'application faisait passer chaque evenement de l'appli par du Python, une fois
+        # par fenetre qui a l'aide (fenetre de reglages prechargee comprise).
+        with patch.object(QApplication,'installEventFilter') as installed:
+            other = QWidget()
+            controller = HelpController(other)
+            self.assertFalse(installed.called)
+            controller.deleteLater()
+            other.deleteLater()
+
+    def test_watch_starts_the_gesture_only_while_the_window_is_shown(self):
+        self.assertTrue(self.help.watch.isActive())
+        with patch.object(QApplication,'keyboardModifiers',return_value=Qt.ControlModifier|Qt.ShiftModifier):
+            self.help._watch()
+        self.assertTrue(self.help.timer.isActive())
+        self.help.dismiss()
+        self.root.hide()
+        APP.processEvents()
+        self.assertFalse(self.help.watch.isActive())
+        self.root.show()
+        APP.processEvents()
+        self.assertTrue(self.help.watch.isActive())
+
+    def test_f1_shortcut_opens_the_glossary_on_the_focused_notion(self):
+        with patch.object(QApplication,'focusWidget',return_value=self.spin.lineEdit()):
+            self.help.f1.activated.emit()
+        self.assertTrue(self.help.glossary.isVisible())
+        self.assertIn('Palette chromatique',self.help.glossary.browser.toPlainText())
+        self.help.glossary.close()
+
     def test_glossary_search_and_required_help_sections(self):
         glossary = Glossary(self.root,'matching')
         self.assertIn('Matching',glossary.browser.toPlainText())

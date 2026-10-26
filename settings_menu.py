@@ -26,7 +26,7 @@ import shutil
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer
-from PySide6.QtGui import QFontMetrics, QIcon, QPixmap
+from PySide6.QtGui import QColor, QFontMetrics, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMenu, QProxyStyle, QStyle, QWidget,
     QWidgetAction,
@@ -122,7 +122,7 @@ def _font(v: dict, pre: str, default_size: int):
     return app_font(size, weight, family=family, smoothing=smooth, italic=bool(v.get(f"{pre}_font_italic")))
 
 
-# Portees d'habillage (ex. « board » : Reglages > MRO > Menus contextuels) : un menu dont la cle commence par
+# Portees d'habillage (ex. « board » : Reglages > Module MRO > Menus contextuels) : un menu dont la cle commence par
 # « <portee>: » prend, pour chaque cle dont l'interrupteur d'override est allume, la valeur propre a la portee.
 SCOPES: dict[str, tuple[str, dict]] = {}
 
@@ -191,6 +191,60 @@ def menu_look(scope: str | None = None) -> dict:
         "editable": bool(v.get("ctx_menu_editable", True)),
         "shadow": _shadow(v),
     }
+
+
+def _luminance(color: QColor) -> float:
+    def channel(v: float) -> float:
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+    return 0.2126 * channel(color.redF()) + 0.7152 * channel(color.greenF()) + 0.0722 * channel(color.blueF())
+
+
+def _flatten(color: QColor, under: QColor) -> QColor:
+    """Couleur (eventuellement translucide) posee sur un fond opaque."""
+    a = color.alphaF()
+    return QColor.fromRgbF(color.redF() * a + under.redF() * (1 - a), color.greenF() * a + under.greenF() * (1 - a),
+                           color.blueF() * a + under.blueF() * (1 - a))
+
+
+def contrast_ratio(foreground, background) -> float:
+    """Rapport de contraste WCAG (1 a 21) du texte `foreground` sur le fond `background` (couleurs Qt / #aarrggbb)."""
+    back = QColor(background)
+    back = _flatten(back, QColor("#ffffff")) if back.alpha() < 255 else back
+    fore = _flatten(QColor(foreground), back)
+    light, dark = sorted((_luminance(fore), _luminance(back)), reverse=True)
+    return (light + 0.05) / (dark + 0.05)
+
+
+def readable_on(foreground, background, minimum: float = 4.5) -> str:
+    """`foreground` s'il se lit sur `background` (contraste >= `minimum`), sinon la couleur la plus proche qui s'y lit :
+    la sienne eclaircie ou assombrie vers le noir / blanc selon le fond (teinte et opacite gardees)."""
+    fore, back = QColor(foreground), QColor(background)
+    if back.alpha() < 255:
+        back = _flatten(back, QColor("#ffffff"))
+    if contrast_ratio(fore, back) >= minimum:
+        return fore.name(QColor.HexArgb) if fore.alpha() < 255 else fore.name()
+    target = QColor("#000000") if _luminance(back) > 0.179 else QColor("#ffffff")
+    for step in range(1, 21):
+        t = step / 20
+        mixed = QColor.fromRgbF(fore.redF() + (target.redF() - fore.redF()) * t,
+                                fore.greenF() + (target.greenF() - fore.greenF()) * t,
+                                fore.blueF() + (target.blueF() - fore.blueF()) * t, fore.alphaF())
+        if contrast_ratio(mixed, back) >= minimum:
+            return mixed.name(QColor.HexArgb) if mixed.alpha() < 255 else mixed.name()
+    return target.name()
+
+
+def readable_look(look: dict) -> dict:
+    """Habillage d'un menu dont les textes se lisent sur son fond : texte, texte grise, titres, et texte de survol sur
+    la couleur de survol posee sur le fond (menu clair + textes clairs de l'appli : illisible, signale)."""
+    fixed = dict(look)
+    bg = look["bg"]
+    for key in ("text", "label_text"):
+        fixed[key] = readable_on(look[key], bg, 4.5)
+    fixed["disabled"] = readable_on(look["disabled"], bg, 3.0)
+    hover = _flatten(QColor(look["hover"]), _flatten(QColor(bg), QColor("#ffffff")))
+    fixed["hover_text"] = readable_on(look["hover_text"], hover.name(), 4.5)
+    return fixed
 
 
 def _single_border_color(values: dict, scope: str | None) -> bool:
@@ -570,6 +624,8 @@ class Menu(QMenu):
 
 def prepare_menu(menu: QMenu) -> None:
     lk = menu_look(menu_scope(menu))
+    if menu.property("ctxContrast"):
+        lk = readable_look(lk)
     layout = _layouts().get(menu_key(menu)) or {}
     if layout.get("order") and not menu.property("ctxNoEdit"):
         _apply_order(menu, layout["order"])
@@ -582,6 +638,8 @@ def prepare_menu(menu: QMenu) -> None:
                 sub.setParent(menu, sub.windowFlags())
             if sub.property("ctxNoEdit") is None and menu.property("ctxNoEdit"):
                 sub.setProperty("ctxNoEdit", True)
+            if menu.property("ctxContrast"):
+                sub.setProperty("ctxContrast", True)
             hook_menu(sub)
     if lk["editable"] and not menu.property("ctxNoEdit"):
         _editor(menu)

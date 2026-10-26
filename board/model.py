@@ -18,6 +18,8 @@ from __future__ import annotations
 import copy
 import uuid
 
+from . import cad_model
+
 FORMAT = "pipeline-board"
 VERSION = 2
 EXTENSION = ".mro"
@@ -75,6 +77,16 @@ DEFAULTS: dict[str, dict] = {
     # Commentaire LOCAL : marqueur sur le canvas, fil de messages ; `target` = element auquel il est accroche
     # (il le suit ; `dx` / `dy` = sa place par rapport au coin haut gauche de l'element).
     "comment": {"target": "", "dx": 0.0, "dy": 0.0, "resolved": False, "messages": []},
+    # Ligne du module CAD (board/cad*.py) : geometrie en coordonnees du DOCUMENT (Y vers le haut), proprietes
+    # « ByLayer » resolues dans le calque (page["cad"]) ; champs valides par cad_model.normalize_line.
+    "cad_line": {k: None for k in cad_model.LINE_DEFAULTS},
+    # Arc, cercle, polyligne du CAD (memes proprietes ; geometrie : board/cad_shapes.py) ; cad_model.normalize_entity.
+    "cad_arc": {k: None for k in cad_model.ENTITY_DEFAULTS["cad_arc"]},
+    "cad_circle": {k: None for k in cad_model.ENTITY_DEFAULTS["cad_circle"]},
+    "cad_pline": {k: None for k in cad_model.ENTITY_DEFAULTS["cad_pline"]},
+    "cad_dim": {k: None for k in cad_model.ENTITY_DEFAULTS["cad_dim"]},
+    "cad_hatch": {k: None for k in cad_model.ENTITY_DEFAULTS["cad_hatch"]},
+    "cad_text": {k: None for k in cad_model.ENTITY_DEFAULTS["cad_text"]},
 }
 COMMON = {"x": 0.0, "y": 0.0, "z": 0.0, "rotation": 0.0, "locked": False, "link": ""}
 ROTATABLE = ("shape", "text", "image")
@@ -155,12 +167,12 @@ def paper_size(data: dict) -> tuple[float, float] | None:
     return (w, h) if data.get("orientation") == "portrait" else (h, w)
 
 
-# Boutons du board dont l'icone se regle (Reglages > MRO > Icones ; cle d'icone `ui_board_<genre>`).
+# Boutons du board dont l'icone se regle (Reglages > Module MRO > Icones ; cle d'icone `ui_board_<genre>`).
 ICON_ROWS = [
     ("select", "Outil Sélection"), ("hand", "Outil Main"), ("sticky", "Outil Post-it"), ("text", "Outil Texte"),
     ("shape", "Outil Formes"), ("connector", "Outil Connecteur"), ("draw", "Outil Dessin"),
     ("comment", "Commentaire"), ("frame", "Outil Cadre"), ("image", "Image depuis un fichier"),
-    ("page", "Réglages de la page"), ("invert", "Icônes et textes en négatif"),
+    ("page", "Réglages de la page"), ("grid", "Grille"), ("invert", "Icônes et textes en négatif"),
     ("pen", "Dessin : stylo"), ("highlighter", "Dessin : surligneur"), ("smart", "Dessin : dessin intelligent"),
     ("eraser", "Dessin : gomme"), ("precision_eraser", "Dessin : gomme de précision"), ("lasso", "Dessin : lasso"),
     ("text_style", "Barre : style du texte"), ("align", "Barre : alignement"),
@@ -169,6 +181,25 @@ ICON_ROWS = [
     ("frame_format", "Barre : format du cadre"), ("lock", "Barre : verrou"), ("more", "Barre : plus"),
     ("minus", "Zoom : dézoomer"), ("plus", "Zoom : zoomer"), ("fit", "Zoom : tout voir"),
     ("close", "Fermer le fil de commentaire"),
+]
+
+# Icones du module CAD (Reglages > Module CAD > Icones ; meme cle d'icone `ui_board_<genre>`) : barre d'outils CAD,
+# bouton « Mode CAD » du board, gestion, historique de la barre de commande. Les menus du CAD n'ont pas d'icone.
+CAD_ICON_ROWS = [
+    ("cad", "Mode CAD (barre d'outils du board)"),
+    ("cad_line", "Dessin : ligne"), ("cad_pline", "Dessin : polyligne"), ("cad_circle", "Dessin : cercle"),
+    ("cad_arc", "Dessin : arc"), ("cad_rect", "Dessin : rectangle"), ("cad_hatch", "Dessin : hachures"),
+    ("cad_move", "Modification : déplacer"), ("cad_copy", "Modification : copier"),
+    ("cad_erase", "Modification : effacer"), ("cad_match", "Modification : pipette"), ("cad_rotate", "Modification : rotation"), ("cad_scale", "Modification : échelle"),
+    ("cad_mirror", "Modification : miroir"), ("cad_trim", "Modification : ajuster"), ("cad_offset", "Modification : décalage"),
+    ("cad_chamfer", "Modification : chanfrein"), ("cad_fillet", "Modification : raccord"),
+    ("cad_text", "Annotations : texte"), ("cad_mtext", "Annotations : texte multiligne"),
+    ("cad_explode", "Modification : décomposer"), ("cad_dim", "Annotations : cotation linéaire"),
+    ("cad_dim_aligned", "Annotations : cotation alignée"), ("cad_dim_radius", "Annotations : cotation de rayon"),
+    ("cad_dim_diameter", "Annotations : cotation de diamètre"), ("cad_dim_angular", "Annotations : cotation angulaire"),
+    ("cad_settings", "Précision : accrochages et suivi"), ("cad_drawing", "Réglages : réglages du dessin"),
+    ("cad_layers", "Gestion : calques"), ("cad_properties", "Gestion : propriétés"),
+    ("cad_history", "Barre de commande : historique"),
 ]
 
 
@@ -215,6 +246,8 @@ def normalize_item(raw) -> dict | None:
                 item[f"{end}_cap"] = "filled" if item[legacy] else "none"
         if "cap_size" not in raw:                       # ancienne taille, calculee sur l'epaisseur
             item["cap_size"] = round(8 + item["width"] * 2.2, 2)
+    if kind in cad_model.CAD_TYPES:
+        cad_model.normalize_entity(item)
     if kind == "shape" and item["shape"] == "round" and "radius" not in raw:
         item["radius"] = round(min(item["w"], item["h"]) * 0.18, 2)        # anciens fichiers (version 1)
     if kind == "shape" and item["shape"] not in SHAPE_KINDS:
@@ -263,6 +296,7 @@ def normalize(data) -> dict:
             item["id"] = new_id()
         seen.add(item["id"])
         board["items"].append(item)
+    cad_model.migrate_lines(board["page"], board["items"])
     try:
         board["version"] = max(VERSION, int(data.get("version", VERSION)))
     except (TypeError, ValueError):

@@ -248,7 +248,7 @@ def _default_glyph(key: str, size: int) -> QPixmap | None:
         button.setStyleSheet("QPushButton { background: transparent; border: none; }")
         button.resize(size, size)
         return button.grab()
-    if isinstance(key, str) and key.startswith("ui_board_"):    # Reglages > MRO > Icones : glyphe du board
+    if isinstance(key, str) and key.startswith("ui_board_"):    # Reglages > Module MRO > Icones : glyphe du board
         from board.ui import paint_glyph
         from PySide6.QtCore import QRectF
         kind = key[len("ui_board_"):]
@@ -310,40 +310,53 @@ def _default_glyph(key: str, size: int) -> QPixmap | None:
 
 
 class UiIconField(QWidget):
-    """ICONES > General : une icone d'interface (dossier, fichier, engrenage...) ou la punaise (deux
-    etats sur la meme ligne). Changer / capturer / reinitialiser agit tout de suite sur le fichier
-    d'icone perso, comme dans la v1 (aucun reglage enregistre)."""
+    """ICONES : une icone d'interface (dossier, fichier, engrenage, bouton du board...) ou la punaise (deux etats).
+    Changer / reinitialiser agit tout de suite sur le fichier d'icone perso, comme dans la v1 (aucun reglage
+    enregistre). Chaque etat : apercu de l'icone EN COURS, son etat (« Par defaut » / « Remplacee ») et ses deux
+    boutons — montres en colonnes par `icon_table`, ou en cellule divisee dans un tableau mixte (`_f_ui_icon`)."""
 
     def __init__(self, ui_key: str):
         super().__init__()
         import previews as pb_previews
 
         self.setStyleSheet("background: transparent;")
-        self._states: list = []                 # (legende, apercu, boutons) : voir states()
+        self._states: list = []                 # (legende, apercu, boutons, etat) : voir states()
         if ui_key == "pin":
             states = ((pb_previews.UI_ICON_PIN_INACTIVE, "Non attachee"), (pb_previews.UI_ICON_PIN_ACTIVE, "Attachee"))
-            short = True
         else:
             # Suffixe (« folder_default »...) -> cle d'icone de l'appli (previews.UI_ICON_*).
             states = ((getattr(pb_previews, f"UI_ICON_{ui_key.upper()}", ui_key), ""),)
-            short = False
         for key, caption in states:
             avatar = _avatar()
-            self._show(avatar, key)
-            # Deux boutons COTE A COTE (plus de capture d'une zone d'ecran : demande de l'utilisateur).
+            state = QLabel()
+            _set_text_role(state, "value_muted")
             row, row_layout = _row()
-            for text, action in ((("Changer..." if short else "Changer l'icone..."), self._change),
-                                 (("Reinit." if short else "Reinitialiser"), self._reset)):
-                button = _button(text)
-                button.clicked.connect(lambda _c=False, k=key, av=avatar, act=action: act(k, av))
+            change, reset = _button("Changer..."), _button("Reinitialiser")
+            for button in (change, reset):
                 row_layout.addWidget(button)
             row_layout.addStretch(1)
-            self._states.append((caption, avatar, [row]))
+            change.clicked.connect(lambda _c=False, k=key, av=avatar, st=state, rb=reset: self._change(k, av, st, rb))
+            reset.clicked.connect(lambda _c=False, k=key, av=avatar, st=state, rb=reset: self._reset(k, av, st, rb))
+            self._refresh(key, avatar, state, reset)
+            self._states.append((caption, avatar, row, state))
 
     def states(self) -> list:
-        """[(legende, apercu de l'icone en cours, boutons Changer / Capturer / Reinitialiser)] : la cellule divisee
-        de la ligne (sous-cellule « Icône » avec l'apercu, puis les choix)."""
+        """[(legende, apercu de l'icone en cours, boutons Changer / Reinitialiser, etat)] : une paire de sous-cellules
+        (`_f_ui_icon`) ou une ligne du tableau d'icones (`icon_table`) par etat."""
         return self._states
+
+    @staticmethod
+    def _replaced(key: str) -> bool:
+        import previews as pb_previews
+
+        return pb_previews.custom_software_icon_path(key).is_file()
+
+    @classmethod
+    def _refresh(cls, key: str, avatar: QLabel, state: QLabel, reset):
+        cls._show(avatar, key)
+        replaced = cls._replaced(key)
+        state.setText("Remplacée" if replaced else "Par défaut")
+        reset.setEnabled(replaced)
 
     @staticmethod
     def _show(avatar: QLabel, key: str):
@@ -360,20 +373,13 @@ class UiIconField(QWidget):
                 pix = _default_glyph(key, 24)               # l'icone EN COURS : le glyphe peint par defaut
             avatar.setPixmap(pix if pix is not None else QPixmap())
 
-    def _change(self, key: str, avatar: QLabel):
+    def _change(self, key: str, avatar: QLabel, state: QLabel, reset):
         pix = _pick_image(self)
         if pix is not None and _save_icon(self, key, pix):
-            self._show(avatar, key)
+            self._refresh(key, avatar, state, reset)
             self._refresh_app_icons()
 
-    def _capture(self, key: str, avatar: QLabel):
-        def saved(pix):
-            if _save_icon(self, key, pix):
-                self._show(avatar, key)
-                self._refresh_app_icons()
-        _capture(self, saved)
-
-    def _reset(self, key: str, avatar: QLabel):
+    def _reset(self, key: str, avatar: QLabel, state: QLabel, reset):
         import previews as pb_previews
 
         path = pb_previews.custom_software_icon_path(key)
@@ -382,7 +388,7 @@ class UiIconField(QWidget):
         except OSError:
             pass
         pb_previews.forget_mtime(path)
-        self._show(avatar, key)
+        self._refresh(key, avatar, state, reset)
         self._refresh_app_icons()
 
     @staticmethod
@@ -394,17 +400,40 @@ class UiIconField(QWidget):
                 titlebar.refresh_look()
             for button in window.findChildren(IconButton):
                 button.update()
-            try:                                         # boutons du board ouvert (Reglages > MRO > Icones)
-                from board.ui import _GlyphButton
-                for button in window.findChildren(_GlyphButton):
-                    button.update()
+            try:                                         # boutons du board ouvert (Reglages > Module MRO > Icones)
+                from board.ui import refresh_glyph_buttons
+                refresh_glyph_buttons(window)
             except Exception:                            # noqa: BLE001
                 pass
 
 
+ICON_TABLE_COLUMNS = (("Aperçu", 80), ("Nom", 260), ("État", 130), ("Action", 300))
+
+
+def icon_table(entries: list, columns=ICON_TABLE_COLUMNS):
+    """Tableau d'icones commun (reglages ICONES, Visionneuse, Barre de navigation, MRO, Module CAD, Logiciels) : de
+    VRAIES colonnes — Apercu | Nom | Etat | Action — une ligne par icone. `entries` : [(nom, apercu, etat, action)] ;
+    `etat` : QLabel (ou texte), `action` : le widget des boutons. Retourne (cadre, entete)."""
+    from settings_cells import build_cells_table
+
+    rows = []
+    for name, avatar, state, action in entries:
+        label = QLabel(name)
+        _set_text_role(label, "value")
+        if isinstance(state, str):
+            text = state
+            state = QLabel(text)
+            _set_text_role(state, "value_muted")
+        rows.append([(avatar, "center", "center"), (label, "left", "center"), (state, "left", "center"),
+                     (action, "left", "center")])
+    frame, head, _cells = build_cells_table([(title, width) for title, width in columns], rows)
+    frame._v2_head = head
+    return frame, head
+
+
 class LogicielsField(QWidget):
-    """ICONES > Logiciels : logiciels reconnus (+ ceux ajoutes), une ligne chacun (icone, nom,
-    changer / capturer l'icone, supprimer), et « Ajouter un logiciel... ». Valeurs : les logiciels
+    """ICONES > Logiciels : logiciels reconnus (+ ceux ajoutes), une ligne chacun du tableau d'icones commun (apercu,
+    nom, origine, changer / capturer l'icone, supprimer), et « Ajouter un logiciel... ». Valeurs : les logiciels
     ajoutes (`custom_softwares`) et ceux d'origine retires (`removed_softwares`)."""
 
     changed = Signal()
@@ -417,6 +446,7 @@ class LogicielsField(QWidget):
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(4)
+        self._table = None
         self._rebuild()
 
     def _keys(self) -> list:
@@ -435,25 +465,24 @@ class LogicielsField(QWidget):
                 item.widget().hide()
                 item.widget().deleteLater()
         labels = {e["key"]: e["label"] for e in self.custom}
+        entries = []
         for key in self._keys():
-            line, line_l = _row()
             avatar = _avatar()
             avatar.setPixmap(pb_core.software_icon_pixmap(key, 24))
-            name = QLabel(labels.get(key, key))
-            _set_text_role(name, "value")
-            name.setFixedWidth(150)
-            line_l.addWidget(avatar)
-            line_l.addWidget(name)
+            line, line_l = _row()
             for text, action in (("Changer l'icone...", self._change), ("Capturer une zone d'ecran...", self._capture)):
                 button = _button(text)
                 button.clicked.connect(lambda _c=False, k=key, av=avatar, act=action: act(k, av))
                 line_l.addWidget(button)
             delete = _button("Supprimer")
-            delete.clicked.connect(
-                lambda _c=False, k=key, c=key not in pb_previews.SOFTWARE_ICONS: self._delete(k, c))
+            is_custom = key not in pb_previews.SOFTWARE_ICONS
+            delete.clicked.connect(lambda _c=False, k=key, c=is_custom: self._delete(k, c))
             line_l.addWidget(delete)
             line_l.addStretch(1)
-            self._layout.addWidget(line)
+            entries.append((labels.get(key, key), avatar, "Ajouté" if is_custom else "Intégré", line))
+        frame, _head = icon_table(entries, (("Aperçu", 80), ("Nom", 200), ("Origine", 110), ("Action", 480)))
+        self._table = frame
+        self._layout.addWidget(frame, 0, Qt.AlignLeft)
         add = _Btn("+  Ajouter un logiciel...", "transparent", "", M["value_fg"], M["btn_hover"],
                    height=28, weight=500, padding="0 12px", align_left=True)
         add.clicked.connect(self._add)

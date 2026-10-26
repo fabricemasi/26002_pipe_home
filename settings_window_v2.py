@@ -46,7 +46,7 @@ from settings_cells import (
     normalize_toggles, slider_fields, wrap_split,
 )
 
-from app_style import INSPECTOR_TITLE, PREVIEW_STACK_TITLE, apply_dwm_frame, resize_hit_test
+from app_style import apply_dwm_frame, resize_hit_test
 from settings_layout import (
     _ReorderOverlay, _reflow_ancestors,
     _Section, _SectionHeader, _SubSection, _TabStrip, _TABLE_HEAD, _ResizableTableHeader, _TableRow,
@@ -79,7 +79,7 @@ from settings_window import (_NoSqueezeScrollArea, _OmitListField, _PanelFrame, 
                              install_extra_window, seed_extra_window_look, shadow_margins)
 from settings_lut import LUT_HELP_TEXT, LutTestImagesField
 from settings_sections import _FONT_ROLES
-from settings_v2_app import FontRoleField, LogicielsField, RootPathField, SemanticColorField, UiIconField
+from settings_v2_app import FontRoleField, LogicielsField, RootPathField, SemanticColorField, UiIconField, icon_table
 from settings_v2_app import _button as _settings_button
 from app_style import SEMANTIC_COLOR_SLOTS
 
@@ -100,14 +100,6 @@ class Spec:
     params: dict = field(default_factory=dict)
     extra_keys: tuple = ()
     general_toggle: str | None = None   # General : cle booleenne d'un interrupteur d'override devant la ligne
-    only: tuple | None = None       # titres de portee ou la ligne existe (None = General) ; None = partout
-    exclude: tuple = ()             # titres de portee ou elle n'existe PAS
-    # Onglet de surcharge : reglage PROPRE a cette colonne (Focus > Zone titre, Projets > Icone de
-    # niveaux...) : pas de toggle de surcharge, la valeur va dans la cle generale.
-    flat: bool = False
-
-    def applies(self, title: str | None) -> bool:
-        return (self.only is None or title in self.only) and title not in self.exclude
 
 
 def _shadow_spec(prefix: str, label: str = "Ombres", **kw) -> "Spec":
@@ -120,56 +112,7 @@ def _shadow_spec(prefix: str, label: str = "Ombres", **kw) -> "Spec":
                 extra_keys=(prefix, f"{prefix}_size"), **kw)
 
 
-CATALOG: dict[str, list[Spec]] = {
-    "Colonnes": [
-        Spec("item_column_width", "Largeur par defaut", "slider", 180, {"min": 120, "max": 640}),
-        Spec("column_padding", "Padding", "padding", {}),
-        Spec("column_bg_color", "Couleur de fond", "color_app", "@skinN2", {"title": "Fond de colonne"}),
-        Spec("column_border_enabled", "Bordure", "sides", True, {"colors_key": "column_border"},
-             extra_keys=("column_border",)),
-        Spec("column_border_thickness", "Epaisseur de bordure", "slider", 1, {"min": 0, "max": 8}),
-        Spec("column_border_radius", "Border radius", "corners", 0, {"max": 20}),
-    ],
-    "Entetes": [
-        Spec("header_visible", "Afficher", "bool", True),
-        Spec("header_height", "Hauteur des entetes", "slider", 26, {"min": 16, "max": 56}),
-        Spec("header_padding", "Padding des entetes", "slider", 0, {"min": 0, "max": 32}),
-        Spec("header_color", "Couleur des entetes", "header_color", "skinN1"),
-        Spec("header_radius", "Border radius", "corners", 0, {"max": 16}),
-        Spec("header_border_enabled", "Bordure", "sides", False, {"colors_key": "header_border"},
-             extra_keys=("header_border",)),
-        Spec("header_border_thickness", "Epaisseur de bordure", "slider", 1, {"min": 0, "max": 8}),
-        Spec("header_icon_right_padding", "Padding droit des icones", "slider", 0, {"min": 0, "max": 40}),
-        Spec("header_font_family", "Police du titre", "font", "Systeme"),
-        Spec("header_font_bold", "Gras du titre", "bool", True),
-        Spec("header_font_color", "Couleur du titre", "color_app", "#9aa1a7", {"title": "Couleur du titre"}),
-        Spec("header_font_size", "Hauteur de police du titre", "slider", 10, {"min": 6, "max": 24}),
-    ],
-}
-
-_TYPE_OR_GENERAL = ("Type", None)          # le General montre les memes lignes de texte que "Type"
-
-def _text_specs() -> list[Spec]:
-    """Groupe Texte. Police/gras + le registre _ITEM_TEXT_FIELD_SPECS (ajouter
-    une entree la-bas la fait apparaitre ici) pour Type et General ; Projets,
-    INTERMEDIAIRE, IN... n'ont que Hauteur/Espacement (rendu unifie)."""
-    specs = [
-        Spec("item_font_family", "Police", "font_select", "Systeme", only=_TYPE_OR_GENERAL),
-        Spec("item_font_bold", "Gras", "bool", False, only=_TYPE_OR_GENERAL),
-    ]
-    for it in _ITEM_TEXT_FIELD_SPECS:
-        specs.append(Spec(it.key, it.label, "item_text", it.default, {"item": it}, only=_TYPE_OR_GENERAL))
-    specs += [
-        Spec("item_row_height", "Hauteur de la ligne", "slider", 25, {"min": 14, "max": 80, "width": 170},
-             exclude=_TYPE_OR_GENERAL),
-        Spec("item_row_spacing", "Espacement entre les lignes", "slider", 1, {"min": 0, "max": 20, "width": 170},
-             exclude=_TYPE_OR_GENERAL),
-        Spec("item_row_bg_color", "Couleur de fond", "color_app", "@skinN2", {"title": "Fond des lignes"}),
-        Spec("item_row_border_enabled", "Bordure entre les lignes", "row_border", False,
-             extra_keys=("item_row_border_color", "item_row_border_thickness")),
-    ]
-    return specs
-
+CATALOG: dict[str, list[Spec]] = {}
 
 def _selection_specs(prefix: str, color_key: str, color_default, app_color: bool, title: str) -> list[Spec]:
     """5 lignes d'un etat de selection. `prefix` = "item_selection" (Focus) ou
@@ -194,16 +137,6 @@ def _selection_specs(prefix: str, color_key: str, color_default, app_color: bool
     ]
 
 
-CATALOG["Texte"] = _text_specs()
-CATALOG["Image"] = [
-    Spec("item_image_padding", "Padding", "padding", {}),
-    Spec("item_image_border_enabled", "Bordure", "sides", False, {"colors_key": "item_image_border"},
-         extra_keys=("item_image_border",)),
-    Spec("item_image_border_thickness", "Epaisseur de bordure", "slider", 1, {"min": 0, "max": 8, "width": 170}),
-    _shadow_spec("item_image_shadow"),
-    Spec("item_image_radius", "Border radius", "corners", 0, {"max": 20}),
-    Spec("item_image_ratio", "Ratio (largeur/hauteur)", "ratio", 1.0),
-]
 # Selection = 4 etats, chacun un tableau (sous-sections de niveau 3).
 SELECTION_STATES: list[tuple[str, str]] = [
     ("Selection : Focus", "Focus"), ("Selection : Non focus", "Non focus"),
@@ -301,11 +234,6 @@ CATALOG["G Apercu"] = [
     Spec("item_image_radius", "Border radius", "corners", 0, {"max": 20}),
     Spec("item_image_ratio", "Ratio (largeur/hauteur)", "ratio_slider", 1.0),
 ]
-
-
-# Groupes visibles selon la portee (Focus/Inspecteur : pas de lignes, donc
-# seulement Colonnes et Entetes).
-ROWLESS_SCOPES = (PREVIEW_STACK_TITLE, INSPECTOR_TITLE)
 
 
 # -- TITRE : 5 niveaux de titre (police composite, espacements, fond du paragraphe) --
@@ -509,7 +437,7 @@ CATALOG["Visionneuse"] = [
 
 
 def _board_icon_rows():
-    """Reglages > MRO > Icones : une ligne par bouton du module (meme champ que les autres icones)."""
+    """Reglages > Module MRO > Icones : une ligne par bouton du module (meme champ que les autres icones)."""
     try:
         from board.model import ICON_ROWS
     except Exception:                                   # noqa: BLE001 - paquet absent : pas de lignes
@@ -533,6 +461,205 @@ CATALOG["MRO"] = [
     Spec("board_snap_distance", "Distance d'aimantation (pixels d'écran)", "slider", 6,
          {"min": 1, "max": 30, "active_when": ("board_snap_enabled", True)}),
 ]
+
+
+CATALOG["MRO : Navigation"] = [
+    Spec("board_zoom_speed", "Vitesse du zoom (par cran de molette)", "slider", 15, {"min": 1, "max": 100, "unit": "%"}),
+    Spec("board_zoom_fine", "Zoom fin, Maj tenu (par cran de molette)", "slider", 3, {"min": 1, "max": 50, "unit": "%"}),
+]
+
+
+CATALOG["MRO : Ouverture"] = [
+    Spec("board_open_cad_drawings", "Double-clic sur un dessin DXF / DWG : Module MRO", "bool", True),
+]
+
+# Grille UNIQUE du board et du module CAD (board/scene.py, `grid_look`). Affichee ou non : bouton « Grille » de la
+# barre d'outils du board (F7 en mode CAD), reglage de chaque board. Chaque ligne peut etre remplacee par dessin
+# (barre CAD > Reglages du dessin, `page["cad"]["overrides"]`).
+CATALOG["MRO : Grille"] = [
+    Spec("board_grid_step", "Pas de base de la grille", "slider", 400,
+         {"min": 1, "max": 100000, "scale": 100, "unit": "", "box": 84}),
+    Spec("board_grid_unit", "Unité du pas et de l'origine", "choice", "board",
+         {"choices": (("board", "Unités du board (1/96 de pouce)"), ("cad", "Unité de mesure du CAD")), "width": 230}),
+    Spec("board_grid_factor", "Facteur entre deux niveaux", "slider", 4, {"min": 2, "max": 10, "unit": "×"}),
+    Spec("board_grid_levels", "Niveaux visibles au plus", "slider", 12, {"min": 1, "max": 12, "unit": ""}),
+    Spec("board_grid_fade_start", "Apparition d'un niveau à (pixels d'écran)", "slider", 12, {"min": 1, "max": 200}),
+    Spec("board_grid_fade_full", "Niveau plein à (pixels d'écran)", "slider", 60, {"min": 2, "max": 400}),
+    Spec("board_grid_origin_x", "Origine X", "slider", 0,
+         {"min": -1000000, "max": 1000000, "scale": 100, "unit": "", "box": 84}),
+    Spec("board_grid_origin_y", "Origine Y (vers le haut)", "slider", 0,
+         {"min": -1000000, "max": 1000000, "scale": 100, "unit": "", "box": 84}),
+    Spec("board_grid_style", "Style", "choice", "lines",
+         {"choices": (("lines", "Lignes"), ("dots", "Points aux croisements"), ("crosses", "Croix aux croisements")),
+          "width": 200}),
+    Spec("board_grid_thickness", "Épaisseur (pixels)", "slider", 1, {"min": 1, "max": 6}),
+    Spec("board_grid_dot_size", "Taille des points / croix (pixels)", "slider", 2,
+         {"min": 1, "max": 12, "active_when": ("board_grid_style", ["dots", "crosses"])}),
+    Spec("board_grid_auto_color", "Couleur automatique (noire sur canvas clair, blanche sur sombre)", "bool", True),
+    Spec("board_grid_intensity", "Intensité d'un niveau plein (couleur automatique)", "slider", 66,
+         {"min": 5, "max": 1000, "scale": 10, "unit": "%", "active_when": ("board_grid_auto_color", True)}),
+    Spec("board_grid_color", "Couleur d'un niveau plein (son opacité compte)", "color_app", "#11000000",
+         {"title": "Grille", "active_when": ("board_grid_auto_color", False)}),
+    Spec("board_grid_axes", "Axes passant par l'origine", "bool", False),
+    Spec("board_grid_axes_color", "Couleur des axes", "color_app", "#66ff2f2f",
+         {"title": "Axes de la grille", "active_when": ("board_grid_axes", True)}),
+    Spec("board_grid_axes_thickness", "Épaisseur des axes (pixels)", "slider", 1,
+         {"min": 1, "max": 6, "active_when": ("board_grid_axes", True)}),
+]
+
+
+MRO_TAB = "Module MRO"
+CAD_TAB = "Module CAD"
+
+
+def _cad_groups() -> dict:
+    """Onglet « Module CAD » : lignes par section (cles `board_cad_*`). Memes lignes dans la fenetre « accrochages et
+    suivi » ouverte depuis la barre d'outils CAD (« Changement de style a la volee », `CAD_GROUPS`)."""
+    from board import cad_model
+    from board.cad_snap import ENGLISH, LABELS, MODES
+    osnap = ("board_cad_osnap", True)
+    snap = [Spec("board_cad_osnap", "Accrochages aux objets — OSNAP (F3)", "bool", True)]
+    for mode in MODES:
+        snap.append(Spec(f"board_cad_osnap_{mode}", f"Accrochage : {LABELS[mode]} ({ENGLISH[mode]})", "bool",
+                         mode in ("end", "mid", "int", "ext", "cen"), {"active_when": osnap}))
+    snap += [
+        Spec("board_cad_aperture", "Distance de détection (pixels d'écran)", "slider", 10, {"min": 2, "max": 40}),
+        Spec("board_cad_markers", "Marqueurs d'accrochage", "bool", True),
+        Spec("board_cad_marker_size", "Taille des marqueurs (pixels)", "slider", 12,
+             {"min": 6, "max": 30, "active_when": ("board_cad_markers", True)}),
+        Spec("board_cad_marker_color", "Couleur des marqueurs", "color_app", "#ff7a00",
+             {"title": "Marqueurs d'accrochage", "active_when": ("board_cad_markers", True)}),
+        Spec("board_cad_tooltips", "Infobulles (type d'accrochage, polaire, commandes)", "bool", True),
+    ]
+    tracking = [
+        Spec("board_cad_ortho", "Mode orthogonal — ORTHO (F8)", "bool", False),
+        Spec("board_cad_polar", "Suivi polaire (F10)", "bool", False),
+        Spec("board_cad_polar_increment", "Incrément polaire", "choice", "45",
+             {"choices": (("15", "15°"), ("30", "30°"), ("45", "45°"), ("90", "90°"), ("custom", "Personnalisé")),
+              "width": 140}),
+        Spec("board_cad_polar_custom", "Incrément personnalisé (degrés)", "slider", 45,
+             {"min": 1, "max": 180, "unit": "°", "active_when": ("board_cad_polar_increment", "custom")}),
+        Spec("board_cad_otrack", "Suivi d'accrochage — OTRACK (F11)", "bool", False),
+        Spec("board_cad_track_polar", "Suivi d'accrochage selon les angles polaires (sinon orthogonal)", "bool",
+             True, {"active_when": ("board_cad_otrack", True)}),
+        Spec("board_cad_track_color", "Couleur des lignes de suivi", "color_app", "#18a058",
+             {"title": "Lignes de suivi"}),
+        Spec("board_cad_dyn", "Saisie dynamique — DYN (F12)", "bool", True),
+    ]
+    # Une seule grille (celle du board : Reglages > Module MRO > Grille ; F7 = l'afficher) : RESOL s'y accroche.
+    grid = [
+        Spec("board_cad_grid_snap", "Accrochage à la grille du board (niveau affiché) — RESOL (F9)", "bool", False),
+    ]
+    units = [
+        Spec("board_cad_unit", "Unité de mesure (saisie, affichage, types de ligne)", "choice", "mm",
+             {"choices": tuple((k, cad_model.UNITS[k][0]) for k in cad_model.UNIT_CHOICES), "width": 200}),
+    ]
+    linetypes = [Spec("board_cad_linetypes", "Types de ligne", "cad_linetypes", [])]
+    # Tout ce qui concerne le reticule (chaque ligne est aussi remplacable par dessin : reglages du dessin).
+    crosshair = [
+        Spec("board_cad_crosshair", "Réticule en croix", "bool", True),
+        Spec("board_cad_crosshair_size", "Longueur des bras (pixels)", "slider", 40,
+             {"min": 8, "max": 400, "active_when": [("board_cad_crosshair", True), ("board_cad_crosshair_full", False)]}),
+        Spec("board_cad_crosshair_full", "Bras jusqu'aux bords de la vue", "bool", False,
+             {"active_when": ("board_cad_crosshair", True)}),
+        Spec("board_cad_crosshair_auto_color", "Couleur automatique (selon le fond du canvas)", "bool", True),
+        Spec("board_cad_crosshair_color", "Couleur du réticule", "color_app", "#1a1a1a",
+             {"title": "Réticule", "active_when": ("board_cad_crosshair_auto_color", False)}),
+        Spec("board_cad_pickbox", "Carré central : demi-côté (pixels d'écran, = boîte de sélection)", "slider", 5,
+             {"min": 1, "max": 20}),
+        Spec("board_cad_magnet", "Aimant : le réticule saute sur le point accroché (objets)", "bool", True),
+        Spec("board_cad_crosshair_memory", "Indicateur « propriétés en mémoire » (pipette) sur le réticule", "bool", True),
+    ]
+    selection = [
+        Spec("board_cad_pickadd", "Clic = ajouter à la sélection (Maj = retirer), comme PICKADD", "bool", False),
+        Spec("board_cad_grip_size", "Taille des poignées (pixels)", "slider", 8, {"min": 4, "max": 20}),
+        Spec("board_cad_grip_color", "Couleur des poignées", "color_app", "#2f6bff", {"title": "Poignées"}),
+    ]
+    display = [
+        Spec("board_cad_gpu", "Rendu GPU (OpenGL) des entités CAD — essai, fluidité du zoom et du déplacement", "bool",
+             False),
+        Spec("board_cad_lineweights", "Afficher les épaisseurs de ligne (éteint : simples lignes, comme AutoCAD)", "bool", True),
+        Spec("board_cad_aa_samples", "Anticrénelage du rendu GPU (échantillons par pixel)", "choice", "8",
+             {"choices": (("1", "Couverture exacte seule"), ("2", "2x"), ("4", "4x"), ("8", "8x"), ("16", "16x"),
+                          ("32", "32x"), ("64", "64x")), "width": 200}),
+        Spec("board_cad_aa_filter", "Adoucissement du suréchantillonnage (rayon du filtre)", "slider", 75,
+             {"min": 50, "max": 200, "unit": "%"}),
+        Spec("board_cad_antialiasing", "Anticrénelage des lignes", "bool", True),
+        Spec("board_cad_linear_blend", "Anticrénelage corrigé du gamma (bords et arrondis lisses)", "bool", True,
+             {"active_when": ("board_cad_antialiasing", True)}),
+        Spec("board_cad_crisp_lines", "Traits fins nets (horizontaux et verticaux calés sur les pixels)", "bool", True),
+        Spec("board_cad_dense_px", "Motif de ligne trop serré : trait continu sous (pixels)", "slider", 4,
+             {"min": 1, "max": 20}),
+        Spec("board_cad_ghost_color", "Couleur des fantômes (déplacer, copier)", "color_app", "#5f6b78",
+             {"title": "Fantômes"}),
+        Spec("board_cad_bar_color", "Fond des barres du CAD (outils et commande)", "color_app", "#0a0a0a",
+             {"title": "Barres du CAD"}),
+        Spec("board_cad_precision", "Décimales affichées", "slider", 4, {"min": 0, "max": 8, "unit": ""}),
+    ]
+    dims = [
+        Spec("board_cad_dim_text", "Hauteur du texte", "slider", 250,
+             {"min": 10, "max": 100000, "scale": 100, "unit": "", "box": 84}),
+        Spec("board_cad_dim_arrow", "Taille des flèches", "slider", 250,
+             {"min": 0, "max": 100000, "scale": 100, "unit": "", "box": 84}),
+        Spec("board_cad_dim_gap", "Écart des lignes d'attache à leur origine", "slider", 100,
+             {"min": 0, "max": 100000, "scale": 100, "unit": "", "box": 84}),
+        Spec("board_cad_dim_over", "Dépassement des lignes d'attache", "slider", 125,
+             {"min": 0, "max": 100000, "scale": 100, "unit": "", "box": 84}),
+        Spec("board_cad_dim_scale", "Échelle des cotations (texte, flèches, écarts)", "slider", 100,
+             {"min": 1, "max": 100000, "unit": "%", "box": 84}),
+        Spec("board_cad_dim_arrow_kind", "Forme des flèches", "choice", "triangle",
+             {"choices": (("triangle", "Triangle"), ("open", "Ouverte"), ("tick", "Trait oblique")), "width": 170}),
+        Spec("board_cad_dim_decimals", "Décimales (zéros de fin retirés)", "slider", 2, {"min": 0, "max": 8, "unit": ""}),
+    ]
+    hatches = [
+        Spec("board_cad_hatch_pattern", "Motif par défaut", "choice", "lines",
+             {"choices": (("solid", "Plein"), ("lines", "Lignes"), ("cross", "Croisé"), ("brick", "Briques")),
+              "width": 170}),
+        Spec("board_cad_hatch_angle", "Angle du motif", "slider", 45, {"min": 0, "max": 179, "unit": "°"}),
+        Spec("board_cad_hatch_spacing", "Espacement des traits", "slider", 300,
+             {"min": 1, "max": 1000000, "scale": 100, "unit": "", "box": 84}),
+        Spec("board_cad_hatch_alpha", "Opacité du remplissage plein", "slider", 35, {"min": 0, "max": 100, "unit": "%"}),
+    ]
+    justify = tuple((code, f"{code} — {label}") for code, label in (
+        ("L", "Gauche (ligne de base)"), ("C", "Centre (ligne de base)"), ("R", "Droite (ligne de base)"),
+        ("TL", "Haut gauche"), ("TC", "Haut centre"), ("TR", "Haut droite"), ("ML", "Milieu gauche"),
+        ("MC", "Milieu centre"), ("MR", "Milieu droite"), ("BL", "Bas gauche"), ("BC", "Bas centre"),
+        ("BR", "Bas droite")))
+
+    def font_choices():
+        from PySide6.QtGui import QFontDatabase
+        return tuple((family, family) for family in QFontDatabase.families())
+    texts = [
+        Spec("board_cad_text_height", "Hauteur du texte (capitales)", "slider", 250,
+             {"min": 1, "max": 100000, "scale": 100, "unit": "", "box": 84}),
+        Spec("board_cad_text_font", "Police", "choice", "Arial", {"choices": font_choices, "width": 220}),
+        Spec("board_cad_text_justify", "Justification du texte (TEXTE)", "choice", "L",
+             {"choices": justify, "width": 220}),
+        Spec("board_cad_mtext_justify", "Justification du texte multiligne (MTEXTE)", "choice", "TL",
+             {"choices": justify, "width": 220}),
+        Spec("board_cad_text_spacing", "Interligne (100 % = 5/3 de la hauteur, comme AutoCAD)", "slider", 100,
+             {"min": 25, "max": 400, "unit": "%"}),
+    ]
+    shortcuts = [
+        Spec("board_cad_pgp_path", "Fichier d'alias (.pgp d'AutoCAD)", "cad_pgp_path", ""),
+    ]
+    try:
+        from board.model import CAD_ICON_ROWS
+    except Exception:                                   # noqa: BLE001 - paquet absent : pas de lignes
+        CAD_ICON_ROWS = []
+    icons = [Spec(f"ui_icon:ui_board_{kind}", label, "ui_icon", None, {"ui_key": f"ui_board_{kind}"})
+             for kind, label in CAD_ICON_ROWS]
+    return {"CAD : Unités": units, "CAD : Types de ligne": linetypes, "CAD : Accrochages": snap,
+            "CAD : Suivi et saisie": tracking, "CAD : Grille": grid, "CAD : Réticule": crosshair,
+            "CAD : Sélection et poignées": selection, "CAD : Affichage": display, "CAD : Cotations": dims, "CAD : Hachures": hatches,
+            "CAD : Textes": texts,
+            "CAD : Raccourcis clavier": shortcuts,
+            "CAD : Icônes": icons}
+
+
+CAD_GROUPS = ("CAD : Accrochages", "CAD : Suivi et saisie", "CAD : Grille", "CAD : Réticule",
+              "CAD : Sélection et poignées", "CAD : Affichage")
+CATALOG.update(_cad_groups())
 
 
 # ==========================================================================
@@ -1228,7 +1355,7 @@ CATALOG["Menu contextuel : Separateurs"] = [
     Spec("ctx_menu_sep_thickness", "Épaisseur", "slider", 1, {"min": 0, "max": 8}),
     Spec("ctx_menu_sep_padding", "Marges", "padding", {}),
 ]
-# Module « Board » : Reglages > MRO > Barres d'outils (habillage des barres flottantes du board).
+# Module « Board » : Reglages > Module MRO > Barres d'outils (habillage des barres flottantes du board).
 CATALOG["MRO : Barres d'outils"] = [
     Spec("board_toolbar_bg_color", "Couleur de fond", "color_app", "#16181a", {"title": "Fond des barres d'outils"}),
     Spec("board_toolbar_border_enabled", "Bordures", "sides_thick", True,
@@ -1449,49 +1576,48 @@ CATALOG["Icones : Logiciels"] = [
     Spec("custom_softwares", "Logiciels", "logiciels", [], extra_keys=("removed_softwares",)),
 ]
 
-# Onglet Focus (colonne des vignettes) : reglages propres a cette colonne, a plat (sans toggle de
-# surcharge), sauf le Ratio qui surcharge item_image_ratio comme dans les autres colonnes.
+# General > Colonnes speciales > Colonne Focus (colonne des vignettes) : reglages propres a cette colonne.
 CATALOG["Focus : Image"] = [
-    Spec("preview_padding", "Padding", "padding", {}, flat=True),
-    Spec("preview_radius", "Border radius", "corners", 0, {"max": 40}, flat=True),
-    _shadow_spec("preview_shadow", flat=True),
-    Spec("item_image_ratio", "Ratio (largeur/hauteur)", "ratio", 1.0),
+    Spec("preview_padding", "Padding", "padding", {}),
+    Spec("preview_radius", "Border radius", "corners", 0, {"max": 40}),
+    _shadow_spec("preview_shadow"),
+    Spec("preview_image_ratio", "Ratio (largeur/hauteur)", "ratio", 1.0),
 ]
 CATALOG["Focus : Zone titre"] = [
-    Spec("preview_title_zone_height", "Hauteur", "slider", 52, {"min": 20, "max": 120}, flat=True),
+    Spec("preview_title_zone_height", "Hauteur", "slider", 52, {"min": 20, "max": 120}),
     Spec("preview_title_font_family", "Titre - police", "font_gabarit", "",
          {"prefix": "preview_title", "size": (8, 48), "size_default": 26, "color_default": "#d6d9dc",
-          "color_title": "Couleur du titre"}, extra_keys=_gabarit_extra("preview_title"), flat=True),
+          "color_title": "Couleur du titre"}, extra_keys=_gabarit_extra("preview_title")),
     Spec("preview_title_padding", "Titre - padding", "padding", {},
-         {"order": [("left", "G"), ("top", "H"), ("bottom", "B")]}, flat=True),
+         {"order": [("left", "G"), ("top", "H"), ("bottom", "B")]}),
     Spec("preview_status_font_family", "Apercu des dossiers - police", "font_gabarit", "",
          {"prefix": "preview_status", "size": (6, 24), "size_default": 10, "color_default": "#d6d9dc",
-          "color_title": "Couleur (apercu dossiers)"}, extra_keys=_gabarit_extra("preview_status"), flat=True),
+          "color_title": "Couleur (apercu dossiers)"}, extra_keys=_gabarit_extra("preview_status")),
     Spec("preview_status_font_color_idle", "Apercu des dossiers - non selectionne", "color_app", "#5f666b",
-         {"title": "Non selectionne"}, flat=True),
+         {"title": "Non selectionne"}),
     Spec("preview_status_padding", "Apercu des dossiers - padding", "padding", {},
-         {"order": [("top", "H"), ("right", "D")]}, flat=True),
+         {"order": [("top", "H"), ("right", "D")]}),
 ]
 _STEP_BADGE_BG = {"2": "#5c6368", "3": "#5c6368", "4": "#3f6f9f", "5": "#3f6f9f", "6": "#d9822b", "n": "#5c6368"}
 CATALOG["Projets : Icone de niveaux"] = [
     Spec("step_badge_width", "Taille", "xy", 18,
          {"range": (8, 60), "defaults": (18, 18), "second_key": "step_badge_height",
-          "captions": ("Largeur", "Hauteur")}, extra_keys=("step_badge_height",), flat=True),
+          "captions": ("Largeur", "Hauteur")}, extra_keys=("step_badge_height",)),
     Spec("step_badge_border_enabled", "Bordures", "sides_thick", False,
          {"colors_key": "step_badge_border", "thickness_key": "step_badge_border_thickness"},
-         extra_keys=("step_badge_border", "step_badge_border_thickness"), flat=True),
-    Spec("step_badge_border_smoothing", "Lissage de la bordure", "bool", True, flat=True),
-    Spec("step_badge_radius", "Border radius", "corners", 9, {"max": 30}, flat=True),
+         extra_keys=("step_badge_border", "step_badge_border_thickness")),
+    Spec("step_badge_border_smoothing", "Lissage de la bordure", "bool", True),
+    Spec("step_badge_radius", "Border radius", "corners", 9, {"max": 30}),
     *[Spec(f"step_badge_text_color_base{n}", f"Couleurs base {n.upper()}", "color_pair", "#eef2f5",
            {"bg_key": f"step_badge_color_base{n}", "text_default": "#eef2f5", "bg_default": bg},
-           extra_keys=(f"step_badge_color_base{n}",), flat=True)
+           extra_keys=(f"step_badge_color_base{n}",))
       for n, bg in _STEP_BADGE_BG.items()],
     Spec("step_badge_font_family", "Police du numero", "font_gabarit", "",
          {"prefix": "step_badge", "only": ("family", "bold", "smoothing"), "bold_default": True},
-         extra_keys=_gabarit_extra("step_badge", only=("family", "bold", "smoothing")), flat=True),
+         extra_keys=_gabarit_extra("step_badge", only=("family", "bold", "smoothing"))),
     Spec("step_badge_offset_x", "Position", "xy", 4,
          {"range": (-100, 200), "defaults": (4, 0), "second_key": "step_badge_offset_y", "captions": ("H", "V")},
-         extra_keys=("step_badge_offset_y",), flat=True),
+         extra_keys=("step_badge_offset_y",)),
 ]
 
 
@@ -1509,17 +1635,20 @@ class Node:
     toggle_key: str | None = None    # sous-section d'un style de toggle (clic droit : renommer / supprimer)
 
 
-COLUMN_NODES = (
-    Node("Colonnes", "Colonnes"), Node("Entetes", "Entetes"), Node("Texte", "Texte"), Node("Image", "Image"),
-    Node("Selection", children=tuple(Node(label, group) for group, label in SELECTION_STATES)),
-)
+SELECTION_NODE = Node("Selection", children=tuple(Node(label, group) for group, label in SELECTION_STATES))
+
+# General > Colonnes speciales : reglages propres a une colonne (ex-onglets Projets et Focus).
+SPECIAL_COLUMNS = Node("Colonnes spéciales", children=(
+    Node("Colonne Projets", children=(Node("Icône de niveaux", "Projets : Icone de niveaux"),)),
+    Node("Colonne Focus", children=(Node("Image", "Focus : Image"), Node("Zone titre", "Focus : Zone titre"))),
+))
 
 GENERAL_COLUMNS = Node("Colonnes", children=(
     Node("Colonnes", "G Colonnes"), Node("Encart", "G Encart"), Node("Entetes", "G Entetes"),
     Node("Lignes", children=(Node("Lignes", "G Lignes"), Node("Texte", "G Texte"),
                              Node("Icone", "G Icone"), Node("Apercu", "G Apercu"))),
     Node("Raccourci", "Raccourci"),
-    COLUMN_NODES[-1],                                   # Selection (Focus + 3 etats clones)
+    SELECTION_NODE,                                     # Selection (Focus + 3 etats clones)
 ))
 
 def _toggle_style_node(prefix: str, label: str) -> Node:
@@ -1541,6 +1670,7 @@ def general_tree(settings: dict | None = None) -> tuple:
 
 GENERAL_TREE = (
     GENERAL_COLUMNS,
+    SPECIAL_COLUMNS,
     Node("TITRES", children=(Node("Polices", "Titre : Polices"),
                              Node("Paragraphes", children=tuple(Node(f"Niveau {n}", f"Titre : Fond {n}")
                                                                for n in range(1, 6))))),
@@ -1551,10 +1681,6 @@ GENERAL_TREE = (
                                                  Node("Regroupement", "Visionneuse : Regroupement"),
                                                  Node("Filtres", "Visionneuse : Filtres"),
                                                  Node("Icônes", "Visionneuse : Icones"))),
-    Node("MRO", "MRO", children=(
-        Node("Barres d'outils", "MRO : Barres d'outils"),
-        Node("Menus contextuels", children=tuple(Node(t, f"MRO : {g}") for t, g in BOARD_MENU_GROUPS)),
-        Node("Icônes", "MRO : Icones"))),
     Node("Menu contextuel", children=(Node("Menu", "Menu contextuel : Menu"), Node("Lignes", "Menu contextuel : Lignes"),
                                       Node("Survol", "Menu contextuel : Survol"),
                                       Node("Libellés", "Menu contextuel : Libelles"),
@@ -1594,6 +1720,34 @@ VIDEO_TREE = (
     Node("Export et interpolation", "Vidéo : Export"),
 )
 
+# Onglet « Module MRO » (module Board, paquet board/ ; avant : section MRO de l'onglet General).
+MRO_TREE = (
+    Node("Ouverture", "MRO : Ouverture"),
+    Node("Navigation", "MRO : Navigation"),
+    Node("Magnétisme", "MRO"),
+    Node("Grille", "MRO : Grille"),
+    Node("Barres d'outils", "MRO : Barres d'outils"),
+    Node("Menus contextuels", children=tuple(Node(t, f"MRO : {g}") for t, g in BOARD_MENU_GROUPS)),
+    Node("Icônes", "MRO : Icones"),
+)
+
+# Onglet « Module CAD » (voir CATALOG["CAD : …"]).
+CAD_TREE = (
+    Node("Unités", "CAD : Unités"),
+    Node("Types de ligne", "CAD : Types de ligne"),
+    Node("Accrochages", "CAD : Accrochages"),
+    Node("Suivi et saisie", "CAD : Suivi et saisie"),
+    Node("Grille", "CAD : Grille"),
+    Node("Réticule", "CAD : Réticule"),
+    Node("Sélection et poignées", "CAD : Sélection et poignées"),
+    Node("Affichage", "CAD : Affichage"),
+    Node("Cotations", "CAD : Cotations"),
+    Node("Hachures", "CAD : Hachures"),
+    Node("Textes", "CAD : Textes"),
+    Node("Raccourcis clavier", "CAD : Raccourcis clavier"),
+    Node("Icônes", "CAD : Icônes"),
+)
+
 # Onglet « Markdown » (voir CATALOG["Markdown : …"]).
 MARKDOWN_TREE = (
     Node("Ouverture", "Markdown : Ouverture"),
@@ -1616,54 +1770,29 @@ MARKDOWN_TREE = (
 )
 
 # Onglets de reglages generaux a part (pas une colonne) : leur arbre.
-STANDALONE_TABS = {MARKDOWN_TAB: MARKDOWN_TREE, VIDEO_TAB: VIDEO_TREE}
+STANDALONE_TABS = {MARKDOWN_TAB: MARKDOWN_TREE, VIDEO_TAB: VIDEO_TREE, MRO_TAB: MRO_TREE, CAD_TAB: CAD_TREE}
 
 # Groupes repris de la v1 : leurs tableaux ont une cle de dimensions a eux (voir build_group).
 PORTED_GROUPS = frozenset(("Application", "Omettre", "LUT", "Polices principales", "Couleurs",
                            "Raccourci", "Icones : General", "Icones : Logiciels", "Focus : Image",
                            "Focus : Zone titre", "Projets : Icone de niveaux"))
 
-# Onglets de surcharge : sous-sections propres a une colonne (comme dans la v1).
-FOCUS_NODES = (Node("Image", "Focus : Image"), Node("Zone titre", "Focus : Zone titre"))
-PROJETS_NODES = (Node("Icone de niveaux", "Projets : Icone de niveaux"),)
-# Toutes les sections de la v1 sont portees (Application, omissions, LUT, Polices principales,
-# Couleurs, Geometrie, ICONES, RACCOURCI, et dans les onglets Focus / Projets : Image, Zone titre,
-# Bouton repliement, Icone de niveaux).
 # A FAIRE ENSEMBLE PLUS TARD : le systeme de PRESETS (celui de la v1 ne plait pas : on le
 # repense avec l'utilisateur avant de le recreer ici ; _on_save garde pour l'instant la mise a
 # jour du preset actif).
 
 
-def nodes_for(title: str | None, settings: dict | None = None) -> tuple:
-    """Noeuds d'un onglet : General = toute la fenetre ; surcharge = les
-    groupes de colonnes (Focus/Inspecteur : Colonnes et Entetes seulement)."""
-    if title is None:
-        return general_tree(settings)
-    if title == PREVIEW_STACK_TITLE:
-        return COLUMN_NODES[:2] + FOCUS_NODES
-    if title in ROWLESS_SCOPES:
-        return COLUMN_NODES[:2]
-    if title == "Projets":
-        return COLUMN_NODES + PROJETS_NODES
-    return COLUMN_NODES
-
-
-# Portees : (libelle d'onglet, titre reel de colonne ou None pour General).
+# Onglets : (libelle d'onglet, None). Tous sont des reglages GENERAUX (un onglet par theme, pas par colonne).
 SCOPES: list[tuple[str, str | None]] = [
     ("General", None),
-    ("Type", "Type"),
-    ("Projets", "Projets"),
-    ("INTERMEDIAIRE", "Sous-projet"),
-    (PREVIEW_STACK_TITLE, PREVIEW_STACK_TITLE),
-    ("Logiciels", "Logiciels"),
-    ("IN", "IN"),
-    ("OVER", "OVER"),
-    ("OUT", "OUT"),
-    (INSPECTOR_TITLE, INSPECTOR_TITLE),
-    # Onglet de reglages GENERAUX a part (pas une colonne) : valeurs dans les cles generales (`md_*`).
-    ("Markdown", None),
+    # Onglets de reglages GENERAUX a part : valeurs dans les cles generales (`md_*`, `video_*`).
+    (MARKDOWN_TAB, None),
     (VIDEO_TAB, None),
+    (MRO_TAB, None),
+    (CAD_TAB, None),
 ]
+# Libelle AFFICHE d'un onglet quand il differe de son identifiant (cles retenues, tests).
+TAB_LABELS = {MARKDOWN_TAB: "Module Markdown"}
 
 
 # ==========================================================================
@@ -1671,40 +1800,21 @@ SCOPES: list[tuple[str, str | None]] = [
 # ==========================================================================
 
 class ScopeValues:
-    """Valeur de depart d'un reglage pour une portee : General = reglages
-    courants ; surcharge = valeur surchargee si elle existe, sinon la
-    generale (meme regle que SettingsWindow._type_override_seed)."""
+    """Valeur de depart d'un reglage : les reglages courants (General et onglets a part)."""
 
-    def __init__(self, settings: dict, title: str | None, name: str | None = None):
+    def __init__(self, settings: dict, title: str | None = None, name: str | None = None):
         self.settings = settings
         self.title = title
-        # Nom de l'onglet dans les cles retenues (ordre des titres, espaces, styles de toggle) : « General », le
-        # titre de la colonne, ou un onglet de reglages generaux a part (« Markdown »).
+        # Nom de l'onglet dans les cles retenues (ordre des titres, espaces, styles de toggle) : « General »
+        # ou un onglet de reglages generaux a part (« Markdown »).
         self.name = name or (title or "General")
         self.hooks: dict[str, Callable] = {}     # actions que la fenetre met a disposition des champs
 
-    def _store(self, kind: str) -> dict:
-        if self.title is None:
-            return {}
-        if self.title == "Type":
-            key = {"overrides": "column_type_overrides", "enabled": "column_type_override_enabled",
-                   "linked": "column_type_override_linked"}[kind]
-            return self.settings.get(key) or {}
-        key = {"overrides": "column_overrides_by_title", "enabled": "column_override_enabled_by_title",
-               "linked": "column_override_linked_by_title"}[kind]
-        return (self.settings.get(key) or {}).get(self.title) or {}
-
     def seed(self, key: str, default):
-        overrides = self._store("overrides")
-        if key in overrides:
-            return overrides[key]
         follow = BOARD_MENU_FOLLOW.get(key)
         if follow is not None and not self.settings.get(follow[0]):
             return self.settings.get(follow[1], default)     # override coupe : la valeur de l'appli
         return self.settings.get(key, default)
-
-    def enabled(self, key: str) -> bool:
-        return bool(self._store("enabled").get(key, False))
 
     def linked(self, key: str, default: bool = True) -> bool:
         """Etat "lie" des 4 cotes/coins. `default` n'a d'effet que si la cle `<key>_linked`
@@ -1712,7 +1822,7 @@ class ScopeValues:
         follow = BOARD_MENU_FOLLOW.get(f"{key}_linked")
         if follow is not None and not self.settings.get(follow[0]):
             return bool(self.settings.get(follow[1], default))
-        return bool(self._store("linked").get(key, self.settings.get(f"{key}_linked", default)))
+        return bool(self.settings.get(f"{key}_linked", default))
 
 
 # ==========================================================================
@@ -2317,6 +2427,53 @@ class _MarkdownCssPathField(RootPathField):
         self.status.setToolTip(str(destination))
 
 
+class _CadPgpPathField(RootPathField):
+    """Reglages > Module CAD > Raccourcis clavier : fichier .pgp d'AutoCAD (alias de commandes) lu par le CAD
+    (`board/cad_aliases.py`). Etat a cote (alias actifs / prevus / sans equivalent), correspondance complete en
+    info-bulle. Le fichier de l'utilisateur n'est jamais modifie."""
+
+    def __init__(self, path):
+        super().__init__(path)
+        self.edit.setPlaceholderText("Aucun fichier : alias d'origine")
+        self.setToolTip("Fichier d'alias d'AutoCAD (acad.pgp : « L, *LIGNE »). Ce que l'on tape à « Commande : » dans\n"
+                        "le CAD : les alias du fichier passent avant ceux d'origine. Une commande pas encore\n"
+                        "disponible garde son alias (elle l'annonce) ; une commande sans équivalent est ignorée.\n"
+                        "Le fichier est relu quand il change.")
+        self.status = _text_label("", "note")
+        layout = self.layout()
+        layout.insertWidget(layout.count() - 1, self.status)
+        clear = _settings_button("Retirer")
+        clear.setToolTip("N'utiliser que les alias d'origine.")
+        clear.clicked.connect(lambda: self.edit.setText(""))
+        layout.insertWidget(layout.count() - 1, clear)
+        self.edit.textChanged.connect(lambda _t: self._refresh_status())
+        self._refresh_status()
+
+    def _refresh_status(self):
+        path = self.edit.text().strip()
+        if not path:
+            self.status.setText("")
+            self.status.setToolTip("")
+            return
+        try:
+            from board import cad_aliases
+        except Exception:                                   # noqa: BLE001 - paquet absent
+            return
+        loaded = cad_aliases.load(path)
+        self.status.setText(loaded.summary())
+        self.status.setToolTip(loaded.report())
+
+    def _browse(self):
+        chosen, _ = QFileDialog.getOpenFileName(self, "Choisir un fichier d'alias (.pgp)", self.edit.text(),
+                                                 "Fichiers d'alias AutoCAD (*.pgp);;Tous les fichiers (*)")
+        if chosen:
+            self.edit.setText(chosen)
+
+
+def _f_cad_pgp_path(spec, v, colors):
+    return _CadPgpPathField(str(v.seed(spec.key, spec.default) or ""))
+
+
 def _f_md_css_path(spec, v, colors):
     return _MarkdownCssPathField(str(v.seed(spec.key, spec.default) or ""))
 
@@ -2420,8 +2577,8 @@ def _f_ui_icon(spec, v, colors):
     a deux etats : une paire de sous-cellules chacun."""
     field = UiIconField(spec.params["ui_key"])
     parts = []
-    for caption, avatar, buttons in field.states():
-        parts += [(caption or "Icône", [avatar]), ("Choix", buttons)]
+    for caption, avatar, buttons, _state in field.states():
+        parts += [(caption or "Icône", [avatar]), ("Choix", [buttons])]
     holder = wrap_split(SplitCell(parts))
     holder._ui_icon_field = field          # garde le champ en vie : ses boutons lui sont relies
     return holder
@@ -2438,18 +2595,23 @@ def _f_color_mark(spec, v, colors):
     return holder
 
 
+def _f_cad_linetypes(spec, v, colors):
+    from board.cad_linetype_ui import LinetypesField    # paquet du board : charge a la demande
+    return LinetypesField(v.seed(spec.key, spec.default))
+
+
 def _f_logiciels(spec, v, colors):
     return LogicielsField(v.seed("custom_softwares", []), v.seed("removed_softwares", []))
 
 
 FIELD_FACTORIES: dict[str, Callable] = {
-    "md_css_path": _f_md_css_path, "choice": _f_choice,
+    "md_css_path": _f_md_css_path, "cad_pgp_path": _f_cad_pgp_path, "choice": _f_choice,
     "root_path": _f_root_path, "shortcut": _f_shortcut, "preset": _f_preset, "window_radius": _f_window_radius, "omit_list": _f_omit_list,
     "extension_list": _f_extension_list, "md_open_md": _choice_factory(MD_OPEN_MD),
     "md_mode": _choice_factory(MD_MODES), "md_align": _choice_factory(MD_ALIGN),
     "lut_images": _f_lut_images, "font_role": _f_font_role, "semantic_color": _f_semantic_color,
     "frame_radius": _f_frame_radius, "color_pair": _f_color_pair, "xy": _f_xy, "ui_icon": _f_ui_icon,
-    "logiciels": _f_logiciels, "collapse_mode": _choice_factory(COLLAPSE_MODES),
+    "logiciels": _f_logiciels, "cad_linetypes": _f_cad_linetypes, "collapse_mode": _choice_factory(COLLAPSE_MODES),
     "coche_skin": _f_coche_skin, "text": _f_text, "icon_choice": _f_icon_choice,
     "crumb_separator_kind": _choice_factory(CRUMB_SEPARATORS), "toggle_kind": _choice_factory(TOGGLE_KINDS), "toggle_motion": _choice_factory(TOGGLE_MOTIONS),
     "toggle_icons": _f_toggle_icons, "image_sequence": _f_image_sequence,
@@ -2501,6 +2663,7 @@ def _r_lut_images(spec, w) -> dict:
 
 FIELD_READERS: dict[str, Callable] = {
     "md_css_path": lambda sp, w: {sp.key: w.text().strip()},
+    "cad_pgp_path": lambda sp, w: {sp.key: w.text().strip()},
     "root_path": lambda sp, w: {sp.key: w.text().strip() or sp.default},
     "shortcut": lambda sp, w: {sp.key: w.value()},
     "preset": lambda sp, w: {sp.key: "" if w.value() == NO_PRESET else w.value()},
@@ -2521,6 +2684,7 @@ FIELD_READERS: dict[str, Callable] = {
     "xy": lambda sp, w: {sp.key: w._v2_parts["first"].value(), sp.params["second_key"]: w._v2_parts["second"].value()},
     "ui_icon": lambda sp, w: {},                 # agit tout de suite sur les fichiers d'icone
     "logiciels": lambda sp, w: w.values(),
+    "cad_linetypes": lambda sp, w: {sp.key: w.values()},
     "collapse_mode": _choice_reader(COLLAPSE_MODES),
     "coche_skin": lambda sp, w: {sp.key: {label: key for key, label in SKINS}[w.value()]},
     "crumb_separator_kind": _choice_reader(CRUMB_SEPARATORS), "toggle_kind": _choice_reader(TOGGLE_KINDS), "toggle_motion": _choice_reader(TOGGLE_MOTIONS),
@@ -2741,11 +2905,15 @@ def _dim_row(field: QWidget, dimmed: bool):
             effect.setOpacity(_DIMMED_OPACITY if dimmed else 1.0)
 
 
-def _link_active_rows(group: str, title: str | None, fields: dict):
+def _rule_holds(value, expected) -> bool:
+    return value in expected if isinstance(expected, list) else value == expected
+
+
+def _link_active_rows(group: str, fields: dict):
     """Lignes actives SEULEMENT quand une autre ligne du groupe a une valeur donnee
-    (`params["active_when"] = (cle, valeur)`, ex. Icones / Animation quand Type = Icones) : grisees
-    sinon, en direct."""
-    specs = [sp for sp in CATALOG[group] if sp.applies(title)]
+    (`params["active_when"] = (cle, valeur)`, ex. Icones / Animation quand Type = Icones ; valeur = liste : l'une
+    d'elles) : grisees sinon, en direct."""
+    specs = list(CATALOG[group])
     by_key = {sp.key: sp for sp in specs}
     for sp in specs:                    # champs d'une colonne en plus (« Activer ») : pilotes eux aussi
         sub = sp.params.get("column") or sp.params.get("shortcut")
@@ -2766,7 +2934,7 @@ def _link_active_rows(group: str, title: str | None, fields: dict):
                        for r in rules)
 
         def sync(target=target, drivers=drivers, same_row=same_row):
-            off = any(read_spec(d_spec, d_widget).get(r[0]) != r[1] for d_spec, d_widget, r in drivers)
+            off = any(not _rule_holds(read_spec(d_spec, d_widget).get(r[0]), r[1]) for d_spec, d_widget, r in drivers)
             if same_row:
                 _set_dimmed(target, off)
             else:
@@ -2777,12 +2945,12 @@ def _link_active_rows(group: str, title: str | None, fields: dict):
         sync()
 
 
-def _link_side_colors(group: str, title: str | None, fields: dict):
+def _link_side_colors(group: str, fields: dict):
     """Ligne « couleur unique » (`params["sets_side_colors"]` = cle d'une ligne Bordures du groupe) : chaque
     changement de sa couleur est pose sur les 4 cotes de cette ligne, en direct."""
     for spec in CATALOG[group]:
         target_key = spec.params.get("sets_side_colors")
-        if not target_key or not spec.applies(title) or spec.key not in fields or target_key not in fields:
+        if not target_key or spec.key not in fields or target_key not in fields:
             continue
         color, sides = fields[spec.key], fields[target_key]
 
@@ -2807,16 +2975,38 @@ def _shortcut_field(spec: Spec, values: ScopeValues, colors: dict, fields: dict,
     return widget
 
 
+# Groupes dont TOUTES les lignes sont des icones : un tableau d'icones commun (colonnes Apercu | Nom | Etat | Action).
+ICON_GROUPS = frozenset(group for group, specs in CATALOG.items() if specs and all(s.kind == "ui_icon" for s in specs))
+
+
+def _build_icon_table(group: str, fields: dict, resizers: list) -> QWidget:
+    """Groupe d'icones : UN tableau commun (`settings_v2_app.icon_table`), une ligne par icone (par etat pour la
+    punaise) — Apercu | Nom | Etat | Action. Les boutons agissent tout de suite sur les fichiers d'icone perso."""
+    entries, keep = [], []
+    for spec in CATALOG[group]:
+        field = UiIconField(spec.params["ui_key"])
+        keep.append(field)
+        fields[spec.key] = field
+        for caption, avatar, buttons, state in field.states():
+            entries.append((f"{spec.label} : {caption.lower()}" if caption else spec.label, avatar, state, buttons))
+    frame, head = icon_table(entries)
+    frame._dims_key = f"v2:{group}#0"               # jamais les largeurs de l'ancien tableau a sous-cellules
+    frame._ui_icon_fields = keep                    # garde les champs en vie : leurs boutons leur sont relies
+    resizers.append(head)
+    return frame
+
+
+TABLE_FIELDS = frozenset({"cad_linetypes"})
+
+
 def build_group(group: str, values: ScopeValues, colors: dict,
                 fields: dict, toggles: dict, resizers: list,
                 record: list | None = None, on_change: Callable | None = None,
                 on_range: Callable | None = None) -> QWidget:
-    """Tableau d'un groupe du CATALOG. Portee General : lignes sans toggle (sauf
-    celles qui portent un `general_toggle`, regroupees dans un second tableau) ;
-    surcharge : un toggle devant chaque ligne (OFF = suit le General).
+    """Tableau d'un groupe du CATALOG : lignes sans toggle (sauf celles qui portent un
+    `general_toggle`, regroupees dans un second tableau).
     `record` : liste ou s'inscrivent (spec, widget) et (cle_interrupteur, toggle).
     Tout tableau a un entete ; ses toggles sont de type 2 sans texte."""
-    override = values.title is not None
     if group == "Chargement et génération automatique":
         rows = []
         specs = CATALOG[group]
@@ -2832,28 +3022,33 @@ def build_group(group: str, values: ScopeValues, colors: dict,
             rows.append(cells)
         frame, head, _cells = build_cells_table(
             [("Paramètre", 200), ("Activer", 80), ("Déclenchement", 350), ("Temps d'attente", 150)], rows)
+        normalize_toggles(frame)                    # toggle seul dans sa cellule « Activer » : type 1
         frame._v2_head = head
         resizers.append(head)
         return frame
-    if group in COLUMN_TABLES and not override:
+    if group in COLUMN_TABLES:
         return _build_font_table(group, values, colors, fields, resizers, record, on_change, on_range)
+    if group in ICON_GROUPS:
+        return _build_icon_table(group, fields, resizers)
+    specs = CATALOG[group]
+    if len(specs) == 1 and specs[0].kind in TABLE_FIELDS:
+        # Le champ EST le tableau (une ligne par element : types de ligne du CAD) : pas de Parametre | Valeur autour.
+        spec = specs[0]
+        field_w = make_field(spec, values, colors, on_range)
+        fields[spec.key] = field_w
+        if record is not None:
+            record.append((spec, field_w))
+            _connect_changed(field_w, on_change)
+        return field_w
     flat_rows, toggle_rows = [], []
-    for spec in (sp for sp in CATALOG[group] if sp.applies(values.title)):
+    for spec in CATALOG[group]:
         field_w = make_field(spec, values, colors, on_range)
         for key in (spec.key, *spec.extra_keys):
             fields[key] = field_w
         if record is not None:
             record.append((spec, field_w))
             _connect_changed(field_w, on_change)
-        if override and not spec.flat:
-            toggle = _Toggle(values.enabled(spec.key), style_override="toggle2", show_label=False)
-            toggle.style_id = f"{values.title}|{spec.key}#actif"
-            for key in (spec.key, *spec.extra_keys):
-                toggles[key] = toggle
-            toggle_rows.append((spec.label, field_w, toggle))
-            if record is not None:
-                _connect_changed(toggle, on_change)      # activer/couper la surcharge = changement
-        elif spec.general_toggle:
+        if spec.general_toggle:
             style = spec.params.get("override_toggle_style", "toggle2")
             toggle = _Toggle(bool(values.seed(spec.general_toggle, False)), style_override=style, show_label=False)
             if "override_toggle_style" in spec.params:
@@ -2878,8 +3073,8 @@ def build_group(group: str, values: ScopeValues, colors: dict,
             resizers.append(frame._v2_head)
             normalize_toggles(frame)
             frames.append(frame)
-    _link_active_rows(group, values.title, fields)
-    _link_side_colors(group, values.title, fields)
+    _link_active_rows(group, fields)
+    _link_side_colors(group, fields)
     if len(frames) == 1:
         return frames[0]
     wrap = QWidget()
@@ -3283,6 +3478,9 @@ def _padding_tuple(sides: dict) -> tuple:
 # la cle des dimensions d'un tableau suit les titres (_TableFrame.dimsKey). Les anciennes cles sont
 # RECOPIEES (jamais deplacees : la v1 garde les siennes) vers les nouvelles si celles-ci manquent.
 _DIMS_RENAMES = (("Visionneuse/Sous cellule image#", "Visionneuse/Cellules#"),
+                 ("MRO#", "Magnétisme#"),                     # section MRO de General -> onglet « Module MRO »
+                 ("MRO/Barres d'outils#", "Barres d'outils#"),
+                 ("MRO/Menus contextuels/", "Menus contextuels/"),
                  ("TITRE/Espacements#", "TITRES/Padding (titre seulement)#"),
                  ("TITRE/Fond/", "TITRES/Paragraphes/"),
                  ("TITRE/", "TITRES/"))
@@ -3449,7 +3647,7 @@ def _markdown_reset_menu_extra(widget: QWidget, menu) -> None:
     node = widget.parentWidget()
     while node is not None and not isinstance(node, _LazyNode):
         node = node.parentWidget()
-    if node is None or node._values.name not in (MARKDOWN_TAB, VIDEO_TAB):
+    if node is None or node._values.name not in (MARKDOWN_TAB, VIDEO_TAB, MRO_TAB, CAD_TAB):
         return
     title = node.node.title
     menu.addAction(f"Restaurer les valeurs d'origine de « {title} »").triggered.connect(
@@ -3492,7 +3690,7 @@ def _toggle_style_listener(toggle: QWidget, key: str | None) -> None:
 TOGGLE_STYLE_LISTENERS.append(_toggle_style_listener)
 
 
-WIRED_SECTIONS = ("Colonnes", "TITRES", "Tableaux", "Toggles", "Sliders", "Application", "Visionneuse", "MRO",
+WIRED_SECTIONS = ("Colonnes", "Colonnes spéciales", "TITRES", "Tableaux", "Toggles", "Sliders", "Application", "Visionneuse",
                   "Menu contextuel", "Fenêtres additionnelles",
                   "Dossiers et fichiers à omettre", "LUT", "Polices principales", "Couleurs",
                   "Barre de navigation", "Bouton", "Tabs", "Zone de saisie",
@@ -3615,7 +3813,7 @@ class SettingsWindowV2(QDialog):
         self.titlebar.installEventFilter(self._tab_gap_watch)
         sl = QHBoxLayout(subbar)
         sl.setContentsMargins(20, 0, 20, 0)
-        self.tabs = _TabStrip([label for label, _t in SCOPES])
+        self.tabs = _TabStrip([TAB_LABELS.get(label, label) for label, _t in SCOPES])
         sl.addWidget(self.tabs)
         root.addWidget(subbar)
 
@@ -3986,60 +4184,17 @@ class SettingsWindowV2(QDialog):
 
     def wired_values(self) -> dict:
         """Valeurs COURANTES de tous les champs branches deja construits (les
-        sections jamais ouvertes n'existent pas : leurs cles restent celles du disque).
-        Onglets de surcharge : leurs valeurs vont dans les dictionnaires de surcharge (voir
-        _override_values), jamais dans les cles generales."""
+        sections jamais ouvertes n'existent pas : leurs cles restent celles du disque)."""
         out: dict = {}
-        scopes = dict(SCOPES)
-        overrides = {}
-        for label, store in self.stores.items():
-            if scopes.get(label) is not None:
-                overrides[scopes[label]] = store
-                for spec, widget in store.get("specs", ()):
-                    if not isinstance(spec, str) and spec.flat:      # reglage propre a la colonne
-                        out.update(read_spec(spec, widget))
-                continue
+        for store in self.stores.values():
             for spec, widget in store.get("specs", ()):
                 if isinstance(spec, str):                 # interrupteur d'override du General
                     out[spec] = widget.isChecked()
                 else:
                     out.update(read_spec(spec, widget))
-        if any(store.get("specs") for store in overrides.values()):
-            out.update(self._override_values(overrides))
         palette = {k[len("colors:"):]: out.pop(k) for k in [k for k in out if k.startswith("colors:")]}
         if palette:                                  # Couleurs : fondues dans la palette
             out["colors"] = {**(self.settings.get("colors") or {}), **palette}
-        return out
-
-    def _override_values(self, stores: dict) -> dict:
-        """Les 6 dictionnaires de surcharge (memes cles que SettingsWindow._column_override_values) :
-        ceux des reglages, mis a jour cle par cle avec les lignes des onglets DEJA construits (une ligne
-        jamais affichee garde sa valeur enregistree). Valeur = lue dans le champ, actif = toggle de la
-        ligne, « lier les 4 » (`<cle>_linked` lu par le champ) = dictionnaire `linked`, cle `<cle>`."""
-        names = {"overrides": ("column_type_overrides", "column_overrides_by_title"),
-                 "enabled": ("column_type_override_enabled", "column_override_enabled_by_title"),
-                 "linked": ("column_type_override_linked", "column_override_linked_by_title")}
-        out = {name: copy.deepcopy(self.settings.get(name) or {}) for pair in names.values() for name in pair}
-        for title, store in stores.items():
-            def target(kind):
-                type_key, by_title_key = names[kind]
-                return out[type_key] if title == "Type" else out[by_title_key].setdefault(title, {})
-            overrides, enabled, linked = target("overrides"), target("enabled"), target("linked")
-            toggles = store.get("toggles", {})
-            for spec, widget in store.get("specs", ()):
-                if isinstance(spec, str) or spec.flat:
-                    continue
-                toggle = toggles.get(spec.key)
-                for key, value in read_spec(spec, widget).items():
-                    if key.endswith("_linked"):
-                        linked[key[:-len("_linked")]] = value
-                    else:
-                        overrides[key] = value
-                        if toggle is not None:
-                            enabled[key] = toggle.isChecked()
-                if toggle is not None:
-                    for key in spec.extra_keys:          # ex. cles *_override des etats de selection
-                        enabled[key] = toggle.isChecked()
         return out
 
     def current_values(self) -> dict:
@@ -4631,7 +4786,7 @@ class SettingsWindowV2(QDialog):
             sections = 0
             for label, title in SCOPES:
                 try:
-                    sections += count(STANDALONE_TABS.get(label) or nodes_for(title, self.settings))
+                    sections += count(STANDALONE_TABS.get(label) or general_tree(self.settings))
                 except Exception:                              # noqa: BLE001 - estimation seulement
                     pass
             total = self._prebuild_units_total = len(SCOPES) + 2 * sections
@@ -4753,12 +4908,11 @@ class SettingsWindowV2(QDialog):
         top_key = f"{values.name}|"
         with _section_host(inner):
             sections = []
-            nodes = STANDALONE_TABS.get(label) or nodes_for(title, self.settings)
+            nodes = STANDALONE_TABS.get(label) or general_tree(self.settings)
             for node in self._ordered_children(nodes, top_key):
-                # Onglets de surcharge : tout est branche (valeurs -> dictionnaires de surcharge).
                 _add_stacked(lay, sections, _LazyNode(
                     node, level, values, colors, store, self.eager, None, inner,
-                    wired=(title is not None or label in STANDALONE_TABS or node.title in WIRED_SECTIONS)))
+                    wired=(label in STANDALONE_TABS or node.title in WIRED_SECTIONS)))
             _make_accordion(sections)
             self._make_title_stack(inner, sections, top_key)
         lay.addStretch(1)

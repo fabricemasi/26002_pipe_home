@@ -293,7 +293,8 @@ def export_api_json(board_data: dict) -> tuple[dict, dict]:
             endpoint = "connectors"
         else:
             count("ignored", {"ink": "dessin à main levée (absent de l'API)", "comment": "commentaire (absent de l'API)",
-                              "image": "image (envoi de fichier non géré)"}.get(kind, str(kind)))
+                              "image": "image (envoi de fichier non géré)",
+                              "cad_line": "ligne CAD (absente de l'API)"}.get(kind, str(kind)))
             continue
         requests.append({"endpoint": f"/v2/boards/{{board_id}}/{endpoint}", "local_id": item.get("id"), "body": body})
         count("kept", kind)

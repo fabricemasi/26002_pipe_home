@@ -627,7 +627,7 @@ class PageAndSettingsTest(unittest.TestCase):
         for key in keys:
             self.assertIn(key, settings_store.DEFAULT_SETTINGS)
         self.assertIn("board_pen_presets", settings_store._LIVE_STATE_KEYS)
-        self.assertIn("MRO", [node.title for node in v2.GENERAL_TREE])
+        self.assertIn("MRO", [node.group for node in v2.MRO_TREE])            # onglet « Module MRO »
         pane = BoardPane(self.host)
         pane.apply_settings({"board_snap_enabled": False, "board_snap_distance": 14, "board_snap_grid": True})
         self.assertEqual(pane.scene.snap["distance"], 14)
@@ -919,8 +919,9 @@ class MroIconsTest(_PaneCase):
         keys = {spec.params["ui_key"] for spec in v2.CATALOG["MRO : Icones"]}
         self.assertIn("ui_board_select", keys)
         self.assertIn("ui_board_lock", keys)
-        self.assertIn(("Icônes", "MRO : Icones"),
-                      [(c.title, c.group) for n in v2.GENERAL_TREE if n.title == "MRO" for c in n.children])
+        self.assertIn(("Icônes", "MRO : Icones"), [(n.title, n.group) for n in v2.MRO_TREE])
+        self.assertIn((v2.MRO_TAB, None), v2.SCOPES)
+        self.assertNotIn("MRO", [n.title for n in v2.GENERAL_TREE])
         import board.ui as board_ui_module
         asked = []
         red = __import__("PySide6.QtGui", fromlist=["QPixmap"]).QPixmap(20, 20)
@@ -1293,6 +1294,29 @@ class BoardModeTest(unittest.TestCase):
         settle(0.3)
         self.assertIsNone(win._board)
         self.assertEqual(serialization.load(path)["items"][0]["text"], "idée")
+
+    def test_double_click_on_a_dxf_opens_it_in_the_board(self):
+        import ezdxf
+        win = self.win
+        source = self.root / "set" / "plan.dxf"
+        doc = ezdxf.new("R2018")
+        doc.modelspace().add_line((0, 0), (40, 0))
+        doc.saveas(source)
+        before = source.read_bytes()
+        with mock.patch("pipeline_browser.open_path", side_effect=AssertionError("logiciel externe ouvert")):
+            win.on_activated(source)                                    # lu en fond, puis ouvert
+            for _ in range(200):
+                settle(0.05)
+                if win._board is not None:
+                    break
+        pane = win._board
+        self.assertIsNotNone(pane)
+        self.assertEqual(pane.source, source)
+        self.assertEqual([i.data["type"] for i in pane.scene.board_items()], ["cad_line"])
+        self.assertIn("1 objet(s)", win.path_label.text())
+        self.assertTrue(win._close_board())                             # inchange : ferme sans question
+        self.assertEqual(source.read_bytes(), before)
+        self.assertEqual(sorted(p.name for p in (self.root / "set").iterdir()), ["notes.txt", "plan.dxf"])
 
 
 if __name__ == "__main__":

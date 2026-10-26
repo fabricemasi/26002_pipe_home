@@ -2,7 +2,7 @@
 import time
 import unicodedata
 from PySide6.QtCore import QObject,QEvent,QTimer,Qt
-from PySide6.QtGui import QCursor
+from PySide6.QtGui import QCursor,QKeySequence,QShortcut
 from PySide6.QtWidgets import (QApplication,QFrame,QVBoxLayout,QHBoxLayout,QTextBrowser,
                                QPushButton,QDialog,QLineEdit,QListWidget,QListWidgetItem)
 from video.help_content import HELP,GLOSSARY,SOURCES,page
@@ -72,6 +72,14 @@ class Glossary(QDialog):
 
 
 class HelpController(QObject):
+    """Aide Ctrl+Maj au survol, F1 = glossaire. AUCUN filtre sur toute l'application : il faisait passer
+    CHAQUE evenement de l'appli par du Python, une fois par fenetre qui en a un (fenetre de reglages prechargee
+    comprise : ~6 us par evenement ; dans les tests, les fenetres s'accumulaient et chaque test ralentissait le
+    suivant jusqu'a 90 s). A la place : filtre sur la SEULE fenetre `root` (affichage / masquage), releve des
+    touches Ctrl+Maj toutes les `WATCH_MS` tant qu'elle est visible, raccourci F1 propre a la fenetre."""
+
+    WATCH_MS = 100
+
     def __init__(self,root,settings=None):
         super().__init__(root)
         self.root = root
@@ -91,8 +99,30 @@ class HelpController(QObject):
         self.timer = QTimer(self)
         self.timer.setInterval(60)
         self.timer.timeout.connect(self._tick)
-        QApplication.instance().installEventFilter(self)
+        self.watch = QTimer(self)
+        self.watch.setInterval(self.WATCH_MS)
+        self.watch.timeout.connect(self._watch)
+        root.installEventFilter(self)
+        if root.isVisible():
+            self.watch.start()
+        QApplication.instance().applicationStateChanged.connect(self._app_state)
+        self.f1 = QShortcut(QKeySequence(Qt.Key_F1),root,context=Qt.WidgetWithChildrenShortcut)
+        self.f1.activated.connect(self._f1)
         root.destroyed.connect(self.popup.deleteLater)
+
+    def _watch(self):
+        """Ctrl+Maj tenus pendant que la fenetre est active : le geste commence (`_tick` prend la suite)."""
+        required = Qt.ControlModifier|Qt.ShiftModifier
+        if QApplication.keyboardModifiers()&required==required and not self.timer.isActive():
+            self.timer.start()
+
+    def _app_state(self,state):
+        if state!=Qt.ApplicationActive:
+            self.dismiss()
+
+    def _f1(self):
+        _target,key = self.resolve(QApplication.focusWidget())
+        self.open_glossary(key)
 
     def open_glossary(self,key=None):
         self.dismiss()
@@ -117,7 +147,10 @@ class HelpController(QObject):
             if QApplication.applicationState()!=Qt.ApplicationActive:
                 self.dismiss()
         elif kind==QEvent.Hide and watched is self.root:
+            self.watch.stop()
             self.dismiss()
+        elif kind==QEvent.Show and watched is self.root:
+            self.watch.start()
         elif kind==QEvent.Enter:
             required = Qt.ControlModifier|Qt.ShiftModifier
             if QApplication.keyboardModifiers()&required==required and not self.timer.isActive():

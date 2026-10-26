@@ -18,9 +18,7 @@ Elements (une classe *Target chacun : identifiant stable, lignes, valeurs, appli
 - titre    `title:<onglet|title:chemin>` (fenetre v2) : police de son niveau + Paragraphes > Niveau N ;
 - texte    `text:<fenetre>:<chemin>`     : police, gras, italique, hauteur, lissage, couleur, padding ;
 - toggle   `toggle:<identifiant>`        : Type / Cadre / Coche de son style (style cache, propre a lui) ;
-- colonne  (fenetre principale, fournie par l'appli : TARGET_RESOLVERS) : les tableaux de son onglet de
-  surcharge, ecrits dans les surcharges de colonne existantes.
-Les quatre premiers sont enregistres dans `element_style_overrides` ({identifiant : valeurs}, etat
+Ils sont enregistres dans `element_style_overrides` ({identifiant : valeurs}, etat
 temps reel de _LIVE_STATE_KEYS) et reappliques a la construction / apres un restylage general
 (`apply_saved(fenetre)`). Couche reglages : rien de propre a l'appli ; l'appli est prevenue par
 add_listener (cle, valeur) a chaque enregistrement."""
@@ -44,7 +42,6 @@ from settings_widgets import (
 
 KEY = "element_style_overrides"
 SAVED_LISTENERS: list = []          # references (faibles) de rappels (cle, valeur), voir add_listener
-TARGET_RESOLVERS: list = []         # rappels (widget) -> [Target] fournis par l'appli (colonnes...)
 _SPACE_KEYS = ("__space_above", "__space_below")
 _ROW_TEXT_CACHE_READY = False
 _ROW_MODEL_CACHE = {}
@@ -272,7 +269,6 @@ class Target:
     """Un element sous le clic. `element` : identifiant stable ; `widget` : l'element lui-meme."""
 
     kind = "Élément"
-    stored = True                      # valeurs dans `element_style_overrides`
 
     def __init__(self, element: str, widget: QWidget, label: str):
         self.element, self.widget, self.label = element, widget, label
@@ -1335,103 +1331,6 @@ def toggle_id(toggle: _Toggle, window: QWidget) -> str | None:
     return f"toggle:{_scope_of(window)}:{path}" if path else None
 
 
-# -- Colonne (surcharges existantes, fournie par l'appli) -----------------------------
-
-class ColumnTarget(Target):
-    """Colonne de la fenetre principale : les tableaux de son onglet de surcharge (Reglages > onglet de
-    la colonne) ; ecrit dans les surcharges de colonne (cle activee par ligne), pas dans
-    `element_style_overrides`."""
-
-    kind = "Colonne"
-    stored = False
-    _NAMES = {"overrides": ("column_type_overrides", "column_overrides_by_title"),
-              "enabled": ("column_type_override_enabled", "column_override_enabled_by_title")}
-
-    def __init__(self, title: str, widget: QWidget, label: str | None = None):
-        super().__init__(f"column:{title}", widget, label or title)
-        self.title = title
-
-    def specs(self) -> list:
-        import settings_window_v2 as v2
-        groups, stack = [], list(v2.nodes_for(self.title))
-        while stack:
-            node = stack.pop(0)
-            if node.group:
-                groups.append(node.group)
-            stack[0:0] = list(node.children)
-        specs = []
-        for group in groups:
-            if group in v2.COLUMN_TABLES:
-                continue
-            specs += [sp for sp in v2.CATALOG.get(group, ()) if sp.applies(self.title)]
-        return specs
-
-    def _store(self, settings: dict, kind: str) -> dict:
-        type_key, by_title_key = self._NAMES[kind]
-        if self.title == "Type":
-            return dict(settings.get(type_key) or {})
-        return dict((settings.get(by_title_key) or {}).get(self.title) or {})
-
-    def _put(self, settings: dict, kind: str, store: dict) -> None:
-        type_key, by_title_key = self._NAMES[kind]
-        if self.title == "Type":
-            settings[type_key] = store
-        else:
-            all_ = dict(settings.get(by_title_key) or {})
-            all_[self.title] = store
-            settings[by_title_key] = all_
-
-    def _keys(self) -> list:
-        return [k for sp in self.specs() for k in (sp.key, *sp.extra_keys)]
-
-    def values(self, settings: dict) -> dict:
-        overrides, enabled = self._store(settings, "overrides"), self._store(settings, "enabled")
-        out = dict(settings)
-        for key in self._keys():
-            if enabled.get(key) and key in overrides:
-                out[key] = overrides[key]
-        return out
-
-    def has_override(self) -> bool:
-        enabled = self._store(load_settings(), "enabled")
-        return any(enabled.get(k) for k in self._keys())
-
-    def save(self, values: dict) -> None:
-        settings = load_settings()
-        overrides, enabled = self._store(settings, "overrides"), self._store(settings, "enabled")
-        flat = {k for sp in self.specs() if sp.flat for k in (sp.key, *sp.extra_keys)}
-        for key, value in _fold_colors(values).items():
-            if key in _SPACE_KEYS or key == "colors":
-                continue
-            if key in flat:                          # reglage propre a la colonne : cle generale
-                settings[key] = value
-            elif value != settings.get(key):
-                overrides[key], enabled[key] = value, True
-            elif key in overrides:
-                overrides.pop(key, None)
-                enabled.pop(key, None)
-        self._put(settings, "overrides", overrides)
-        self._put(settings, "enabled", enabled)
-        save_settings(settings)
-        for name in (*self._NAMES["overrides"], *self._NAMES["enabled"], *flat):
-            _notify(name, settings.get(name))
-
-    def remove(self) -> None:
-        settings = load_settings()
-        overrides, enabled = self._store(settings, "overrides"), self._store(settings, "enabled")
-        for key in self._keys():
-            overrides.pop(key, None)
-            enabled.pop(key, None)
-        self._put(settings, "overrides", overrides)
-        self._put(settings, "enabled", enabled)
-        save_settings(settings)
-        for name in (*self._NAMES["overrides"], *self._NAMES["enabled"]):
-            _notify(name, settings.get(name))
-
-    def apply(self, values):
-        pass                                     # l'appli se restyle (prevenue par _notify)
-
-
 # ==========================================================================
 # Elements sous un clic
 # ==========================================================================
@@ -1512,8 +1411,6 @@ def targets_for(widget: QWidget) -> list:
         if parts:                            # le menu demande la portee : cellule / ligne / colonne / tableau
             table.scope_label = "Tableau entier sauf entête"
         out += [*parts, table]
-    for resolver in list(TARGET_RESOLVERS):
-        out += resolver(widget) or []
     return out
 
 

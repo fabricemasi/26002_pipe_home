@@ -26,6 +26,9 @@ app = QApplication.instance() or QApplication([])
 
 import settings_store
 import settings_window_v2 as v2
+from _window_cleanup import WindowTestCase, track_class  # fenetres detruites apres chaque test
+
+track_class(v2.SettingsWindowV2)
 
 ALL_EQUIVALENT = ("Colonnes", "TITRES", "Tableaux", "Toggles", "Sliders")
 
@@ -41,7 +44,7 @@ def build(wired=v2.WIRED_SECTIONS):
     return win
 
 
-class EquivalenceTest(unittest.TestCase):
+class EquivalenceTest(WindowTestCase):
     @classmethod
     def setUpClass(cls):
         # Valeurs de l'ancienne fenetre v1 (retiree), figees avec les reglages par defaut : _v1_reference.py.
@@ -53,10 +56,13 @@ class EquivalenceTest(unittest.TestCase):
 
     def test_every_value_read_by_v2_matches_the_old_window(self):
         self.assertGreater(len(self.new_values), 100)
-        # Les cles que l'ancienne fenetre ne connait pas (habillage de coche, v2 seulement) n'ont rien a comparer.
+        # Les cles que l'ancienne fenetre n'affichait pas (habillage de coche ; Tableaux > « Texte au dessus »,
+        # ajoute a la v2 le 12/10, absent de settings_window.py jusqu'a son retrait) n'ont rien a comparer : la
+        # reference ne contient pour elles que la valeur par defaut, pas une valeur relue par la v1.
         mismatches = {k: (self.old_values[k], v)
                       for k, v in self.new_values.items() if k in self.old_values and self.old_values[k] != v
-                      and not any(tag in k for tag in ('_coche_skin', '_coche_text', '_coche_icon'))}
+                      and not any(tag in k for tag in ('_coche_skin', '_coche_text', '_coche_icon',
+                                                       'table_above_text_'))}
         self.assertEqual(mismatches, {}, f"{len(mismatches)} cle(s) differente(s) : {list(mismatches)[:8]}")
 
     def test_wired_keys_exist_in_the_settings(self):
@@ -67,7 +73,7 @@ class EquivalenceTest(unittest.TestCase):
         self.assertEqual(unknown, [])
 
 
-class SaveTest(unittest.TestCase):
+class SaveTest(WindowTestCase):
     def setUp(self):
         self.win = build(("Sliders",))
         self.disk = copy.deepcopy(self.win._original_settings)
@@ -148,7 +154,7 @@ class SaveTest(unittest.TestCase):
         self.assertEqual(self.written, [])
 
 
-class WiringTest(unittest.TestCase):
+class WiringTest(WindowTestCase):
     def test_every_general_section_is_editable_when_wired(self):
         win = build()
         page = win.stack.currentWidget()
@@ -164,53 +170,73 @@ class WiringTest(unittest.TestCase):
         for title in ("Colonnes", "Tableaux", "Toggles", "TITRES"):
             self.assertFalse(by_title[title]._head._body.isEnabled(), title)
 
-    def _override_tab(self, label):
-        win = build()
-        index = [lab for lab, _t in v2.SCOPES].index(label)
-        win._ensure_page(index)
-        page = win.stack.widget(index)
-        for _ in range(4):                      # sections racines puis sous-sections
-            for node in page.findChildren(v2._LazyNode):
-                node.set_collapsed(False)
-        return win, page, win.stores[label]
+    def test_tabs_are_general_ones_only(self):
+        """Plus d'onglet de surcharge par colonne (Type, Projets, Focus, Inspecteur...) : General et les
+        modules ; le libelle affiche de Markdown est « Module Markdown » (l'identifiant ne change pas)."""
+        self.assertEqual([label for label, _t in v2.SCOPES], ["General", v2.MARKDOWN_TAB, v2.VIDEO_TAB, v2.MRO_TAB, v2.CAD_TAB])
+        self.assertEqual(v2.TAB_LABELS[v2.MARKDOWN_TAB], "Module Markdown")
+        self.assertEqual(v2.MARKDOWN_TAB, "Markdown")
+        self.assertEqual(v2.MRO_TAB, "Module MRO")
 
-    def test_override_tabs_are_editable(self):
-        _win, page, _store = self._override_tab("Type")
-        nodes = page.findChildren(v2._LazyNode)
-        self.assertTrue(nodes)
-        self.assertTrue(all(n._head._body.isEnabled() for n in nodes if n.node.group))
+    def test_mro_dimensions_follow_the_move_to_its_tab(self):
+        dims = v2._renamed_dims({"MRO#0": {"width": 1}, "MRO/Barres d'outils#0": {"width": 2},
+                                 "MRO/Menus contextuels/Lignes#0": {"width": 3}})
+        self.assertEqual(dims["Magnétisme#0"], {"width": 1})
+        self.assertEqual(dims["Barres d'outils#0"], {"width": 2})
+        self.assertEqual(dims["Menus contextuels/Lignes#0"], {"width": 3})
 
-    def test_override_tab_writes_into_the_override_dicts_only(self):
-        win, _page, store = self._override_tab("Projets")
-        field = {sp.key: w for sp, w in store["specs"]}["column_bg_color"]
-        store["toggles"]["column_bg_color"].setChecked(True)
-        field._apply_custom_live("#123456")
-        seen = []
-        win.settingsChanged.connect(seen.append)
-        # L'apercu en direct attend la fin de la bascule du toggle (fluidite) : ce test verifie quoi, pas quand.
-        with mock.patch.object(v2, "toggle_animation_left_ms", lambda: 0):
-            win._flush_live()
-        merged = seen[-1]
-        self.assertEqual(merged["column_overrides_by_title"]["Projets"]["column_bg_color"], "#123456")
-        self.assertTrue(merged["column_override_enabled_by_title"]["Projets"]["column_bg_color"])
-        self.assertEqual(merged["column_bg_color"], win.settings["column_bg_color"])     # General intact
-        for title, enabled in (win.settings.get("column_override_enabled_by_title") or {}).items():
-            if title != "Projets":                                                       # autres onglets intacts
-                self.assertEqual(merged["column_override_enabled_by_title"][title], enabled, title)
+    def test_special_columns_section_holds_the_moved_groups(self):
+        tree = {n.title: n for n in v2.general_tree()}
+        special = tree["Colonnes spéciales"]
+        by_title = {n.title: n for n in special.children}
+        self.assertEqual([c.group for c in by_title["Colonne Projets"].children], ["Projets : Icone de niveaux"])
+        self.assertEqual([c.group for c in by_title["Colonne Focus"].children],
+                         ["Focus : Image", "Focus : Zone titre"])
+        self.assertIn("Colonnes spéciales", v2.WIRED_SECTIONS)
 
-    def test_override_toggle_alone_is_a_live_change(self):
-        win, _page, store = self._override_tab("Type")
-        self.assertFalse(win._dirty)
-        toggle = store["toggles"]["item_row_height"]
-        toggle.setChecked(not toggle.isChecked())
-        self.assertTrue(win._dirty)
+    def test_old_column_overrides_are_pruned_to_sizes_and_the_focus_ratio_moves(self):
+        import settings_store
+        settings = {
+            "column_type_overrides": {"item_column_width": 184, "column_bg_color": "#111111"},
+            "column_type_override_enabled": {"item_column_width": True, "column_bg_color": True},
+            "column_overrides_by_title": {"Focus": {"item_image_ratio": 1.5, "item_column_width": 181},
+                                          "IN": {"item_column_width": 220}, "Projets": {"item_row_height": 40}},
+            "column_override_enabled_by_title": {"Focus": {"item_image_ratio": True, "item_column_width": True},
+                                                 "IN": {"item_column_width": True}},
+            "preview_image_ratio": 1.0,
+        }
+        settings_store._prune_column_overrides(settings, {})
+        self.assertEqual(settings["column_type_overrides"], {"item_column_width": 184})
+        self.assertEqual(settings["column_overrides_by_title"],
+                         {"Focus": {"item_column_width": 181}, "Projets": {"item_row_height": 40}})
+        self.assertEqual(settings["preview_image_ratio"], 1.5)
+        self.assertNotIn("IN", settings["column_override_enabled_by_title"])
+
+    def test_column_styles_follow_the_general_ones_except_sizes_and_focus(self):
+        import browser_core
+        from app_style import PREVIEW_STACK_TITLE, column_style_for
+        from settings_store import DEFAULT_SETTINGS
+        settings = copy.deepcopy(DEFAULT_SETTINGS)
+        settings["column_bg_color"] = "#223344"
+        settings["preview_image_ratio"] = 1.5
+        settings["column_overrides_by_title"] = {"Projets": {"item_column_width": 260}}
+        settings["column_override_enabled_by_title"] = {"Projets": {"item_column_width": True}}
+        browser_core.apply_all_settings(settings)
+        self.assertEqual(column_style_for("Projets")["column_bg_color"], "#223344")
+        self.assertEqual(column_style_for("Projets")["item_column_width"], 260)
+        self.assertEqual(browser_core.COLUMN_SETTINGS["Projets"]["width"], 260)
+        self.assertEqual(column_style_for("IN")["item_column_width"], settings["item_column_width"])
+        focus = column_style_for(PREVIEW_STACK_TITLE)
+        self.assertFalse(focus["header_visible"])
+        self.assertEqual(focus["column_bg_color"], "@skinN1")
+        self.assertEqual(focus["item_image_ratio"], 1.5)
 
     def test_window_is_resizable_through_native_events(self):
         self.assertTrue(callable(v2.SettingsWindowV2.nativeEvent))
         self.assertGreater(v2.SettingsWindowV2._RESIZE_BORDER, 0)
 
 
-class LiveLookTest(unittest.TestCase):
+class LiveLookTest(WindowTestCase):
     """Les reglages qui habillent la fenetre elle-meme se rejouent en direct, et se restaurent a l'annulation."""
 
     def setUp(self):
@@ -398,7 +424,7 @@ class LiveLookTest(unittest.TestCase):
         self.assertEqual(section._head_layout.contentsMargins().top(), before)
 
 
-class ColorFieldTest(unittest.TestCase):
+class ColorFieldTest(WindowTestCase):
     """Champ couleur compact (app | pastille | sys) : la VALEUR suit toujours le mode affiche."""
 
     def setUp(self):
@@ -428,7 +454,7 @@ class ColorFieldTest(unittest.TestCase):
         self.assertTrue(field.value().startswith("#"))
 
 
-class SidesLinkTest(unittest.TestCase):
+class SidesLinkTest(WindowTestCase):
     def test_link_state_of_borders_is_read_and_restored(self):
         spec = next(sp for sp in v2.CATALOG["G Colonnes"] if sp.key == "column_border_enabled")
         settings = {"column_border_enabled_linked": True, "column_border_thickness": 1, "column_border": {},
@@ -439,7 +465,7 @@ class SidesLinkTest(unittest.TestCase):
         self.assertFalse(v2.read_spec(spec, widget)["column_border_enabled_linked"])
 
 
-class EveryControlSignalsTest(unittest.TestCase):
+class EveryControlSignalsTest(WindowTestCase):
     """CHAQUE controle elementaire de CHAQUE ligne du CATALOG (General et surcharge) doit declencher
     l'apercu en direct. Le curseur « Epaisseur » des lignes Bordure n'etait relie a rien : le lecteur
     le lisait, mais le bouger ne declenchait aucune mise a jour."""
@@ -457,6 +483,8 @@ class EveryControlSignalsTest(unittest.TestCase):
                     continue        # zone de saisie d'un curseur : le curseur est teste
                 if isinstance(c, _SelectField) and len(c._options) < 2:
                     continue
+                if getattr(c, "_refuses_invalid", False):
+                    continue        # « Ab » ajoute = saisie invalide, refusee : rien ne change (sequence d'un type de ligne)
                 if isinstance(c, (_MiniSlider, _Toggle, _SelectField, _CompactAppOrCustomColorField, QLineEdit)) \
                         and c not in out:
                     out.append(c)
@@ -482,7 +510,7 @@ class EveryControlSignalsTest(unittest.TestCase):
         from settings_store import DEFAULT_SETTINGS
         settings = copy.deepcopy(DEFAULT_SETTINGS)
         silent = []
-        for title in (None, "Type"):
+        for title in (None,):
             for group in v2.CATALOG:
                 count, record = [0], []
                 table = v2.build_group(group, v2.ScopeValues(settings, title), settings["colors"], {}, {}, [],
@@ -498,7 +526,7 @@ class EveryControlSignalsTest(unittest.TestCase):
         self.assertEqual(silent, [])
 
 
-class AppliedSettingsTest(unittest.TestCase):
+class AppliedSettingsTest(WindowTestCase):
     def test_inspector_restyle_uses_the_applied_settings_not_the_disk(self):
         """L'inspecteur se restylait en relisant le disque, ce qui ecrasait l'apercu en direct (toggles,
         palette) de la fenetre de reglages ouverte."""
@@ -516,6 +544,75 @@ class AppliedSettingsTest(unittest.TestCase):
             with self.assertRaises(AttributeError):
                 detail_panel.DetailPanel._apply_preview_table_style(panel)
         sync_m.assert_called_once_with(live.get("colors") or {})
+
+
+class CadTabAndIconTablesTest(WindowTestCase):
+    def test_cad_tab_groups_keys_and_defaults(self):
+        from board.model import CAD_ICON_ROWS
+        self.assertIn((v2.CAD_TAB, None), v2.SCOPES)
+        self.assertEqual([n.group for n in v2.CAD_TREE],
+                         ["CAD : Unités", "CAD : Types de ligne"] + list(v2.CAD_GROUPS)
+                         + ["CAD : Cotations", "CAD : Hachures", "CAD : Textes", "CAD : Raccourcis clavier", "CAD : Icônes"])
+        for group in ("CAD : Cotations", "CAD : Hachures", "CAD : Textes"):                        # mêmes clés / défauts que DEFAULT_SETTINGS
+            for spec in v2.CATALOG[group]:
+                self.assertEqual(settings_store.DEFAULT_SETTINGS[spec.key], spec.default, spec.key)
+        for group in v2.CAD_GROUPS:
+            for spec in v2.CATALOG[group]:
+                self.assertIn(spec.key, settings_store.DEFAULT_SETTINGS, spec.key)
+                self.assertEqual(settings_store.DEFAULT_SETTINGS[spec.key], spec.default, spec.key)
+        self.assertEqual([s.params["ui_key"] for s in v2.CATALOG["CAD : Icônes"]],
+                         [f"ui_board_{kind}" for kind, _label in CAD_ICON_ROWS])
+        self.assertNotIn("MRO : CAD", v2.CATALOG)
+        self.assertNotIn("cad_line", [kind for kind, _label in __import__("board.model", fromlist=["x"]).ICON_ROWS])
+
+    def test_every_cad_toolbar_icon_is_in_the_icon_table(self):
+        from board import cad_ui
+        from board.model import CAD_ICON_ROWS
+        listed = {kind for kind, _label in CAD_ICON_ROWS}
+        used = {kind for _s, tools in cad_ui.SECTIONS for kind, *_rest in tools}
+        used |= {"cad", "cad_layers", "cad_properties", "cad_settings", "cad_history"}
+        self.assertLessEqual(used, listed)
+
+    def test_icon_groups_are_tables_with_real_columns(self):
+        from settings_v2_app import icon_table  # noqa: F401
+        self.assertIn("CAD : Icônes", v2.ICON_GROUPS)
+        self.assertIn("Icones : General", v2.ICON_GROUPS)
+        self.assertIn("MRO : Icones", v2.ICON_GROUPS)
+        self.assertIn("Visionneuse : Icones", v2.ICON_GROUPS)
+        values = v2.ScopeValues(copy.deepcopy(settings_store.DEFAULT_SETTINGS), "General", None)
+        for group in ("CAD : Icônes", "Icones : General"):
+            frame = v2.build_group(group, values, {}, {}, {}, [])
+            titles = [label.text() for label in frame._v2_head._cells]
+            self.assertEqual([t.lower() for t in titles], ["aperçu", "nom", "état", "action"], group)
+            rows = sum(len(f.states()) for f in frame._ui_icon_fields)
+            self.assertEqual(len(frame._ui_icon_fields), len(v2.CATALOG[group]))
+            self.assertGreaterEqual(rows, len(v2.CATALOG[group]))
+            frame.deleteLater()
+
+    def test_replace_and_reset_an_icon(self):
+        import tempfile
+        from pathlib import Path
+        from PySide6.QtGui import QColor, QPixmap
+        import previews
+        import settings_v2_app as app_fields
+        folder = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, folder, True)
+        with mock.patch.object(previews, "custom_software_icon_path", lambda key: folder / f"{key}.png"):
+            field = app_fields.UiIconField("ui_board_cad_line")
+            (_caption, _avatar, _row, state), = field.states()
+            self.assertEqual(state.text(), "Par défaut")
+            pix = QPixmap(24, 24)
+            pix.fill(QColor("red"))
+            reset_button = _row.layout().itemAt(1).widget()
+            with mock.patch.object(app_fields, "_pick_image", lambda _w: pix):
+                field._change("ui_board_cad_line", _avatar, state, reset_button)
+            self.assertTrue((folder / "ui_board_cad_line.png").is_file())
+            self.assertEqual(state.text(), "Remplacée")
+            self.assertTrue(reset_button.isEnabled())
+            field._reset("ui_board_cad_line", _avatar, state, reset_button)
+            self.assertFalse((folder / "ui_board_cad_line.png").exists())
+            self.assertEqual(state.text(), "Par défaut")
+            self.assertFalse(reset_button.isEnabled())
 
 
 if __name__ == "__main__":

@@ -14,17 +14,41 @@ fleches = deplacer (Maj = 1 unite), Echap = annuler / deselectionner / Selection
 coller) = elles sont copiees dans le dossier du board."""
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
-from PySide6.QtCore import QBuffer, QByteArray, QEvent, QIODevice, QLineF, QMimeData, QPointF, QRectF, Qt, QUrl, Signal
+from PySide6.QtCore import (QBuffer, QByteArray, QEvent, QIODevice, QLineF, QMimeData, QPoint, QPointF, QRect, QRectF,
+                            QSize, Qt, QTimer, QUrl, Signal)
 from PySide6.QtGui import (QColor, QDesktopServices, QImage, QImageReader, QKeySequence, QPainter, QPainterPath, QPen,
-                           QPolygonF, QTransform)
+                           QPixmap,
+                           QPolygonF, QRegion, QTransform)
 from PySide6.QtWidgets import (QApplication, QFrame, QGraphicsItem, QGraphicsLineItem, QGraphicsPathItem,
-                               QGraphicsView)
+                               QGraphicsView, QWidget)
 
 from . import model, serialization, smart
 from .items import BoardItem, CommentItem, ConnectorItem, InkItem, ink_path, ink_pen, shape_path
 from .scene import CLIPBOARD_MIME, BoardScene
+
+BADGE_GL = (0, 255, 0)             # encart du mode de rendu : OPEN GL
+BADGE_CLASSIC = (255, 0, 0)         # CLASSIQUE
+
+
+def paint_render_badge(painter, rect, gl: bool):
+    """Encart « OPEN GL » (vert) / « CLASSIQUE » (rouge) : fond noir a 15 %, coins de 3 px. Peint par le widget de
+    l'encart (rendu classique) ou DANS la couche GPU (un widget translucide au-dessus d'un QOpenGLWidget est compose opaque)."""
+    painter.save()
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor(0, 0, 0, 38))                   # noir, 15 % d'opacite
+    painter.drawRoundedRect(QRectF(rect), 3, 3)
+    painter.setPen(QColor(*(BADGE_GL if gl else BADGE_CLASSIC)))
+    font = painter.font()
+    font.setPixelSize(12)
+    font.setBold(True)
+    painter.setFont(font)
+    painter.drawText(rect, Qt.AlignCenter, "OPEN GL" if gl else "CLASSIQUE")
+    painter.restore()
+
 
 CACHE_MAX_ZOOM = 4.0          # au-dela, les images gardees des elements seraient enormes : peints directement
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff"}
@@ -38,6 +62,8 @@ class BoardView(QGraphicsView):
     zoomChanged = Signal(float)
     toolChanged = Signal(str)
     commentOpened = Signal(object, bool)       # CommentItem, nouveau (pas encore dans l'annulation)
+    renderModeChanged = Signal(bool)           # rendu OpenGL (vrai) ou classique (faux) : voir `set_gpu`
+    gpuFailed = Signal(str)                    # rendu GPU du CAD impossible : retour au rendu par lots (message)
 
     def __init__(self, scene: BoardScene, parent=None, opengl: bool = False):
         super().__init__(scene, parent)
@@ -72,9 +98,211 @@ class BoardView(QGraphicsView):
                              "ratio_locked": False}
         self._zoom = 1.0
         self._pan = None
+        self._pan_frame = None          # image du viewport pendant un deplacement (voir _pan_paint)
+        self.gpu_badge = None           # QRect (viewport) de l'encart du mode de rendu, peint dans la couche GPU
+        self.zoom_step = 1.15                   # facteur de zoom par cran de molette (Reglages > Module MRO > Navigation)
+        self.zoom_fine_step = 1.03              # idem avec Maj : zoom fin
+        self._pan_shift = [0, 0]
         self._space = False
         self._draft = None
         self._press = None
+        self.cad = None                 # module CAD (board/cad.py) : actif, il recoit souris et clavier
+
+    def _cad_on(self) -> bool:
+        return self.cad is not None and self.cad.active
+
+    # -- rendu GPU du CAD (board/cad_gpu.py, reglage board_cad_gpu) --
+    def set_gpu(self, on: bool) -> bool:
+        """Couche OpenGL du CAD allumee / eteinte ; faux si OpenGL est indisponible (rendu par lots du processeur)."""
+        ok = self._set_gpu(on)
+        self.renderModeChanged.emit(getattr(self, "gpu", None) is not None)
+        return ok
+
+    def gpu_active(self) -> bool:
+        return getattr(self, "gpu", None) is not None
+
+    def _set_gpu(self, on: bool) -> bool:
+        from . import cad_gpu
+        from .cad_items import CadLayer
+        layer = getattr(self, "gpu", None)
+        if on and layer is None:
+            layer = cad_gpu.create_layer(self)
+            if layer is None:
+                return False
+            layer.paint_hook = self._paint_gpu_overlay
+            layer.paint_bounds = self._gpu_overlay_bounds
+            layer.texture_provider = self._gpu_texture
+            layer.under_hook = self._paint_gpu_under
+            layer.under_bounds = lambda: self._gpu_extra_bounds("_fill")
+            layer.obstacles = self._gpu_obstacles
+            layer.failed.connect(self._gpu_failed)
+            self.gpu = layer
+            layer.show()
+            layer.raise_()
+            for signal in (self.zoomChanged,):
+                signal.connect(layer.request)
+            self.horizontalScrollBar().valueChanged.connect(layer.request)
+            self.verticalScrollBar().valueChanged.connect(layer.request)
+            CadLayer.of(self.board).set_gpu(layer)
+            if self.cad is not None:
+                self.cad.overlay.attach_gpu(layer)
+            self._gpu_mode_timer = QTimer(self)             # mode « pur CAD » reevalue apres les changements du board
+            self._gpu_mode_timer.setSingleShot(True)
+            self._gpu_mode_timer.setInterval(0)
+            self._gpu_mode_timer.timeout.connect(self.refresh_gpu_mode)
+            self.board.contentChanged.connect(self._gpu_mode_timer.start)
+            self.board.pageChanged.connect(self._gpu_mode_timer.start)
+            self.board.pageChanged.connect(layer.request)
+            self.board.selectionChanged.connect(layer.request)    # halo et poignees
+            self.refresh_gpu_mode()
+            QTimer.singleShot(1500, lambda: self._check_gpu(layer, 5))
+        elif not on and layer is not None:
+            self.gpu = None
+            layer.set_pure(False)
+            for signal in (self.board.contentChanged, self.board.pageChanged):
+                try:
+                    signal.disconnect(self._gpu_mode_timer.start)
+                except (TypeError, RuntimeError):
+                    pass
+            for signal in (self.board.pageChanged, self.board.selectionChanged):
+                try:
+                    signal.disconnect(layer.request)
+                except (TypeError, RuntimeError):
+                    pass
+            CadLayer.of(self.board).set_gpu(None)
+            if self.cad is not None:
+                self.cad.overlay.attach_gpu(None)
+            try:
+                self.zoomChanged.disconnect(layer.request)
+                self.horizontalScrollBar().valueChanged.disconnect(layer.request)
+                self.verticalScrollBar().valueChanged.disconnect(layer.request)
+            except (TypeError, RuntimeError):
+                pass
+            layer.release()
+            layer.hide()
+            layer.deleteLater()
+            self.viewport().update()
+        return getattr(self, "gpu", None) is not None or not on
+
+    def _gpu_failed(self, message: str):
+        """Contexte OpenGL 3.3 impossible (pilote, bureau a distance…) : les entites CAD reviennent au rendu par lots."""
+        self.set_gpu(False)
+        self.gpuFailed.emit(message)
+
+    def _check_gpu(self, layer, tries: int):
+        """Couche visible mais sans contexte OpenGL valide apres un moment : secours (sinon le CAD resterait invisible,
+        la scene ne le peint plus)."""
+        if getattr(self, "gpu", None) is not layer:
+            return
+        if layer.isVisible() and not layer.isValid():
+            self._gpu_failed("contexte OpenGL indisponible")
+        elif not layer.isVisible() and tries > 0:
+            QTimer.singleShot(3000, lambda: self._check_gpu(layer, tries - 1))
+
+    def refresh_gpu_mode(self):
+        """Mode « pur CAD » (fond et grille sur le GPU, vue raster figee) tant que le board ne contient QUE des entites
+        CAD et que la grille est en lignes ; sinon la couche reste translucide au-dessus de la vue raster."""
+        layer = getattr(self, "gpu", None)
+        if layer is None:
+            return
+        scene = self.board
+        pure = (scene.grid_look["style"] == "lines"
+                and all(getattr(item, "CAD", False) for item in scene._items.values()))
+        layer.set_pure(pure)         # textes des cotes et remplissages des hachures : peints par QPainter (_paint_gpu_*)
+
+    def _gpu_extras(self, kind: str):
+        """Enfants a peindre par QPainter dans la couche GPU : `_fill` (remplissage plein d'une hachure, SOUS les traits) ou
+        `_text_item` (texte d'une cote, PAR-DESSUS)."""
+        for item in self.board._items.values():
+            child = getattr(item, kind, None)
+            if child is not None and item.isVisible() and child.isVisible() and getattr(child, "_solid", True):
+                yield child
+
+    def _gpu_extra_bounds(self, kind: str) -> QRect:
+        out = QRect()
+        for child in self._gpu_extras(kind):
+            box = self.mapFromScene(child.sceneBoundingRect()).boundingRect().adjusted(-2, -2, 2, 2)
+            out = box if out.isNull() else out.united(box)
+        return out
+
+    def _paint_gpu_under(self, painter, transform):
+        painter.save()
+        painter.setTransform(transform, True)
+        for child in self._gpu_extras("_fill"):
+            painter.save()
+            painter.setTransform(child.sceneTransform(), True)
+            child.paint(painter, None)
+            painter.restore()
+        painter.restore()
+
+    def _paint_gpu_texts(self, painter, transform):
+        painter.save()
+        painter.setTransform(transform, True)
+        for child in self._gpu_extras("_text_item"):
+            painter.save()
+            painter.setTransform(child.sceneTransform(), True)
+            child.paint(painter, None)
+            painter.restore()
+        painter.restore()
+
+    def _paint_gpu_overlay(self, painter, transform):
+        """Dans la couche GPU (QPainter) : halo et poignees des entites selectionnees, puis le rendu temporaire du CAD
+        (apercus, reticule peint, infobulles…)."""
+        painter.save()
+        painter.setTransform(transform, True)         # COMBINEE : le peintre est deja decale de la zone peinte (`_paint_qt`)
+        for item in self.board.selectedItems():
+            if getattr(item, "CAD", False) and item.isVisible():
+                painter.save()
+                painter.translate(item.pos())
+                item.paint_selection(painter)
+                painter.restore()
+        painter.restore()
+        if self.gpu is not None and self.gpu.pure:
+            self._paint_gpu_texts(painter, transform)
+        if self.gpu_badge is not None:
+            paint_render_badge(painter, self.gpu_badge, True)
+        if self.cad is not None and self.cad.active and self.cad.overlay.paint_into(painter):
+            self.cad.painted_cursor_shown()
+
+    def _gpu_overlay_bounds(self) -> QRect:
+        """Rectangle (viewport) qui contient le dessin de `_paint_gpu_overlay` : halo et poignees des entites
+        selectionnees + rendu temporaire du CAD ; vide = rien a peindre cette image."""
+        out = QRect()
+        margin = int(getattr(self.board, "cad_grip_px", 8) or 8) + 10
+        for item in self.board.selectedItems():
+            if getattr(item, "CAD", False) and item.isVisible():
+                box = self.mapFromScene(item.sceneBoundingRect()).boundingRect().adjusted(-margin, -margin, margin, margin)
+                out = box if out.isNull() else out.united(box)
+        if self.gpu_badge is not None:
+            out = self.gpu_badge.adjusted(-2, -2, 2, 2) if out.isNull() else out.united(self.gpu_badge.adjusted(-2, -2, 2, 2))
+        if self.gpu is not None and self.gpu.pure:
+            box = self._gpu_extra_bounds("_text_item")
+            if not box.isNull():
+                out = box if out.isNull() else out.united(box)
+        if self.cad is not None and self.cad.active:
+            box = self.cad.overlay.prepare()
+            if not box.isNull():
+                out = box if out.isNull() else out.united(box)
+        return out
+
+    def _gpu_obstacles(self) -> list:
+        """Zones (coordonnees du viewport) des panneaux flottants du board, widgets AU-DESSUS de la vue : la couche GPU
+        les laisse libres (sinon elle les recouvrirait)."""
+        viewport = self.viewport()
+        pane = self.parentWidget()
+        if pane is None:
+            return []
+        rects = []
+        bounds = viewport.rect()
+        for widget in pane.children():
+            if (not isinstance(widget, QWidget) or widget is self or not widget.isVisible()
+                    or type(widget).__name__ == "ShadowUnderlay"):
+                continue
+            top_left = viewport.mapFromGlobal(widget.mapToGlobal(QPoint(0, 0)))
+            rect = QRect(top_left, widget.size()).intersected(bounds)
+            if not rect.isEmpty():
+                rects.append(rect)
+        return rects
 
     @property
     def board(self) -> BoardScene:
@@ -101,6 +329,8 @@ class BoardView(QGraphicsView):
         self._fit_scroll_area()
         self.setTransform(QTransform.fromScale(zoom, zoom))
         self.board.set_zoom(zoom)
+        if not self.zooming():
+            self.board.cad_tess_zoom = zoom         # finesse des courbes CAD : pas pendant un zoom continu
         moved = self.viewportTransform().map(fixed) - anchor
         self._scroll_by(moved.x(), moved.y())
         if was_cached != (zoom <= CACHE_MAX_ZOOM) and not getattr(self, "_zoom_timer", None):
@@ -137,16 +367,28 @@ class BoardView(QGraphicsView):
             timer = self._zoom_timer = QTimer(self)
             timer.setSingleShot(True)
             timer.setInterval(250)
-            timer.timeout.connect(lambda: self._set_item_cache(True))
+            timer.timeout.connect(self._zoom_settled)
         if not timer.isActive():
             self._set_item_cache(False)
         timer.start()
+
+    def _zoom_settled(self):
+        self._set_item_cache(True)
+        if getattr(self.board, "cad_tess_zoom", None) != self._zoom:
+            self.board.cad_tess_zoom = self._zoom   # courbes CAD retessellees a la fin du geste (cad_items.tess_band)
+            self.board.update()
+        if self._cad_on():
+            self.cad.overlay.invalidate()           # image du viewport relevee maintenant (pas pendant le geste)
+
+    def zooming(self) -> bool:
+        timer = getattr(self, "_zoom_timer", None)
+        return timer is not None and timer.isActive()
 
     def _set_item_cache(self, on: bool):
         on = on and self._zoom <= CACHE_MAX_ZOOM
         mode = QGraphicsItem.DeviceCoordinateCache if on else QGraphicsItem.NoCache
         for item in self.board.board_items():
-            if isinstance(item, CommentItem):
+            if isinstance(item, CommentItem) or getattr(item, "NO_CACHE", False):
                 continue
             item.setCacheMode(mode)
             if item.text_item is not None and not item.text_item.editing():
@@ -160,8 +402,12 @@ class BoardView(QGraphicsView):
         ix, iy = round(dx), round(dy)
         self._scroll_rest = (dx - ix, dy - iy)
         h, v = self.horizontalScrollBar(), self.verticalScrollBar()
+        before = (h.value(), v.value())
         h.setValue(h.value() + ix)
         v.setValue(v.value() + iy)
+        if self._pan is not None and self._pan_frame is not None:     # deplacement : image recopiee (_pan_paint)
+            self._pan_shift[0] += h.value() - before[0]
+            self._pan_shift[1] += v.value() - before[1]
         self._note_visible()
 
     def center_on(self, point: QPointF):
@@ -186,24 +432,173 @@ class BoardView(QGraphicsView):
     def _note_visible(self):
         self.board.visible_rect = self.mapToScene(self.viewport().rect()).boundingRect()
 
+    def paintEvent(self, event):
+        if self._pan is not None and self._pan_frame is not None and self._pan_paint():
+            return
+        super().paintEvent(event)
+        if self._pan is not None:
+            self._pan_frame = self._grab_painted(event.rect())     # 1re image du geste : peinture ordinaire relevee
+        if self.cad is not None and self.cad.active:
+            self.cad.overlay.capture(event.rect())     # image du viewport pour les mouvements (cad_overlay)
+
+    # -- deplacement (pan) par recopie de l'image --
+    # Signale : « le pan n'est pas super fluide ». Mesure (fenetre reelle 2400 x 1300, sonde _probe_cad_latency
+    # « pan ») : chaque pas de souris repeignait TOUTE la scene (vue en FullViewportUpdate : 7 ms board vide, 27 ms
+    # avec 150 post-it / formes, 35 ms avec 5 000 lignes CAD en plus), alors que seule une bande de quelques pixels
+    # apparait. Pendant le geste, l'image de la scene est gardee a part (`_pan_frame`, pixels physiques, sans les
+    # barres posees dessus) : chaque pas la decale EN PLACE (QPixmap.scroll) et ne dessine que les bandes qui
+    # apparaissent au bord. Scene changee pendant le geste (image arrivee...) ou decalage non entier en pixels
+    # physiques : image refaite en entier. Le geste fini, peinture ordinaire.
+    def _pan_paint(self) -> bool:
+        viewport = self.viewport()
+        ratio = viewport.devicePixelRatioF() or 1.0
+        rect = viewport.rect()
+        if rect.isEmpty():
+            return False
+        size = QSize(math.ceil(rect.width() * ratio), math.ceil(rect.height() * ratio))
+        dx, dy = self._pan_shift
+        self._pan_shift = [0, 0]
+        frame = self._pan_frame
+        whole = (frame is None or frame.size() != size or abs(dx * ratio - round(dx * ratio)) > 1e-6
+                 or abs(dy * ratio - round(dy * ratio)) > 1e-6)
+        if whole:
+            frame = QPixmap(size)
+            frame.setDevicePixelRatio(ratio)
+            painter = QPainter(frame)
+            self._render_part(painter, rect)
+        else:
+            frame.scroll(-round(dx * ratio), -round(dy * ratio), frame.rect())     # en place (memmove)
+            painter = QPainter(frame)
+            exposed = QRegion(rect).subtracted(QRegion(rect.translated(-dx, -dy)))
+            for part in exposed:
+                self._render_part(painter, part)
+        painter.end()
+        self._pan_frame = frame
+        out = QPainter(viewport)
+        out.setCompositionMode(QPainter.CompositionMode_Source)
+        out.drawPixmap(0, 0, frame)
+        out.end()
+        return True
+
+    def _grab_painted(self, rect):
+        """Image de la scene que le viewport vient de peindre EN ENTIER, relevee dans la memoire de la fenetre
+        (~3 ms ; la refaire a part coutait jusqu'a ~110 ms au depart du geste) ; None si ce n'est pas sur
+        (peinture partielle, overlay CAD opaque par-dessus, autre moteur de rendu)."""
+        viewport = self.viewport()
+        if rect != viewport.rect() or (self.cad is not None and self.cad.overlay.backdrop is not None):
+            return None
+        try:
+            store = viewport.backingStore()
+            device = store.paintDevice() if store is not None else None
+        except (AttributeError, RuntimeError):
+            return None
+        if not isinstance(device, QImage) or device.isNull():
+            return None
+        ratio = device.devicePixelRatio() or 1.0
+        if abs(ratio - (viewport.devicePixelRatioF() or 1.0)) > 1e-6:
+            return None
+        corner = viewport.mapTo(viewport.window(), rect.topLeft())
+        area = QRectF(corner.x() * ratio, corner.y() * ratio, rect.width() * ratio, rect.height() * ratio).toRect()
+        if not device.rect().contains(area):
+            return None
+        frame = QPixmap.fromImage(device.copy(area))
+        frame.setDevicePixelRatio(ratio)
+        return frame
+
+    def _render_part(self, painter, rect):
+        painter.save()
+        painter.setClipRect(rect)
+        painter.setRenderHints(self.renderHints())
+        self.render(painter, QRectF(rect), rect, Qt.IgnoreAspectRatio)
+        painter.restore()
+
+    def _gpu_texture(self, rect):
+        """Contenu raster du board (fond, grille, post-it, formes, textes… ; le CAD est peint par le GPU) de la zone `rect`
+        de la vue (pixels logiques) : bande envoyee a la texture que la couche GPU decale pendant un deplacement."""
+        ratio = self.viewport().devicePixelRatioF() or 1.0
+        image = QImage(math.ceil(rect.width() * ratio), math.ceil(rect.height() * ratio), QImage.Format_RGB32)
+        image.setDevicePixelRatio(ratio)
+        painter = QPainter(image)
+        painter.translate(-rect.x(), -rect.y())
+        self._gpu_texturing = True
+        try:
+            self._render_part(painter, rect)
+        finally:
+            self._gpu_texturing = False
+            painter.end()
+        return image
+
+    def _pan_started(self):
+        self._pan_frame = None
+        self._pan_shift = [0, 0]
+        gpu = getattr(self, "gpu", None)
+        if gpu is not None and gpu.texture_provider is not None:
+            gpu.begin_texture()
+        if not getattr(self, "_pan_watching", False):  # relachement jamais recu (fenetre quittee) : pas de doublon
+            self.board.changed.connect(self._pan_scene_changed)
+            self._pan_watching = True
+
+    def _pan_finished(self):
+        if getattr(self, "_pan_watching", False):
+            self.board.changed.disconnect(self._pan_scene_changed)
+            self._pan_watching = False
+        self._pan_frame = None
+        gpu = getattr(self, "gpu", None)
+        if gpu is not None:
+            gpu.end_texture()
+        self.viewport().update()                        # peinture ordinaire (caches, image du CAD relevee)
+
+    def _pan_scene_changed(self, _rects=None):
+        self._pan_frame = None                          # contenu change : prochaine image refaite en entier
+        gpu = getattr(self, "gpu", None)
+        if gpu is not None and not getattr(self, "_gpu_texturing", False):
+            gpu.stale_texture()
+            gpu.request()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._note_visible()
+        if self.cad is not None:
+            self.cad.overlay.setGeometry(self.viewport().rect())
+            self.cad.overlay.invalidate()
+
+    def event(self, event):
+        # Mode CAD : ses touches (Entree, F3, F7-F12, lettres de la barre de commande…) ne partent pas vers
+        # les raccourcis de la fenetre principale.
+        if event.type() == QEvent.ShortcutOverride and self._cad_on() and self.cad.claims(event):
+            event.accept()
+            return True
+        return super().event(event)
+
+    def focusNextPrevChild(self, forward: bool) -> bool:
+        if self._cad_on():
+            return False                    # Tab : saisie dynamique / accrochage suivant (mode CAD)
+        return super().focusNextPrevChild(forward)
+
+    def leaveEvent(self, event):
+        if self._cad_on():
+            self.cad.leave()
+        super().leaveEvent(event)
 
     def wheelEvent(self, event):
+        """Molette = zoom autour du curseur (Reglages > Module MRO > Navigation : `zoom_step` par cran) ; Maj tenu =
+        zoom FIN (`zoom_fine_step`, demande de l'utilisateur ; Maj + molette deplacait la vue a l'horizontale) ; pave
+        tactile, deux doigts en travers = deplacement."""
+        delta = event.angleDelta()
         if event.modifiers() & Qt.ShiftModifier:
-            delta = event.angleDelta()
-            self._scroll_by(-(delta.y() or delta.x()), 0)
+            steps = (delta.y() or delta.x()) / 120.0        # Windows peut rendre la molette en x avec Maj
+            if steps:
+                self.zoom_by(self.zoom_fine_step ** steps, event.position())
             event.accept()
             return
         pixel = event.pixelDelta()
-        if not (event.modifiers() & Qt.ControlModifier) and not pixel.isNull() and event.angleDelta().y() == 0:
+        if not (event.modifiers() & Qt.ControlModifier) and not pixel.isNull() and delta.y() == 0:
             self._scroll_by(-pixel.x(), -pixel.y())          # pave tactile, deux doigts en travers
             event.accept()
             return
-        steps = event.angleDelta().y() / 120.0
+        steps = delta.y() / 120.0
         if steps:
-            self.zoom_by(1.15 ** steps, event.position())
+            self.zoom_by(self.zoom_step ** steps, event.position())
         event.accept()
 
     def viewportEvent(self, event):
@@ -228,6 +623,9 @@ class BoardView(QGraphicsView):
         self.toolChanged.emit(tool)
 
     def _sync_cursor(self):
+        if self._cad_on():
+            self.cad._sync_cursor()         # mode CAD : le reticule, meme pendant un deplacement (il suit le pointeur)
+            return
         if self._pan is not None:
             self.viewport().setCursor(Qt.ClosedHandCursor)
         elif self._space or self.tool == "hand":
@@ -269,7 +667,13 @@ class BoardView(QGraphicsView):
         if event.button() == Qt.MiddleButton or (event.button() == Qt.LeftButton
                                                  and (self._space or self.tool == "hand")):
             self._pan = pos
+            self._pan_started()
             self._sync_cursor()
+            if self._cad_on():
+                self.cad.note_pan()
+            event.accept()
+            return
+        if self._cad_on() and self.cad.mouse_press(event):
             event.accept()
             return
         if event.button() == Qt.LeftButton and self.tool == "select":
@@ -357,7 +761,17 @@ class BoardView(QGraphicsView):
         if self._pan is not None:
             delta = pos - self._pan
             self._pan = pos
+            cad = self._cad_on()
+            if cad:
+                self.cad.cursor_view = QPointF(pos)     # relu par _view_changed pendant le defilement
+            before = (self.horizontalScrollBar().value(), self.verticalScrollBar().value())
             self._scroll_by(-delta.x(), -delta.y())
+            if cad:
+                self.cad.pan_moved(pos, before != (self.horizontalScrollBar().value(),
+                                                   self.verticalScrollBar().value()))
+            event.accept()
+            return
+        if self._cad_on() and self.cad.mouse_move(event):
             event.accept()
             return
         draft = self._draft
@@ -396,7 +810,13 @@ class BoardView(QGraphicsView):
     def mouseReleaseEvent(self, event):
         if self._pan is not None and event.button() in (Qt.MiddleButton, Qt.LeftButton):
             self._pan = None
+            self._pan_finished()
             self._sync_cursor()
+            if self._cad_on():
+                self.cad._sync_cursor()
+            event.accept()
+            return
+        if self._cad_on() and self.cad.mouse_release(event):
             event.accept()
             return
         draft, self._draft = self._draft, None
@@ -599,10 +1019,19 @@ class BoardView(QGraphicsView):
         if event.key() == Qt.Key_Shift and isinstance(grabber, BoardItem):
             grabber.refresh_gesture(event.modifiers())
 
+    def mouseDoubleClickEvent(self, event):
+        if self._cad_on() and self.cad.mouse_double_click(event):
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
     def keyPressEvent(self, event):
         self._refresh_gesture(event)
         if self.editing_text():
             super().keyPressEvent(event)
+            return
+        if self._cad_on() and self.cad.key_press(event):
+            event.accept()
             return
         key, mods = event.key(), event.modifiers()
         board = self.board
@@ -673,6 +1102,9 @@ class BoardView(QGraphicsView):
         event.accept()
 
     def keyReleaseEvent(self, event):
+        if self._cad_on() and self.cad.key_release(event):
+            event.accept()
+            return
         self._refresh_gesture(event)
         if event.key() == Qt.Key_Space and not event.isAutoRepeat() and self._space:
             self._space = False
@@ -740,7 +1172,7 @@ class BoardView(QGraphicsView):
             return
         if mime.hasUrls() and self.add_image_files([Path(u.toLocalFile()) for u in mime.urls()], at):
             return
-        if mime.hasImage():
+        if mime.hasImage() and self.board.board_path is not None:      # dessin DXF importe : pas de dossier
             image = QImage(mime.imageData())
             if not image.isNull():
                 buffer = QBuffer()
@@ -775,6 +1207,8 @@ class BoardView(QGraphicsView):
 
     def add_image_files(self, paths, at: QPointF) -> bool:
         added = False
+        if self.board.board_path is None:                  # dessin DXF / DWG pas encore enregistre en .mro
+            return False
         for i, path in enumerate(p for p in paths if p.suffix.lower() in IMAGE_SUFFIXES and p.is_file()):
             size = QImageReader(str(path)).size()
             if not size.isValid():

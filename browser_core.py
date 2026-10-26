@@ -3027,98 +3027,40 @@ def apply_all_settings(settings: dict) -> None:
     # palette live, pas l'ancienne).
     set_general_column_style({key: settings.get(key) for key in COLUMN_TYPE_OVERRIDE_KEYS})
 
-    # Colonne "Type"/"Projets"/"Sous-projet" > style EFFECTIF (voir
-    # COLUMN_TYPE_OVERRIDE_KEYS/app_style.set_column_style) : la valeur
-    # GENERALE de chaque cle, sauf si Colonnes > (Type/Projets/Sous-
-    # projets) l'a explicitement surchargee pour CETTE colonne (voir
-    # SettingsWindow._build_column_override_page, un toggle par ligne) —
-    # "Type" garde ses cles de stockage historiques (column_type_overrides/
-    # column_type_override_enabled), Projets/Sous-projet utilisent les
-    # nouvelles cles imbriquees par titre (voir la remarque de
-    # l'utilisateur, "place ensuite cette meme section dans les onglets
-    # projets et sous projets pour y controler les colonnes respectives").
+    # Style EFFECTIF de chaque colonne : le style GENERAL, sauf la largeur et la hauteur de ligne de
+    # Type / Projets / Sous-projet / Focus, enregistrees par le glisser des bordures
+    # (_persist_column_width / _persist_row_height) dans `column_type_overrides` (Type) et
+    # `column_overrides_by_title` (les autres), avec leur interrupteur `*_enabled`. Plus aucun onglet de
+    # surcharge dans les reglages : seules ces deux cles sont lues.
     overrides_by_title = settings.get("column_overrides_by_title") or {}
     enabled_by_title = settings.get("column_override_enabled_by_title") or {}
-    # "Logiciels"/"IN"/"OVER"/"OUT"/INSPECTOR_TITLE (ajoutes ici, voir la
-    # remarque de l'utilisateur, "ajoute la colonne logiciels dans les
-    # settings, ainsi que in over et out, puis la colonne inspecteur") :
-    # MEME mecanisme "column_overrides_by_title" que Projets/Sous-projet,
-    # chacune avec son propre onglet de surcharge dedie (voir
-    # SettingsWindow._build_columns_page) — plus de repli general-only
-    # special pour elles (voir l'ancienne remarque plus bas, desormais
-    # limitee a "Contenu" seul, le SEUL bucket restant sans onglet dedie).
-    for real_title in ("Type", "Projets", "Sous-projet", "Logiciels", "IN", "OVER", "OUT", INSPECTOR_TITLE):
+    for real_title in ("Type", "Projets", "Sous-projet", "Logiciels", "IN", "OVER", "OUT", INSPECTOR_TITLE,
+                       PREVIEW_STACK_TITLE):
         if real_title == "Type":
             overrides = settings.get("column_type_overrides") or {}
             override_enabled = settings.get("column_type_override_enabled") or {}
         else:
             overrides = overrides_by_title.get(real_title) or {}
             override_enabled = enabled_by_title.get(real_title) or {}
-        col_style = {}
-        for key in COLUMN_TYPE_OVERRIDE_KEYS:
+        col_style = {key: settings.get(key) for key in COLUMN_TYPE_OVERRIDE_KEYS}
+        for key in ("item_column_width", "item_row_height"):
             if override_enabled.get(key) and key in overrides:
                 col_style[key] = overrides[key]
-            else:
-                # "Projets"/"Sous-projet" suivent desormais la valeur
-                # GENERALE par defaut, exactement comme "Type" (voir
-                # _paint_unified_row, rendu PARTAGE par toutes les
-                # colonnes) — plus de repli neutre special pour ces 2
-                # colonnes (essaye puis abandonne : il empechait
-                # padding/rayon/bordure de selection de s'appliquer du
-                # tout tant qu'aucune surcharge PAR TITRE n'etait activee,
-                # voir la remarque de l'utilisateur, "le padding et les
-                # coins arrondis des autres colonnes que type ne
-                # fonctionnent pas").
-                col_style[key] = settings.get(key)
+        if real_title == PREVIEW_STACK_TITLE:
+            # Colonne Focus (colonne fantome de l'apercu) : entete masque et fond @skinN1 (anciennes
+            # surcharges de l'onglet Focus, codees en dur), ratio de son image = `preview_image_ratio`.
+            col_style["header_visible"] = False
+            col_style["column_bg_color"] = "@skinN1"
+            col_style["item_image_ratio"] = settings.get("preview_image_ratio", 1.0)
         set_column_style(real_title, col_style)
-        # sizeHint (voir RowDelegate.sizeHint/ProjectTileDelegate.sizeHint)
-        # lit deja COLUMN_SETTINGS[titre] — y ecrire la hauteur/l'espacement
-        # de ligne EFFECTIFS (col_style : surcharge PAR TITRE si active,
-        # sinon la valeur GENERALE) evite un 2e chemin de lecture rien que
-        # pour ca. TOUJOURS col_style, pour les 3 titres — PAS seulement
-        # "Type" (essaye puis abandonne : "Projets"/"Sous-projet" gardaient
-        # alors LEUR propre defaut fige, 58/1, tant qu'aucune surcharge PAR
-        # TITRE n'etait activee, ignorant purement et simplement le reglage
-        # GENERAL "Hauteur de la ligne"/"Espacement entre les lignes") —
-        # voir la remarque de l'utilisateur, "le parametre de hauteur de
-        # ligne ne prend que la colonne type en compte ... pareil pour
-        # espacement entre les lignes".
-        # INSPECTOR_TITLE n'est PAS dans COLUMN_SETTINGS (voir sa remarque
-        # de tete — pas une colonne a LIGNES, DetailPanel n'a pas de
-        # sizeHint/item_row_* a y ecrire, MEME raison que PREVIEW_STACK_
-        # TITLE ci-dessous) : rien de plus a faire pour elle une fois
-        # set_column_style() appele ci-dessus.
+        # sizeHint (RowDelegate / ProjectTileDelegate) lit COLUMN_SETTINGS[titre] : hauteur, espacement
+        # et largeur EFFECTIFS y sont recopies. Inspecteur et Focus n'y sont pas (pas des colonnes a lignes).
         if real_title in COLUMN_SETTINGS:
             if col_style.get("item_row_height") is not None:
                 COLUMN_SETTINGS[real_title]["height"] = int(col_style["item_row_height"])
             COLUMN_SETTINGS[real_title]["spacing"] = max(0, int(col_style.get("item_row_spacing") or 0))
-            # Largeur par defaut (voir settings_window.DEFAULT_SETTINGS.
-            # item_column_width, 1er parametre de General > Colonnes > Colonnes,
-            # et son override dans Colonnes > Type/Projets/Sous-projets) : MEME
-            # resolution generale/surcharge PAR TITRE que hauteur/espacement juste au-
-            # dessus — remplace les largeurs fixes codees en dur ci-dessus
-            # (COLUMN_SETTINGS, "width": 140/208/...) des qu'un reglage existe
-            # — voir la remarque de l'utilisateur, "ajoute un parametre de
-            # largeur de colonne par defaut ... et un overide pour chacune des
-            # autres colonnes".
             if col_style.get("item_column_width") is not None:
                 COLUMN_SETTINGS[real_title]["width"] = int(col_style["item_column_width"])
-
-    # PREVIEW_STACK_TITLE (voir sa remarque de tete/PreviewColumn) : MEME
-    # resolution generale/surcharge que ci-dessus (son propre onglet, voir
-    # SettingsWindow._build_columns_page), mais a PART — pas dans
-    # COLUMN_SETTINGS (pas une colonne a LIGNES, aucun sizeHint/item_row_*
-    # a y ecrire, voir PreviewColumn.set_preview_block) — voir la remarque
-    # de l'utilisateur, "je veux les overrides dans les settings aussi".
-    preview_overrides = overrides_by_title.get(PREVIEW_STACK_TITLE) or {}
-    preview_enabled = enabled_by_title.get(PREVIEW_STACK_TITLE) or {}
-    preview_style = {}
-    for key in COLUMN_TYPE_OVERRIDE_KEYS:
-        if preview_enabled.get(key) and key in preview_overrides:
-            preview_style[key] = preview_overrides[key]
-        else:
-            preview_style[key] = settings.get(key)
-    set_column_style(PREVIEW_STACK_TITLE, preview_style)
 
     # "Contenu" n'a pas d'onglet de surcharge dedie (voir settings_window.
     # _build_columns_page) : suit directement la valeur GENERALE, jamais
