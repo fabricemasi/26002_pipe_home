@@ -796,6 +796,17 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "board_cad_aa_samples": "8",                   # suréchantillonnage du rendu GPU : 1 (aucun), 2, 4, 8, 16, 32, 64
     "board_cad_antialiasing": True, "board_cad_linear_blend": True, "board_cad_crisp_lines": True, "board_cad_dense_px": 4,
     "board_cad_grip_color": "#2f6bff", "board_cad_track_color": "#18a058", "board_cad_ghost_color": "#5f6b78",
+    # Cadres de selection du CAD (Reglages > Module CAD > Selection) : fenetre (gauche -> droite) et capture
+    # (droite -> gauche) — fond, bordure par cote, arrondis, type de ligne (solid | dash | dot) et son echelle (%)
+    **{f"board_cad_{frame}_{key}": value for frame, bg, edge, line in (
+        ("window", "#283c6eff", "#285ae6", "solid"), ("crossing", "#2850c878", "#28a05a", "dash"))
+       for key, value in (
+           ("bg", bg), ("border_enabled", {"top": True, "right": True, "bottom": True, "left": True}),
+           ("border_enabled_linked", True), ("border", {"top": edge, "right": edge, "bottom": edge, "left": edge}),
+           ("border_thickness", 1), ("radius", {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0}),
+           ("radius_linked", True), ("line", line), ("line_scale", 100))},
+    "board_cad_trim_mode": "quick",                # AJUSTER : quick (Rapide, comme AutoCAD) | standard
+    "board_cad_trim_edge": False,                  # AJUSTER : aretes de coupe prolongees (EDGEMODE = 1)
     "viewer_focus_image_border": {"top": "#5f666b", "right": "#5f666b", "bottom": "#5f666b", "left": "#5f666b"},
     "viewer_focus_image_border_thickness": 1,
     "viewer_focus_image_border_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},

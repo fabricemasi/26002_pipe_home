@@ -104,9 +104,11 @@ class CadController(QObject):
         self.hover_grip = None
         self.hover_snap = None                 # hors commande : point caracteristique approche (aimant)
         self.window = None
+        self.lasso = None
         self._press = None
         self._press_double = False             # appui venu d'un double-clic (voir mouse_double_click)
         self.last_pick_doc = None              # point (document) du dernier clic de choix d'objet (chanfrein…)
+        self.last_pick_shift = False           # ce clic avait Maj (AJUSTER : Maj + clic = prolonger)
         # Valeurs des outils gardees d'une utilisation a l'autre (comme AutoCAD) : distance de decalage, distances /
         # angle / methode du chanfrein, rayon du raccord, mode Ajuster.
         self.tool_memory = {"offset": None, "chamfer_d1": 0.0, "chamfer_d2": 0.0, "chamfer_angle": 45.0,
@@ -165,6 +167,8 @@ class CadController(QObject):
             "track": resolve_color_ref(g("board_cad_track_color"), "#18a058"),
             "grip_color": resolve_color_ref(g("board_cad_grip_color"), "#2f6bff"),
             "precision": max(0, min(8, int(g("board_cad_precision", 4) or 0))),
+            "sel_window": self._frame_look("board_cad_window", 0),
+            "sel_crossing": self._frame_look("board_cad_crossing", 1),
             **self._tip_colors(),
         }
         if self.scene.background.lightness() < 110:
@@ -221,6 +225,33 @@ class CadController(QObject):
         """Reglages du dessin : le reticule remplace par ce dessin est relu."""
         if self._crosshair_overrides() != self._override_sig:
             self.apply_settings(self.settings)
+
+    def _frame_look(self, prefix: str, crossing: int) -> dict:
+        """Cadre de selection (Reglages > Module CAD > Selection) : fenetre (`board_cad_window_*`) ou capture
+        (`board_cad_crossing_*`) ; une cle absente garde l'ancien dessin (`cad_overlay.DEFAULT_FRAMES`)."""
+        from app_style import resolve_color_ref
+        from .cad_overlay import DEFAULT_FRAMES
+        base = DEFAULT_FRAMES[crossing]
+        g = self.setting
+        sides = g(f"{prefix}_border_enabled")
+        colors = g(f"{prefix}_border")
+        radius = g(f"{prefix}_radius")
+        sides = ({k: bool(sides.get(k, True)) for k in base["sides"]} if isinstance(sides, dict)
+                 else {k: bool(sides) for k in base["sides"]} if sides is not None else dict(base["sides"]))
+        colors = {k: resolve_color_ref((colors or {}).get(k) if isinstance(colors, dict) else colors, base["colors"][k])
+                  for k in base["colors"]}
+        if isinstance(radius, dict):
+            radius = {k: int(radius.get(k, 0) or 0) for k in base["radius"]}
+        else:
+            radius = {k: int(radius or 0) for k in base["radius"]}
+        try:
+            scale = float(g(f"{prefix}_line_scale", base["scale"]))
+        except (TypeError, ValueError):
+            scale = base["scale"]
+        line = g(f"{prefix}_line", base["line"])
+        return {"bg": resolve_color_ref(g(f"{prefix}_bg"), base["bg"]), "sides": sides, "colors": colors,
+                "thickness": max(1, int(g(f"{prefix}_border_thickness", 1) or 1)), "radius": radius,
+                "line": line if line in ("solid", "dash", "dot") else base["line"], "scale": max(10.0, scale)}
 
     @staticmethod
     def _tip_colors() -> dict:
@@ -337,6 +368,7 @@ class CadController(QObject):
             return
         self.end_command()
         self.window = None
+        self.lasso = None
         self._press = None
         self.active = False
         self.overlay.hide()
@@ -371,12 +403,25 @@ class CadController(QObject):
             return None, True                               # aimant : sur les objets, jamais sur la grille
         if look.get("crosshair_full"):
             return None, True                               # bras jusqu'aux bords : aucun curseur du systeme
+        if self.selecting_area():
+            # Fenetre de selection / trace en cours : le reticule est peint DANS LA MEME IMAGE que le cadre (signale :
+            # « latence entre le curseur et le cadre de selection » — le curseur du systeme avance, le cadre suit
+            # une image plus tard ; peints ensemble, ils ne se decalent jamais).
+            return None, True
         if look.get("magnet") and prompt is None and self.hover_snap is not None:
             return None, True
         ratio = self.view.viewport().devicePixelRatioF()
-        native = native_cursor(look["crosshair_px"], 0 if point_prompt else look["pickbox_px"], look["cursor"], ratio,
-                               self.memory_color())
+        box = 0 if point_prompt or self.selecting_area() else look["pickbox_px"]
+        native = native_cursor(look["crosshair_px"], box, look["cursor"], ratio, self.memory_color())
         return native, native is None
+
+    def selecting_area(self) -> bool:
+        """Une fenetre de selection ou un trace a main levee est en cours : le carre central du reticule disparait
+        (demande de l'utilisateur), les bras restent."""
+        return self.window is not None or self.lasso is not None
+
+    def shift_held(self) -> bool:
+        return bool(QApplication.keyboardModifiers() & Qt.ShiftModifier)
 
     def memory_color(self) -> str | None:
         """Pipette en cours avec un objet source : sa couleur (indicateur « des proprietes sont en memoire » sur le
@@ -394,8 +439,8 @@ class CadController(QObject):
         if native is None:
             if not painted or self._cursor_key == "blank":
                 return
-            if self.look.get("magnet") and not self._cursor_blank_ok:
-                return                                      # cache apres la 1re peinture du reticule aimante
+            if (self.look.get("magnet") or self.selecting_area()) and not self._cursor_blank_ok:
+                return                                      # cache apres la 1re peinture du reticule (aimant, cadre)
             key = "blank"
             self.view.viewport().setCursor(Qt.BlankCursor)
         else:
@@ -534,6 +579,7 @@ class CadController(QObject):
         # commande et le clic suivant sur la ligne tout juste tracee la refermait au lieu de selectionner (bug signale :
         # « parfois une ligne creee est impossible a selectionner »).
         self.window = None
+        self.lasso = None
         if isinstance(entry.factory, type):
             self.end_command()
             self.command = entry.factory(self)
@@ -552,6 +598,7 @@ class CadController(QObject):
         if command is not None and not command.finished:
             command.cancel()
         self.window = None
+        self.lasso = None
         self._end_selection_prompt()
         self.highlight([])
         self.engine.reset_tracking()
@@ -565,6 +612,7 @@ class CadController(QObject):
         if command is not None and command.finished:
             self.command = None
             self.window = None
+            self.lasso = None
             self.highlight([])
             self.engine.reset_tracking()
             self._end_selection_prompt()
@@ -807,6 +855,7 @@ class CadController(QObject):
         if self.command is not None:
             self.end_command()
         self.window = None
+        self.lasso = None
         self._press = None
 
     # ------------------------------------------------------------------ saisie
@@ -1021,10 +1070,22 @@ class CadController(QObject):
 
     def mouse_move(self, event) -> bool:
         self._move_cursor(event.position())
-        if self._press is not None and self.window is None:
+        if self.lasso is not None:
+            last = self.doc_to_view(self.lasso[-1])
+            if (event.position() - last).manhattanLength() >= 2:
+                self.lasso.append(self.cursor_doc)
+        elif self._press is not None and self.window is None:
             start_view = self._press[0]
             if (event.position() - start_view).manhattanLength() > CLICK_PX:
-                self.window = {"start": self._press[1], "drag": True}
+                prompt = self.prompt()
+                if (prompt is not None and prompt.kind == "select" and self.command is not None
+                        and getattr(self.command, "wants_path", lambda: False)()):
+                    self.lasso = [self._press[1], self.cursor_doc]      # AJUSTER : trace a main levee
+                else:
+                    # Comme un clic dans le vide (demande de l'utilisateur) : la fenetre reste ouverte au
+                    # relachement, seul un 2e clic la ferme — jamais de fenetre « tiree » qui se ferme en lachant.
+                    self.window = {"start": self._press[1]}
+                self._apply_cursor()                # carre central cache pendant la selection
         self.overlay.track()                    # seule la zone qui change est repeinte
         return True
 
@@ -1047,8 +1108,14 @@ class CadController(QObject):
             return True
         pos, doc, mods = press
         self.last_pick_doc = doc
-        if self.window is not None and self.window.get("drag"):
-            self._finish_window(self.view_to_doc(event.position()), mods)
+        self.last_pick_shift = bool(mods & Qt.ShiftModifier)
+        if self.lasso is not None:
+            points, self.lasso = self.lasso + [self.view_to_doc(event.position())], None
+            if self.command is not None and hasattr(self.command, "path_done"):
+                self.command.path_done(points)
+                self._after_step()
+            self._apply_cursor()
+            self.overlay.update()
             return True
         if (event.position() - pos).manhattanLength() <= CLICK_PX:
             prompt = self.prompt()
@@ -1063,7 +1130,7 @@ class CadController(QObject):
                     self._select([item], Qt.NoModifier)
                     self.ui.show_properties()
                 else:
-                    self.window = {"start": doc, "drag": False}
+                    self.window = {"start": doc}
                 self.overlay.update()
                 return True
             if prompt is not None and prompt.kind == "select":
@@ -1074,8 +1141,12 @@ class CadController(QObject):
                 item = self.pick_next(pos, self.selection(), cycle=True)
             if item is not None:
                 self._select([item], mods)
+            elif (prompt is not None and prompt.kind == "select" and self.command is not None
+                  and getattr(self.command, "empty_click", lambda _d: False)(doc)):
+                self._after_step()                          # AJUSTER : trajet de deux points ou capture
             else:
-                self.window = {"start": doc, "drag": False}  # clic dans le vide : fenetre, 2e clic
+                self.window = {"start": doc}  # clic dans le vide : fenetre, 2e clic
+            self._apply_cursor()
         self.overlay.update()
         return True
 
@@ -1287,6 +1358,7 @@ class CadController(QObject):
         window, self.window = self.window, None
         if window is None:
             return
+        self._apply_cursor()                                # le carre central revient
         start = window["start"]
         a, b = self.doc_to_view(start), self.doc_to_view(end_doc)
         if abs(a.x() - b.x()) < 2 and abs(a.y() - b.y()) < 2:
@@ -1505,8 +1577,10 @@ class CadController(QObject):
         if self.buffer:
             self.set_buffer("")
             return
-        if self.window is not None:
+        if self.window is not None or self.lasso is not None:
             self.window = None
+            self.lasso = None
+            self._apply_cursor()
             self.overlay.update()
             return
         if self.command is not None:
@@ -1575,7 +1649,7 @@ class CadController(QObject):
         prompt = self.prompt()
         res = self.res
         point_prompt = prompt is not None and prompt.kind == "point"
-        state["pickbox"] = not point_prompt
+        state["pickbox"] = not point_prompt and not self.selecting_area()
         state["paint_cursor"] = self.cursor_view is not None and self._cursor_plan()[1]
         state["memory"] = self.memory_color()
         highlights = []
@@ -1620,10 +1694,16 @@ class CadController(QObject):
                 and hasattr(self.command, "hover_ghosts")):
             # Apercu au survol d'un objet a choisir (decalage, chanfrein, raccord : ce que donnera le clic).
             state["ghosts"] = self.command.hover_ghosts(self.hover_item, self.cursor_doc)
+        if self.lasso is not None and self.cursor_doc is not None:
+            state["path"] = self.lasso + [self.cursor_doc]
+            if hasattr(self.command, "path_ghosts"):
+                state["ghosts"] = self.command.path_ghosts(state["path"])
         if self.window is not None and self.cursor_doc is not None:
             start = self.window["start"]
             crossing = self.doc_to_view(self.cursor_doc).x() < self.doc_to_view(start).x()
-            state["window"] = (start, self.cursor_doc, crossing)
+            # Coin mobile = le point ECRAN du reticule tel quel (pas d'aller-retour document -> ecran : 64,9999 au
+            # lieu de 65 tombait sur le pixel voisin du reticule, signale « le cadre est un peu a cote »).
+            state["window"] = (start, self.cursor_doc, crossing, self.cursor_view)
         snap = self.hover_snap if prompt is None else None
         if snap is not None:
             if look["show_markers"]:

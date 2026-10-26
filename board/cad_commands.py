@@ -2029,44 +2029,127 @@ class HatchCommand(Command):
 # AJUSTER (TRIM) — voir cad_trim
 # ==========================================================================
 
+TRIMMABLE = ("cad_line", "cad_arc", "cad_circle", "cad_pline")
+TRIM_CUTTING_OPT = ("cutting", "Arêtes de coupe", ("T", "ARETES", "ARÊTES", "CUTTINGEDGES"))
+TRIM_FENCE_OPT = ("fence", "Trajet", ("F", "TRAJET", "FENCE"))
+TRIM_CROSSING_OPT = ("crossing", "Capture", ("C", "CAPTURE", "CROSSING"))
+TRIM_MODE_OPT = ("mode", "mOde", ("O", "MODE"))
+TRIM_EDGE_OPT = ("edge", "aRête", ("R", "ARETE", "ARÊTE", "EDGE"))
+TRIM_ERASE_OPT = ("erase", "Effacer", ("E", "EFFACER", "ERASE"))
+TRIM_MODES = (("quick", "Rapide", ("R", "RAPIDE", "Q", "QUICK")), ("standard", "Standard", ("S", "STANDARD")))
+TRIM_EDGES = (("extend", "Prolonger", ("P", "PROLONGER", "E", "EXTEND")),
+              ("none", "Sans prolongement", ("S", "SANS", "N", "NO", "NOEXTEND")))
+
+
 class TrimCommand(Command):
-    """AJUSTER (TR) : d'abord les ARETES DE COUPE (objets choisis, ou Entree = tous les objets), puis, en boucle, un clic
-    sur la partie d'un objet a retirer (entre deux intersections, ou jusqu'au bout) ; apercu au survol, une etape
-    d'annulation par ajustage ; annUler retire le dernier ; Entree / Echap = fin. Lignes, arcs, cercles, polylignes."""
+    """AJUSTER (TR), comme AutoCAD 2021+ (TRIM). Mode RAPIDE (par defaut, `board_cad_trim_mode`) : TOUS les objets
+    sont des aretes de coupe ; on clique la partie a retirer, on TRACE A MAIN LEVEE (appui + glisser : tout ce que le
+    trace croise est ajuste), ou deux clics dans le vide = un trajet de deux points ; un objet que rien ne coupe est
+    EFFACE. Mode STANDARD : d'abord les aretes de coupe (Entree = tous les objets), puis les objets ; un clic dans le
+    vide = une capture (rectangle). Les deux : Maj + clic = PROLONGER jusqu'a la premiere limite ; options Arêtes de
+    coupe, Trajet (plusieurs points, Entree), Capture, mOde, aRête (prolonger les aretes de coupe, EDGEMODE), Effacer,
+    annUler. Une etape d'annulation par geste. Lignes, arcs, cercles, polylignes."""
 
     NAME = "TRIM"
     LABEL = "Ajuster"
     IMMEDIATE_PICK = True
 
     def start(self):
-        self.cutters = None                 # None : encore en train de les choisir ; [] = tous les objets
+        memory = self.ctx.tool_memory
+        self.mode = memory.get("trim_mode") or self.ctx.setting("board_cad_trim_mode", "quick")
+        if self.mode not in ("quick", "standard"):
+            self.mode = "quick"
+        self.extend_edges = memory.get("trim_edge", bool(self.ctx.setting("board_cad_trim_edge", False)))
+        self.cutters = "all" if self.mode == "quick" else None   # None : en train de les choisir
         self.chosen = []
         self.count = 0
+        self.step = None                    # None | "fence" | "two" | "crossing" | "mode" | "edge" | "erase"
+        self.points = []                    # trajet / capture en cours
+        self._path_cache = None
         selection = [i for i in self.ctx.selection()]
         if selection:
-            self.cutters = list(selection)
+            self.cutters = [i for i in selection if self._can_cut(i)]
             self.ctx.scene.clearSelection()
-            self.ctx.message(f"{len(selection)} arête(s) de coupe : la sélection.")
+            self.ctx.message(f"{len(self.cutters)} arête(s) de coupe : la sélection.")
 
+    # ------------------------------------------------------------------ invites
     def prompt(self):
         if self.cutters is None:
             default = f"{len(self.chosen)} choisi(s) : Entrée pour continuer" if self.chosen else "tous les objets"
             return Prompt("Choisissez les arêtes de coupe", [], "select", None, default)
-        options = [UNDO_OPT, EXIT_OPT] if self.count else [EXIT_OPT]
-        return Prompt("Choisissez l'objet à ajuster", options, "select", None, "quitter")
+        if self.step == "fence":
+            if not self.points:
+                return Prompt("Spécifiez le premier point du trajet", [], "point")
+            return Prompt("Spécifiez le point suivant du trajet", [UNDO_OPT] if len(self.points) > 1 else [],
+                          "point", self.points[-1], "ajuster" if len(self.points) > 1 else "")
+        if self.step == "two":
+            return Prompt("Spécifiez le point suivant du trajet", [], "point", self.points[0])
+        if self.step == "crossing":
+            if not self.points:
+                return Prompt("Spécifiez le premier coin de la capture", [], "point")
+            return Prompt("Spécifiez le coin opposé", [], "point")
+        if self.step == "mode":
+            current = dict((k, label) for k, label, _w in TRIM_MODES)[self.mode]
+            return Prompt("Mode d'ajustement", list(TRIM_MODES), "select", None, current)
+        if self.step == "edge":
+            current = "Prolonger" if self.extend_edges else "Sans prolongement"
+            return Prompt("Arêtes de coupe prolongées", list(TRIM_EDGES), "select", None, current)
+        if self.step == "erase":
+            return Prompt("Choisissez les objets à effacer", [], "select", None, "revenir à l'ajustement")
+        options = [TRIM_CUTTING_OPT, TRIM_FENCE_OPT, TRIM_CROSSING_OPT, TRIM_MODE_OPT, TRIM_EDGE_OPT, TRIM_ERASE_OPT]
+        if self.count:
+            options.append(UNDO_OPT)
+        options.append(EXIT_OPT)
+        return Prompt("Choisissez l'objet à ajuster ou Maj + clic pour le prolonger", options, "select", None,
+                      "quitter")
 
     def keyword(self, key):
+        if self.step == "mode" and key in ("quick", "standard"):
+            self.mode = self.ctx.tool_memory["trim_mode"] = key
+            if key == "quick" and self.cutters is None:
+                self.cutters = "all"
+            elif key == "standard" and self.cutters == "all":
+                self.cutters, self.chosen = None, []             # Standard : d'abord les aretes de coupe
+            self.step = None
+            self.ctx.message(f"Mode d'ajustement : {'Rapide' if key == 'quick' else 'Standard'}.")
+            return
+        if self.step == "edge" and key in ("extend", "none"):
+            self.extend_edges = self.ctx.tool_memory["trim_edge"] = key == "extend"
+            self.step = None
+            return
+        if self.step == "fence" and key == "undo":
+            if self.points:
+                self.points.pop()
+            return
         if key == "exit":
             self.finish()
         elif key == "undo" and self.count:
             self.ctx.pane.undo()
             self.count -= 1
+        elif key == "cutting":
+            self.cutters, self.chosen = None, []
+        elif key in ("fence", "crossing", "mode", "edge", "erase"):
+            self.step, self.points = key, []
 
     def enter(self):
         if self.cutters is None:
-            self.cutters = list(self.chosen)
+            self.cutters = list(self.chosen) or "all"
             self.chosen = []
             self.ctx.highlight([])
+            return
+        if self.step == "fence":
+            points, self.step, self.points = self.points, None, []
+            if len(points) > 1:
+                self._apply(self._path_targets(points))
+            return
+        if self.step is not None:
+            self.step, self.points = None, []
+            return
+        self.finish()
+
+    def cancel(self):
+        if self.step is not None:
+            self.step, self.points = None, []
             return
         self.finish()
 
@@ -2076,70 +2159,257 @@ class TrimCommand(Command):
         else:
             self.enter()
 
-    def _cutter_prims(self, target):
-        items = self.cutters or [i for i in self.ctx.cad_items()
-                                 if i.isVisible() and not getattr(i, "AREA", False) and i.kind not in ("cad_dim", "cad_text")]
+    # ------------------------------------------------------------------ aretes de coupe
+    @staticmethod
+    def _can_cut(item) -> bool:
+        return not getattr(item, "AREA", False) and item.kind not in ("cad_dim", "cad_text")
+
+    def _cutter_items(self, target, rect=None) -> list:
+        """Aretes de coupe pour `target` ; `rect` (document) : seulement celles qui le touchent (aretes non
+        prolongees : rien d'autre ne peut le couper — la recherche reste locale, fluide sur un gros dessin)."""
+        if self.cutters == "all" or self.cutters is None:
+            items = self.ctx._source(rect) if rect is not None and not self.extend_edges else \
+                [i for i in self.ctx.cad_items() if i.isVisible()]
+        else:
+            items = self.cutters
+        return [i for i in items if i is not target and self._can_cut(i) and i.scene() is self.ctx.scene]
+
+    def _cutter_prims(self, target, local: bool = True):
+        rect = None
+        if local:
+            x0, y0, x1, y1 = target.doc_bounds() if target.CURVED else _line_box(target)
+            rect = (x0 - 1e-6, y0 - 1e-6, x1 + 1e-6, y1 + 1e-6)
         out = []
-        for item in items:
-            if item is target or getattr(item, "AREA", False) or item.kind in ("cad_dim", "cad_text"):
-                continue
+        for item in self._cutter_items(target, rect):
             out.extend(item.prims())
         return out
 
+    # ------------------------------------------------------------------ choix d'objets
     def picked(self, items):
         if not items:
             return
         if self.cutters is None:
             for item in items:
-                if item not in self.chosen and not getattr(item, "AREA", False) and item.kind not in ("cad_dim", "cad_text"):
+                if item not in self.chosen and self._can_cut(item):
                     self.chosen.append(item)
             self.ctx.highlight(self.chosen)
             self.ctx.message(f"{len(self.chosen)} arête(s) de coupe : Entrée pour continuer.")
+            return
+        if self.step == "erase":
+            gone = [i for i in items if not i.locked()]
+            if gone:
+                self.ctx.apply_edit([], [], "Effacer", gone)
+                self.count += 1
+            return
+        if self.step is not None:
             return
         item = items[0]
         point = self.ctx.last_pick_doc
         if point is None:
             return
-        if item.kind not in ("cad_line", "cad_arc", "cad_circle", "cad_pline"):
-            self.ctx.message("On ne peut ajuster que des lignes, arcs, cercles et polylignes.", error=True)
-            return
         if item.locked():
             self.ctx.message("Objet verrouillé.", error=True)
             return
-        result = cad_trim.trim(item.kind, item.to_dict(), self._cutter_prims(item), point)
+        if getattr(self.ctx, "last_pick_shift", False):
+            self._extend(item, point)
+            return
+        if item.kind not in TRIMMABLE:
+            self.ctx.message("On ne peut ajuster que des lignes, arcs, cercles et polylignes.", error=True)
+            return
+        result = cad_trim.trim_points(item.kind, item.to_dict(), self._cutter_prims(item), [point],
+                                      self.mode == "quick", self.extend_edges)
         if isinstance(result, str):
             self.ctx.message(result, error=True)
             return
-        _interval, pieces, _prims = result
+        self._apply({item: [point]}, {item: result})
+
+    def _extend(self, item, point):
+        result = cad_trim.extend(item.kind, item.to_dict(), self._cutter_prims(item, local=False), point,
+                                 self.extend_edges)
+        if isinstance(result, str):
+            self.ctx.message(result, error=True)
+            return
+        kind, geometry = result
+        if kind == item.kind:
+            self.ctx.apply_edit([(item, geometry)], [], "Prolonger")
+        else:
+            self.ctx.apply_edit([], [(kind, geometry, item)], "Prolonger", [item])
+        self.count += 1
+
+    def _apply(self, targets: dict, results: dict | None = None):
+        """Ajuste chaque objet en ses points (UNE etape d'annulation pour tout le geste) ; les aretes de coupe sont
+        celles d'AVANT le geste."""
+        results = dict(results or {})
+        for item, points in targets.items():
+            if item not in results:
+                results[item] = cad_trim.trim_points(item.kind, item.to_dict(), self._cutter_prims(item), points,
+                                                     self.mode == "quick", self.extend_edges)
         changes, created, deleted = [], [], []
-        entities = [cad_shapes.prims_to_entity(piece, False) for piece in pieces]
-        for index, (kind, geometry) in enumerate(entities):
-            if index == 0 and kind == item.kind:
-                changes.append((item, geometry))               # le premier morceau reste l'objet d'origine
+        for item, result in results.items():
+            if isinstance(result, str):
+                continue
+            if result.get("delete"):
+                deleted.append(item)
+                continue
+            entities = [cad_shapes.prims_to_entity(piece, False) for piece in result["pieces"]]
+            kept = False
+            for index, (kind, geometry) in enumerate(entities):
+                if index == 0 and kind == item.kind:
+                    changes.append((item, geometry))           # le premier morceau reste l'objet d'origine
+                    kept = True
+                else:
+                    created.append((kind, geometry, item))
+            if not kept:
+                deleted.append(item)
+        if not (changes or created or deleted):
+            if len(targets) != 1:
+                self.ctx.message("Le trajet ne croise aucun objet à ajuster.", error=True)
             else:
-                created.append((kind, geometry, item))
-        if not changes:
-            deleted.append(item)
+                result = next(iter(results.values()))
+                self.ctx.message(result if isinstance(result, str) else "Rien à ajuster.", error=True)
+            return
         self.ctx.apply_edit(changes, created, "Ajuster", deleted)
         self.count += 1
 
+    # ------------------------------------------------------------------ trajets (clôture, main levée, capture)
+    def _candidates(self, a, b) -> list:
+        rect = (min(a[0], b[0]), min(a[1], b[1]), max(a[0], b[0]), max(a[1], b[1]))
+        return [i for i in self.ctx._source(rect) if i.kind in TRIMMABLE and not i.locked()]
+
+    def _path_targets(self, path) -> dict:
+        """{objet: [points ou le trajet le croise]}."""
+        targets = {}
+        for a, b in zip(path, path[1:]):
+            for item in self._candidates(a, b):
+                hits = cad_trim.path_hits(item.prims(), [a, b])
+                if hits:
+                    targets.setdefault(item, []).extend(hits)
+        return targets
+
+    def _rect_targets(self, a, b) -> dict:
+        targets = {}
+        for item in self._candidates(a, b):
+            hits = cad_trim.rect_hits(item.prims(), a, b)
+            if hits:
+                targets[item] = hits
+        return targets
+
+    def empty_click(self, doc) -> bool:
+        """Clic dans le vide a l'invite des objets a ajuster : Rapide = trajet de deux points, Standard = capture."""
+        if self.cutters is None or self.step is not None:
+            return False
+        self.step = "two" if self.mode == "quick" else "crossing"
+        self.points = [(float(doc[0]), float(doc[1]))]
+        return True
+
+    def wants_path(self) -> bool:
+        """Appui + glisser a l'invite des objets a ajuster : trace a main levee."""
+        return self.cutters is not None and self.step is None
+
+    def path_done(self, points):
+        self._path_cache = None
+        if len(points) > 1:
+            self._apply(self._path_targets(points))
+
+    def point(self, p):
+        p = (float(p[0]), float(p[1]))
+        if self.step == "fence":
+            if not self.points or geo.distance(self.points[-1], p) > geo.EPS:
+                self.points.append(p)
+        elif self.step == "two":
+            points, self.step, self.points = self.points + [p], None, []
+            self._apply(self._path_targets(points))
+        elif self.step == "crossing":
+            if not self.points:
+                self.points = [p]
+                return
+            a, self.step, self.points = self.points[0], None, []
+            self._apply(self._rect_targets(a, p))
+
+    # ------------------------------------------------------------------ aperçus
+    def preview(self, p):
+        if self.step in ("fence", "two") and self.points:
+            path = self.points + [p]
+            return [("fence", a, b) for a, b in zip(path, path[1:])]
+        if self.step == "crossing" and self.points:
+            (x0, y0), (x1, y1) = self.points[0], p
+            corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)]
+            return [("fence", a, b) for a, b in zip(corners, corners[1:])]
+        return []
+
+    def _removed_ghosts(self, targets: dict) -> list:
+        out = []
+        tol = self.ctx.tess_tol()
+        for item, points in targets.items():
+            result = cad_trim.trim_points(item.kind, item.to_dict(), self._cutter_prims(item), points,
+                                          self.mode == "quick", self.extend_edges)
+            if isinstance(result, str):
+                continue
+            removed = result["prims"] if result.get("delete") else result["removed"]
+            out += cad_shapes.display_segments(removed, tol)
+        return out
+
+    def ghosts(self, p):
+        """Apercu du trajet / de la capture en cours : les morceaux qui seraient retires."""
+        if self.step in ("fence", "two") and self.points:
+            return self._removed_ghosts(self._path_targets(self.points + [p]))
+        if self.step == "crossing" and self.points:
+            return self._removed_ghosts(self._rect_targets(self.points[0], p))
+        return []
+
+    def path_ghosts(self, points) -> list:
+        """Apercu PENDANT un trace a main levee : seuls les nouveaux segments du trace sont examines (cache des
+        points deja poses ; le dernier segment, jusqu'au curseur, est refait a chaque mouvement)."""
+        fixed, cursor = points[:-1], points[-1]
+        cache = self._path_cache
+        if cache is None or cache["count"] > len(fixed):
+            cache = self._path_cache = {"count": 1, "targets": {}, "ghosts": {}}
+        changed = set()
+        for i in range(max(1, cache["count"]), len(fixed)):
+            a, b = fixed[i - 1], fixed[i]
+            for item in self._candidates(a, b):
+                hits = cad_trim.path_hits(item.prims(), [a, b])
+                if hits:
+                    cache["targets"].setdefault(item, []).extend(hits)
+                    changed.add(item)
+        cache["count"] = len(fixed)
+        for item in changed:
+            cache["ghosts"][item] = self._removed_ghosts({item: cache["targets"][item]})
+        ghosts = dict(cache["ghosts"])
+        if fixed:
+            a = fixed[-1]
+            for item in self._candidates(a, cursor):
+                hits = cad_trim.path_hits(item.prims(), [a, cursor])
+                if hits:
+                    ghosts[item] = self._removed_ghosts({item: cache["targets"].get(item, []) + hits})
+        return [seg for segs in ghosts.values() for seg in segs]
+
     def hover_ghosts(self, item, cursor):
-        """Apercu : le morceau qui serait retire."""
-        if self.cutters is None or item is None or item.kind not in ("cad_line", "cad_arc", "cad_circle", "cad_pline"):
+        """Apercu au survol : le morceau qui serait retire (ou effacé, mode Rapide), le prolongement avec Maj."""
+        if self.cutters is None or self.step is not None or item is None or cursor is None:
             return []
-        result = cad_trim.trim(item.kind, item.to_dict(), self._cutter_prims(item), cursor)
-        if isinstance(result, str):
+        tol = self.ctx.tess_tol()
+        if getattr(self.ctx, "shift_held", lambda: False)():
+            result = cad_trim.extend(item.kind, item.to_dict(), self._cutter_prims(item, local=False), cursor,
+                                     self.extend_edges)
+            if isinstance(result, str):
+                return []
+            return cad_shapes.display_segments(cad_shapes.prims(*result), tol)
+        if item.kind not in TRIMMABLE:
             return []
-        interval, _pieces, prims = result
-        removed = cad_trim.removed_prims(prims, cad_trim.is_closed(item.kind, item.to_dict()), interval)
-        return cad_shapes.display_segments(removed, self.ctx.tess_tol())
+        return self._removed_ghosts({item: [cursor]})
 
     def finish(self):
         if not self.finished:
             self.ctx.highlight([])
             if self.count:
-                self.ctx.message(f"Ajuster : {self.count} objet(s) ajusté(s).")
+                self.ctx.message(f"Ajuster : {self.count} modification(s).")
         super().finish()
+
+
+def _line_box(item) -> tuple:
+    a, b = item.points()
+    return min(a[0], b[0]), min(a[1], b[1]), max(a[0], b[0]), max(a[1], b[1])
 
 
 # ==========================================================================

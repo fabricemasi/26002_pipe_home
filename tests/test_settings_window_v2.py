@@ -550,12 +550,21 @@ class CadTabAndIconTablesTest(WindowTestCase):
     def test_cad_tab_groups_keys_and_defaults(self):
         from board.model import CAD_ICON_ROWS
         self.assertIn((v2.CAD_TAB, None), v2.SCOPES)
-        self.assertEqual([n.group for n in v2.CAD_TREE],
-                         ["CAD : Unités", "CAD : Types de ligne"] + list(v2.CAD_GROUPS)
-                         + ["CAD : Cotations", "CAD : Hachures", "CAD : Textes", "CAD : Raccourcis clavier", "CAD : Icônes"])
-        for group in ("CAD : Cotations", "CAD : Hachures", "CAD : Textes"):                        # mêmes clés / défauts que DEFAULT_SETTINGS
+        leaves = [child.group for node in v2.CAD_TREE for child in (node.children or (node,))]
+        self.assertEqual(leaves,
+                         ["CAD : Unités", "CAD : Types de ligne", "CAD : Accrochages", "CAD : Suivi et saisie",
+                          "CAD : Grille", "CAD : Réticule",
+                          "CAD : Sélection et poignées", "CAD : Fenêtre de sélection", "CAD : Capture",   # Sélection
+                          "CAD : Ajuster", "CAD : Affichage",
+                          "CAD : Cotations", "CAD : Hachures", "CAD : Textes", "CAD : Raccourcis clavier", "CAD : Icônes"])
+        self.assertLessEqual(set(v2.CAD_GROUPS), set(leaves))
+        for group in ("CAD : Cotations", "CAD : Hachures", "CAD : Textes", "CAD : Fenêtre de sélection", "CAD : Capture",
+                      "CAD : Ajuster"):                                                            # mêmes clés / défauts que DEFAULT_SETTINGS
             for spec in v2.CATALOG[group]:
-                self.assertEqual(settings_store.DEFAULT_SETTINGS[spec.key], spec.default, spec.key)
+                for key in (spec.key, *spec.extra_keys):
+                    self.assertIn(key, settings_store.DEFAULT_SETTINGS, key)
+                if spec.kind not in ("sides_thick", "corners"):        # ceux-la : un dict par cote / coin
+                    self.assertEqual(settings_store.DEFAULT_SETTINGS[spec.key], spec.default, spec.key)
         for group in v2.CAD_GROUPS:
             for spec in v2.CATALOG[group]:
                 self.assertIn(spec.key, settings_store.DEFAULT_SETTINGS, spec.key)

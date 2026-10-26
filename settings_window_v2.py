@@ -575,6 +575,24 @@ def _cad_groups() -> dict:
         Spec("board_cad_grip_size", "Taille des poignées (pixels)", "slider", 8, {"min": 4, "max": 20}),
         Spec("board_cad_grip_color", "Couleur des poignées", "color_app", "#2f6bff", {"title": "Poignées"}),
     ]
+
+    # Cadres de selection (demande de l'utilisateur) : fenetre (gauche -> droite) et capture (droite -> gauche).
+    def frame(prefix: str, bg: str, title: str) -> list:
+        return [
+            Spec(f"{prefix}_bg", "Couleur de fond", "color_app", bg, {"title": f"Fond — {title}"}),
+            Spec(f"{prefix}_border_enabled", "Bordure", "sides_thick", True, _BORD(f"{prefix}_border"),
+                 extra_keys=(f"{prefix}_border", f"{prefix}_border_thickness")),
+            Spec(f"{prefix}_radius", "Border radius", "corners", 0, {"max": 40}),
+            Spec(f"{prefix}_line", "Type de ligne", "line_pattern", "solid" if "window" in prefix else "dash",
+                 {"scale_key": f"{prefix}_line_scale"}, extra_keys=(f"{prefix}_line_scale",)),
+        ]
+    window_frame = frame("board_cad_window", "#283c6eff", "fenêtre")
+    crossing_frame = frame("board_cad_crossing", "#2850c878", "capture")
+    trim = [
+        Spec("board_cad_trim_mode", "Mode par défaut (Rapide : tous les objets coupent, comme AutoCAD)", "choice",
+             "quick", {"choices": (("quick", "Rapide"), ("standard", "Standard")), "width": 170}),
+        Spec("board_cad_trim_edge", "Arêtes de coupe prolongées (EDGEMODE)", "bool", False),
+    ]
     display = [
         Spec("board_cad_gpu", "Rendu GPU (OpenGL) des entités CAD — essai, fluidité du zoom et du déplacement", "bool",
              False),
@@ -651,7 +669,8 @@ def _cad_groups() -> dict:
              for kind, label in CAD_ICON_ROWS]
     return {"CAD : Unités": units, "CAD : Types de ligne": linetypes, "CAD : Accrochages": snap,
             "CAD : Suivi et saisie": tracking, "CAD : Grille": grid, "CAD : Réticule": crosshair,
-            "CAD : Sélection et poignées": selection, "CAD : Affichage": display, "CAD : Cotations": dims, "CAD : Hachures": hatches,
+            "CAD : Sélection et poignées": selection, "CAD : Fenêtre de sélection": window_frame,
+            "CAD : Capture": crossing_frame, "CAD : Ajuster": trim, "CAD : Affichage": display, "CAD : Cotations": dims, "CAD : Hachures": hatches,
             "CAD : Textes": texts,
             "CAD : Raccourcis clavier": shortcuts,
             "CAD : Icônes": icons}
@@ -1739,7 +1758,12 @@ CAD_TREE = (
     Node("Suivi et saisie", "CAD : Suivi et saisie"),
     Node("Grille", "CAD : Grille"),
     Node("Réticule", "CAD : Réticule"),
-    Node("Sélection et poignées", "CAD : Sélection et poignées"),
+    Node("Sélection", children=(
+        Node("Clic et poignées", "CAD : Sélection et poignées"),
+        Node("Fenêtre (de gauche à droite)", "CAD : Fenêtre de sélection"),
+        Node("Capture (de droite à gauche)", "CAD : Capture"),
+    )),
+    Node("Ajuster", "CAD : Ajuster"),
     Node("Affichage", "CAD : Affichage"),
     Node("Cotations", "CAD : Cotations"),
     Node("Hachures", "CAD : Hachures"),
@@ -2595,6 +2619,21 @@ def _f_color_mark(spec, v, colors):
     return holder
 
 
+LINE_PATTERN_CHOICES = (("solid", "Normal"), ("dash", "Pointillés"), ("dot", "Points"))
+
+
+def _f_line_pattern(spec, v, colors):
+    """Type de ligne d'un cadre : cellule divisee « Type (Normal / Pointillés / Points) | Échelle (%) »."""
+    current = v.seed(spec.key, spec.default)
+    labels = [label for _k, label in LINE_PATTERN_CHOICES]
+    kind = _SelectField(labels, dict(LINE_PATTERN_CHOICES).get(current, labels[0]), width=140)
+    scale = _SliderField(10, 1000, int(v.seed(spec.params["scale_key"], 100)), unit="%", slider_width=140,
+                         box_width=62)
+    holder = wrap_split(SplitCell([("Type", [kind]), ("Échelle", [scale])]))
+    holder._v2_parts = {"kind": kind, "scale": scale}           # lus par FIELD_READERS["line_pattern"]
+    return holder
+
+
 def _f_cad_linetypes(spec, v, colors):
     from board.cad_linetype_ui import LinetypesField    # paquet du board : charge a la demande
     return LinetypesField(v.seed(spec.key, spec.default))
@@ -2621,7 +2660,7 @@ FIELD_FACTORIES: dict[str, Callable] = {
     "color": _f_color, "ratio": _f_ratio, "font_select": _f_font_select, "item_text": _f_item_text,
     "row_border": _f_row_border,
     "slider": _f_slider, "bool": _f_bool, "color_app": _f_color_app, "header_color": _f_header_color,
-    "color_mark": _f_color_mark,
+    "color_mark": _f_color_mark, "line_pattern": _f_line_pattern,
     "corners": _f_corners, "padding": _f_padding, "title_padding": _f_title_padding, "sides": _f_sides, "font": _f_font,
 }
 
@@ -2685,6 +2724,9 @@ FIELD_READERS: dict[str, Callable] = {
     "ui_icon": lambda sp, w: {},                 # agit tout de suite sur les fichiers d'icone
     "logiciels": lambda sp, w: w.values(),
     "cad_linetypes": lambda sp, w: {sp.key: w.values()},
+    "line_pattern": lambda sp, w: {
+        sp.key: {label: key for key, label in LINE_PATTERN_CHOICES}.get(w._v2_parts["kind"].value(), "solid"),
+        sp.params["scale_key"]: w._v2_parts["scale"].value()},
     "collapse_mode": _choice_reader(COLLAPSE_MODES),
     "coche_skin": lambda sp, w: {sp.key: {label: key for key, label in SKINS}[w.value()]},
     "crumb_separator_kind": _choice_reader(CRUMB_SEPARATORS), "toggle_kind": _choice_reader(TOGGLE_KINDS), "toggle_motion": _choice_reader(TOGGLE_MOTIONS),

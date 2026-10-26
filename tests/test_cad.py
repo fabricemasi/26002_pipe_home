@@ -1913,7 +1913,7 @@ class CurveEntitiesTest(CadBoardCase):
         self.assertEqual(cad_shapes.grip_edit("cad_circle", circle.geometry(), {"q0"}, (20.0, 0.0), False),
                          {"radius": 70.0})
         self.ctl.scene.clearSelection()
-        self.ctl.window = {"start": (-60.0, -60.0), "drag": True}
+        self.ctl.window = {"start": (-60.0, -60.0)}
         self.ctl._finish_window((60.0, 60.0), Qt.NoModifier)
         self.assertTrue(circle.isSelected())                                   # fenetre qui le contient
 
@@ -2830,7 +2830,12 @@ class HatchTest(CadBoardCase):
 
 
 class TrimTest(CadBoardCase):
-    """AJUSTER (TR, cad_trim) : aretes de coupe, morceau retire, cercles / polylignes, une etape d'annulation."""
+    """AJUSTER (TR, cad_trim) en mode STANDARD : aretes de coupe, morceau retire, cercles / polylignes, une etape
+    d'annulation."""
+
+    def setUp(self):
+        super().setUp()
+        self.ctl.apply_settings(dict(self.ctl.settings, board_cad_trim_mode="standard"))
 
     def cross(self):
         """Une horizontale de (0,0) a (100,0) coupee par deux verticales en x = 30 et x = 70."""
@@ -2971,6 +2976,236 @@ class TrimTest(CadBoardCase):
         return item
 
 
+class TrimQuickTest(CadBoardCase):
+    """AJUSTER comme AutoCAD 2021+ : mode Rapide (tous les objets coupent, un objet que rien ne coupe est efface),
+    trajet de deux points, trace a main levee, capture, Maj + clic = prolonger, aretes prolongees."""
+
+    def cross(self):
+        h = self.line((0, 0), (100, 0))
+        self.line((30, -20), (30, 20))
+        self.line((70, -20), (70, 20))
+        return h
+
+    def horizontals(self):
+        return sorted((tuple(i.points()[0]), tuple(i.points()[1])) for i in self.ctl.cad_items()
+                      if i.kind == "cad_line" and i.points()[0][1] == i.points()[1][1])
+
+    def test_quick_mode_trims_at_once_and_deletes_what_nothing_cuts(self):
+        self.cross()
+        lonely = self.line((0, 50), (100, 50))
+        self.type("TR")
+        self.move((50, 0))
+        self.assertTrue(self.ctl.overlay_state()["ghosts"])
+        self.click((50, 0))
+        self.assertEqual([h for h in self.horizontals() if h[0][1] == 0.0],
+                         [((0.0, 0.0), (30.0, 0.0)), ((70.0, 0.0), (100.0, 0.0))])
+        self.click((50, 50))                                                    # rien ne la coupe : effacee
+        self.assertIsNone(lonely.scene())
+        self.type("")
+        self.ctl.undo()
+        self.assertIsNotNone([i for i in self.ctl.cad_items() if i.points() == ((0.0, 50.0), (100.0, 50.0))])
+
+    def test_two_point_fence_trims_everything_it_crosses_in_one_step(self):
+        self.line((0, 0), (100, 0))
+        self.line((0, 10), (100, 10))
+        self.line((30, -20), (30, 20))
+        self.type("TR")
+        self.click((10, -40))                                                   # clic dans le vide : trajet
+        self.assertEqual(self.ctl.prompt().kind, "point")
+        self.move((10, 40))
+        self.assertTrue(self.ctl.overlay_state()["ghosts"])
+        self.click((10, 40))
+        self.assertEqual(self.horizontals(), [((30.0, 0.0), (100.0, 0.0)), ((30.0, 10.0), (100.0, 10.0))])
+        self.type("")
+        self.ctl.undo()                                                         # une seule etape
+        self.assertEqual(self.horizontals(), [((0.0, 0.0), (100.0, 0.0)), ((0.0, 10.0), (100.0, 10.0))])
+
+    def test_freehand_path_and_hidden_pickbox(self):
+        self.line((0, 0), (100, 0))
+        self.line((0, 10), (100, 10))
+        self.line((30, -20), (30, 20))
+        self.type("TR")
+        viewport = self.pane.view.viewport()
+        QTest.mousePress(viewport, Qt.LeftButton, Qt.NoModifier, self.vp((10, -40)))
+        for y in (-30, -15, 0, 3, 6, 9, 12, 15):
+            QTest.mouseMove(viewport, self.vp((10 + abs(y) * 0.2, y)))
+        APP.processEvents()
+        self.assertIsNotNone(self.ctl.lasso)
+        state = self.ctl.overlay_state()
+        self.assertFalse(state["pickbox"])                                      # pas de carre pendant le trace
+        self.assertTrue(state["path"])
+        self.assertTrue(state["ghosts"])
+        QTest.mouseRelease(viewport, Qt.LeftButton, Qt.NoModifier, self.vp((13, 15)))
+        APP.processEvents()
+        self.assertIsNone(self.ctl.lasso)
+        self.assertEqual(self.horizontals(), [((30.0, 0.0), (100.0, 0.0)), ((30.0, 10.0), (100.0, 10.0))])
+        self.assertTrue(self.ctl.overlay_state()["pickbox"])
+
+    def test_shift_click_extends_to_the_next_boundary(self):
+        self.line((0, 0), (50, 0))
+        self.line((80, -20), (80, 20))
+        self.type("TR")
+        self.click((45, 0), Qt.ShiftModifier)
+        self.assertEqual(self.horizontals(), [((0.0, 0.0), (80.0, 0.0))])
+        self.type("")
+
+    def test_extend_geometry_arc_and_extended_edges(self):
+        arc = {"center": [0.0, 0.0], "radius": 10.0, "start": 0.0, "end": 90.0}
+        wall = [("segment", (-20.0, 5.0), (0.0, 5.0))]                          # coupe le cercle a gauche (x < 0)
+        kind, data = cad_trim.extend("cad_arc", arc, wall, (0.0, 10.0))
+        self.assertEqual(kind, "cad_arc")
+        self.assertAlmostEqual(data["end"], 150.0, places=6)                     # jusqu'a (-8.66, 5)
+        short = [("segment", (60.0, 10.0), (60.0, 20.0))]                       # ne croise pas y = 0…
+        self.assertIsInstance(cad_trim.extend("cad_line", {"p1": [0, 0], "p2": [10, 0]}, short, (9, 0)), str)
+        kind, data = cad_trim.extend("cad_line", {"p1": [0, 0], "p2": [10, 0]}, short, (9, 0), extend_edges=True)
+        self.assertEqual(data["p2"], [60.0, 0.0])                               # … sauf prolongee (EDGEMODE)
+
+    def test_standard_empty_click_is_a_crossing_and_options_switch_mode(self):
+        self.cross()
+        self.type("TR", "O", "S")                                               # mOde : Standard
+        self.assertEqual(self.ctl.tool_memory["trim_mode"], "standard")
+        self.type("")                                                           # Entree : tous les objets
+        self.click((45, 40))
+        self.assertEqual(self.ctl.prompt().text, "Spécifiez le coin opposé")
+        self.click((55, -40))
+        self.assertEqual(self.horizontals()[:2], [((0.0, 0.0), (30.0, 0.0)), ((70.0, 0.0), (100.0, 0.0))])
+        self.type("")
+
+
+class SelectionFrameTest(CadBoardCase):
+    """Reglages > Module CAD > Selection : fond, bordures, arrondis, type de ligne des deux cadres ; le carre du
+    reticule disparait pendant une fenetre de selection."""
+
+    def test_frames_follow_the_settings_and_default_to_the_old_look(self):
+        look = self.ctl.look
+        self.assertEqual(look["sel_window"]["line"], "solid")
+        self.assertEqual(look["sel_crossing"]["line"], "dash")
+        self.ctl.apply_settings(dict(self.ctl.settings, board_cad_window_bg="#80ff0000", board_cad_window_line="dot",
+                                     board_cad_window_line_scale=250, board_cad_window_radius={"top_left": 6},
+                                     board_cad_window_border_enabled={"top": True, "right": False, "bottom": True,
+                                                                      "left": False}))
+        frame = self.ctl.look["sel_window"]
+        self.assertEqual((frame["bg"], frame["line"], frame["scale"]), ("#80ff0000", "dot", 250.0))
+        self.assertEqual(frame["radius"]["top_left"], 6)
+        self.assertFalse(frame["sides"]["right"])
+        from PySide6.QtGui import QImage, QPainter
+        from board.cad_overlay import paint_selection_frame
+        for f in (frame, self.ctl.look["sel_crossing"]):
+            image = QImage(60, 40, QImage.Format_ARGB32_Premultiplied)
+            image.fill(0)
+            painter = QPainter(image)
+            paint_selection_frame(painter, QRectF(5, 5, 50, 30), f)
+            painter.end()
+            self.assertGreater(QColor(image.pixelColor(30, 20)).alpha(), 0)     # le fond est peint
+
+    def test_partial_repaint_covers_every_changed_pixel(self):
+        """Latence signalee entre le curseur et le cadre : seuls les bords qui bougent sont repeints ; tout pixel qui
+        change entre deux positions doit pourtant etre dans la zone repeinte (pointilles et arrondis compris)."""
+        from PySide6.QtGui import QImage, QPainter
+        from board.cad_overlay import CadOverlay, DEFAULT_FRAMES, paint_selection_frame
+
+        def image(rect, frame):
+            out = QImage(260, 200, QImage.Format_ARGB32_Premultiplied)
+            out.fill(0)
+            painter = QPainter(out)
+            paint_selection_frame(painter, rect, frame)
+            painter.end()
+            return out
+
+        def op(rect, frame):
+            pad = 2 + frame["thickness"]
+            band = int(pad + max([0, *frame["radius"].values()]) + 3)
+            padded = rect.adjusted(-pad, -pad, pad, pad)
+            return [("window", padded, (rect, False, band))], [padded.toAlignedRect().adjusted(-1, -1, 1, 1)]
+        rounded = dict(DEFAULT_FRAMES[1], thickness=2, scale=150,
+                       radius={"top_left": 8, "top_right": 8, "bottom_right": 8, "bottom_left": 8})
+        for frame in (DEFAULT_FRAMES[0], DEFAULT_FRAMES[1], rounded):
+            for old, new in ((QRectF(20, 20, 100, 60), QRectF(20, 20, 137, 91)),        # coin haut gauche fixe
+                             (QRectF(20, 20, 100, 60), QRectF(20, 20, 61, 33)),         # il retrecit
+                             (QRectF(100, 90, 120, 80), QRectF(63, 41, 157, 129)),      # coin bas droit fixe
+                             (QRectF(30, 30, 80, 40), QRectF(110, 30, 60, 90))):        # il passe de l'autre cote
+                old_ops, old_rects = op(old, frame)
+                ops, rects = op(new, frame)
+                dirty = CadOverlay._dirty(old_ops, old_rects, ops, rects)
+                a, b = image(old, frame), image(new, frame)
+                for y in range(a.height()):
+                    for x in range(a.width()):
+                        if a.pixel(x, y) != b.pixel(x, y):
+                            self.assertTrue(any(r.contains(x, y) for r in dirty), (frame["line"], old, new, x, y))
+
+    def test_moving_corner_falls_exactly_on_the_crosshair(self):
+        """Signale : « le cadre est un peu a cote du reticule a l'arret ». Le coin mobile est le point ecran du
+        reticule et les bords sont cales sur les memes pixels que lui, a des positions fractionnaires aussi."""
+        from PySide6.QtGui import QImage, QPainter
+        overlay = self.ctl.overlay
+        frame = dict(self.ctl.look["sel_window"], bg="#00000000")
+        for corner in (QPointF(64.99999, 80.6), QPointF(65.0, 80.0), QPointF(70.5, 90.49)):
+            image = QImage(120, 120, QImage.Format_ARGB32_Premultiplied)
+            image.fill(0)
+            painter = QPainter(image)
+            overlay._paint_window(painter, dict(self.ctl.look, sel_window=frame), QRectF(), False, 0,
+                                  QPointF(10.3, 10.7), corner)
+            painter.end()
+            column, row = int(math.floor(corner.x())), int(math.floor(corner.y()))
+            edge = [x for x in range(120) if QColor(image.pixelColor(x, 40)).alpha()]
+            self.assertEqual(edge, [10, column])                                  # un pixel, celui de la croix
+            edge = [y for y in range(120) if QColor(image.pixelColor(40, y)).alpha()]
+            self.assertEqual(edge, [10, row])
+        self.click((0, 0))
+        self.move((30, 20))
+        state = self.ctl.overlay_state()
+        self.assertEqual(state["window"][3], self.ctl.cursor_view)                # pas d'aller-retour ecran / document
+        self.click((30, 20))
+
+    def test_dragging_opens_the_same_window_closed_by_a_second_click(self):
+        """Demande de l'utilisateur : appuyer en bougeant n'est pas une autre selection ; la fenetre reste ouverte au
+        relachement, seul un 2e clic la ferme."""
+        line = self.line((20, 20), (30, 30))
+        viewport = self.pane.view.viewport()
+        QTest.mousePress(viewport, Qt.LeftButton, Qt.NoModifier, self.vp((0, 0)))
+        QTest.mouseMove(viewport, self.vp((25, 25)))
+        QTest.mouseMove(viewport, self.vp((50, 50)))
+        QTest.mouseRelease(viewport, Qt.LeftButton, Qt.NoModifier, self.vp((50, 50)))
+        APP.processEvents()
+        self.assertIsNotNone(self.ctl.window)                                   # toujours ouverte
+        self.assertFalse(line.isSelected())
+        self.move((60, 60))
+        self.click((60, 60))                                                    # 2e clic : fermee
+        self.assertIsNone(self.ctl.window)
+        self.assertTrue(line.isSelected())
+
+    def test_pickbox_hidden_while_a_window_is_open(self):
+        self.ctl.cursor_view = self.ctl.doc_to_view((10, 10))
+        self.ctl.cursor_doc = (10.0, 10.0)
+        self.assertTrue(self.ctl.overlay_state()["pickbox"])
+        self.click((10, 10))                                                    # clic dans le vide : fenetre
+        self.move((40, 40))
+        self.assertIsNotNone(self.ctl.window)
+        self.assertFalse(self.ctl.overlay_state()["pickbox"])
+        self.click((40, 40))
+        self.assertTrue(self.ctl.overlay_state()["pickbox"])
+
+    def test_selection_settings_are_in_the_cad_tab(self):
+        import settings_window_v2 as v2
+        from settings_store import DEFAULT_SETTINGS
+        groups = {node.group for top in v2.CAD_TREE for node in (top, *top.children)}
+        self.assertTrue({"CAD : Fenêtre de sélection", "CAD : Capture", "CAD : Ajuster"} <= groups)
+        import copy
+        for group in ("CAD : Fenêtre de sélection", "CAD : Capture"):
+            for spec in v2.CATALOG[group]:
+                for key in (spec.key, *spec.extra_keys):
+                    self.assertIn(key, DEFAULT_SETTINGS)
+            settings = copy.deepcopy(DEFAULT_SETTINGS)
+            fields = {}
+            v2.build_group(group, v2.ScopeValues(settings, None), settings["colors"], fields, {}, [], [], lambda: None)
+            line = [sp for sp in v2.CATALOG[group] if sp.kind == "line_pattern"][0]
+            widget = fields[line.key]
+            widget._v2_parts["kind"].setValue("Points")
+            widget._v2_parts["scale"].setValue(250)
+            self.assertEqual(v2.FIELD_READERS["line_pattern"](line, widget),
+                             {line.key: "dot", line.params["scale_key"]: 250})
+
+
 class LineweightDisplayTest(CadBoardCase):
     """Affichage « simples lignes » (LWT) : epaisseurs ignorees a l'ecran, jamais a l'export."""
 
@@ -2985,6 +3220,89 @@ class LineweightDisplayTest(CadBoardCase):
         self.type("EPAIS")
         self.assertTrue(self.ctl.mode_on("lineweight"))
         self.assertGreater(item.props()["lineweight"], 0.0)
+
+
+class FramePacerTest(unittest.TestCase):
+    """Retard du rendu GPU pendant un pan (demande de l'utilisateur) : echange de tampons sans attente du balayage,
+    la couche cadence elle-meme ses images — UNE par balayage, lancee juste avant la composition."""
+
+    def make(self, timing=None):
+        from PySide6.QtCore import QObject, Signal
+        from board import cad_gpu
+
+        class Widget(QObject):
+            frameSwapped = Signal()
+            updates = 0
+
+            def update(self):
+                self.updates += 1
+
+        class Clock:
+            ok = timing is not None
+
+            def read(self):
+                return timing() if timing else None
+        widget = Widget()
+        pacer = cad_gpu.FramePacer(widget, 60.0)
+        pacer.active = True
+        pacer.clock = Clock()
+        return widget, pacer
+
+    def test_one_frame_per_vblank_launched_just_before_it(self):
+        period = 1 / 60.0
+        base = time.perf_counter()
+        widget, pacer = self.make(lambda: (base - 0.001, period))
+        pacer.request()
+        self.assertTrue(pacer.scheduled())                          # trop tot : attend le moment de lancer
+        self.assertEqual(widget.updates, 0)
+        wait = (pacer._deadline - time.perf_counter()) * 1000
+        self.assertLessEqual(abs(wait - (period - 0.001 - pacer.cost - pacer.MARGIN_S) * 1000), 3)
+        pacer.request()
+        pacer.request()                                             # demandes regroupees
+        settle(wait / 1000 + 0.02)
+        self.assertEqual(widget.updates, 1)
+        pacer.request()                                             # image pas encore presentee : rien de plus
+        self.assertEqual(widget.updates, 1)
+        widget.frameSwapped.emit()
+        self.assertFalse(pacer.pending)
+        target = pacer.last_target
+        pacer.request()                                             # ce balayage est pris : le suivant
+        self.assertGreater(pacer.last_target, target + period / 2)
+
+    def test_without_compositor_at_most_one_frame_per_period(self):
+        widget, pacer = self.make(None)
+        pacer.request()
+        self.assertEqual(widget.updates, 1)                         # la 1re tout de suite
+        widget.frameSwapped.emit()
+        pacer.request()
+        self.assertEqual(widget.updates, 1)                         # la suivante une periode apres
+        self.assertTrue(pacer.scheduled())
+        settle(0.04)
+        self.assertEqual(widget.updates, 2)
+
+    def test_inactive_when_the_swap_waits_for_the_vblank(self):
+        widget, pacer = self.make(None)
+        pacer.active = False
+        for _ in range(3):
+            pacer.request()
+        self.assertEqual(widget.updates, 3)                         # le pilote cadence : update() direct
+
+    def test_launch_is_precise_with_an_idle_event_loop(self):
+        """Une minuterie de Qt, boucle endormie, arrivait jusqu'a 10 ms en retard (saccades) : le fil de cadence
+        lance l'image a ~1 ms pres."""
+        from PySide6.QtCore import QEventLoop, QTimer
+        widget, pacer = self.make(None)
+        late = []
+        wanted = [0.0]
+        widget.update = lambda: late.append((time.perf_counter() - wanted[0]) * 1000)
+        for _ in range(10):
+            wanted[0] = time.perf_counter() + 0.007
+            pacer._schedule(wanted[0])
+            loop = QEventLoop()
+            QTimer.singleShot(30, loop.quit)
+            loop.exec()                                             # boucle qui DORT, comme dans l'appli
+        self.assertEqual(len(late), 10)
+        self.assertLess(sorted(late)[8], 4.0)
 
 
 class RenderBadgeTest(CadBoardCase):
@@ -3443,10 +3761,12 @@ class CrosshairTest(CadBoardCase):
         cursor = native_cursor(40, 5, "#1a1a1a", 1.0)
         image = cursor.pixmap().toImage()
         opaque = sum(1 for y in range(image.height()) for x in range(image.width()) if QColor(image.pixelColor(x, y)).alpha())
-        self.assertEqual(opaque, 161 + 40 - 4)                                  # deux bras d'un pixel + contour d'un pixel
+        self.assertEqual(opaque, 4 * 35 + 40)                                   # 4 bras d'un pixel + contour d'un pixel
         centre = 40
         self.assertEqual(QColor(image.pixelColor(centre + 1, centre + 1)).alpha(), 0)   # un seul pixel d'epaisseur
-        self.assertEqual(QColor(image.pixelColor(centre, centre)).alpha(), 255)
+        self.assertEqual(QColor(image.pixelColor(centre, centre)).alpha(), 0)          # les bras partent du carre
+        self.assertEqual(QColor(image.pixelColor(centre + 6, centre)).alpha(), 255)
+        self.assertEqual(QColor(image.pixelColor(centre, centre - 6)).alpha(), 255)
         self.assertEqual(QColor(image.pixelColor(centre + 5, centre + 5)).alpha(), 255)   # coin du carre
         self.assertEqual(QColor(image.pixelColor(centre + 4, centre + 4)).alpha(), 0)     # dedans : vide
 

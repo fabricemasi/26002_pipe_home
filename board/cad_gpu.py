@@ -63,6 +63,210 @@ PENDING = object()               # `GpuStore.build` : lot inacheve (budget de te
 FLOATS = 12                     # par instance : ax ay bx by | demi-epaisseur r1 r2 codes | r g b a
 
 
+# ==========================================================================
+# Cadence des images (retard du rendu pendant un pan, demande de l'utilisateur)
+# ==========================================================================
+# L'echange de tampons de la fenetre attendait le balayage de l'ecran (intervalle d'echange 1) : le fil de l'interface
+# restait BLOQUE a chaque image, un mouvement de souris attendait la fin de l'image en cours puis une image entiere —
+# mesure de bout en bout (`tests/_probe_pan_display.py`, ecran lu) : ~20 ms souris -> ecran au lieu de ~5. L'appli regle
+# donc l'intervalle d'echange a 0 (`low_latency_format`, AVANT la QApplication : c'est le format de la FENETRE qui compte)
+# — Windows compose de toute facon (pas de dechirure) — et la couche cadence elle-meme ses images : UNE par balayage,
+# lancee juste avant que Windows compose (instants des balayages : `DwmGetCompositionTimingInfo`), avec la position la
+# plus fraiche ; sans cela elle en rendait ~400 par seconde pour 60 montrees.
+
+def low_latency_format():
+    """Format par defaut de l'appli (a poser AVANT la QApplication) : echange sans attente du balayage."""
+    fmt = QSurfaceFormat.defaultFormat()
+    fmt.setSwapInterval(0)
+    QSurfaceFormat.setDefaultFormat(fmt)
+
+
+class _DwmClock:
+    """Instants des balayages de l'ecran (secondes de `time.perf_counter`), lus aupres du compositeur de Windows."""
+
+    def __init__(self):
+        self.ok = False
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            from ctypes import c_uint32, c_uint64
+
+            class RATIO(ctypes.Structure):
+                _pack_ = 1
+                _fields_ = [("num", c_uint32), ("den", c_uint32)]
+
+            class TIMING(ctypes.Structure):          # DWM_TIMING_INFO (dwmapi.h, aligne sur 1 octet)
+                _pack_ = 1
+                _fields_ = [("cbSize", c_uint32), ("rateRefresh", RATIO), ("qpcRefreshPeriod", c_uint64),
+                            ("rateCompose", RATIO), ("qpcVBlank", c_uint64), ("cRefresh", c_uint64),
+                            ("cDXRefresh", c_uint32), ("qpcCompose", c_uint64), ("cFrame", c_uint64),
+                            ("cDXPresent", c_uint32), ("cRefreshFrame", c_uint64), ("cFrameSubmitted", c_uint64),
+                            ("cDXPresentSubmitted", c_uint32), ("cFrameConfirmed", c_uint64),
+                            ("cDXPresentConfirmed", c_uint32), ("cRefreshConfirmed", c_uint64),
+                            ("cDXRefreshConfirmed", c_uint32), ("cFramesLate", c_uint64),
+                            ("cFramesOutstanding", c_uint32), ("cFrameDisplayed", c_uint64),
+                            ("qpcFrameDisplayed", c_uint64), ("cRefreshFrameDisplayed", c_uint64),
+                            ("cFrameComplete", c_uint64), ("qpcFrameComplete", c_uint64),
+                            ("cFramePending", c_uint64), ("qpcFramePending", c_uint64),
+                            ("cFramesDisplayed", c_uint64), ("cFramesComplete", c_uint64),
+                            ("cFramesPending", c_uint64), ("cFramesAvailable", c_uint64),
+                            ("cFramesDropped", c_uint64), ("cFramesMissed", c_uint64),
+                            ("cRefreshNextDisplayed", c_uint64), ("cRefreshNextPresented", c_uint64),
+                            ("cRefreshesDisplayed", c_uint64), ("cRefreshesPresented", c_uint64),
+                            ("cRefreshStarted", c_uint64), ("cPixelsReceived", c_uint64),
+                            ("cPixelsDrawn", c_uint64), ("cBuffersEmpty", c_uint64)]
+            self._info = TIMING()
+            self._info.cbSize = ctypes.sizeof(TIMING)
+            self._call = ctypes.windll.dwmapi.DwmGetCompositionTimingInfo
+            freq = ctypes.c_int64()
+            ctypes.windll.kernel32.QueryPerformanceFrequency(ctypes.byref(freq))
+            counter = ctypes.c_int64()
+            ctypes.windll.kernel32.QueryPerformanceCounter(ctypes.byref(counter))
+            self._freq = float(freq.value)
+            self._offset = time.perf_counter() - counter.value / self._freq   # QPC -> perf_counter
+            self.ok = self.read() is not None
+        except Exception:                               # noqa: BLE001 - pas de compositeur : cadence simple
+            self.ok = False
+
+    def read(self):
+        """(instant du dernier balayage, periode) en secondes, ou None."""
+        if self._call(None, __import__("ctypes").byref(self._info)) != 0:
+            return None
+        period = self._info.qpcRefreshPeriod / self._freq
+        if not 0.002 < period < 0.1:
+            return None
+        return self._info.qpcVBlank / self._freq + self._offset, period
+
+
+class FramePacer:
+    """Une image par balayage, lancee juste avant que Windows compose : `request()` a la place de `update()`. Sans
+    compositeur, une image par periode de l'ecran au plus. Inactif (`update()` direct) quand l'echange attend le
+    balayage (intervalle d'echange 1 : la cadence est alors celle du pilote).
+
+    L'instant de lancement est attendu par un FIL A PART (`time.sleep`, precis a ~0,5 ms) qui reveille l'interface
+    par un signal : une minuterie de Qt, boucle d'evenements endormie, arrivait jusqu'a 10 ms en retard (p95, mesure)
+    — l'image ratait son balayage, le pan SACCADAIT (signale ; la sonde, qui faisait tourner la boucle sans arret, ne
+    le voyait pas)."""
+
+    # Avance sur le balayage (Windows compose un peu AVANT lui). Mesure en boucle endormie (sonde _probe_pan_display) :
+    # 2-4 ms = ~6 % d'images qui ratent leur balayage (saccades), 6 ms = aussi regulier que sans cadence (~13 ms de
+    # retard souris -> ecran, contre ~35 ms avec l'echange qui attend le balayage).
+    MARGIN_S = 0.006
+
+    def __init__(self, widget, refresh_hz: float = 60.0):
+        import threading
+        from PySide6.QtCore import QObject, Signal
+
+        class Waker(QObject):
+            go = Signal()
+        self.widget = widget
+        self.active = QSurfaceFormat.defaultFormat().swapInterval() == 0
+        self.clock = _DwmClock() if self.active else None
+        self.period = 1.0 / max(24.0, float(refresh_hz or 60.0))
+        self.cost = 0.004                           # duree estimee d'une image (moyenne glissante)
+        self.last_target = None                     # balayage vise par la derniere image
+        self.last_frame = 0.0
+        self._waker = Waker(widget)                # vit dans le fil de l'interface : le signal du fil y est mis en file
+        self._waker.go.connect(self._wake)
+        self._lock = threading.Lock()
+        self._event = threading.Event()
+        self._deadline = None                       # instant (perf_counter) ou lancer l'image ; None = rien de prevu
+        self._thread = None
+        self._closed = False
+        widget.destroyed.connect(self._close)
+        self.pending = False                        # `update()` deja demande, image pas encore presentee
+        self.fired_at = 0.0
+        widget.frameSwapped.connect(self._swapped)
+
+    def request(self):
+        if not self.active:
+            self.widget.update()
+            return
+        now = time.perf_counter()
+        if self.scheduled() or (self.pending and now - self.fired_at < 0.1):
+            return                                  # l'image a venir prendra l'etat le plus frais
+        timing = self.clock.read() if self.clock is not None and self.clock.ok else None
+        if timing is None:                          # cadence simple : une image par periode au plus
+            wait = self.last_frame + self.period - now
+            if wait <= 0:
+                self._fire()
+            else:
+                self._schedule(now + wait)
+            return
+        vblank, period = timing
+        k = math.floor((now - vblank) / period) + 1
+        target = vblank + k * period                # prochain balayage
+        if self.last_target is not None and abs(target - self.last_target) < period / 2:
+            target += period                        # une image vise deja ce balayage : le suivant
+        start = target - self.cost - self.MARGIN_S
+        wait = start - now
+        self.last_target = target
+        if wait <= 0.0005:
+            self._fire()
+        else:
+            self._schedule(start)
+
+    def scheduled(self) -> bool:
+        return self._deadline is not None
+
+    def _schedule(self, deadline: float):
+        import threading
+        with self._lock:
+            self._deadline = deadline
+        if self._thread is None:
+            self._thread = threading.Thread(target=self._run, name="cad-gpu-pacer", daemon=True)
+            self._thread.start()
+        self._event.set()
+
+    def _run(self):
+        """Fil de cadence : attend l'instant prevu (`time.sleep`, precis) puis reveille l'interface."""
+        while not self._closed:
+            self._event.wait()
+            self._event.clear()
+            while not self._closed:
+                with self._lock:
+                    deadline = self._deadline
+                if deadline is None:
+                    break
+                remaining = deadline - time.perf_counter()
+                if remaining > 0:
+                    time.sleep(remaining)
+                    continue
+                try:
+                    self._waker.go.emit()
+                except RuntimeError:                # widget detruit
+                    return
+                break
+
+    def _wake(self):
+        with self._lock:
+            self._deadline = None
+        if not self._closed:
+            self._fire()
+
+    def _close(self, *_args):
+        self._closed = True
+        self._event.set()
+
+    def _fire(self):
+        self.pending = True
+        self.fired_at = time.perf_counter()
+        self.widget.update()
+
+    def _swapped(self):
+        """Image presentee : sa duree (demande -> presentation, composition de la fenetre comprise) sert a lancer la
+        suivante assez tot ; prochaine demande possible."""
+        now = time.perf_counter()
+        if self.pending:
+            # Moyenne glissante (mesure : la meilleure) ; une image exceptionnelle (la 1re, un dessin a recharger)
+            # plafonnee pour ne pas faire partir les suivantes trop tot.
+            took = min(0.02, max(0.0005, now - self.fired_at))
+            self.cost = 0.8 * self.cost + 0.2 * took
+        self.pending = False
+        self.last_frame = now
+
+
 def available() -> bool:
     """PyOpenGL et QOpenGLWidget presents."""
     try:
@@ -514,15 +718,17 @@ def _make_layer_class():
             self._zoom = None
             self._band = None
             self.frame_ms = 0.0
-            self._overlay_image = None
+            self._overlay_images = []                  # une image par zone peinte (`_paint_qt`)
             self._under_image = None
             fmt = QSurfaceFormat()
             fmt.setVersion(3, 3)
             fmt.setProfile(QSurfaceFormat.CoreProfile)
             fmt.setAlphaBufferSize(8)
-            fmt.setSwapInterval(1)
+            fmt.setSwapInterval(QSurfaceFormat.defaultFormat().swapInterval())       # celui de la fenetre (`low_latency_format`)
             fmt.setSamples(4)                           # QPainter (selection, elastique, reticule) n anticrenele que sur un tampon multi-echantillons
             self.setFormat(fmt)
+            screen = view.screen() if hasattr(view, "screen") else None
+            self.pacer = FramePacer(self, screen.refreshRate() if screen is not None else 60.0)
             self.setAttribute(Qt.WA_AlwaysStackOnTop, True)
             self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
             self.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -684,7 +890,7 @@ def _make_layer_class():
 
         def request(self):
             if self.isVisible():
-                self.update()
+                self.pacer.request()                    # une image par balayage, juste avant la composition
 
         # -- OpenGL --
         def initializeGL(self):
@@ -1054,30 +1260,39 @@ def _make_layer_class():
             hook = self.paint_hook
             if hook is None:
                 return
-            area = self.rect()
+            areas = [self.rect()]
             if self.paint_bounds is not None:
-                area = area.intersected(self.paint_bounds())          # seule la zone qui contient du dessin
-            if area.isEmpty():
+                found = self.paint_bounds()             # seules les zones qui contiennent du dessin (une ou plusieurs)
+                areas = [self.rect().intersected(r) for r in (found if isinstance(found, list) else [found])]
+            areas = [r for r in areas if not r.isEmpty()]
+            if not areas:
                 return
             ratio = self.devicePixelRatioF()
-            size = (max(1, int(area.width() * ratio)), max(1, int(area.height() * ratio)))
-            image = self._overlay_image
-            if image is None or (image.width(), image.height()) != size:
-                image = self._overlay_image = QImage(size[0], size[1], QImage.Format_ARGB32_Premultiplied)
-                image.setDevicePixelRatio(ratio)
-            image.fill(0)
-            raster = QPainter(image)                    # moteur raster de Qt : couverture exacte (le moteur GL de Qt ne
-            raster.setRenderHint(QPainter.Antialiasing, True)   # donne que 4 niveaux, tirets baves)
-            raster.translate(-area.x(), -area.y())
-            try:
-                hook(raster, vt)
-            finally:
-                raster.end()
+            images = self._overlay_images
             painter = QPainter(self)
             try:
-                painter.drawImage(area.topLeft(), image)
+                for index, area in enumerate(areas):
+                    size = (max(1, int(area.width() * ratio)), max(1, int(area.height() * ratio)))
+                    image = images[index] if index < len(images) else None
+                    if image is None or (image.width(), image.height()) != size:
+                        image = QImage(size[0], size[1], QImage.Format_ARGB32_Premultiplied)
+                        image.setDevicePixelRatio(ratio)
+                        if index < len(images):
+                            images[index] = image
+                        else:
+                            images.append(image)
+                    image.fill(0)
+                    raster = QPainter(image)            # moteur raster de Qt : couverture exacte (le moteur GL de Qt
+                    raster.setRenderHint(QPainter.Antialiasing, True)   # ne donne que 4 niveaux, tirets baves)
+                    raster.translate(-area.x(), -area.y())
+                    try:
+                        hook(raster, vt)
+                    finally:
+                        raster.end()
+                    painter.drawImage(area.topLeft(), image)
             finally:
                 painter.end()
+            self._overlay_images = images[:len(areas)]
 
         def _clear_obstacles(self, GL, ratio, height):
             """Zones des panneaux flottants (widgets AU-DESSUS de la vue) : rien du CAD n'y est dessine."""

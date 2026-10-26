@@ -98,6 +98,7 @@ class BoardView(QGraphicsView):
                              "ratio_locked": False}
         self._zoom = 1.0
         self._pan = None
+        self._gpu_texts = None          # textes des cotes peints dans la couche GPU (cette image)
         self._pan_frame = None          # image du viewport pendant un deplacement (voir _pan_paint)
         self.gpu_badge = None           # QRect (viewport) de l'encart du mode de rendu, peint dans la couche GPU
         self.zoom_step = 1.15                   # facteur de zoom par cran de molette (Reglages > Module MRO > Navigation)
@@ -218,9 +219,9 @@ class BoardView(QGraphicsView):
             if child is not None and item.isVisible() and child.isVisible() and getattr(child, "_solid", True):
                 yield child
 
-    def _gpu_extra_bounds(self, kind: str) -> QRect:
+    def _gpu_extra_bounds(self, kind: str, children=None) -> QRect:
         out = QRect()
-        for child in self._gpu_extras(kind):
+        for child in (self._gpu_extras(kind) if children is None else children):
             box = self.mapFromScene(child.sceneBoundingRect()).boundingRect().adjusted(-2, -2, 2, 2)
             out = box if out.isNull() else out.united(box)
         return out
@@ -238,7 +239,8 @@ class BoardView(QGraphicsView):
     def _paint_gpu_texts(self, painter, transform):
         painter.save()
         painter.setTransform(transform, True)
-        for child in self._gpu_extras("_text_item"):
+        texts = self._gpu_texts                     # releves UNE fois par image (`_gpu_overlay_bounds`)
+        for child in (self._gpu_extras("_text_item") if texts is None else texts):
             painter.save()
             painter.setTransform(child.sceneTransform(), True)
             child.paint(painter, None)
@@ -264,26 +266,29 @@ class BoardView(QGraphicsView):
         if self.cad is not None and self.cad.active and self.cad.overlay.paint_into(painter):
             self.cad.painted_cursor_shown()
 
-    def _gpu_overlay_bounds(self) -> QRect:
-        """Rectangle (viewport) qui contient le dessin de `_paint_gpu_overlay` : halo et poignees des entites
-        selectionnees + rendu temporaire du CAD ; vide = rien a peindre cette image."""
-        out = QRect()
+    def _gpu_overlay_bounds(self) -> list:
+        """Zones (viewport) qui contiennent le dessin de `_paint_gpu_overlay` : halo et poignees des entites
+        selectionnees, textes du mode pur, encart du rendu, rendu temporaire du CAD ; vide = rien a peindre. Gardees
+        SEPAREES quand elles sont loin les unes des autres (fondues sinon, `CadOverlay._merge`) : leur rectangle
+        englobant (le reticule au centre + l'encart en haut a droite = la moitie de la vue) etait efface, peint et
+        envoye au GPU a CHAQUE image d'un pan (+3 ms de processeur par image, mesure)."""
+        from .cad_overlay import CadOverlay
+        parts = []
         margin = int(getattr(self.board, "cad_grip_px", 8) or 8) + 10
         for item in self.board.selectedItems():
             if getattr(item, "CAD", False) and item.isVisible():
-                box = self.mapFromScene(item.sceneBoundingRect()).boundingRect().adjusted(-margin, -margin, margin, margin)
-                out = box if out.isNull() else out.united(box)
+                parts.append(self.mapFromScene(item.sceneBoundingRect()).boundingRect()
+                             .adjusted(-margin, -margin, margin, margin))
         if self.gpu_badge is not None:
-            out = self.gpu_badge.adjusted(-2, -2, 2, 2) if out.isNull() else out.united(self.gpu_badge.adjusted(-2, -2, 2, 2))
+            parts.append(self.gpu_badge.adjusted(-2, -2, 2, 2))
+        self._gpu_texts = None
         if self.gpu is not None and self.gpu.pure:
-            box = self._gpu_extra_bounds("_text_item")
-            if not box.isNull():
-                out = box if out.isNull() else out.united(box)
+            # Un seul parcours des elements par image (il etait refait pour chaque zone peinte).
+            self._gpu_texts = list(self._gpu_extras("_text_item"))
+            parts.append(self._gpu_extra_bounds("_text_item", self._gpu_texts))
         if self.cad is not None and self.cad.active:
-            box = self.cad.overlay.prepare()
-            if not box.isNull():
-                out = box if out.isNull() else out.united(box)
-        return out
+            parts.append(self.cad.overlay.prepare())
+        return CadOverlay._merge([r for r in parts if not r.isNull()])
 
     def _gpu_obstacles(self) -> list:
         """Zones (coordonnees du viewport) des panneaux flottants du board, widgets AU-DESSUS de la vue : la couche GPU

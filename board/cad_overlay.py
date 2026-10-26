@@ -46,10 +46,17 @@ _CURSORS: dict = {}
 
 def crosshair_rects(cx: int, cy: int, arm: int, half: int) -> list:
     """Le reticule en rectangles de PIXELS PHYSIQUES entiers (x, y, largeur, hauteur), centre sur le pixel (cx, cy) :
-    deux traits d'UN pixel de large (bras de `arm` pixels de chaque cote) et la boite de selection de demi-cote `half`
-    (contour d'un pixel). Le meme dessin pour le curseur du systeme et pour le reticule peint par l'overlay."""
+    quatre bras d'UN pixel de large (`arm` pixels depuis le centre) et la boite de selection de demi-cote `half`
+    (contour d'un pixel). Avec la boite, les bras PARTENT DE SON BORD (dedans vide, comme AutoCAD : demande de
+    l'utilisateur) ; sans elle (invite de point, fenetre de selection), une croix pleine. Le meme dessin pour le
+    curseur du systeme et pour le reticule peint par l'overlay."""
     rects = []
-    if arm > 0:
+    if arm > 0 and half > 0:
+        if arm > half:
+            length = arm - half
+            rects += [(cx - arm, cy, length, 1), (cx + half + 1, cy, length, 1),
+                      (cx, cy - arm, 1, length), (cx, cy + half + 1, 1, length)]
+    elif arm > 0:
         rects.append((cx - arm, cy, 2 * arm + 1, 1))
         rects.append((cx, cy - arm, 1, 2 * arm + 1))
     if half > 0:
@@ -105,6 +112,116 @@ def native_cursor(reach: int, pickbox: int, color: str, ratio: float, badge: str
     pixmap.setDevicePixelRatio(ratio)
     cursor = _CURSORS[key] = QCursor(pixmap, room, room)       # point chaud en pixels LOGIQUES (Qt)
     return cursor
+
+
+# Cadres de selection par defaut (= l'ancien dessin) : [fenetre, capture].
+DEFAULT_FRAMES = (
+    {"bg": "#283c6eff", "sides": {"top": True, "right": True, "bottom": True, "left": True},
+     "colors": {k: "#285ae6" for k in ("top", "right", "bottom", "left")}, "thickness": 1,
+     "radius": {k: 0 for k in ("top_left", "top_right", "bottom_right", "bottom_left")}, "line": "solid", "scale": 100},
+    {"bg": "#2850c878", "sides": {"top": True, "right": True, "bottom": True, "left": True},
+     "colors": {k: "#28a05a" for k in ("top", "right", "bottom", "left")}, "thickness": 1,
+     "radius": {k: 0 for k in ("top_left", "top_right", "bottom_right", "bottom_left")}, "line": "dash", "scale": 100},
+)
+LINE_PATTERNS = {"dash": (6.0, 4.0), "dot": (1.0, 3.0)}       # en epaisseurs de trait, a l'echelle 100 %
+
+
+def _frame_pen(color: str, thickness: float, line: str, scale: float) -> QPen:
+    pen = QPen(QColor(color), max(0.1, float(thickness)))
+    pen.setJoinStyle(Qt.MiterJoin)
+    pattern = LINE_PATTERNS.get(line)
+    if pattern:
+        k = max(0.1, float(scale) / 100.0)
+        pen.setCapStyle(Qt.FlatCap)
+        pen.setDashPattern([max(0.1, v * k) for v in pattern])
+    return pen
+
+
+def paint_selection_frame(painter, rect: QRectF, frame: dict):
+    """Un cadre de selection : fond, bordure par cote (couleur, epaisseur, type de ligne), arrondi par coin. Les 4
+    cotes allumes et de meme couleur : un seul contour (les tirets suivent les arrondis) ; sinon un trait par cote,
+    chacun avec la moitie des arrondis voisins."""
+    from PySide6.QtGui import QPainterPath
+    radius = frame.get("radius") or {}
+    w, h = rect.width(), rect.height()
+    limit = max(0.0, min(w, h) / 2.0)
+    r = {k: min(limit, max(0.0, float(radius.get(k, 0) or 0))) for k in ("top_left", "top_right", "bottom_right",
+                                                                         "bottom_left")}
+    x0, y0, x1, y1 = rect.left(), rect.top(), rect.right(), rect.bottom()
+    outline = QPainterPath()
+    outline.moveTo(x0 + r["top_left"], y0)
+    outline.lineTo(x1 - r["top_right"], y0)
+    outline.arcTo(QRectF(x1 - 2 * r["top_right"], y0, 2 * r["top_right"], 2 * r["top_right"]), 90, -90)
+    outline.lineTo(x1, y1 - r["bottom_right"])
+    outline.arcTo(QRectF(x1 - 2 * r["bottom_right"], y1 - 2 * r["bottom_right"], 2 * r["bottom_right"],
+                         2 * r["bottom_right"]), 0, -90)
+    outline.lineTo(x0 + r["bottom_left"], y1)
+    outline.arcTo(QRectF(x0, y1 - 2 * r["bottom_left"], 2 * r["bottom_left"], 2 * r["bottom_left"]), 270, -90)
+    outline.lineTo(x0, y0 + r["top_left"])
+    outline.arcTo(QRectF(x0, y0, 2 * r["top_left"], 2 * r["top_left"]), 180, -90)
+    outline.closeSubpath()
+    painter.save()
+    painter.setRenderHint(QPainter.Antialiasing, any(r.values()))
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor(frame.get("bg") or "#00000000"))
+    painter.drawPath(outline)
+    painter.setBrush(Qt.NoBrush)
+    sides = frame.get("sides") or {}
+    colors = frame.get("colors") or {}
+    thickness, line, scale = frame.get("thickness", 1), frame.get("line", "solid"), frame.get("scale", 100)
+    on = [k for k in ("top", "right", "bottom", "left") if sides.get(k)]
+    if line == "solid" and len(on) == 4 and len({colors.get(k) for k in on}) == 1:
+        painter.setPen(_frame_pen(colors.get("top") or "#285ae6", thickness, line, scale))
+        painter.drawPath(outline)
+    else:
+        # Un trait par cote (avec la moitie des arrondis voisins), TOUJOURS tire depuis le meme coin : haut et bas
+        # depuis la gauche, gauche et droite depuis le haut. Les tirets d'un cote dont la place et le coin de depart
+        # ne bougent pas restent donc immobiles quand le cadre grandit : il n'est pas repeint (`CadOverlay._dirty`).
+        # Angles de Qt : 0 = est, sens direct (vers le haut).
+        def box(key, left, top):
+            return QRectF(left, top, 2 * r[key], 2 * r[key])
+        boxes = {"top_left": box("top_left", x0, y0), "top_right": box("top_right", x1 - 2 * r["top_right"], y0),
+                 "bottom_right": box("bottom_right", x1 - 2 * r["bottom_right"], y1 - 2 * r["bottom_right"]),
+                 "bottom_left": box("bottom_left", x0, y1 - 2 * r["bottom_left"])}
+        # cote : (coin de depart, angle, sens), point droit d'arrivee, (coin d'arrivee, angle, sens)
+        sides_path = {
+            "top": (("top_left", 135, -45), (x1 - r["top_right"], y0), ("top_right", 90, -45)),
+            "bottom": (("bottom_left", 225, 45), (x1 - r["bottom_right"], y1), ("bottom_right", 270, 45)),
+            "left": (("top_left", 135, 45), (x0, y1 - r["bottom_left"]), ("bottom_left", 180, 45)),
+            "right": (("top_right", 45, -45), (x1, y1 - r["bottom_right"]), ("bottom_right", 0, -45)),
+        }
+        starts = {"top": (x0, y0), "bottom": (x0, y1), "left": (x0, y0), "right": (x1, y0)}
+        for key in on:
+            (first, angle, sweep), point, (last, end_angle, end_sweep) = sides_path[key]
+            path = QPainterPath()
+            if r[first] > 0:
+                path.arcMoveTo(boxes[first], angle)
+                path.arcTo(boxes[first], angle, sweep)
+            else:
+                path.moveTo(*starts[key])
+            path.lineTo(*point)
+            if r[last] > 0:
+                path.arcTo(boxes[last], end_angle, end_sweep)
+            painter.setPen(_frame_pen(colors.get(key) or "#285ae6", thickness, line, scale))
+            painter.drawPath(path)
+    painter.restore()
+
+
+def _minus(a: QRect, b: QRect) -> list:
+    """Rectangles de `a` hors de `b` (au plus 4 bandes)."""
+    inter = a.intersected(b)
+    if inter.isEmpty():
+        return [QRect(a)]
+    out = []
+    if inter.top() > a.top():
+        out.append(QRect(a.left(), a.top(), a.width(), inter.top() - a.top()))
+    if inter.bottom() < a.bottom():
+        out.append(QRect(a.left(), inter.bottom() + 1, a.width(), a.bottom() - inter.bottom()))
+    if inter.left() > a.left():
+        out.append(QRect(a.left(), inter.top(), inter.left() - a.left(), inter.height()))
+    if inter.right() < a.right():
+        out.append(QRect(inter.right() + 1, inter.top(), a.right() - inter.right(), inter.height()))
+    return out
 
 
 def _pt(p: QPointF) -> tuple:
@@ -289,12 +406,53 @@ class CadOverlay(QWidget):
             return
         ops, key, rect = self._layout(self.ctl.overlay_state())
         rects = self._rects_of(ops)
-        old_key, old_rects = self._key, self._rects
+        old_ops, old_key, old_rects = self._ops, self._key, self._rects
         self._ops, self._key, self._rect, self._rects = ops, key, rect, rects       # avant toute peinture
         if self.backdrop is None and self.backdrop_enabled:
             self.update()                       # image a relever : la scene est repeinte une fois
         elif key != old_key:
-            self._repaint(rects + old_rects)
+            # (les zones des elements PEINTS : `_rects` n'est pas tenu a jour par la peinture, `_ops` l'est)
+            dirty = self._dirty(old_ops, self._rects_of(old_ops), ops, rects)
+            if dirty is None:
+                self._repaint(rects + old_rects)
+            else:                               # cadre de selection : UN envoi, peinture limitee aux bords qui bougent
+                region = QRegion()
+                for r in self._merge(dirty):
+                    region = region.united(r)
+                self.update(region)
+
+    @staticmethod
+    def _dirty(old_ops, old_rects, ops, rects) -> list:
+        """Zones a repeindre. Fenetre de selection (signale : « latence entre le curseur et le cadre ») : son fond est
+        UNI, l'interieur commun a l'ancien et au nouveau cadre ne change pas — seuls les BORDS (bandes, arrondis
+        compris) et la zone gagnee ou perdue sont repeints, pas toute sa surface (un grand cadre = presque toute la
+        vue envoyee a Windows a chaque mouvement)."""
+        def window(ops_, rects_):
+            for index, (kind, rect, args) in enumerate(ops_):
+                if kind == "window":
+                    return index, rect.toAlignedRect().adjusted(-1, -1, 1, 1), args
+            return None
+        old, new = window(old_ops, old_rects), window(ops, rects)
+        if old is None or new is None or old[2][1] != new[2][1]:
+            return None
+        band = max(new[2][2], old[2][2])
+        out = [r for i, r in enumerate(old_rects) if i != old[0]] + [r for i, r in enumerate(rects) if i != new[0]]
+        a, b = old[1], new[1]
+        # Un bord dont la place ET le coin de depart (gauche pour haut / bas, haut pour gauche / droite) ne changent
+        # pas reste identique : seule sa rallonge (ou ce qu'il perd) change, deja dans la zone gagnee / perdue.
+        same = {"top": a.top() == b.top() and a.left() == b.left(), "bottom": a.bottom() == b.bottom()
+                and a.left() == b.left(), "left": a.left() == b.left() and a.top() == b.top(),
+                "right": a.right() == b.right() and a.top() == b.top()}
+        for r in (a, b):
+            w, h = min(band, r.width()), min(band, r.height())
+            strips = {"top": QRect(r.left(), r.top(), r.width(), h),
+                      "bottom": QRect(r.left(), r.bottom() - h + 1, r.width(), h),
+                      "left": QRect(r.left(), r.top(), w, r.height()),
+                      "right": QRect(r.right() - w + 1, r.top(), w, r.height())}
+            out += [strip for side, strip in strips.items() if not same[side]]
+        # zone gagnee / perdue, elargie de la bande : les arrondis et le bout des bords qui s'allongent
+        out += [piece.adjusted(-band, -band, band, band).intersected(a.united(b)) for piece in _minus(a, b) + _minus(b, a)]
+        return out
 
     def _repaint(self, rects: list):
         """Zones ancienne + nouvelle. Windows recoit pour chaque envoi le rectangle ENGLOBANT de la region : les deux
@@ -377,9 +535,20 @@ class CadOverlay(QWidget):
             add("preview", _line_rect(a, b, 2), a, b, look["rubber"])
         window = state.get("window")
         if window is not None:
-            start, end, crossing = window
-            rect = QRectF(to_view(start), to_view(end)).normalized()
-            add("window", rect.adjusted(-2, -2, 2, 2), rect, crossing)
+            start, end, crossing = window[:3]
+            a = to_view(start)
+            b = QPointF(window[3]) if len(window) > 3 and window[3] is not None else to_view(end)
+            rect = QRectF(a, b).normalized()
+            frame = look.get("sel_crossing" if crossing else "sel_window") or {}
+            pad = 2 + float(frame.get("thickness", 1))
+            band = int(pad + max([0, *(frame.get("radius") or {}).values()]) + 3)   # bords a repeindre (`_dirty`)
+            add("window", rect.adjusted(-pad, -pad, pad, pad), rect, crossing, band, a, b)
+        path = state.get("path")
+        if path:
+            points = [to_view(point) for point in path]
+            xs, ys = [q.x() for q in points], [q.y() for q in points]
+            add("path", QRectF(min(xs) - 3, min(ys) - 3, max(xs) - min(xs) + 6, max(ys) - min(ys) + 6), points,
+                look["rubber"])
         for point, color in state.get("grips", ()):
             c = to_view(point)
             size = look["grip_px"]
@@ -398,8 +567,8 @@ class CadOverlay(QWidget):
                 # Reticule jusqu'aux bords de la vue : deux traits (zones minces), la boite de selection a part.
                 w, h = float(self.width()), float(self.height())
                 pad = max(2, half + 2)      # les traits englobent la boite : une seule zone par trait a repeindre
-                add("cursor_h", QRectF(0, cursor.y() - pad, w, 2 * pad), cursor, look["cursor"], w)
-                add("cursor_v", QRectF(cursor.x() - pad, 0, 2 * pad, h), cursor, look["cursor"], h)
+                add("cursor_h", QRectF(0, cursor.y() - pad, w, 2 * pad), cursor, look["cursor"], w, half)
+                add("cursor_v", QRectF(cursor.x() - pad, 0, 2 * pad, h), cursor, look["cursor"], h, half)
                 if half:
                     add("cursor", QRectF(cursor.x() - half - 2, cursor.y() - half - 2, 2 * half + 4, 2 * half + 4),
                         cursor, look["cursor"], 0, half)
@@ -539,13 +708,31 @@ class CadOverlay(QWidget):
         painter.setPen(pen)
         painter.drawLine(a, b)
 
-    def _paint_window(self, painter, look, rect, crossing):
-        fill = QColor(80, 200, 120, 40) if crossing else QColor(60, 110, 255, 40)
-        edge = QColor(40, 160, 90) if crossing else QColor(40, 90, 230)
-        painter.setPen(QPen(edge, 1.0, Qt.DashLine if crossing else Qt.SolidLine))
-        painter.setBrush(fill)
-        painter.drawRect(rect)
+    def _paint_window(self, painter, look, rect, crossing, _band=0, a=None, b=None):
+        """Fenetre (gauche -> droite) ou capture (droite -> gauche) : Reglages > Module CAD > Selection. Ses bords sont
+        cales sur les PIXELS PHYSIQUES comme le reticule (`_centre_pixel` : pixel floor(x * ratio)) : le coin mobile
+        tombe exactement sur la croix, trait net, a toute echelle d'affichage."""
+        frame = dict(look.get("sel_crossing" if crossing else "sel_window") or DEFAULT_FRAMES[bool(crossing)])
+        if a is not None and b is not None:
+            ratio = self.devicePixelRatioF() or 1.0
+            width = max(1, round(float(frame.get("thickness", 1)) * ratio))       # en pixels physiques
+            centre = 0.5 if width % 2 else 0.0
+
+            def snap(v):
+                return (math.floor(v * ratio) + centre) / ratio
+            xs = sorted((snap(a.x()), snap(b.x())))
+            ys = sorted((snap(a.y()), snap(b.y())))
+            rect = QRectF(QPointF(xs[0], ys[0]), QPointF(xs[1], ys[1]))
+            frame["thickness"] = width / ratio
+        paint_selection_frame(painter, rect, frame)
+
+    def _paint_path(self, painter, look, points, color):
+        """Trace a main levee d'AJUSTER."""
+        pen = QPen(QColor(color), 1.2)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
+        painter.drawPolyline(QPolygonF(points))
 
     def _paint_grip(self, painter, look, c, color, size):
         painter.setPen(QPen(QColor("#ffffff"), 1.0))
@@ -571,13 +758,19 @@ class CadOverlay(QWidget):
         cx, cy, ratio = self._centre_pixel(c)
         self._paint_pixels(painter, crosshair_rects(cx, cy, round(reach * ratio), round(half * ratio)), color)
 
-    def _paint_cursor_h(self, painter, look, c, color, width):
+    def _paint_cursor_h(self, painter, look, c, color, width, half=0):
         cx, cy, ratio = self._centre_pixel(c)
-        self._paint_pixels(painter, [(0, cy, math.ceil(width * ratio), 1)], color)
+        end = math.ceil(width * ratio)
+        gap = round(half * ratio)
+        rects = [(0, cy, end, 1)] if gap <= 0 else [(0, cy, max(0, cx - gap), 1), (cx + gap + 1, cy, end, 1)]
+        self._paint_pixels(painter, rects, color)
 
-    def _paint_cursor_v(self, painter, look, c, color, height):
+    def _paint_cursor_v(self, painter, look, c, color, height, half=0):
         cx, cy, ratio = self._centre_pixel(c)
-        self._paint_pixels(painter, [(cx, 0, 1, math.ceil(height * ratio))], color)
+        end = math.ceil(height * ratio)
+        gap = round(half * ratio)
+        rects = [(cx, 0, 1, end)] if gap <= 0 else [(cx, 0, 1, max(0, cy - gap)), (cx, cy + gap + 1, 1, end)]
+        self._paint_pixels(painter, rects, color)
 
     def _paint_badge(self, painter, look, c, color, source):
         paint_memory_badge(painter, c.x() + 0.5, c.y() + 0.5, source, color)

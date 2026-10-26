@@ -2,8 +2,10 @@
 hors de l'ecran n'est jamais peinte : rien a mesurer). Ne pas toucher la souris pendant la mesure.
 
     QT_QPA_PLATFORM=windows python tests/_probe_cad_latency.py [N,N,...] [scenarios]
-    scenarios : idle, line, line_nosnap, zoom, mixed, draw, pan (bouton du milieu tenu), pan_mixed
+    scenarios : idle, line, line_nosnap, zoom, mixed, draw, pan (bouton du milieu tenu), pan_mixed, window (fenetre de selection)
     BOARD_ROOT=<dossier contenant un paquet board/>   (comparer avec une autre version du paquet)
+    USER_SETTINGS=1   (les reglages de l'utilisateur, copie isolee, au lieu des defauts)
+    RATE=<Hz>   (mouvements de souris par seconde, 250 par defaut ; une souris de jeu : 1000)
     FULL_CROSSHAIR=1   reticule jusqu'aux bords de la vue
     NOGRID=1          grille du board eteinte (mesure de ce que coute le fond raster)
     GPU=1             rendu GPU du CAD (board/cad_gpu.py ; interpreteur du projet : .venv, PyOpenGL)
@@ -168,7 +170,7 @@ def build(pane, count, mixed):
     ctl.touch_index()
 
 
-def run_moves(pane, seconds, rate_hz=250, draw=None, pan=False):
+def run_moves(pane, seconds, rate_hz=int(os.environ.get("RATE", 250)), draw=None, pan=False):
     vp = pane.view.viewport()
     w, h = vp.width(), vp.height()
     state = {"n": 0, "busy": False}
@@ -292,7 +294,11 @@ def main():
             host.move(screen.left() + 40, screen.top() + 40)       # A L'ECRAN : hors ecran, Windows ne peint rien
             host.show()
             APP.host = host
-            pane = board_ui.BoardPane(host, dict(DEFAULT_SETTINGS, board_opengl=bool(os.environ.get("GL")), board_cad_gpu=bool(os.environ.get("GPU"))))
+            base = DEFAULT_SETTINGS
+            if os.environ.get("USER_SETTINGS"):           # USER_SETTINGS=1 : les reglages de l'utilisateur (copie, _isolate)
+                from settings_store import load_settings
+                base = load_settings()
+            pane = board_ui.BoardPane(host, dict(base, board_opengl=bool(os.environ.get("GL")), board_cad_gpu=bool(os.environ.get("GPU"))))
             if os.environ.get("FILE"):                    # FILE=<.mro> : un vrai dessin au lieu des lignes generees
                 import shutil
                 shutil.copy(os.environ["FILE"], path)
@@ -304,6 +310,8 @@ def main():
             pane.toggle_cad(True)
             ctl = pane.cad
             settings = dict(ctl.settings, board_cad_dyn=True)
+            if os.environ.get("USER_SETTINGS"):
+                settings = dict(ctl.settings)
             if scenario == "line_nosnap":
                 settings["board_cad_osnap"] = False
             else:
@@ -327,6 +335,11 @@ def main():
                 APP.sendEvent(vp, QMouseEvent(QEvent.MouseMove, at, vp.mapToGlobal(at), Qt.NoButton, Qt.NoButton,
                                               Qt.NoModifier))
                 settle(0.3)
+            if scenario == "window":                    # fenetre de selection ouverte depuis un coin, balayee
+                vp = pane.view.viewport()
+                ctl.window = {"start": ctl.view_to_doc(QPointF(vp.width() * 0.03, vp.height() * 0.03))}
+                ctl._apply_cursor()
+                settle(0.2)
             SWAPS.clear()
             if getattr(pane.view, "gpu", None) is not None:           # rendu GPU : images reellement presentees
                 pane.view.gpu.frameSwapped.connect(lambda: (SWAPS.append(time.perf_counter()), GPU_MS.append(pane.view.gpu.frame_ms), SCROLLS.append((pane.view.horizontalScrollBar().value(), pane.view.verticalScrollBar().value()))))

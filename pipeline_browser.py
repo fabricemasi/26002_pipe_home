@@ -9796,6 +9796,14 @@ def main():
     QApplication.setAttribute(Qt.AA_DontCreateNativeWidgetSiblings, True)
     # QtWebEngine (inspecteur des notes, module Markdown) cree apres l'application : contextes OpenGL partages.
     QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
+    # OpenGL : echange de tampons SANS attendre le balayage de l'ecran (format de la FENETRE, a poser avant
+    # l'application) — une image de retard en moins pendant un pan du CAD ; la couche GPU cadence elle-meme ses
+    # images (board/cad_gpu.py, FramePacer).
+    try:
+        from board.cad_gpu import low_latency_format
+        low_latency_format()
+    except Exception:                                   # noqa: BLE001 - paquet du board absent : format par defaut
+        pass
     app = QApplication(sys.argv)
     apply_style(app)
     _install_context_menus()
