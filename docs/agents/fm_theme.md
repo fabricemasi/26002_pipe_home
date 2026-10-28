@@ -56,8 +56,21 @@ Une variante absente du preset chargé → repli sur la variante par défaut du 
 
 - Chaque appli enregistre **dans ses propres réglages** le nom du preset choisi (ex. clé `theme_preset` de fm_browser). Choisir un preset pour une appli ne touche aucune autre appli.
 - **Variante par défaut surchargeable par appli** (décidé par l'utilisateur le 2026-10-27) : dans ses propres réglages, une appli peut choisir pour chaque type d'élément une autre variante par défaut que celle du preset (ex. clé `theme_default_variants` : `{"tableau": "compact"}`). Ordre de résolution d'un élément : variante nommée dans le code → surcharge de l'appli → défaut du preset → première variante du type. Le preset n'est jamais modifié par ce choix.
-- L'appli le charge au lancement et **surveille le fichier** (`QFileSystemWatcher`) : un preset modifié dans fm_theme se met à jour en direct dans les applis ouvertes.
-- Fluidité (règle n° 1 de l'appli) : un changement de thème ne reconstruit jamais une fenêtre. Seuls les widgets inscrits au type d'élément modifié se restylent (mécanisme déjà en place pour les arrondis : `_register_input` / `_register_radius`). Mesurer sur la fenêtre de réglages entièrement construite avant de valider.
+- L'appli le charge au lancement.
+
+## Temps réel et fluidité (EXIGENCE de l'utilisateur, 2026-10-27)
+
+**Toute modification faite dans fm_theme apparaît EN TEMPS RÉEL, avec une fluidité exemplaire, dans toutes les applis ouvertes** : pendant qu'on tire un slider de couleur ou d'arrondi, les applis suivent le geste image par image, jamais « une fois relâché » ni « quelques secondes plus tard ». Critère de réussite de tout le projet, au même rang que la règle n° 1 d'AGENTS.md.
+
+Conséquences sur la conception :
+
+- **Canal direct, pas le fichier, pendant le geste.** Écrire le preset sur disque à chaque pas d'un slider serait trop lent, et le dossier est synchronisé dans le cloud (un client de synchro réagirait à chaque écriture). fm_theme diffuse donc les changements par un **canal local** (`QLocalServer` côté fm_theme, `QLocalSocket` dans chaque appli) : messages minuscules, seulement les valeurs modifiées (`{"preset": …, "type": "toggle", "variante": "pilule", "valeurs": {"radius": 6}}`).
+- **Fichier écrit à la fin du geste** (relâchement, ou après un court délai d'inactivité), une seule fois. Les applis qui n'étaient pas connectées (lancées après, fm_theme fermé) le relisent par surveillance du fichier (`QFileSystemWatcher`, avec délai anti-rebond : une sauvegarde peut déclencher plusieurs notifications).
+- **Une mise à jour par image au plus.** Dans chaque appli, les messages reçus sont fusionnés et appliqués au prochain rafraîchissement (≈ 16 ms), jamais un restylage par message.
+- **Restylage ciblé, jamais de reconstruction.** Seuls les widgets inscrits au type et à la variante modifiés se restylent (mécanisme déjà en place pour les arrondis : `_register_input` / `_register_radius`), et seulement si la valeur a vraiment changé. Pas de `setStyleSheet` sur une fenêtre entière, pas de `refresh_all_columns` pour une couleur.
+- **Seule l'appli concernée réagit** : un message pour un preset qu'elle n'utilise pas est ignoré sans rien calculer.
+- **Budget mesuré** : un pas de slider doit tenir dans une image (< 16 ms) dans chaque appli, mesuré sur la fenêtre de réglages ENTIÈREMENT construite (~24 000 widgets) et sur la fenêtre principale avec ses colonnes ouvertes (sonde cProfile). Une étape de migration qui dépasse ce budget n'est pas terminée.
+- Le canal est un détail interne de la bibliothèque fm_theme : une appli s'abonne en une ligne et reçoit uniquement des restylages déjà fusionnés.
 
 ## Ce que deviennent les réglages actuels
 
@@ -88,7 +101,7 @@ Remplace l'intention « copier les modules de réglages dans chaque nouvelle app
 1. **Inventaire** : classer chaque clé de `DEFAULT_SETTINGS` en aspect (fm_theme) / fonctionnement (fm_browser) / aspect propre à fm_browser (à convertir en références) ; script qui produit la liste, validée par l'utilisateur.
 2. **Paquet `fm_theme/`** : déplacer les briques sans changer leur comportement, modules d'origine gardés comme simples réexportations le temps de la transition. Vérifier qu'aucun import ne va de fm_theme vers fm_browser.
 3. **Format de preset fm_theme** : types d'éléments + variantes ; convertisseur depuis `pipeline_settings.presets.json` (les presets actuels deviennent des presets fm_theme, rien n'est perdu).
-4. **fm_browser charge son preset** (`theme_preset`), surveillance du fichier, restylage ciblé. Mesure de fluidité.
+4. **fm_browser charge son preset** (`theme_preset`), canal temps réel + surveillance du fichier, restylage ciblé fusionné par image. Mesure de fluidité (budget < 16 ms par pas, voir « Temps réel et fluidité »).
 5. **Appli fm_theme** : la fenêtre de réglages v2 réduite à l'aspect, gestion des presets et des variantes.
 6. **Réglages de fm_browser** réduits au fonctionnement.
 7. Généraliser les variantes aux types qui n'en ont pas encore (tableaux, colonnes…), au fil des demandes.
