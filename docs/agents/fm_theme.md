@@ -97,8 +97,11 @@ Remplace l'intention « copier les modules de réglages dans chaque nouvelle app
 |---|---|---|
 | `fm_visionneuse/` | `focus.py` (visionneuse, pellicule, planche) | `docs/agents/fm_visionneuse.md` (ex `visionneuse.md`) |
 | `fm_markdown/` | `mdeditor/` (+ `markdown_preview.py` s'il ne sert qu'à lui et à l'inspecteur : à décider à l'inventaire) | `docs/agents/fm_markdown.md` (ex `markdown.md`) |
-| `fm_board/` | `board/` sauf `cad*.py` | `docs/agents/fm_board.md` (ex `board.md`) |
+| `fm_board/` | COQUE commune de `board/` : vue, scène, modèle, sérialisation, presse-papiers, export (choix de l'utilisateur 2026-10-28) | `docs/agents/fm_board.md` (ex `board.md`, partie commune) |
+| `fm_miro/` | partie tableau blanc de `board/` : post-it, images, formes, connecteurs, import Miro (`items`, `smart`, `miro_io`…) ; nom choisi par l'utilisateur | `docs/agents/fm_miro.md` (ex `board.md`, partie tableau blanc) |
 | `fm_cad/` | `board/cad*.py` | `docs/agents/fm_cad.md` (ex `cad.md`) |
+
+fm_board est la coque : fm_miro et fm_cad sont deux modules qui s'y branchent. La répartition exacte des fichiers de `board/` (surtout `ui.py`, `commands.py`, `items.py`) entre coque et fm_miro est à établir au début de l'étape, en lisant leurs imports.
 | `fm_video/` | `video/` | `docs/agents/fm_video.md` (ex `video.md`) |
 
 Règles :
@@ -108,13 +111,13 @@ Règles :
 - Les CLÉS de réglages ne changent pas (`board_*`, `md_*`, `video_*`…) : renommer les paquets ne doit rien faire perdre des réglages ni des presets de l'utilisateur.
 
 Points relevés (2026-10-28) :
-- **Board et CAD dépendent l'un de l'autre** : `board/model.py`, `scene.py`, `ui.py`, `view.py`, `__init__.py` importent `cad_*` ; `cad.py`, `cad_items.py`, `cad_import.py`, `cad_ui.py` importent `items`, `model`, `ui`, `scene`. Imports relatifs (`from . import …`) à transformer en `from fm_cad import …` / `from fm_board import …`. Garder les `__init__.py` minimaux pour que ce cycle reste chargeable ; à terme, réduire le sens fm_board → fm_cad à des points d'entrée (un registre posé par fm_cad).
+- **Board et CAD dépendent l'un de l'autre** : `board/model.py`, `scene.py`, `ui.py`, `view.py`, `__init__.py` importent `cad_*` ; `cad.py`, `cad_items.py`, `cad_import.py`, `cad_ui.py` importent `items`, `model`, `ui`, `scene`. Imports relatifs (`from . import …`) à transformer en `from fm_cad import …` / `from fm_miro import …` / `from fm_board import …`. Garder les `__init__.py` minimaux pour que ce cycle reste chargeable ; à terme, la coque fm_board ne connaît fm_miro et fm_cad que par des points d'entrée (un registre où chaque module inscrit ses types d'éléments, outils et barres), et fm_cad n'importe plus fm_miro.
 - `focus.py` est un module plat de ~4 900 lignes : le découper par responsabilité (visionneuse, pellicule, planche, panneau d'infos) en le passant en paquet.
 - Les chemins de données par `Path(__file__)` (`mdeditor/toolbar.json`, `mdeditor/web/`…) suivent le paquet ; vérifier ceux qui remontent vers la racine (`parent.parent`).
 - Les tests patchent des noms par module (`board.ui.X`…) : à renommer avec les paquets.
 - **Avant de commencer** : commiter (ou mettre de côté) le travail CAD en cours (`board/cad*.py`, `tests/test_cad.py`, `docs/agents/cad.md`, `settings_store.py`, `settings_window_v2.py`), sinon le renommage se mélange à ces modifications.
 
-Ordre : ce chantier est INDÉPENDANT de fm_theme et passe EN PREMIER (il allège toutes les requêtes suivantes, y compris la migration fm_theme). Un module par étape, tests du module verts et appli lancée à chaque étape, un commit par module : fm_video (le plus isolé) → fm_markdown → fm_visionneuse → fm_board + fm_cad (ensemble, à cause du cycle).
+Ordre : ce chantier est INDÉPENDANT de fm_theme et passe EN PREMIER (il allège toutes les requêtes suivantes, y compris la migration fm_theme). Un module par étape, tests du module verts et appli lancée à chaque étape, un commit par module : fm_video (le plus isolé) → fm_markdown → fm_visionneuse → fm_board + fm_miro + fm_cad (ensemble, à cause du cycle).
 
 ## Organisation du code (proposition)
 
