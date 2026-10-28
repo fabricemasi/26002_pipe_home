@@ -1,5 +1,5 @@
 """Module Markdown / code : le panneau Qt (une QWebEngineView qui recouvre la zone des colonnes) et tout ce qui touche
-au disque pour la page (mdeditor/web/).
+au disque pour la page (fm_markdown/web/).
 
 - Page chargee UNE fois (prechargee cachee au demarrage de l'appli) : ouvrir un fichier ne recharge jamais la page,
   on lui envoie des messages (QWebChannel, objet « bridge »). Fermer le module CACHE la page (reouverture immediate).
@@ -31,9 +31,9 @@ from PySide6.QtCore import (QByteArray, QEasingCurve, QEventLoop, QFileSystemWat
 from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QFileDialog, QGraphicsOpacityEffect, QMessageBox, QVBoxLayout, QWidget
 
-import markdown_preview
+from fm_markdown import preview as markdown_preview
 from config import DATA_DIR
-from mdeditor import PACKAGE_DIR, css_sync, is_markdown, is_text_file, style, web_dir
+from fm_markdown import PACKAGE_DIR, css_sync, is_markdown, is_text_file, style, web_dir
 
 MODULE_DIR = DATA_DIR / "mdeditor"
 AUTOSAVE_MS = 800

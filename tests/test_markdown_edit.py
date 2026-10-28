@@ -21,9 +21,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 APP = QApplication.instance() or QApplication([])
 
 import detail_panel as dp
-import markdown_preview as mp
-
-
+from fm_markdown import preview as mp
 class NoteFileTest(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())

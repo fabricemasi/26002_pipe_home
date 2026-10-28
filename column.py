@@ -2661,7 +2661,7 @@ class Column(QWidget):
         act_lightroom = menu.addAction("Associer ce dossier à Lightroom…") if is_shortcut and path.is_dir() else None
         act_obsidian_app = None
         if not item.data(ROLE_ISDIR) and path.suffix.lower() == ".md":
-            import markdown_preview
+            from fm_markdown import preview as markdown_preview
             if markdown_preview.vault_containing(path) is not None:
                 act_obsidian_app = menu.addAction("Ouvrir dans l'application Obsidian")
         act_add_shortcut = menu.addAction("Ajouter un raccourci...")
@@ -2731,7 +2731,7 @@ class Column(QWidget):
         elif act_lightroom is not None and chosen is act_lightroom:
             self._configure_lightroom_folder(path)
         elif act_obsidian_app is not None and chosen is act_obsidian_app:
-            import markdown_preview
+            from fm_markdown import preview as markdown_preview
             url = markdown_preview.obsidian_open_url(path)
             if url:
                 from PySide6.QtGui import QDesktopServices

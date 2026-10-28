@@ -14,9 +14,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import markdown_preview as mp
-
-
+from fm_markdown import preview as mp
 @unittest.skipUnless(mp.available(), "markdown-it-py absent")
 class MarkdownRenderTest(unittest.TestCase):
     def setUp(self):

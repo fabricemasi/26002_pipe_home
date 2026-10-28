@@ -96,7 +96,7 @@ Remplace l'intention « copier les modules de réglages dans chaque nouvelle app
 | Nouveau paquet | Aujourd'hui | Doc à lire (une seule, celle du module de la requête) |
 |---|---|---|
 | `fm_visionneuse/` | `focus.py` (visionneuse, pellicule, planche) | `docs/agents/fm_visionneuse.md` (ex `visionneuse.md`) |
-| `fm_markdown/` | `mdeditor/` (+ `markdown_preview.py` s'il ne sert qu'à lui et à l'inspecteur : à décider à l'inventaire) | `docs/agents/fm_markdown.md` (ex `markdown.md`) |
+| `fm_markdown/` | `mdeditor/` + `markdown_preview.py` (devenu `fm_markdown/preview.py` : cœur du module, en cycle avec lui ; l'inspecteur, les colonnes et la fenêtre l'importent comme service) — **FAIT 2026-10-28** | `docs/agents/fm_markdown.md` (ex `markdown.md`) |
 | `fm_board/` | COQUE commune de `board/` : vue, scène, modèle, sérialisation, presse-papiers, export (choix de l'utilisateur 2026-10-28) | `docs/agents/fm_board.md` (ex `board.md`, partie commune) |
 | `fm_miro/` | partie tableau blanc de `board/` : post-it, images, formes, connecteurs, import Miro (`items`, `smart`, `miro_io`…) ; nom choisi par l'utilisateur | `docs/agents/fm_miro.md` (ex `board.md`, partie tableau blanc) |
 | `fm_cad/` | `board/cad*.py` | `docs/agents/fm_cad.md` (ex `cad.md`) |

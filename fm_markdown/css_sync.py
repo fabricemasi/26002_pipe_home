@@ -35,9 +35,9 @@ from typing import Callable
 from PySide6.QtCore import QFileSystemWatcher, QObject, QTimer, Qt, Signal
 from PySide6.QtWidgets import QApplication
 
-import markdown_preview
+from fm_markdown import preview as markdown_preview
 from settings_store import MARKDOWN_DEFAULTS
-from mdeditor import style
+from fm_markdown import style
 
 BEGIN = "/* pipeline-browser:sync:begin"
 END = "/* pipeline-browser:sync:end */"

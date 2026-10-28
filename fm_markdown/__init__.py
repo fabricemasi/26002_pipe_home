@@ -6,7 +6,7 @@ syntaxique, barre Editing Toolbar, apparence reglee dans l'onglet « Markdown »
 - `style.py` : reglages `md_*` -> variables CSS (source unique de l'apparence, inspecteur compris).
 - `web/` : la page (base.css, app.js, editor.js, toolbar.js, highlight.js) et CodeMirror 5 (vendor/, licence MIT).
 - `toolbar.json` : commandes, icones et couleurs de la barre d'outils.
-Le rendu Markdown -> HTML et la lecture / ecriture fideles sont dans `markdown_preview.py` (partages avec
+Le rendu Markdown -> HTML et la lecture / ecriture fideles sont dans `fm_markdown/preview.py` (partages avec
 l'inspecteur). Aucune dependance vers la fenetre principale."""
 from __future__ import annotations
 

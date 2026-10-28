@@ -1,6 +1,6 @@
 /* Module Markdown : barre d'outils reprise du plugin Obsidian « Editing Toolbar » (meme ergonomie, memes commandes).
 
-   Ses commandes, icones et couleurs viennent de mdeditor/toolbar.json (instantane AUTONOME de la configuration de
+   Ses commandes, icones et couleurs viennent de fm_markdown/toolbar.json (instantane AUTONOME de la configuration de
    l'utilisateur : plus rien n'est lu dans Obsidian) ; son habillage, des reglages (Markdown > Barre d'outils).
    Sous-menus au survol ; menus deroulants et palettes de couleurs = menus contextuels de l'appli (pont « menu »).
    Chaque commande agit sur la selection ou le curseur, dans l'historique d'annulation, avec la syntaxe du plugin

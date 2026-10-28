@@ -27,9 +27,9 @@ QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
 APP = QApplication.instance() or QApplication([])
 
 import app_style
-import mdeditor
-import mdeditor.pane as md_pane
-import mdeditor.style as md_style
+import fm_markdown as mdeditor
+import fm_markdown.pane as md_pane
+import fm_markdown.style as md_style
 import pipeline_browser as pb
 import settings_store
 import settings_window_v2 as v2

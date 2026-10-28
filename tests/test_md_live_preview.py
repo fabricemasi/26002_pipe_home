@@ -1,4 +1,4 @@
-"""Module Markdown : edition visuelle comparable a celle d'Obsidian (mdeditor/web/editor.js + base.css).
+"""Module Markdown : edition visuelle comparable a celle d'Obsidian (fm_markdown/web/editor.js + base.css).
 
 Cases a cocher (clic = Markdown modifie, etat garde a l'enregistrement), listes imbriquees (retrait par cran, puce
 dans le retrait, lignes repliees alignees sur le texte), citations (« > » garde sa place, barre en ::before
@@ -14,8 +14,8 @@ from pathlib import Path
 from unittest import mock
 
 from test_md_tables import APP, _js, _json, _until, settle  # noqa: F401  (meme page, memes outils)
-import markdown_preview
-import mdeditor.pane as md_pane
+from fm_markdown import preview as markdown_preview
+import fm_markdown.pane as md_pane
 import settings_store
 
 NOTE = ("> Sitation\n> Test seconde ligne\n\n"

@@ -27,7 +27,7 @@ from PySide6.QtWidgets import QApplication
 QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
 APP = QApplication.instance() or QApplication([])
 
-import mdeditor.pane as md_pane
+import fm_markdown.pane as md_pane
 import settings_store
 
 

@@ -38,6 +38,6 @@ os.environ["PIPELINE_MAIN_WINDOW_STATE_FILE"] = str(_TMP / "pipeline_window_stat
 # La fenetre de reglages construit ses sections en fond a l'ouverture (~20 s) : inutile et lent en test.
 os.environ.setdefault("PIPELINE_NO_PREBUILD", "1")
 # Feuille CSS partagee avec Obsidian (Reglages > Markdown > CSS, par defaut celle du coffre de l'utilisateur) : la
-# synchronisation ne lit ni n'ecrit jamais ce fichier en test ; seuls les tests de mdeditor/css_sync.py l'allument,
+# synchronisation ne lit ni n'ecrit jamais ce fichier en test ; seuls les tests de fm_markdown/css_sync.py l'allument,
 # sur des copies temporaires.
 os.environ["PIPELINE_NO_CSS_SYNC"] = "1"

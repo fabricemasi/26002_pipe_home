@@ -1,5 +1,5 @@
 /* Module Markdown / code : APPARENCE (couche « md-theme »). AUCUNE valeur ici : tout passe par les variables --md-*
-   posees par mdeditor/style.py (onglet « Markdown » des reglages) — elles-memes reprennent d'abord les variables
+   posees par fm_markdown/style.py (onglet « Markdown » des reglages) — elles-memes reprennent d'abord les variables
    documentees d'Obsidian (--h1-color, --text-normal, --code-background…) quand une feuille chargee les definit.
    La mecanique (CodeMirror, defilement, barres) est dans structure.css ; une feuille choisie dans
    Reglages > Markdown > CSS (couche « md-user », posee apres) l'emporte sur ces regles pour ce qu'elle definit.

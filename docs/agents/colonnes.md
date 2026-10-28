@@ -33,7 +33,7 @@ Détail lu À LA DEMANDE (sorti d'AGENTS.md le 2026-10-26 pour alléger le conte
 
 ## Barre de navigation : boutons de mode
 
-Demande de l'utilisateur : à la suite du repli des colonnes, bouton VISIONNEUSE (`btn_viewer`, kind `"viewer"`, icône `navbar_viewer`) = visionneuse sur la sélection la plus profonde (`_selected_path` : fichier à aperçu tel quel, dossier = sa 1re photo, autre fichier = les photos de son dossier) ; visionneuse ouverte = retour aux colonnes (`_on_viewer_button`). Puis bouton ÉDITEUR (module Markdown / code, `btn_text_editor`, kind `"text_editor"`, icône `navbar_text_editor`), GRISÉ tant que la sélection n'est pas un fichier texte / de code (`mdeditor.is_text_file` : `mdeditor.TEXT_EXTENSIONS` ; `_sync_mode_buttons`, appelé à chaque sélection / désélection et par `_sync_collapse_button`). Bouton d'un mode ouvert = fond accent à 35 % (`_mode_on_color`).
+Demande de l'utilisateur : à la suite du repli des colonnes, bouton VISIONNEUSE (`btn_viewer`, kind `"viewer"`, icône `navbar_viewer`) = visionneuse sur la sélection la plus profonde (`_selected_path` : fichier à aperçu tel quel, dossier = sa 1re photo, autre fichier = les photos de son dossier) ; visionneuse ouverte = retour aux colonnes (`_on_viewer_button`). Puis bouton ÉDITEUR (module Markdown / code, `btn_text_editor`, kind `"text_editor"`, icône `navbar_text_editor`), GRISÉ tant que la sélection n'est pas un fichier texte / de code (`fm_markdown.is_text_file` : `fm_markdown.TEXT_EXTENSIONS` ; `_sync_mode_buttons`, appelé à chaque sélection / désélection et par `_sync_collapse_button`). Bouton d'un mode ouvert = fond accent à 35 % (`_mode_on_color`).
 
 ## Opérations sur les fichiers (confirmations)
 

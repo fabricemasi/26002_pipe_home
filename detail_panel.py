@@ -141,7 +141,7 @@ from preview_column import (
     read_pur_exported_image,
     read_text_preview,
 )
-import markdown_preview
+from fm_markdown import preview as markdown_preview
 from previews import (
     delete_preview_cache,
     ai_has_pdf_content,

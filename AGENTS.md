@@ -39,7 +39,7 @@ Application (ordre de dépendance) :
 - `browser_core.py` : scan disque, config projet/layout/raccourcis, helpers de peinture/redimensionnement.
 - `row_delegates.py` (`RowDelegate`, `ProjectTileDelegate`), `column_config.py` (dialogue de configuration des colonnes), `capture_widgets.py` (capture, `_PreviewBlock`, `_ColumnCard`…), `column.py` (`Column`), `preview_column.py` (`PreviewColumn`, export PureRef), `detail_panel.py` (`DetailPanel`, inspecteur).
 - `software_launch.py` : ouvrir un logiciel (Blender, Houdini) dans le dossier d'une colonne (détail : `docs/agents/colonnes.md`).
-- `markdown_preview.py` : rendu Markdown -> HTML partagé par le module Markdown et l'inspecteur (détail : `docs/agents/markdown.md`).
+- `fm_markdown/preview.py` (ex `markdown_preview.py`, importé `as markdown_preview`) : rendu Markdown -> HTML partagé par le module Markdown et l'inspecteur (détail : `docs/agents/fm_markdown.md`).
 - `focus.py` : visionneuse, pellicule, planche (détail : `docs/agents/visionneuse.md`).
 - `lightroom_bridge.py` : dossiers liés à un catalogue Lightroom Classic (détail : `docs/agents/apercus.md`).
 - `pipeline_browser.py` : `IconButton`, `TitleBar`, `PipelineBrowser(QMainWindow)`, `apply_all_settings`, `main()` (`load_settings()` → `apply_all_settings()` → `QApplication` → `apply_style()` → fenêtre). Point d'entrée.
@@ -50,7 +50,7 @@ Fenêtre de réglages (ordre de dépendance) : `settings_store.py` (palette `M`,
 
 Les données propres à l'appli sont dans `data/` (réglages, presets, état des fenêtres, cache d'aperçus, icônes de logiciels) ; `files/` contient les modèles Blender et profils de rendu, `icons/` les SVG de l'interface.
 
-Paquets : `board/` (module MRO + CAD), `mdeditor/` (module Markdown), `fm_video/` (module vidéo) ; aucun ne dépend de la fenêtre principale (elle leur pose des `HOOKS`).
+Paquets : `board/` (module MRO + CAD), `fm_markdown/` (module Markdown), `fm_video/` (module vidéo) ; aucun ne dépend de la fenêtre principale (elle leur pose des `HOOKS`).
 
 ### Réglages (règles de base)
 Enregistrer UNE clé d'état temps réel : `settings_store.save_live_state(clé, valeur)` (écrit cette clé dans le fichier tel qu'il est), jamais `load_settings()` + `save_settings()` (cela fige dans le fichier les valeurs du preset actif, même périmées).
@@ -64,7 +64,7 @@ Le détail de chaque module (choix de l'utilisateur, pièges, mesures, tests) es
 - `docs/agents/colonnes.md` : colonnes (configuration `.pipeline_*.json`, animations, navigation réactive, réseau, dessin), boutons de mode de la barre, lancement des logiciels, opérations sur les fichiers (confirmations, corbeille, glisser-déposer).
 - `docs/agents/apercus.md` : pipeline d'aperçus, caches, rendus Blender / Maya / Houdini, rendu automatique SUSPENDU, Lightroom.
 - `docs/agents/visionneuse.md` : visionneuse, pellicule, planche, PureRef, cadre « Visionneuse », attributs des fichiers, filtres.
-- `docs/agents/markdown.md` : module Markdown / code (`mdeditor/`), aperçu des notes, CSS / Obsidian.
+- `docs/agents/fm_markdown.md` : module Markdown / code (`fm_markdown/`, ex `mdeditor/` + `markdown_preview.py`), aperçu des notes, CSS / Obsidian.
 - `docs/agents/board.md` : module Board (`board/`, clone de Miro).
 - `docs/agents/cad.md` : module CAD du board (`board/cad*.py`).
 - `docs/agents/fm_video.md` : module vidéo (`fm_video/`, ex `video/`).

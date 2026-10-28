@@ -23,7 +23,7 @@ QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
 APP = QApplication.instance() or QApplication(sys.argv)
 
 import settings_store  # noqa: E402
-import mdeditor.pane as md_pane  # noqa: E402
+import fm_markdown.pane as md_pane  # noqa: E402
 
 SETTINGS = dict(settings_store.DEFAULT_SETTINGS)
 SETTINGS["md_css_path"] = os.environ.get("CSS", "")          # `CSS=feuille.css` : feuille de Reglages > Markdown > CSS

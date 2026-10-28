@@ -8,8 +8,8 @@ adresses web en clair. Images et liens relatifs resolus depuis le dossier de la 
 par NOM dans la racine de la note (coffre = parent qui a un dossier .obsidian, sinon le dossier de la note) ;
 references d'origine jamais modifiees (seul le HTML pointe vers les fichiers).
 
-Apparence : AUCUN style ici ; la page de l'inspecteur prend la feuille du module (mdeditor/web/base.css) et les
-variables des reglages (mdeditor/style.py) : meme rendu que le mode lecture du module.
+Apparence : AUCUN style ici ; la page de l'inspecteur prend la feuille du module (fm_markdown/web/base.css) et les
+variables des reglages (fm_markdown/style.py) : meme rendu que le mode lecture du module.
 Aucune dependance vers le reste de l'appli hors config."""
 from __future__ import annotations
 
@@ -386,7 +386,7 @@ def render_page(note: Path, text: str | None = None, settings: dict | None = Non
     rendu que le mode lecture du module (coloration des blocs de code comprise)."""
     if text is None:
         text, _info = read_note(note)
-    from mdeditor import css_sync, style, web_dir
+    from fm_markdown import css_sync, style, web_dir
     if settings is None:
         import ui_state
         settings = ui_state.APPLIED_SETTINGS or {}

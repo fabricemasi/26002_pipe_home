@@ -950,7 +950,7 @@ CATALOG["Vidéo : Export"] = [
 # ==========================================================================
 # Onglet « Markdown » (module Markdown / code, paquet mdeditor/) : TOUTE l'apparence des notes (lecture, edition,
 # inspecteur) et des fichiers de code. Defauts = settings_store.MARKDOWN_DEFAULTS (source unique, tires du CSS de
-# l'utilisateur) ; mdeditor/style.py traduit ces cles en variables CSS. Clic droit sur un titre de l'onglet =
+# l'utilisateur) ; fm_markdown/style.py traduit ces cles en variables CSS. Clic droit sur un titre de l'onglet =
 # « Restaurer les valeurs d'origine » (MarkdownResetTest).
 # ==========================================================================
 MD_OPEN_MD = (("module", "Éditeur Markdown de l'appli"), ("obsidian", "Application Obsidian"))
@@ -2358,7 +2358,7 @@ class _MarkdownCssPathField(RootPathField):
         self.status = _text_label("", "note")
         layout.insertWidget(layout.count() - 1, self.status)
         self.edit.textChanged.connect(lambda _t: self._refresh_status())
-        from mdeditor import css_sync
+        from fm_markdown import css_sync
         css_sync.engine().statusChanged.connect(self._on_sync_status)
         self._refresh_status()
 
@@ -2366,14 +2366,14 @@ class _MarkdownCssPathField(RootPathField):
         try:
             self._refresh_status()
         except RuntimeError:                    # champ detruit (fenetre refaite) : plus suivi
-            from mdeditor import css_sync
+            from fm_markdown import css_sync
             try:
                 css_sync.engine().statusChanged.disconnect(self._on_sync_status)
             except (RuntimeError, TypeError):
                 pass
 
     def _refresh_status(self, note: str = ""):
-        from mdeditor import css_sync, style as md_style
+        from fm_markdown import css_sync, style as md_style
         path, status = md_style.user_css({"md_css_path": self.edit.text()})
         sync = css_sync.engine()
         synced = path is not None and sync.path == path
@@ -2400,11 +2400,11 @@ class _MarkdownCssPathField(RootPathField):
         return str(Path.home() / "Documents")
 
     def _export(self):
-        from mdeditor import style as md_style
+        from fm_markdown import style as md_style
         window = self.window()
         values = window.current_values() if hasattr(window, "current_values") else {}
         if not values:
-            from mdeditor import pane as md_pane
+            from fm_markdown import pane as md_pane
             values = md_pane._settings()
         target, _ = QFileDialog.getSaveFileName(self, "Exporter la feuille pour Obsidian",
                                                 str(Path(self._export_dir()) / self.EXPORT_NAME),
@@ -2421,7 +2421,7 @@ class _MarkdownCssPathField(RootPathField):
         self.status.setToolTip(str(target))
 
     def _save_as(self):
-        from mdeditor import style as md_style
+        from fm_markdown import style as md_style
         source, _ = md_style.user_css({"md_css_path": self.edit.text()})
         if source is not None:
             suggested = source
@@ -2443,7 +2443,7 @@ class _MarkdownCssPathField(RootPathField):
                 window = self.window()
                 values = window.current_values() if hasattr(window, "current_values") else {}
                 if not values:
-                    from mdeditor import pane as md_pane
+                    from fm_markdown import pane as md_pane
                     values = md_pane._settings()
                 md_style.export_obsidian_css(values, destination)
         except (OSError, ValueError) as exc:

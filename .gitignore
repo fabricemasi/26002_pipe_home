@@ -7,7 +7,7 @@ __pycache__/
 
 # Caches et fichiers generes a l'execution
 data/.pipeline_preview_cache/
-# CSS et polices d'Obsidian extraits de SON installation (voir markdown_preview.py)
+# CSS et polices d'Obsidian extraits de SON installation (voir fm_markdown/preview.py)
 data/obsidian_cache/
 data/obsidian_module/
 data/render_profiles_snapshot.json

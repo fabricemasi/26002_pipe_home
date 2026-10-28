@@ -1525,7 +1525,7 @@ for _key in BOARD_MENU_KEYS:
 del _key
 
 # -- Module Markdown / code (paquet mdeditor/, onglet « Markdown » des reglages) ---------------------------------
-# SOURCE UNIQUE de l'apparence des notes (lecture ET edition, inspecteur compris) : mdeditor/style.py traduit ces
+# SOURCE UNIQUE de l'apparence des notes (lecture ET edition, inspecteur compris) : fm_markdown/style.py traduit ces
 # cles en variables CSS. Valeurs d'origine = celles du CSS de l'utilisateur (snippet « fabrice.css » de son coffre,
 # octobre 2026) ; couleurs au format de l'appli (#aarrggbb quand elles ont une opacite).
 

@@ -1,4 +1,4 @@
-"""Module Markdown : tableaux EDITABLES de l'edition visuelle (mdeditor/web/table.js), comme Obsidian.
+"""Module Markdown : tableaux EDITABLES de l'edition visuelle (fm_markdown/web/table.js), comme Obsidian.
 
 Le modele (analyse d'une ligne, une cellule modifiee sans toucher aux autres, lignes / colonnes, alignements,
 echappements) puis le widget dans la vraie page : cellules rendues, cellule active = sa source, clavier, annulation,
@@ -27,8 +27,8 @@ from PySide6.QtWidgets import QApplication
 QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
 APP = QApplication.instance() or QApplication([])
 
-import markdown_preview
-import mdeditor.pane as md_pane
+from fm_markdown import preview as markdown_preview
+import fm_markdown.pane as md_pane
 import settings_store
 
 TABLE = ('Avant\n\n'

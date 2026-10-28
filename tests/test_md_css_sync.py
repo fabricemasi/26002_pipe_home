@@ -1,4 +1,4 @@
-"""Feuille CSS partagee avec Obsidian (mdeditor/css_sync.py) : le cycle complet, sur des COPIES temporaires.
+"""Feuille CSS partagee avec Obsidian (fm_markdown/css_sync.py) : le cycle complet, sur des COPIES temporaires.
 
 1. un reglage change dans Pipeline Browser -> apercu immediat dans la page (avant toute ecriture) ;
 2. le fichier recoit la declaration correspondante (une seule ecriture apres le geste, souris relachee) ;
@@ -32,10 +32,10 @@ from PySide6.QtWidgets import QApplication
 QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
 APP = QApplication.instance() or QApplication([])
 
-import markdown_preview
-import mdeditor.css_sync as css_sync
-import mdeditor.pane as md_pane
-import mdeditor.style as md_style
+from fm_markdown import preview as markdown_preview
+import fm_markdown.css_sync as css_sync
+import fm_markdown.pane as md_pane
+import fm_markdown.style as md_style
 import settings_store
 import settings_window_v2 as v2
 

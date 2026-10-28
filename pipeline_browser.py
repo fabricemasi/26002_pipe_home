@@ -868,7 +868,7 @@ class TitleBar(QWidget):
                               else bool(toolbar_borders))
         toolbar_visible = (getattr(owner, "_md_open", False) and settings.get("md_toolbar_enabled", True))
         if toolbar_visible:
-            import mdeditor.pane as md_pane
+            import fm_markdown.pane as md_pane
             pane = md_pane.instance(create=False)
             toolbar_visible = pane is not None and pane.kind == "markdown" and pane.mode == "edit"
         if toolbar_visible and margins_are_zero and toolbar_top_enabled:
@@ -3867,7 +3867,7 @@ class PipelineBrowser(QMainWindow):
         if board_pane is not None and not board_pane.confirm_leave():   # board : enregistre (contenu + vue)
             event.ignore()
             return
-        import mdeditor.pane as md_pane
+        import fm_markdown.pane as md_pane
         pane = md_pane.instance(create=False)
         if getattr(self, "_md_open", False) and pane is not None and not pane.confirm_leave():
             event.ignore()                                            # module Markdown : tout est enregistre
@@ -3888,7 +3888,7 @@ class PipelineBrowser(QMainWindow):
                 dialog.deleteLater()
             except RuntimeError:
                 pass
-        import mdeditor.css_sync as css_sync                       # feuille partagee avec Obsidian : rien en attente
+        import fm_markdown.css_sync as css_sync                       # feuille partagee avec Obsidian : rien en attente
         css_sync.engine().flush()
         self._nav_plan = None
         pending = getattr(self, "_remote_selection", None)
@@ -8391,7 +8391,7 @@ class PipelineBrowser(QMainWindow):
             if self._open_md_editor(path):                # module Markdown / code : note ou fichier DANS l'appli
                 return
         if path.suffix.lower() == ".md":
-            import markdown_preview
+            from fm_markdown import preview as markdown_preview
             url = markdown_preview.obsidian_open_url(path)
             if url is not None:
                 from PySide6.QtGui import QDesktopServices
@@ -8741,7 +8741,7 @@ class PipelineBrowser(QMainWindow):
         md_changed = {k for k in changed if k.startswith("md_")}
         if md_changed:
             # Feuille CSS partagee avec Obsidian : apercu aussitot, ecriture regroupee apres le geste (css_sync).
-            import mdeditor.css_sync as css_sync
+            import fm_markdown.css_sync as css_sync
             css_sync.engine().update(settings, md_changed)
         if changed and all(k.startswith("md_") for k in changed):
             # Onglet Markdown : seule la page du module (si elle existe) les reprend, sans rechargement ; l'apercu
@@ -8755,7 +8755,7 @@ class PipelineBrowser(QMainWindow):
                 self.md_margin_slider.blockSignals(True)
                 self.md_margin_slider.setValue(int(settings.get("md_module_padding") or 0))
                 self.md_margin_slider.blockSignals(False)
-            import mdeditor.pane as md_pane
+            import fm_markdown.pane as md_pane
             pane = md_pane.instance(create=False)
             if pane is not None:
                 pane.apply_settings(ui_state.APPLIED_SETTINGS or settings, changed)
@@ -8957,7 +8957,7 @@ class PipelineBrowser(QMainWindow):
         texte selectionne (ou deja ouvert, pour en sortir) ; la visionneuse sur une selection (ou ouverte)."""
         if not hasattr(self, "btn_text_editor"):
             return
-        import mdeditor
+        import fm_markdown as mdeditor
         editing = getattr(self, "_md_open", False)
         _column, path = self._selected_path()
         viewer_open = getattr(self, "_project_columns_hidden", False)
@@ -9014,7 +9014,7 @@ class PipelineBrowser(QMainWindow):
     def _set_md_margin(self, value):
         settings = ui_state.APPLIED_SETTINGS if isinstance(ui_state.APPLIED_SETTINGS, dict) else {}
         settings["md_module_padding"] = value
-        import mdeditor.pane as md_pane
+        import fm_markdown.pane as md_pane
         pane = md_pane.instance(create=False)
         if pane is not None:
             pane._apply_module_padding(settings)
@@ -9035,13 +9035,13 @@ class PipelineBrowser(QMainWindow):
 
     def _md_pane(self):
         """Le module (instance unique, prechargee) : branche une fois sur la barre et les reglages."""
-        import mdeditor.pane as md_pane
-        import mdeditor.style as md_style
+        import fm_markdown.pane as md_pane
+        import fm_markdown.style as md_style
         from browser_core import _resolve_font_family
         md_style.FONT_RESOLVER = _resolve_font_family
         md_pane.HOOKS["settings"] = lambda: ui_state.APPLIED_SETTINGS or {}
         md_pane.HOOKS["save_state"] = self._save_md_state
-        import mdeditor.css_sync as css_sync                 # module ouvert avant le demarrage de la synchro
+        import fm_markdown.css_sync as css_sync                 # module ouvert avant le demarrage de la synchro
         css_sync.HOOKS["external"] = self._apply_md_external
         pane = md_pane.instance(create=True)
         if not getattr(pane, "_pb_connected", False):
@@ -9061,9 +9061,9 @@ class PipelineBrowser(QMainWindow):
     def _start_css_sync(self):
         """Feuille CSS partagee avec Obsidian (Reglages > Markdown > CSS) : lue une fois au demarrage — ses valeurs
         (peut-etre modifiees dans Obsidian pendant que l'appli etait fermee) sont reprises dans les reglages —, puis
-        suivie sur le disque (mdeditor/css_sync.py)."""
-        import mdeditor.css_sync as css_sync
-        import mdeditor.style as md_style
+        suivie sur le disque (fm_markdown/css_sync.py)."""
+        import fm_markdown.css_sync as css_sync
+        import fm_markdown.style as md_style
         from browser_core import _resolve_font_family
         md_style.FONT_RESOLVER = _resolve_font_family         # polices « de l'appli » comparees sous leur vrai nom
         css_sync.HOOKS["external"] = self._apply_md_external
@@ -9088,7 +9088,7 @@ class PipelineBrowser(QMainWindow):
                 dialog.external_values(values)
             except RuntimeError:
                 pass
-        import mdeditor.pane as md_pane
+        import fm_markdown.pane as md_pane
         pane = md_pane.instance(create=False)
         if pane is not None:
             pane.apply_settings(ui_state.APPLIED_SETTINGS or settings, set(values))
@@ -9113,7 +9113,7 @@ class PipelineBrowser(QMainWindow):
     def _md_opens_on_double_click(self, path: Path) -> bool:
         """Double-clic : extensions de Markdown > Ouverture ; une note .md va a l'application Obsidian si le
         reglage le demande."""
-        import mdeditor.pane as md_pane
+        import fm_markdown.pane as md_pane
         settings = ui_state.APPLIED_SETTINGS or {}
         if path.suffix.lower() == ".md" and settings.get("md_open_md") == "obsidian":
             return False
@@ -9123,7 +9123,7 @@ class PipelineBrowser(QMainWindow):
         if getattr(self, "_md_open", False):
             self._close_md_editor()
             return
-        import mdeditor
+        import fm_markdown as mdeditor
         _column, path = self._selected_path()
         if path is not None and path.is_file() and mdeditor.is_text_file(path):
             self._open_md_editor(path)
@@ -9163,7 +9163,7 @@ class PipelineBrowser(QMainWindow):
         reste chargee (cachee) : la rouvrir est immediat."""
         if not getattr(self, "_md_open", False):
             return True
-        import mdeditor.pane as md_pane
+        import fm_markdown.pane as md_pane
         pane = md_pane.instance(create=False)
         if pane is not None and not pane.confirm_leave():
             return False
@@ -9187,7 +9187,7 @@ class PipelineBrowser(QMainWindow):
         if not getattr(self, "_md_open", False):
             group.hide()
             return
-        import mdeditor.pane as md_pane
+        import fm_markdown.pane as md_pane
         pane = md_pane.instance(create=False)
         if pane is None:
             group.hide()
@@ -9211,7 +9211,7 @@ class PipelineBrowser(QMainWindow):
                 button.clicked.connect(slot)
                 button._editor_kind = kind
                 self._editor_buttons.append(button)
-        import markdown_preview
+        from fm_markdown import preview as markdown_preview
         on = self._mode_on_color()
         if pane.path != getattr(self, "_md_vault_path", None):        # une fois par fichier (lecture du disque)
             self._md_vault_path = pane.path
