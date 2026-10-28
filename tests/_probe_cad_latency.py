@@ -8,7 +8,7 @@ hors de l'ecran n'est jamais peinte : rien a mesurer). Ne pas toucher la souris 
     RATE=<Hz>   (mouvements de souris par seconde, 250 par defaut ; une souris de jeu : 1000)
     FULL_CROSSHAIR=1   reticule jusqu'aux bords de la vue
     NOGRID=1          grille du board eteinte (mesure de ce que coute le fond raster)
-    GPU=1             rendu GPU du CAD (board/cad_gpu.py ; interpreteur du projet : .venv, PyOpenGL)
+    GPU=1             rendu GPU du CAD (fm_cad/cad_gpu.py ; interpreteur du projet : .venv, PyOpenGL)
     GL=1              viewport OpenGL (QOpenGLWidget) au lieu du viewport raster
     CURVES=N          N arcs et cercles en plus des lignes
     CURSOR_IN=0       la souris n'est PAS dans la vue au depart (defaut 1 : deja dedans, le reticule est affiche pendant pan / zoom)
@@ -66,10 +66,12 @@ class ProbeApp(QApplication):
 
 APP = QApplication.instance() or ProbeApp([])
 import app_style  # noqa: E402
-import board  # noqa: E402
-from board import cad_model, model  # noqa: E402
-from board import ui as board_ui  # noqa: E402
-from board import cad_snap, view as view_mod  # noqa: E402
+import fm_board as board  # noqa: E402
+from fm_cad import cad_model  # noqa: E402
+from fm_board import model
+from fm_board import ui as board_ui  # noqa: E402
+from fm_cad import cad_snap  # noqa: E402
+from fm_board import view as view_mod
 
 print("paquet board :", os.path.dirname(board.__file__))
 
@@ -131,7 +133,7 @@ if "paintEvent" not in view_mod.BoardView.__dict__:
     from PySide6.QtWidgets import QGraphicsView
     view_mod.BoardView.paintEvent = lambda self, event: QGraphicsView.paintEvent(self, event)
 wrap(view_mod.BoardView, "paintEvent", "p.scene")
-from board import cad_overlay  # noqa: E402
+from fm_cad import cad_overlay  # noqa: E402
 wrap(cad_overlay.CadOverlay, "paintEvent", "p.overlay")
 
 

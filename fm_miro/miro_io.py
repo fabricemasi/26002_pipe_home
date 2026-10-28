@@ -20,7 +20,7 @@ import json
 import re
 from pathlib import Path
 
-from . import model
+from fm_board import model
 
 STICKY_NAMES = {"gray": "#f5f6f8", "light_yellow": "#fff9b1", "yellow": "#f5d128", "orange": "#ff9d48",
                 "light_green": "#d5f692", "green": "#c9df56", "dark_green": "#93d275", "cyan": "#67c6c0",

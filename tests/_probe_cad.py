@@ -21,9 +21,9 @@ from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 import app_style  # noqa: E402
-import board  # noqa: E402
-from board import cad_model  # noqa: E402
-from board import ui as board_ui  # noqa: E402
+import fm_board as board  # noqa: E402
+from fm_cad import cad_model  # noqa: E402
+from fm_board import ui as board_ui  # noqa: E402
 
 
 def settle(seconds=0.1):

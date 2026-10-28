@@ -2965,7 +2965,7 @@ class Column(QWidget):
         """« Créer un mro » (voir _on_context_menu) : un board vierge (paquet board/, JSON), meme mecanique que
         _create_text_file (nom, caracteres interdits, niveau d'une colonne fusionnee) ; il est selectionne,
         le double-clic l'ouvre dans l'appli."""
-        import board
+        import fm_board as board
         if name is None:
             name, ok = QInputDialog.getText(self, "Créer un mro", "Nom du board :", QLineEdit.Normal, "Nouveau board")
             if not ok:

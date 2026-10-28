@@ -1,4 +1,4 @@
-"""Textes du module CAD (TEXTE, MTEXTE, modification en place) et DECOMPOSER (board/cad_text.py,
+"""Textes du module CAD (TEXTE, MTEXTE, modification en place) et DECOMPOSER (fm_cad/cad_text.py,
 cad_items.CadTextItem, cad_commands.TextCommand / MTextCommand / TextEditCommand / ExplodeCommand)."""
 import _isolate  # noqa: F401  (jamais les vrais reglages / presets de l'utilisateur)
 
@@ -12,7 +12,8 @@ from PySide6.QtWidgets import QApplication
 
 import test_cad as base
 from test_cad import APP, CadBoardCase
-from board import cad_export, cad_import, cad_model, cad_shapes, cad_text, model
+from fm_cad import cad_export, cad_import, cad_model, cad_shapes, cad_text
+from fm_board import model
 
 
 def layout(**data):
@@ -272,7 +273,7 @@ class TextCommandTest(CadBoardCase):
         self.key(Qt.Key_Escape)
         item = self.texts()[0]
         item.setSelected(True)
-        from board.cad_ui import PropertyRows
+        from fm_cad.cad_ui import PropertyRows
         handler = PropertyRows(self.ctl.ui)
         keys = [spec[0] for spec in handler.specs()]
         for key in ("text_value", "text_height", "text_rot", "text_justify", "text_font", "text_spacing"):

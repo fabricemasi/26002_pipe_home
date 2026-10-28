@@ -97,9 +97,9 @@ Remplace l'intention « copier les modules de réglages dans chaque nouvelle app
 |---|---|---|
 | `fm_visionneuse/` | `focus.py` (visionneuse, pellicule, planche) + `file_attributes.py`, `file_filters.py` — **FAIT 2026-10-28** (focus.py découpé en 11 sous-modules, façade gardée) | `docs/agents/fm_visionneuse.md` (ex `visionneuse.md`) |
 | `fm_markdown/` | `mdeditor/` + `markdown_preview.py` (devenu `fm_markdown/preview.py` : cœur du module, en cycle avec lui ; l'inspecteur, les colonnes et la fenêtre l'importent comme service) — **FAIT 2026-10-28** | `docs/agents/fm_markdown.md` (ex `markdown.md`) |
-| `fm_board/` | COQUE commune de `board/` : vue, scène, modèle, sérialisation, presse-papiers, export (choix de l'utilisateur 2026-10-28) | `docs/agents/fm_board.md` (ex `board.md`, partie commune) |
-| `fm_miro/` | partie tableau blanc de `board/` : post-it, images, formes, connecteurs, import Miro (`items`, `smart`, `miro_io`…) ; nom choisi par l'utilisateur | `docs/agents/fm_miro.md` (ex `board.md`, partie tableau blanc) |
-| `fm_cad/` | `board/cad*.py` | `docs/agents/fm_cad.md` (ex `cad.md`) |
+| `fm_board/` | COQUE commune de `board/` : vue, scène, modèle, sérialisation, presse-papiers, export (choix de l'utilisateur 2026-10-28) — **FAIT 2026-10-28** (cycle gardé, registre à venir) | `docs/agents/fm_board.md` (ex `board.md`, partie commune) |
+| `fm_miro/` | partie tableau blanc de `board/` : post-it, images, formes, connecteurs, import Miro (`items`, `smart`, `miro_io`…) ; nom choisi par l'utilisateur — **FAIT 2026-10-28** (cycle gardé, registre à venir) | `docs/agents/fm_miro.md` (ex `board.md`, partie tableau blanc) |
+| `fm_cad/` | `board/cad*.py` — **FAIT 2026-10-28** (cycle gardé, registre à venir) | `docs/agents/fm_cad.md` (ex `cad.md`) |
 
 fm_board est la coque : fm_miro et fm_cad sont deux modules qui s'y branchent. La répartition exacte des fichiers de `board/` (surtout `ui.py`, `commands.py`, `items.py`) entre coque et fm_miro est à établir au début de l'étape, en lisant leurs imports.
 | `fm_video/` | `video/` — **FAIT 2026-10-28** (paquet renommé, carte en tête de la doc) | `docs/agents/fm_video.md` (ex `video.md`) |
@@ -113,11 +113,11 @@ Règles :
 - Les CLÉS de réglages ne changent pas (`board_*`, `md_*`, `video_*`…) : renommer les paquets ne doit rien faire perdre des réglages ni des presets de l'utilisateur.
 
 Points relevés (2026-10-28) :
-- **Board et CAD dépendent l'un de l'autre** : `board/model.py`, `scene.py`, `ui.py`, `view.py`, `__init__.py` importent `cad_*` ; `cad.py`, `cad_items.py`, `cad_import.py`, `cad_ui.py` importent `items`, `model`, `ui`, `scene`. Imports relatifs (`from . import …`) à transformer en `from fm_cad import …` / `from fm_miro import …` / `from fm_board import …`. Garder les `__init__.py` minimaux pour que ce cycle reste chargeable ; à terme, la coque fm_board ne connaît fm_miro et fm_cad que par des points d'entrée (un registre où chaque module inscrit ses types d'éléments, outils et barres), et fm_cad n'importe plus fm_miro.
+- **Board et CAD dépendent l'un de l'autre** : `fm_board/model.py`, `scene.py`, `ui.py`, `view.py`, `__init__.py` importent `cad_*` ; `cad.py`, `cad_items.py`, `cad_import.py`, `cad_ui.py` importent `items`, `model`, `ui`, `scene`. Imports relatifs (`from . import …`) à transformer en `from fm_cad import …` / `from fm_miro import …` / `from fm_board import …`. Garder les `__init__.py` minimaux pour que ce cycle reste chargeable ; à terme, la coque fm_board ne connaît fm_miro et fm_cad que par des points d'entrée (un registre où chaque module inscrit ses types d'éléments, outils et barres), et fm_cad n'importe plus fm_miro.
 - FAIT : `focus.py` était un module plat de ~4 900 lignes : le découper par responsabilité (visionneuse, pellicule, planche, panneau d'infos) en le passant en paquet.
 - Les chemins de données par `Path(__file__)` (`mdeditor/toolbar.json`, `mdeditor/web/`…) suivent le paquet ; vérifier ceux qui remontent vers la racine (`parent.parent`).
-- Les tests patchent des noms par module (`board.ui.X`…) : à renommer avec les paquets.
-- **Avant de commencer** : commiter (ou mettre de côté) le travail CAD en cours (`board/cad*.py`, `tests/test_cad.py`, `docs/agents/cad.md`, `settings_store.py`, `settings_window_v2.py`), sinon le renommage se mélange à ces modifications.
+- Les tests patchent des noms par module (`fm_board.ui.X`…) : à renommer avec les paquets.
+- **Avant de commencer** : commiter (ou mettre de côté) le travail CAD en cours (`fm_cad/cad*.py`, `tests/test_cad.py`, `docs/agents/cad.md`, `settings_store.py`, `settings_window_v2.py`), sinon le renommage se mélange à ces modifications.
 
 ### Découpage des gros fichiers de fm_browser (ajouté le 2026-10-28, accord de l'utilisateur)
 
@@ -139,10 +139,11 @@ Ordre : ce chantier est INDÉPENDANT de fm_theme et passe EN PREMIER (il allège
 
 - Une fenêtre de réglages GÉNÉRALE pour fm_browser (allégée), et UNE fenêtre de réglages PAR MODULE (vidéo, Markdown, visionneuse, board / MRO, CAD), construites avec les mêmes briques (v2).
 - Ouverture : un bouton dans le CADRE du module dans la barre de navigation (choix de l'utilisateur).
+- CONTENU propre à chaque module (100 % de ses réglages spécifiques), FONCTIONNEMENT commun : UNE seule classe de fenêtre générique (bordure rouge, Appliquer / Enregistrer / Annuler, aperçu en direct, géométrie, presets) à qui chaque module ne donne que ses définitions. JAMAIS une fenêtre codée par module (cinq copies qui divergent). La fenêtre générale garde les réglages généraux seulement.
 - La définition des réglages d'un module (arbre, catalogue, valeurs par défaut) VIT DANS SON PAQUET (ex. `fm_video/settings.py`) : une requête sur les réglages vidéo ne lit que `fm_video/`. Les onglets correspondants quittent `settings_window_v2.py` ; les défauts quittent `settings_store.py` (qui les rassemble au chargement).
 - Les CLÉS ne changent pas (`video_*`, `md_*`, `viewer_*`, `board_*`) : réglages et presets de l'utilisateur intacts.
 - À partir de fm_board / fm_miro / fm_cad, chaque module isolé range directement ses définitions de réglages dans son paquet ; fm_video, fm_markdown, fm_visionneuse sont rattrapés à l'étape « fenêtres de réglages par module ».
-- Presets : voir la recommandation dans la réponse du 2026-10-28 (à confirmer par l'utilisateur), à reporter ici une fois décidée.
+- Presets (recommandation du 2026-10-28, à confirmer) : UN seul jeu de presets global à fm_browser (menu de la fenêtre principale) ; les fenêtres de module enregistrent dans le preset actif ; l'aspect part dans les presets de fm_theme. Si besoin un jour : « appliquer les réglages d'un module depuis le preset X » = filtre sur le préfixe des clés (`video_`…), sans stockage nouveau.
 
 ## Organisation du code (proposition)
 

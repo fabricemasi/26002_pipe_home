@@ -439,7 +439,7 @@ CATALOG["Visionneuse"] = [
 def _board_icon_rows():
     """Reglages > Module MRO > Icones : une ligne par bouton du module (meme champ que les autres icones)."""
     try:
-        from board.model import ICON_ROWS
+        from fm_board.model import ICON_ROWS
     except Exception:                                   # noqa: BLE001 - paquet absent : pas de lignes
         return []
     return [Spec(f"ui_icon:ui_board_{kind}", label, "ui_icon", None, {"ui_key": f"ui_board_{kind}"})
@@ -473,7 +473,7 @@ CATALOG["MRO : Ouverture"] = [
     Spec("board_open_cad_drawings", "Double-clic sur un dessin DXF / DWG : Module MRO", "bool", True),
 ]
 
-# Grille UNIQUE du board et du module CAD (board/scene.py, `grid_look`). Affichee ou non : bouton « Grille » de la
+# Grille UNIQUE du board et du module CAD (fm_board/scene.py, `grid_look`). Affichee ou non : bouton « Grille » de la
 # barre d'outils du board (F7 en mode CAD), reglage de chaque board. Chaque ligne peut etre remplacee par dessin
 # (barre CAD > Reglages du dessin, `page["cad"]["overrides"]`).
 CATALOG["MRO : Grille"] = [
@@ -515,8 +515,8 @@ CAD_TAB = "Module CAD"
 def _cad_groups() -> dict:
     """Onglet « Module CAD » : lignes par section (cles `board_cad_*`). Memes lignes dans la fenetre « accrochages et
     suivi » ouverte depuis la barre d'outils CAD (« Changement de style a la volee », `CAD_GROUPS`)."""
-    from board import cad_model
-    from board.cad_snap import ENGLISH, LABELS, MODES
+    from fm_cad import cad_model
+    from fm_cad.cad_snap import ENGLISH, LABELS, MODES
     osnap = ("board_cad_osnap", True)
     snap = [Spec("board_cad_osnap", "Accrochages aux objets — OSNAP (F3)", "bool", True)]
     for mode in MODES:
@@ -666,7 +666,7 @@ def _cad_groups() -> dict:
         Spec("board_cad_pgp_path", "Fichier d'alias (.pgp d'AutoCAD)", "cad_pgp_path", ""),
     ]
     try:
-        from board.model import CAD_ICON_ROWS
+        from fm_board.model import CAD_ICON_ROWS
     except Exception:                                   # noqa: BLE001 - paquet absent : pas de lignes
         CAD_ICON_ROWS = []
     icons = [Spec(f"ui_icon:ui_board_{kind}", label, "ui_icon", None, {"ui_key": f"ui_board_{kind}"})
@@ -2457,7 +2457,7 @@ class _MarkdownCssPathField(RootPathField):
 
 class _CadPgpPathField(RootPathField):
     """Reglages > Module CAD > Raccourcis clavier : fichier .pgp d'AutoCAD (alias de commandes) lu par le CAD
-    (`board/cad_aliases.py`). Etat a cote (alias actifs / prevus / sans equivalent), correspondance complete en
+    (`fm_cad/cad_aliases.py`). Etat a cote (alias actifs / prevus / sans equivalent), correspondance complete en
     info-bulle. Le fichier de l'utilisateur n'est jamais modifie."""
 
     def __init__(self, path):
@@ -2484,7 +2484,7 @@ class _CadPgpPathField(RootPathField):
             self.status.setToolTip("")
             return
         try:
-            from board import cad_aliases
+            from fm_cad import cad_aliases
         except Exception:                                   # noqa: BLE001 - paquet absent
             return
         loaded = cad_aliases.load(path)
@@ -2639,7 +2639,7 @@ def _f_line_pattern(spec, v, colors):
 
 
 def _f_cad_linetypes(spec, v, colors):
-    from board.cad_linetype_ui import LinetypesField    # paquet du board : charge a la demande
+    from fm_cad.cad_linetype_ui import LinetypesField    # paquet du board : charge a la demande
     return LinetypesField(v.seed(spec.key, spec.default))
 
 

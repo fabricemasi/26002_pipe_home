@@ -8380,7 +8380,7 @@ class PipelineBrowser(QMainWindow):
             return
         if self._video_claims(path) and self._open_video(path):   # module video : video / sequence d'images
             return
-        import board
+        import fm_board as board
         if board.is_board_file(path):                     # board facon Miro : ouvert DANS l'appli
             if self._open_board(path):
                 return
@@ -8968,7 +8968,7 @@ class PipelineBrowser(QMainWindow):
         self._set_button_usable(self.btn_viewer, viewer_open or editing or path is not None)
         self.btn_text_editor.set_alert(self._mode_on_color() if editing else None)
         self.btn_viewer.set_alert(self._mode_on_color() if viewer_open else None)
-        import board
+        import fm_board as board
         on_board = self._board is not None
         self._set_button_usable(self.btn_board, on_board or (not viewer_open and is_file and (
             board.is_board_file(path) or board.is_cad_drawing(path))))
@@ -9453,7 +9453,7 @@ class PipelineBrowser(QMainWindow):
         if self._board is not None:
             self._close_board()
             return
-        import board
+        import fm_board as board
         _column, path = self._selected_path()
         if path is not None and path.is_file() and board.is_board_file(path):
             self._open_board(path)
@@ -9462,10 +9462,10 @@ class PipelineBrowser(QMainWindow):
 
     def _open_cad_drawing(self, path: Path):
         """Dessin DXF / DWG dans le module MRO (demande de l'utilisateur) : lu et converti HORS du fil de
-        l'interface (`board.cad_import`, conversion ODA pour un DWG : plusieurs secondes possibles), puis ouvert
+        l'interface (`fm_cad.cad_import`, conversion ODA pour un DWG : plusieurs secondes possibles), puis ouvert
         comme un board en memoire (le dessin d'origine n'est jamais reecrit ; voir `BoardPane.open_import`)."""
         import threading
-        from board import cad_import
+        from fm_cad import cad_import
         path = Path(path)
         if self._board is not None and self._board.source == path:
             return
@@ -9489,7 +9489,7 @@ class PipelineBrowser(QMainWindow):
         if relay is not self._drawing_relay:
             return                                          # une autre ouverture a ete demandee depuis
         self._drawing_relay = None
-        from board import cad_import
+        from fm_cad import cad_import
         if error is not None:
             self.path_label.setText(f"{path.name} : {error}")
             return
@@ -9500,13 +9500,13 @@ class PipelineBrowser(QMainWindow):
         """Le board recouvre les colonnes (comme l'editeur de texte) ; ses boutons dans le cadre « Board » de la
         barre de navigation. Un autre board ouvert est d'abord enregistre et ferme. `imported` : dessin DXF / DWG
         deja lu (`_open_cad_drawing`), ouvert en memoire."""
-        import board.ui
-        from board.ui import BoardPane
-        board.ui.ICON_PROVIDER = self._board_icon
-        board.ui.SETTING_WRITER = self._write_setting_now
-        import board.cad_export
+        import fm_board.ui
+        from fm_board.ui import BoardPane
+        fm_board.ui.ICON_PROVIDER = self._board_icon
+        fm_board.ui.SETTING_WRITER = self._write_setting_now
+        import fm_cad.cad_export
         from previews import _oda_file_converter
-        board.cad_export.ODA_PROVIDER = _oda_file_converter     # meme recherche que les apercus DWG
+        fm_cad.cad_export.ODA_PROVIDER = _oda_file_converter     # meme recherche que les apercus DWG
         # Overrides des menus du board (Reglages > Module MRO > Menus contextuels) : la correspondance des lignes est
         # dans le catalogue des reglages (deja charge par le prechargement de la fenetre, sinon ~0,1 s une fois).
         import settings_window_v2  # noqa: F401
@@ -9798,9 +9798,9 @@ def main():
     QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
     # OpenGL : echange de tampons SANS attendre le balayage de l'ecran (format de la FENETRE, a poser avant
     # l'application) — une image de retard en moins pendant un pan du CAD ; la couche GPU cadence elle-meme ses
-    # images (board/cad_gpu.py, FramePacer).
+    # images (fm_cad/cad_gpu.py, FramePacer).
     try:
-        from board.cad_gpu import low_latency_format
+        from fm_cad.cad_gpu import low_latency_format
         low_latency_format()
     except Exception:                                   # noqa: BLE001 - paquet du board absent : format par defaut
         pass

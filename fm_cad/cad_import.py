@@ -21,7 +21,8 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-from . import cad_model, cad_shapes, model
+from . import cad_model, cad_shapes
+from fm_board import model
 
 EXTENSIONS = (".dxf", ".dwg")
 TOLERANCE = 0.25                           # ecart maximal courbe / lignes, en unites du board

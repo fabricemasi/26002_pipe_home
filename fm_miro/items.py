@@ -24,7 +24,7 @@ from PySide6.QtGui import (QBrush, QColor, QFont, QFontDatabase, QImage, QImageR
                            QTextCursor, QTextOption, QTransform)
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsObject, QGraphicsTextItem, QStyle
 
-from . import model
+from fm_board import model
 
 HANDLE_PX = 9          # poignees de redimensionnement, en pixels d'ecran
 EDGE_PX = 6            # zone tirable des bords
@@ -984,7 +984,7 @@ def asset_pixmap(board_path, name: str) -> QPixmap | None:
     if key in _PIXMAPS:
         _PIXMAPS.move_to_end(key)
         return _PIXMAPS[key]
-    from .serialization import asset_path, is_asset_name
+    from fm_board.serialization import asset_path, is_asset_name
     pixmap = None
     if is_asset_name(name):
         reader = QImageReader(str(asset_path(board_path, name)))

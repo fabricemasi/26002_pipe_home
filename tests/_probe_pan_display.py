@@ -41,16 +41,17 @@ if os.environ.get("SWAP1"):                       # SWAP1=1 : l'ancien format (e
     QSurfaceFormat.setDefaultFormat(_fmt)
 else:                                            # comme l'appli (pipeline_browser.main)
     try:
-        from board.cad_gpu import low_latency_format
+        from fm_cad.cad_gpu import low_latency_format
         low_latency_format()
     except ImportError:
         pass
 APP = QApplication.instance() or QApplication([])
 import app_style  # noqa: E402
-import board  # noqa: E402
-from board import cad_model, model  # noqa: E402
-from board import ui as board_ui  # noqa: E402
-from board import view as view_mod  # noqa: E402
+import fm_board as board  # noqa: E402
+from fm_cad import cad_model  # noqa: E402
+from fm_board import model
+from fm_board import ui as board_ui  # noqa: E402
+from fm_board import view as view_mod  # noqa: E402
 
 print("paquet board :", os.path.dirname(board.__file__))
 

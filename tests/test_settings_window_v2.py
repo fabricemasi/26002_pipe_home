@@ -574,7 +574,7 @@ class AppliedSettingsTest(WindowTestCase):
 
 class CadTabAndIconTablesTest(WindowTestCase):
     def test_cad_tab_groups_keys_and_defaults(self):
-        from board.model import CAD_ICON_ROWS
+        from fm_board.model import CAD_ICON_ROWS
         self.assertIn((v2.CAD_TAB, None), v2.SCOPES)
         leaves = [child.group for node in v2.CAD_TREE for child in (node.children or (node,))]
         self.assertEqual(leaves,
@@ -598,11 +598,11 @@ class CadTabAndIconTablesTest(WindowTestCase):
         self.assertEqual([s.params["ui_key"] for s in v2.CATALOG["CAD : Icônes"]],
                          [f"ui_board_{kind}" for kind, _label in CAD_ICON_ROWS])
         self.assertNotIn("MRO : CAD", v2.CATALOG)
-        self.assertNotIn("cad_line", [kind for kind, _label in __import__("board.model", fromlist=["x"]).ICON_ROWS])
+        self.assertNotIn("cad_line", [kind for kind, _label in __import__("fm_board.model", fromlist=["x"]).ICON_ROWS])
 
     def test_every_cad_toolbar_icon_is_in_the_icon_table(self):
-        from board import cad_ui
-        from board.model import CAD_ICON_ROWS
+        from fm_cad import cad_ui
+        from fm_board.model import CAD_ICON_ROWS
         listed = {kind for kind, _label in CAD_ICON_ROWS}
         used = {kind for _s, tools in cad_ui.SECTIONS for kind, *_rest in tools}
         used |= {"cad", "cad_layers", "cad_properties", "cad_settings", "cad_history"}

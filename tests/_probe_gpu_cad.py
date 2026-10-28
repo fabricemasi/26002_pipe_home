@@ -1,4 +1,4 @@
-"""Sonde du rendu GPU du CAD (board/cad_gpu.py) en VRAIE fenetre Windows, a l'ecran (interpreteur du projet : `.venv`, PyOpenGL) :
+"""Sonde du rendu GPU du CAD (fm_cad/cad_gpu.py) en VRAIE fenetre Windows, a l'ecran (interpreteur du projet : `.venv`, PyOpenGL) :
 meme dessin peint par le rendu raster (lots du processeur) puis par le GPU, captures de l'ecran reel comparees pixel a
 pixel (la capture d'un widget `grab()` ne montre pas le contenu d'un QOpenGLWidget tel qu'affiche).
 
@@ -23,9 +23,10 @@ from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 import app_style  # noqa: E402
-import board  # noqa: E402
-from board import cad_model, model  # noqa: E402
-from board import ui as board_ui  # noqa: E402
+import fm_board as board  # noqa: E402
+from fm_cad import cad_model  # noqa: E402
+from fm_board import model
+from fm_board import ui as board_ui  # noqa: E402
 from settings_store import DEFAULT_SETTINGS  # noqa: E402
 
 OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(tempfile.mkdtemp())

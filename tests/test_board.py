@@ -25,10 +25,11 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
 APP = QApplication.instance() or QApplication([])
 
 import app_style
-import board
-from board import export, miro_io, model, serialization, smart
-from board.scene import PAGE, BoardScene, grid_alpha
-from board import ui as board_ui
+import fm_board as board
+from fm_board import export, model, serialization
+from fm_miro import miro_io, smart
+from fm_board.scene import PAGE, BoardScene, grid_alpha
+from fm_board import ui as board_ui
 
 _PANES = []
 
@@ -395,7 +396,7 @@ class LookTest(unittest.TestCase):
         self.assertLess(max(steps), 0.35 * max(darkness))                 # pas de saut d'un cran a l'autre
 
     def test_sticky_shadow_is_below_and_soft(self):
-        from board.items import StickyItem
+        from fm_miro.items import StickyItem
         note = StickyItem(model.new_item("sticky", w=318, h=330))
         self.assertGreater(note.boundingRect().bottom(), 330 + 20)        # place de l'ombre comprise
         img = QImage(460, 460, QImage.Format_ARGB32_Premultiplied)
@@ -507,7 +508,7 @@ class ShapeAndCommentTest(unittest.TestCase):
         for kind in model.SHAPE_KINDS:
             self.scene.add_new(model.new_item("shape", shape=kind, w=120, h=80, radius=500.0))
         self.pane.view.viewport().grab()
-        from board.items import max_radius, shape_path
+        from fm_miro.items import max_radius, shape_path
         path = shape_path("rect", QRectF(0, 0, 120, 80), 500)
         self.assertTrue(path.boundingRect().width() <= 120.01)
         self.assertEqual(max_radius(120, 80), 40)
@@ -764,7 +765,7 @@ class ZoomLimitsTest(_PaneCase):
         self.scene.set_page({"zoom_min": 0.001, "zoom_max": 20.0})
         self.view.set_zoom(0.001)
         self.assertAlmostEqual(self.view.zoom(), 0.001)
-        from board.ui import format_zoom, parse_percent
+        from fm_board.ui import format_zoom, parse_percent
         self.assertEqual(format_zoom(0.001), "0,1 %")
         self.assertEqual(format_zoom(20.0), "2000 %")
         self.assertEqual(parse_percent("0,1 %"), 0.001)
@@ -788,7 +789,7 @@ class ZoomLimitsTest(_PaneCase):
         self.assertLess(abs(after.x() - before.x()) * self.view.zoom(), 1.5)  # moins d'un pixel et demi a l'ecran
 
     def test_percent_field_rejects_invalid_ranges(self):
-        from board.ui import _PercentField
+        from fm_board.ui import _PercentField
         field = _PercentField(0.1, lambda v: None if 0 < v < 4 else "hors plage")
         got = []
         field.committed.connect(got.append)
@@ -804,7 +805,7 @@ class ZoomLimitsTest(_PaneCase):
 
 class ArrowCapTest(_PaneCase):
     def test_caps_are_saved_undoable_and_compatible(self):
-        from board.items import CAP_KINDS
+        from fm_miro.items import CAP_KINDS
         arrow = self.scene.add_new(model.new_item("connector", src={"x": 0, "y": 0}, dst={"x": 300, "y": 0}))
         self.assertEqual(arrow.caps(), ("none", "filled"))
         for kind in CAP_KINDS:
@@ -884,7 +885,7 @@ class FrameFormatTest(_PaneCase):
 
 class FontPickerTest(_PaneCase):
     def test_list_previews_and_missing_font(self):
-        from board.ui import FontPicker, installed_families
+        from fm_board.ui import FontPicker, installed_families
         families = installed_families()
         if not families:
             self.skipTest("aucune police sur cette plateforme (offscreen)")
@@ -922,7 +923,7 @@ class MroIconsTest(_PaneCase):
         self.assertIn(("Icônes", "MRO : Icones"), [(n.title, n.group) for n in v2.MRO_TREE])
         self.assertIn((v2.MRO_TAB, None), v2.SCOPES)
         self.assertNotIn("MRO", [n.title for n in v2.GENERAL_TREE])
-        import board.ui as board_ui_module
+        import fm_board.ui as board_ui_module
         asked = []
         red = __import__("PySide6.QtGui", fromlist=["QPixmap"]).QPixmap(20, 20)
         red.fill(QColor("red"))
@@ -1110,7 +1111,7 @@ class MroToolbarAndMenuSettingsTest(_PaneCase):
         self.assertTrue(bar._shadow.isVisible())
         shape = self.scene.add_new(model.new_item("shape", text="x"))
         settle(0.05)
-        from board.ui import _TextButton
+        from fm_board.ui import _TextButton
         buttons = self.pane._contextbar.findChildren(_TextButton)
         self.assertTrue(buttons)
         self.assertEqual(buttons[0].font().pixelSize() or round(buttons[0].font().pointSizeF() * 4 / 3), 17)
@@ -1211,7 +1212,7 @@ class ShiftSnapAndNegativeTest(_PaneCase):
         finally:
             board_ui.SETTING_WRITER = old
         self.assertEqual(written, [("board_toolbar_invert", True), ("board_toolbar_invert", False)])
-        from board import model as board_model
+        from fm_board import model as board_model
         self.assertIn("invert", [kind for kind, _label in board_model.ICON_ROWS])   # icone reglable
 
     def test_override_toggles_are_type_1(self):
@@ -1228,7 +1229,7 @@ class ShiftSnapAndNegativeTest(_PaneCase):
         self.assertIsNotNone(frame)
 
     def test_negative_icons_and_texts(self):
-        from board.ui import negative
+        from fm_board.ui import negative
         self.assertEqual(negative("#d6d9dc"), "#292623")
         button = self.pane._tool_buttons["hand"]
 

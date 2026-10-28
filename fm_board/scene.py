@@ -22,10 +22,11 @@ from PySide6.QtCore import QLineF, QPointF, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QImage, QPaintEngine, QPainter, QPen, QPixmap, QTransform, QUndoStack
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene
 
-from . import cad_items, cad_model, model, serialization  # noqa: F401 - cad_items : enregistre le type « cad_line »
-from .cad_items import unit_of
+from fm_cad import cad_items, cad_model  # noqa: F401 - cad_items : enregistre le type « cad_line »
+from . import model, serialization
+from fm_cad.cad_items import unit_of
 from .commands import StateCommand
-from .items import BoardItem, CommentItem, ConnectorItem, FrameItem, InkItem, make_item
+from fm_miro.items import BoardItem, CommentItem, ConnectorItem, FrameItem, InkItem, make_item
 
 GRID_BASE = 4.0
 GRID_FACTOR = 4.0

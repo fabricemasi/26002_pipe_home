@@ -1,4 +1,4 @@
-"""Alias de commandes d'un fichier .pgp d'AutoCAD (board/cad_aliases.py) : couche pure, sans fenetre."""
+"""Alias de commandes d'un fichier .pgp d'AutoCAD (fm_cad/cad_aliases.py) : couche pure, sans fenetre."""
 import os
 import shutil
 import sys
@@ -9,7 +9,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _isolate  # noqa: E402,F401  (jamais les vrais reglages de l'utilisateur)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from board import cad_aliases, cad_commands  # noqa: E402
+from fm_cad import cad_aliases, cad_commands  # noqa: E402
 
 PGP = (";  FABRICE\r\n;  =======\r\n\r\nA,         \t*AJUSTER\r\nAI,        \t*AIRE\r\n\r\nC,   *COPIER\r\n"
        "CE,  *CERCLE\r\nD,   *DEPLACER\r\nDC,  *DECALER\r\nL,   *LIGNE\r\nLL,  *POLYLIGN\r\nM,   *MIROIR\r\n"

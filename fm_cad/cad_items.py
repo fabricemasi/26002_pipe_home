@@ -41,7 +41,7 @@ from PySide6.QtWidgets import QGraphicsItem, QStyle
 
 from . import cad_geometry as geo
 from . import cad_dims, cad_hatch, cad_model, cad_shapes, cad_text
-from .items import ITEM_CLASSES, BoardItem
+from fm_miro.items import ITEM_CLASSES, BoardItem
 
 GRIP_PX = 8                 # poignees (grips), pixels d'ecran ; reglable (board_cad_grip_size)
 GRIP_COLOR = "#2f6bff"      # grip froid (bleu, comme AutoCAD) ; reglable (board_cad_grip_color)

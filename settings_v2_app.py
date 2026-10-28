@@ -249,7 +249,7 @@ def _default_glyph(key: str, size: int) -> QPixmap | None:
         button.resize(size, size)
         return button.grab()
     if isinstance(key, str) and key.startswith("ui_board_"):    # Reglages > Module MRO > Icones : glyphe du board
-        from board.ui import paint_glyph
+        from fm_board.ui import paint_glyph
         from PySide6.QtCore import QRectF
         kind = key[len("ui_board_"):]
         glyph = QPixmap(size, size)
@@ -401,7 +401,7 @@ class UiIconField(QWidget):
             for button in window.findChildren(IconButton):
                 button.update()
             try:                                         # boutons du board ouvert (Reglages > Module MRO > Icones)
-                from board.ui import refresh_glyph_buttons
+                from fm_board.ui import refresh_glyph_buttons
                 refresh_glyph_buttons(window)
             except Exception:                            # noqa: BLE001
                 pass

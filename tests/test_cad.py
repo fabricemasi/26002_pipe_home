@@ -28,12 +28,15 @@ from PySide6.QtWidgets import QApplication, QWidget
 APP = QApplication.instance() or QApplication([])
 
 import app_style
-import board
-from board import (cad_commands, cad_dims, cad_export, cad_hatch, cad_trim, cad_geometry as geo, cad_input, cad_model, cad_shapes, cad_snap,
-                   model, serialization)
-from board import ui as board_ui
-from board.cad_items import CadLineItem, line_outline
-from board.cad_overlay import native_cursor
+import fm_board as board
+from fm_cad import (
+    cad_commands, cad_dims, cad_export, cad_hatch, cad_trim, cad_geometry as geo, cad_input, cad_model, cad_shapes,
+    cad_snap,
+)
+from fm_board import model, serialization
+from fm_board import ui as board_ui
+from fm_cad.cad_items import CadLineItem, line_outline
+from fm_cad.cad_overlay import native_cursor
 
 _PANES = []
 
@@ -601,7 +604,7 @@ class PropertiesAndLayersTest(CadBoardCase):
         line.setSelected(True)
         self.ctl.ui.show_properties()
         settle()
-        rows = __import__("board.cad_ui", fromlist=["PropertyRows"]).PropertyRows(self.ctl.ui)
+        rows = __import__("fm_cad.cad_ui", fromlist=["PropertyRows"]).PropertyRows(self.ctl.ui)
         rows._set_coord("end2", 1, "0")
         self.assertEqual(line.points()[1], (30.0, 0.0))
         self.assertEqual(line.length(), 30.0)
@@ -1217,7 +1220,7 @@ class ReadabilityTest(CadBoardCase):
 
     def test_cad_menu_text_is_readable_on_a_light_menu(self):
         import settings_menu
-        from board import cad_ui
+        from fm_cad import cad_ui
         menu = cad_ui._menu(self.pane, "cad_context")
         light = dict(settings_menu.menu_look("board"), bg="#ffffff", text="#d6d9dc", hover="#539f9f9f")
         with mock.patch.object(settings_menu, "menu_look", return_value=light):
@@ -1236,7 +1239,7 @@ class ReadabilityTest(CadBoardCase):
         self.assertEqual(QColor(self.ctl.ui.toolbar.look["bg"]).getRgb()[:3], (48, 48, 48))
 
     def test_toolbar_ink_follows_a_light_bar(self):
-        from board import ui as board_ui
+        from fm_board import ui as board_ui
         from settings_menu import contrast_ratio
         look = board_ui.toolbar_look({"board_toolbar_bg_color": "#ffffff", "board_toolbar_text_font_color": "#d6d9dc"})
         self.pane.toolbar_style = look
@@ -1345,7 +1348,7 @@ class IdleMagnetTest(CadBoardCase):
 class CadExportTest(CadBoardCase):
     def test_dxf_export_keeps_lines_layers_and_properties(self):
         ezdxf = __import__("ezdxf")
-        from board import cad_export
+        from fm_cad import cad_export
         cad = cad_model.copy_cad(self.ctl.cad_page())
         cad["layers"].append({**cad_model.LAYER_DEFAULTS, "id": "murs", "name": "Murs: béton", "color": "#ff0000",
                               "linetype": "dashed", "lineweight": 2.0, "visible": False, "locked": True})
@@ -1373,7 +1376,7 @@ class CadExportTest(CadBoardCase):
 
     def test_raw_units_and_dwg_without_oda_says_why(self):
         ezdxf = __import__("ezdxf")
-        from board import cad_export
+        from fm_cad import cad_export
         self.line((10, 20), (30, 40))
         target = self.dir / "brut.dxf"
         cad_export.export_dxf(self.pane.scene, target, "raw")
@@ -1393,7 +1396,7 @@ class CadExportTest(CadBoardCase):
 
 class LinearBlendTest(CadBoardCase):
     def test_table_brightens_light_on_dark_edges_and_keeps_full_coverage(self):
-        from board.cad_items import linear_blend_table
+        from fm_cad.cad_items import linear_blend_table
         table = linear_blend_table("#ffffff", QColor("#262626"))
         self.assertEqual(table[0] >> 24, 0)
         self.assertEqual(table[255] >> 24, 255)
@@ -1426,7 +1429,7 @@ class LinearBlendTest(CadBoardCase):
         """Angle d'une polyligne a bouts ronds : les deux bouts ont le meme contour exterieur. Le chemin unique de Qt
         additionne leurs couvertures (bord gras) ; les couches de ThickPaths donnent la couverture d'un seul bout."""
         from PySide6.QtGui import QPainter, QTransform
-        from board.cad_items import ThickPaths, _coverage
+        from fm_cad.cad_items import ThickPaths, _coverage
 
         def capsule(a, b):
             transform = QTransform()
@@ -1461,7 +1464,7 @@ class LinearBlendTest(CadBoardCase):
 
 class CadImportTest(CadBoardCase):
     def test_export_then_open_gives_back_lines_and_layers(self):
-        from board import cad_export, cad_import
+        from fm_cad import cad_export, cad_import
         cad = cad_model.copy_cad(self.ctl.cad_page())
         cad["layers"].append({**cad_model.LAYER_DEFAULTS, "id": "murs", "name": "Murs", "color": "#ff0000",
                               "linetype": "dashed", "lineweight": 2.0, "visible": False, "locked": True})
@@ -1485,7 +1488,7 @@ class CadImportTest(CadBoardCase):
 
     def test_curves_blocks_and_ignored_entities(self):
         ezdxf = __import__("ezdxf")
-        from board import cad_import
+        from fm_cad import cad_import
         doc = ezdxf.new("R2018")
         doc.header["$INSUNITS"] = 0
         msp = doc.modelspace()
@@ -1510,7 +1513,7 @@ class CadImportTest(CadBoardCase):
 
     def test_opened_drawing_is_never_rewritten_and_can_be_kept_as_a_board(self):
         ezdxf = __import__("ezdxf")
-        from board import cad_import
+        from fm_cad import cad_import
         doc = ezdxf.new("R2018")
         doc.modelspace().add_line((0, 0), (40, 0))
         source = self.dir / "plan.dxf"
@@ -1537,7 +1540,7 @@ class CadImportTest(CadBoardCase):
 
     def test_unchanged_import_closes_without_asking(self):
         ezdxf = __import__("ezdxf")
-        from board import cad_import
+        from fm_cad import cad_import
         doc = ezdxf.new("R2018")
         doc.modelspace().add_line((0, 0), (40, 0))
         source = self.dir / "vue.dxf"
@@ -1607,7 +1610,7 @@ class PanTest(CadBoardCase):
 
 def drawing(ctl, **overrides):
     """Reglages du dessin (fenetre de la barre CAD) : `overrides` = reglages generaux remplaces par le dessin."""
-    from board.cad_ui import OVERRIDE_TAG
+    from fm_cad.cad_ui import OVERRIDE_TAG
     values = {"ltscale": f"{ctl.cad_page()['ltscale']:g}", "grid": ctl.grid_on()}
     for key, value in overrides.items():
         values[OVERRIDE_TAG + key] = True
@@ -1695,7 +1698,7 @@ class FastClicksTest(CadBoardCase):
         self.assertTrue(self.ctl.ui._properties_open)
 
     def test_mouse_log_can_be_switched_on(self):
-        from board import cad as cad_module
+        from fm_cad import cad as cad_module
         lines = []
         with mock.patch.object(cad_module, "MOUSE_LOG", True), \
                 mock.patch.object(cad_module, "_write_log", lines.append):
@@ -1710,7 +1713,7 @@ class CurveGeometryTest(unittest.TestCase):
     """Geometrie pure des courbes (cad_shapes) et des outils (cad_tools)."""
 
     def setUp(self):
-        from board import cad_shapes, cad_tools
+        from fm_cad import cad_shapes, cad_tools
         self.S, self.T = cad_shapes, cad_tools
 
     def close(self, a, b, places=6):
@@ -1909,7 +1912,7 @@ class CurveEntitiesTest(CadBoardCase):
         self.assertEqual(circle.geometry()["center"], [10.0, 5.0])
         self.ctl.undo()
         self.assertEqual(circle.geometry()["center"], [0.0, 0.0])
-        from board import cad_shapes
+        from fm_cad import cad_shapes
         self.assertEqual(cad_shapes.grip_edit("cad_circle", circle.geometry(), {"q0"}, (20.0, 0.0), False),
                          {"radius": 70.0})
         self.ctl.scene.clearSelection()
@@ -1933,7 +1936,7 @@ class CurveEntitiesTest(CadBoardCase):
         self.assertTrue(any(i.CURVED for b in getattr(scene, "cad_layer").batches for i in b.members))
 
     def test_dxf_round_trip(self):
-        from board import cad_export, cad_import
+        from fm_cad import cad_export, cad_import
         self.type("C", "0,0", "50", "A", "0,0", "50,50", "100,0", "PL", "0,0", "10,0", "A", "10,10", "")
         path = self.dir / "courbes.dxf"
         cad_export.export_dxf(self.pane.scene, path, units="raw")
@@ -2054,12 +2057,12 @@ class ModifyToolsTest(CadBoardCase):
 
 
 class GpuInstancesTest(CadBoardCase):
-    """Rendu GPU du CAD (board/cad_gpu.py) : instances, lots et secours — la partie qui ne demande pas d'OpenGL ; le
+    """Rendu GPU du CAD (fm_cad/cad_gpu.py) : instances, lots et secours — la partie qui ne demande pas d'OpenGL ; le
     rendu lui-meme est compare au raster par `tests/_probe_gpu_cad.py` (vraie fenetre Windows)."""
 
     def setUp(self):
         super().setUp()
-        from board import cad_gpu
+        from fm_cad import cad_gpu
         self.gpu = cad_gpu
 
     def make(self, kind, **values):
@@ -2205,7 +2208,7 @@ class GpuInstancesTest(CadBoardCase):
     def test_a_deleted_entity_leaves_the_gpu_store(self):
         """Signale : plantage (ecran vide) en supprimant une ligne — l'entite supprimee restait dans le lot GPU, son objet
         C++ detruit par `deleteLater`, et la construction suivante du lot levait une erreur a chaque image."""
-        from board.cad_items import CadLayer
+        from fm_cad.cad_items import CadLayer
 
         class FakeGpu:
             def __init__(self, gpu):
@@ -2238,7 +2241,7 @@ class GpuInstancesTest(CadBoardCase):
         layer.set_gpu(None)
 
     def test_cad_layer_switches_between_gpu_and_batches_without_touching_the_entities(self):
-        from board.cad_items import CadLayer
+        from fm_cad.cad_items import CadLayer
         line = self.line((0, 0), (100, 0))
         layer = CadLayer.of(self.pane.scene)
         settle(0.05)
@@ -2272,7 +2275,7 @@ class GpuInstancesTest(CadBoardCase):
 
 
 def CadLayer_of(scene):
-    from board.cad_items import CadLayer
+    from fm_cad.cad_items import CadLayer
     return CadLayer.of(scene)
 
 
@@ -2574,7 +2577,7 @@ class TransformDimTest(CadBoardCase):
             shutil.rmtree(folder, ignore_errors=True)
 
     def test_gpu_instances_of_a_dimension(self):
-        from board import cad_gpu
+        from fm_cad import cad_gpu
         self.type("DLI", "0,0", "100,0")
         self.click((50, 20))
         dim = self.kinds("cad_dim")[0]
@@ -2765,7 +2768,7 @@ class HatchTest(CadBoardCase):
         data = model.normalize(dict(hatch.to_dict()))
         self.assertEqual(len(data["loops"]), 1)
         self.assertEqual(data["hatch_pattern"], "lines")
-        from board import cad_gpu
+        from fm_cad import cad_gpu
         self.assertGreater(len(cad_gpu.item_instances(hatch, False, 0.1)), 5)
         self.assertTrue(hatch.TEXTED)                                                      # jamais le mode « pur CAD »
         try:
@@ -3079,7 +3082,7 @@ class MarkersAndGripsTest(CadBoardCase):
 
     def test_grips_are_square_with_an_opaque_one_pixel_border(self):
         from PySide6.QtGui import QImage, QPainter
-        from board.cad_items import paint_grips
+        from fm_cad.cad_items import paint_grips
         for ratio in (1.0, 2.0):
             image = QImage(round(40 * ratio), round(40 * ratio), QImage.Format_ARGB32_Premultiplied)
             image.setDevicePixelRatio(ratio)
@@ -3222,7 +3225,7 @@ class SelectionFrameTest(CadBoardCase):
         self.assertEqual(frame["radius"]["top_left"], 6)
         self.assertFalse(frame["sides"]["right"])
         from PySide6.QtGui import QImage, QPainter
-        from board.cad_overlay import paint_selection_frame
+        from fm_cad.cad_overlay import paint_selection_frame
         for f in (frame, self.ctl.look["sel_crossing"]):
             image = QImage(60, 40, QImage.Format_ARGB32_Premultiplied)
             image.fill(0)
@@ -3235,7 +3238,7 @@ class SelectionFrameTest(CadBoardCase):
         """Latence signalee entre le curseur et le cadre : seuls les bords qui bougent sont repeints ; tout pixel qui
         change entre deux positions doit pourtant etre dans la zone repeinte (pointilles et arrondis compris)."""
         from PySide6.QtGui import QImage, QPainter
-        from board.cad_overlay import CadOverlay, DEFAULT_FRAMES, paint_selection_frame
+        from fm_cad.cad_overlay import CadOverlay, DEFAULT_FRAMES, paint_selection_frame
 
         def image(rect, frame):
             out = QImage(260, 200, QImage.Format_ARGB32_Premultiplied)
@@ -3361,7 +3364,7 @@ class FramePacerTest(unittest.TestCase):
 
     def make(self, timing=None):
         from PySide6.QtCore import QObject, Signal
-        from board import cad_gpu
+        from fm_cad import cad_gpu
 
         class Widget(QObject):
             frameSwapped = Signal()
@@ -3550,7 +3553,7 @@ class UnitsTest(CadBoardCase):
         self.type("L", "0,0", "3,4", "")
         line = self.ctl.cad_items()[0]
         line.setSelected(True)
-        rows = __import__("board.cad_ui", fromlist=["PropertyRows"]).PropertyRows(self.ctl.ui)
+        rows = __import__("fm_cad.cad_ui", fromlist=["PropertyRows"]).PropertyRows(self.ctl.ui)
         specs = {key: value for key, _l, _k, value, _e in rows.specs()}
         self.assertEqual(specs["length"], "5.0000")
         self.assertEqual(specs["end2:x"], "3.0000")
@@ -3573,7 +3576,7 @@ class LinetypesTest(CadBoardCase):
         settle()
 
     def rows(self):
-        return __import__("board.cad_ui", fromlist=["PropertyRows"]).PropertyRows(self.ctl.ui)
+        return __import__("fm_cad.cad_ui", fromlist=["PropertyRows"]).PropertyRows(self.ctl.ui)
 
     def test_sequence_parsing_and_pattern(self):
         self.assertEqual(cad_model.parse_sequence("1 0.5 0.5 0.5"), [1.0, 0.5, 0.5, 0.5])
@@ -3657,7 +3660,7 @@ class LinetypesTest(CadBoardCase):
         self.assertEqual(cad["end2"]["style"], "round")
 
     def test_settings_field_edits_types_and_the_marker_snaps_to_segments(self):
-        from board.cad_linetype_ui import LinetypePreview, LinetypesField
+        from fm_cad.cad_linetype_ui import LinetypePreview, LinetypesField
         field = LinetypesField([])
         self.addCleanup(field.deleteLater)
         self.assertEqual([d["key"] for d in field.values()][:2], ["continuous", "dashed"])
@@ -3701,7 +3704,7 @@ class SharedGridTest(CadBoardCase):
 
     def test_settings_and_drawing_step_change_the_grid(self):
         from PySide6.QtGui import QImage, QPainter
-        from board.scene import grid_look
+        from fm_board.scene import grid_look
         look = grid_look({"board_grid_step": 1000, "board_grid_factor": 10, "board_grid_style": "dots"})
         self.assertEqual((look["step"], look["factor"], look["style"]), (10.0, 10, "dots"))
         self.assertAlmostEqual(grid_look({})["intensity"], 0.066)
@@ -3842,7 +3845,7 @@ class DotsPlacementTest(CadBoardCase):
 
     def test_dots_are_in_the_first_column_and_really_clickable(self):
         from PySide6.QtWidgets import QApplication
-        from board.cad_ui import OverrideDot
+        from fm_cad.cad_ui import OverrideDot
         line = self.line((0, 0), (100, 0))
         line.setSelected(True)
         self.ctl.ui.show_properties()
@@ -4017,7 +4020,7 @@ class CrosshairTest(CadBoardCase):
             self.assertEqual(row[3]._table_style, "toggle1")
         from settings_quick_style import QuickStyleWindow
         window = QuickStyleWindow("test : dessin", self.ctl.ui.drawing_rows(), {}, title="t",
-                                  settings=__import__("board.cad_ui", fromlist=["x"]).full_settings(self.pane),
+                                  settings=__import__("fm_cad.cad_ui", fromlist=["x"]).full_settings(self.pane),
                                   parent=self.pane)
         self.addCleanup(window.close)
         _label, widget, reader, toggle = next(r for r in window._rows if r[0] == "Carré central : demi-côté (pixels d'écran, = boîte de sélection)")

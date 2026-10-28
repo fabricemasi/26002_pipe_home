@@ -25,8 +25,9 @@ from PySide6.QtGui import (QColor, QDesktopServices, QImage, QImageReader, QKeyS
 from PySide6.QtWidgets import (QApplication, QFrame, QGraphicsItem, QGraphicsLineItem, QGraphicsPathItem,
                                QGraphicsView, QWidget)
 
-from . import model, serialization, smart
-from .items import BoardItem, CommentItem, ConnectorItem, InkItem, ink_path, ink_pen, shape_path
+from . import model, serialization
+from fm_miro import smart
+from fm_miro.items import BoardItem, CommentItem, ConnectorItem, InkItem, ink_path, ink_pen, shape_path
 from .scene import CLIPBOARD_MIME, BoardScene
 
 BADGE_GL = (0, 255, 0)             # encart du mode de rendu : OPEN GL
@@ -107,12 +108,12 @@ class BoardView(QGraphicsView):
         self._space = False
         self._draft = None
         self._press = None
-        self.cad = None                 # module CAD (board/cad.py) : actif, il recoit souris et clavier
+        self.cad = None                 # module CAD (fm_cad/cad.py) : actif, il recoit souris et clavier
 
     def _cad_on(self) -> bool:
         return self.cad is not None and self.cad.active
 
-    # -- rendu GPU du CAD (board/cad_gpu.py, reglage board_cad_gpu) --
+    # -- rendu GPU du CAD (fm_cad/cad_gpu.py, reglage board_cad_gpu) --
     def set_gpu(self, on: bool) -> bool:
         """Couche OpenGL du CAD allumee / eteinte ; faux si OpenGL est indisponible (rendu par lots du processeur)."""
         ok = self._set_gpu(on)
@@ -123,8 +124,8 @@ class BoardView(QGraphicsView):
         return getattr(self, "gpu", None) is not None
 
     def _set_gpu(self, on: bool) -> bool:
-        from . import cad_gpu
-        from .cad_items import CadLayer
+        from fm_cad import cad_gpu
+        from fm_cad.cad_items import CadLayer
         layer = getattr(self, "gpu", None)
         if on and layer is None:
             layer = cad_gpu.create_layer(self)
@@ -272,7 +273,7 @@ class BoardView(QGraphicsView):
         SEPAREES quand elles sont loin les unes des autres (fondues sinon, `CadOverlay._merge`) : leur rectangle
         englobant (le reticule au centre + l'encart en haut a droite = la moitie de la vue) etait efface, peint et
         envoye au GPU a CHAQUE image d'un pan (+3 ms de processeur par image, mesure)."""
-        from .cad_overlay import CadOverlay
+        from fm_cad.cad_overlay import CadOverlay
         parts = []
         margin = int(getattr(self.board, "cad_grip_px", 8) or 8) + 10
         for item in self.board.selectedItems():

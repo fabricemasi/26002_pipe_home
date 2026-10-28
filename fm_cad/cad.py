@@ -37,7 +37,8 @@ from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QPen
 from PySide6.QtWidgets import QApplication
 
-from . import cad_aliases, cad_commands, cad_geometry as geo, cad_input, cad_model, cad_shapes, cad_snap, model
+from . import cad_aliases, cad_commands, cad_geometry as geo, cad_input, cad_model, cad_shapes, cad_snap
+from fm_board import model
 from .cad_items import CadLayer, CadLineItem, unit_of
 from .cad_overlay import CadOverlay, native_cursor
 
@@ -336,7 +337,7 @@ class CadController(QObject):
     def _write_setting(self, key, value):
         self.settings[key] = value
         self.pane._settings[key] = value
-        from . import ui as board_ui
+        from fm_board import ui as board_ui
         writer = board_ui.SETTING_WRITER
         if writer is not None:
             try:
@@ -1782,7 +1783,7 @@ class CadController(QObject):
 
     def set_cad_and_items(self, cad: dict, changes: dict, text: str):
         """Calques ET entites en une etape (suppression d'un calque : ses objets passent sur un autre)."""
-        from .scene import PAGE
+        from fm_board.scene import PAGE
         self.scene.commit_live()
         ids = [i.item_id for i in changes]
         before = self.scene.snapshot([PAGE] + ids)

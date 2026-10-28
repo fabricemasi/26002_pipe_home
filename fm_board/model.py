@@ -18,7 +18,7 @@ from __future__ import annotations
 import copy
 import uuid
 
-from . import cad_model
+from fm_cad import cad_model
 
 FORMAT = "pipeline-board"
 VERSION = 2
@@ -69,7 +69,7 @@ DEFAULTS: dict[str, dict] = {
     # `orientation` portrait / landscape ; `ratio_locked` = le redimensionnement garde les proportions.
     "frame": {"w": 800.0, "h": 600.0, "title": "Cadre", "fill": "#ffffff", "fill_opacity": 1.0,
               "format": "free", "orientation": "landscape", "ratio": [16.0, 9.0], "ratio_locked": False},
-    # Pointes : start_cap / end_cap (board.items.CAP_KINDS), cap_size = taille commune en unites du board
+    # Pointes : start_cap / end_cap (fm_miro.items.CAP_KINDS), cap_size = taille commune en unites du board
     # (distincte de l'epaisseur). arrow_start / arrow_end gardes a jour pour les anciennes versions.
     "connector": {"src": {}, "dst": {}, "color": MIRO_INK, "width": 2.0, "arrow_end": True,
                   "arrow_start": False, "style": "straight", "stroke_style": "solid",
@@ -80,7 +80,7 @@ DEFAULTS: dict[str, dict] = {
     # Ligne du module CAD (board/cad*.py) : geometrie en coordonnees du DOCUMENT (Y vers le haut), proprietes
     # « ByLayer » resolues dans le calque (page["cad"]) ; champs valides par cad_model.normalize_line.
     "cad_line": {k: None for k in cad_model.LINE_DEFAULTS},
-    # Arc, cercle, polyligne du CAD (memes proprietes ; geometrie : board/cad_shapes.py) ; cad_model.normalize_entity.
+    # Arc, cercle, polyligne du CAD (memes proprietes ; geometrie : fm_cad/cad_shapes.py) ; cad_model.normalize_entity.
     "cad_arc": {k: None for k in cad_model.ENTITY_DEFAULTS["cad_arc"]},
     "cad_circle": {k: None for k in cad_model.ENTITY_DEFAULTS["cad_circle"]},
     "cad_pline": {k: None for k in cad_model.ENTITY_DEFAULTS["cad_pline"]},

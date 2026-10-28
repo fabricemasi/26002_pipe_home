@@ -16,5 +16,5 @@ Couches (chacune n'importe que les precedentes) :
 Orchestration dans `PipelineBrowser._open_board` / `_close_board` ; ce paquet ne depend d'aucun code propre a la
 fenetre principale."""
 from .model import EXTENSION, empty_board  # noqa: F401
-from .cad_import import is_cad_drawing  # noqa: F401
+from fm_cad.cad_import import is_cad_drawing  # noqa: F401
 from .serialization import create_board_file, is_board_file  # noqa: F401

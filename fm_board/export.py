@@ -21,7 +21,7 @@ def _area(scene) -> QRectF:
 
 
 def _render(scene, painter: QPainter, target: QRectF, source: QRectF, transparent: bool):
-    from .items import CommentItem
+    from fm_miro.items import CommentItem
     selected = scene.selectedItems()
     scene.clearSelection()
     hidden = [i for i in scene.board_items() if isinstance(i, CommentItem) and i.isVisible()]

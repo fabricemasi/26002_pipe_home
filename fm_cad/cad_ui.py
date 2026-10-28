@@ -17,8 +17,9 @@ from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QLineEdit, QVB
 
 from . import cad_commands, cad_hatch, cad_input, cad_model, cad_snap, cad_text
 from . import cad_geometry as geo
-from .ui import (_GlyphButton, _TextButton, _bar, _menu as _board_menu, _panel, _SwatchGrid, custom_icon, look_key,
-                 negative)
+from fm_board.ui import (
+    _GlyphButton, _TextButton, _bar, _menu as _board_menu, _panel, _SwatchGrid, custom_icon, look_key, negative,
+)
 
 # Barre d'outils : (section, [(genre d'icone, commande, infobulle, disponible)])
 SECTIONS = [
@@ -813,7 +814,7 @@ class CadChrome:
 
     def color_menu(self, anchor, target="toolbar", layer_id=None):
         """Couleur : de la selection (ou couleur courante), ou d'un calque (`layer_id`)."""
-        from .model import COLORS
+        from fm_board.model import COLORS
         menu = _menu(self.pane, "cad_color")
         grid = _SwatchGrid(COLORS, None, 6)
         from settings_menu import menu_row

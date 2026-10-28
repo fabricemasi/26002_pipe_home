@@ -29,8 +29,10 @@ from PySide6.QtWidgets import (
     QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
-from . import cad_aliases, cad_model, export, miro_io, model, serialization
-from .items import BoardItem, CommentItem, max_radius, shape_path
+from fm_cad import cad_aliases, cad_model
+from . import export, model, serialization
+from fm_miro import miro_io
+from fm_miro.items import BoardItem, CommentItem, max_radius, shape_path
 from .scene import BoardScene
 from .view import DRAW_TOOLS, ERASER_SIZES, BoardView, paint_render_badge
 
@@ -78,7 +80,7 @@ TEXT_KINDS = ("sticky", "text", "shape")
 def paint_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
     """Icones des outils et commandes (traits, comme les glyphes des boutons de l'appli)."""
     if kind.startswith("cad"):
-        from .cad_ui import paint_cad_glyph              # module CAD : ses icones
+        from fm_cad.cad_ui import paint_cad_glyph              # module CAD : ses icones
         paint_cad_glyph(painter, kind, rect, color)
         return
     pen = QPen(color, 1.4)
@@ -694,7 +696,7 @@ def cap_icon(kind: str, end: str):
     """Apercu d'une pointe pour le menu (un bout de trait et sa pointe, du bon cote)."""
     from PySide6.QtGui import QIcon, QPixmap
     from app_style import C
-    from .items import cap_shape
+    from fm_miro.items import cap_shape
     pixmap = QPixmap(48, 48)                      # carre (les icones de menu le sont), pointe bien visible
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
@@ -1111,7 +1113,7 @@ class BoardPane(QWidget):
         self._presets = self._load_presets()
         self._preset_index = {"pen": 0, "highlighter": 0, "smart": 0}
         self._draw_tool = "pen"
-        self.cad = None                         # module CAD (board/cad.py), cree au 1er usage
+        self.cad = None                         # module CAD (fm_cad/cad.py), cree au 1er usage
         self._cad_export_units = "mm"           # unites du dernier export DXF / DWG (session)
         self.view.cad = None
         self._build_chrome()
@@ -1334,7 +1336,7 @@ class BoardPane(QWidget):
         """Bouton CAD : active / desactive le mode CAD sur ce board (les entites CAD restent visibles)."""
         on = (self.cad is None or not self.cad.active) if on is None else on
         if on and self.cad is None:
-            from .cad import CadController
+            from fm_cad.cad import CadController
             self.cad = CadController(self)
             self.view.cad = self.cad
             look = getattr(self, "toolbar_style", None)
@@ -1535,7 +1537,7 @@ class BoardPane(QWidget):
                 glyph(f"shape:{shape}", "Forme", lambda b: self._open_shape_menu(b, create=False))
             if kinds & set(TEXT_KINDS):
                 text_item = next(i for i in items if i.kind in TEXT_KINDS)
-                from .items import resolve_family
+                from fm_miro.items import resolve_family
                 chosen_family = text_item.data.get("font_family") or ""
                 missing = bool(chosen_family) and not font_installed(chosen_family)   # police du fichier absente
                 family = chosen_family or resolve_family("")                    # par defaut : Noto Sans ou repli
@@ -1612,7 +1614,7 @@ class BoardPane(QWidget):
         menu = _menu(self, "font")
         targets = self._targets(TEXT_KINDS)
         current = targets[0].data.get("font_family", "") if targets else ""
-        from .items import resolve_family
+        from fm_miro.items import resolve_family
         picker = FontPicker(current or resolve_family(""))
 
         def chosen(family):
@@ -1845,7 +1847,7 @@ class BoardPane(QWidget):
                 self._targets(("connector",)), lambda i: i.data.update(style=v), "Forme de la flèche"))
         menu.addSeparator()
         from settings_menu import menu_row
-        from .items import CAP_KINDS, CAP_LABELS, cap_kind
+        from fm_miro.items import CAP_KINDS, CAP_LABELS, cap_kind
         for end, label in (("start", "Pointe au départ"), ("end", "Pointe à l'arrivée")):
             sub = _menu(menu, f"arrow_{end}")
             sub.setTitle(label)
@@ -2426,7 +2428,7 @@ class BoardPane(QWidget):
     def export_cad(self, target: str | None = None, suffix: str = ".dxf"):
         """Lignes CAD et calques en DXF (ou DWG par ODA File Converter) ; unites demandees (voir cad_export)."""
         from PySide6.QtWidgets import QInputDialog
-        from . import cad_export
+        from fm_cad import cad_export
         if target is None:
             base = self.path or self.source
             if base is None:

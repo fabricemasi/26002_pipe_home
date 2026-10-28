@@ -771,7 +771,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "board_cad_dyn": True,
     "board_cad_grid_snap": False,
     "board_cad_unit": "mm",                       # unite de mesure (mm, cm, m, km) ; override par dessin
-    "board_cad_linetypes": [],                    # types de ligne (vide = ceux d'origine, board.cad_model)
+    "board_cad_linetypes": [],                    # types de ligne (vide = ceux d'origine, fm_cad.cad_model)
     # Grille unique du board et du CAD (Reglages > Module MRO > Grille) : pas en centiemes, intensite en dixiemes de %
     "board_grid_step": 400, "board_grid_unit": "board", "board_grid_factor": 4, "board_grid_fade_start": 12,
     "board_grid_fade_full": 60, "board_grid_style": "lines", "board_grid_thickness": 1, "board_grid_auto_color": True,
@@ -787,8 +787,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "board_cad_hatch_alpha": 35,                   # hachures : motif, angle, espacement (centiemes d'unite de mesure), opacite du plein
     "board_cad_text_height": 250, "board_cad_text_font": "Arial", "board_cad_text_justify": "L",
     "board_cad_mtext_justify": "TL", "board_cad_text_spacing": 100,   # textes : hauteur (centiemes d'unite de mesure), police, justifications, interligne (%)
-    "board_cad_pgp_path": "",                      # fichier .pgp d'AutoCAD : alias de commandes du CAD (board/cad_aliases.py)
-    "board_cad_gpu": False,                        # rendu GPU (OpenGL) des entites CAD (board/cad_gpu.py)
+    "board_cad_pgp_path": "",                      # fichier .pgp d'AutoCAD : alias de commandes du CAD (fm_cad/cad_aliases.py)
+    "board_cad_gpu": False,                        # rendu GPU (OpenGL) des entites CAD (fm_cad/cad_gpu.py)
     "board_cad_bar_color": "#0a0a0a",              # fond de la barre d'outils et de la barre de commande du CAD
     "board_zoom_speed": 15, "board_zoom_fine": 3,           # zoom du board : % par cran de molette (Maj = fin)
     "board_cad_precision": 4,

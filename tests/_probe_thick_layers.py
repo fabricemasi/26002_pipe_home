@@ -5,7 +5,8 @@ import sys
 import time
 import unittest
 
-from board import cad_items, cad_model, model
+from fm_cad import cad_items, cad_model
+from fm_board import model
 import test_cad as T
 
 COUNT = int(sys.argv[1]) if len(sys.argv) > 1 else 3000
