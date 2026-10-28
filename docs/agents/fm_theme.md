@@ -119,7 +119,19 @@ Points relevés (2026-10-28) :
 - Les tests patchent des noms par module (`board.ui.X`…) : à renommer avec les paquets.
 - **Avant de commencer** : commiter (ou mettre de côté) le travail CAD en cours (`board/cad*.py`, `tests/test_cad.py`, `docs/agents/cad.md`, `settings_store.py`, `settings_window_v2.py`), sinon le renommage se mélange à ces modifications.
 
-Ordre : ce chantier est INDÉPENDANT de fm_theme et passe EN PREMIER (il allège toutes les requêtes suivantes, y compris la migration fm_theme). Un module par étape, tests du module verts et appli lancée à chaque étape, un commit par module : fm_video (le plus isolé) → fm_markdown → fm_visionneuse → fm_board + fm_miro + fm_cad (ensemble, à cause du cycle).
+### Découpage des gros fichiers de fm_browser (ajouté le 2026-10-28, accord de l'utilisateur)
+
+- **`pipeline_browser.py` (~9 800 lignes)** : le couper par responsabilité, sans changer le comportement (ex. barre de titre / `IconButton`, gestion des colonnes et de la navigation, raccourcis, branchement des modules et leurs `HOOKS`, application des réglages `apply_all_settings` / `_apply_settings`, `main()`). Découpage exact à établir en début d'étape d'après les classes et méthodes ; `PipelineBrowser` peut rester une classe composée de mixins par fichier. Gain : toute requête sur la fenêtre principale ne lit plus que le fichier de sa responsabilité.
+- Ensuite, au même principe : `previews.py` (~5 300), `settings_widgets.py` (~4 800, plutôt pendant fm_theme), `column.py`, `browser_core.py`, `detail_panel.py`.
+- Une doc `docs/agents/fm_browser.md` (ou la carte en tête de `colonnes.md`) indique quel fichier porte quelle responsabilité.
+
+### Tests rapides par module (ajouté le 2026-10-28, accord de l'utilisateur)
+
+- Une commande par module (ex. `python tests/run.py fm_video`) qui lance seulement ses tests.
+- Les tests LENTS (Blender / Maya installés, fenêtre de réglages entièrement construite, sondes de fluidité) sont marqués et sautés par défaut, lancés seulement sur demande (ex. `--lent`) ou avant un commit qui touche leur zone.
+- La doc de chaque module indique sa commande de test.
+
+Ordre : ce chantier est INDÉPENDANT de fm_theme et passe EN PREMIER (il allège toutes les requêtes suivantes, y compris la migration fm_theme). Un module par étape, tests du module verts et appli lancée à chaque étape, un commit par module : tests rapides par module (outil commun, utile dès la première étape) → fm_video (le plus isolé) → fm_markdown → fm_visionneuse → fm_board + fm_miro + fm_cad (ensemble, à cause du cycle) → découpage de `pipeline_browser.py` → autres gros fichiers.
 
 ## Organisation du code (proposition)
 
