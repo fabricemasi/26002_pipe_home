@@ -2,6 +2,8 @@
 
 Détail lu À LA DEMANDE (sorti d'AGENTS.md le 2026-10-26 pour alléger le contexte de chaque session) : à lire avant de travailler sur ce sujet. Contenu repris tel quel.
 
+**Tests du module** : `python tests/run.py fm_cad` — rapides seulement ; ajouter `--lent` pour les tests lents (Blender, fenêtre entière…) avant un commit qui touche leur zone.
+
 ## Module CAD du board (`board/cad*.py`, phase 1 + arcs, cercles, polylignes, DÉCALER, CHANFREIN, RACCORD, TEXTES, DÉCOMPOSER, AJUSTER À LA AUTOCAD)
 
 Demande de l'utilisateur (octobre 2026, cahier des charges « module CAD professionnel intégré à MRO ») : dessin technique 2D à la manière d'AutoCAD DANS la page MRO (le board), développé PAR PHASES — phase 1 faite (lignes, accrochages, calques, barre de commande) ; de la phase 2, POLYLIGNE, CERCLE, ARC (avancés pour faire les outils correctement, accord de l'utilisateur) ; de la phase 3, DÉCALER, CHANFREIN, RACCORD, ROTATION, MIROIR, ÉCHELLE, AJUSTER ; RECTANGLE ; de la phase 4, les hachures et les TEXTES (TEXTE, MTEXTE) ; de la phase 3, DÉCOMPOSER ; de la phase 5, les cotations (non associatives) ; le reste déclaré, jamais présenté comme disponible : 2 primitives (ELLIPSE, POLYGON), 3 modifications (EXTEND, STRETCH, BREAK, JOIN, ARRAY), 5 cotations associatives, 6 optimisation. Référence = comportement documenté d'AutoCAD (LINE, OSNAP, coordonnées, calques) ; aucun code repris.

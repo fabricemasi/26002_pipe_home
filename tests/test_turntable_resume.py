@@ -2,6 +2,7 @@
 import os as _os, sys as _sys  # jamais les vrais reglages / presets de l'utilisateur (tests/_isolate.py)
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 import _isolate  # noqa: E402,F401
+from _lent import lent  # noqa: E402
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from pathlib import Path
@@ -83,6 +84,7 @@ class TurntableResumeTest(unittest.TestCase):
                 newer = pv._turntable_cache_path(source, 2.0, profiles)
                 self.assertNotEqual(same, pv._turntable_work_path(newer, profile, "low"))
 
+    @lent
     def test_real_frames_use_distinct_finished_blender_processes(self):
         blender = pv._blender_executable()
         if not blender:

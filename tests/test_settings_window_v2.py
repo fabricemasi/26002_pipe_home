@@ -11,6 +11,7 @@
 import os as _os, sys as _sys  # jamais les vrais reglages / presets de l'utilisateur (tests/_isolate.py)
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 import _isolate  # noqa: E402,F401
+from _lent import lent  # noqa: E402
 import copy
 import os
 import sys
@@ -97,6 +98,7 @@ class SaveTest(WindowTestCase):
         spec_widget = {sp.key: w for sp, w in self.win.stores["General"]["specs"]}
         return spec_widget[key]
 
+    @lent
     def test_save_writes_only_what_changed_and_keeps_the_rest(self):
         field = self._slider("slider_thumb_height")
         new = 20 if field.value() != 20 else 21
@@ -108,10 +110,12 @@ class SaveTest(WindowTestCase):
         untouched = {k for k in self.win._original_settings if k != "slider_thumb_height"}
         self.assertEqual({k: saved[k] for k in untouched}, {k: self.win._original_settings[k] for k in untouched})
 
+    @lent
     def test_unchanged_window_saves_the_disk_state_as_is(self):
         self.win._on_save()
         self.assertEqual(self.written[0], self.win._original_settings)
 
+    @lent
     def test_active_preset_is_updated_too(self):
         self.disk["default_preset"] = self.disk["active_preset"] = "Mon preset"
         self.presets["Mon preset"] = {"old": True}
@@ -119,6 +123,7 @@ class SaveTest(WindowTestCase):
         self.win._on_save()
         self.assertEqual(self.presets["Mon preset"]["slider_track_height"], 9)
 
+    @lent
     def test_live_change_emits_settings_changed(self):
         seen = []
         self.win.settingsChanged.connect(seen.append)
@@ -128,6 +133,7 @@ class SaveTest(WindowTestCase):
         self.assertTrue(seen)
         self.assertEqual(seen[-1]["slider_thumb_width"], field.value())
 
+    @lent
     def test_live_timer_is_throttled_not_restarted(self):
         """Pendant un glissement, le minuteur doit tourner (application toutes les 30 ms), pas
         etre relance a chaque mouvement (rien ne s'appliquait avant la fin du geste)."""
@@ -136,6 +142,7 @@ class SaveTest(WindowTestCase):
                 self.win._mark_dirty()
         self.assertEqual(start.call_count, 1)
 
+    @lent
     def test_unchanged_values_do_not_re_emit(self):
         seen = []
         self.win.settingsChanged.connect(seen.append)
@@ -143,6 +150,7 @@ class SaveTest(WindowTestCase):
         self.win._flush_live()
         self.assertEqual(len(seen), 1)
 
+    @lent
     def test_cancel_after_change_restores_the_original(self):
         seen = []
         self.win.settingsChanged.connect(seen.append)
@@ -155,6 +163,7 @@ class SaveTest(WindowTestCase):
 
 
 class WiringTest(WindowTestCase):
+    @lent
     def test_every_general_section_is_editable_when_wired(self):
         win = build()
         page = win.stack.currentWidget()
@@ -162,6 +171,7 @@ class WiringTest(WindowTestCase):
         for title in v2.WIRED_SECTIONS:
             self.assertTrue(by_title[title]._head._body.isEnabled(), title)
 
+    @lent
     def test_unwired_section_is_greyed(self):
         win = build(("Sliders",))
         page = win.stack.currentWidget()
@@ -258,6 +268,7 @@ class LiveLookTest(WindowTestCase):
         self.fields[key].setValue(value)
         self.win._flush_live()
 
+    @lent
     def test_no_indent_section_in_v2(self):
         """Titre > Retraits supprime (double emploi avec les paddings) : les retraits enregistres
         (cles v1) ne deplacent plus rien, une boite sans margin commence au contenu de son parent."""
@@ -267,6 +278,7 @@ class LiveLookTest(WindowTestCase):
             parent = title._parent_title()
             self.assertEqual(title._box_abs, parent.content_abs_x() + title._box_style["margin"][0])
 
+    @lent
     def test_space_before_first_and_after_last_title(self):
         """Paragraphes > Padding (titre) > Avant / Apres : padding avant le 1er et apres le dernier titre d'une pile de niveau N,
         DANS la boite (sous le fond), pas une margin."""
@@ -289,6 +301,7 @@ class LiveLookTest(WindowTestCase):
         cls = v2._Section if level == 1 else v2._SubSection
         return [t for t in self.win.findChildren(cls) if t._title_level() == level]
 
+    @lent
     def test_text_padding_moves_the_title_text(self):
         """Titre > Espacements : padding du texte seul, par niveau, replie ou deplie."""
         for level in (1, 2, 3):
@@ -302,9 +315,11 @@ class LiveLookTest(WindowTestCase):
                 self.assertEqual((m.left(), m.top(), m.right(), m.bottom()), (5 + level, 7, 2, 9 + level))
                 self.assertEqual(title._body_offset, 5 + level + title._chevron_room())
 
+    @lent
     def test_no_gap_spacers_between_titles(self):
         self.assertEqual([w for w in self.win.findChildren(QWidget) if hasattr(w, "_gap_spacer")], [])
 
+    @lent
     def test_background_padding_border_and_child_position(self):
         """Titre > Fond : padding + bordure decalent le contenu du paragraphe ; les titres enfants
         commencent au debut de ce contenu."""
@@ -320,6 +335,7 @@ class LiveLookTest(WindowTestCase):
         self.assertEqual(child._box_abs, section.content_abs_x())
         self.assertEqual(child._box_off, 0)
 
+    @lent
     def test_background_margin_is_outside_the_box(self):
         """Titre > Fond > Margin : espace HORS de la boite (decale le bord, s'ajoute avant la bordure)."""
         section = next(t for t in self._titles(1) if t._title_text == "TITRES")
@@ -332,6 +348,7 @@ class LiveLookTest(WindowTestCase):
         self.assertEqual((m.left() - section._box_off, m.top(), m.right(), m.bottom()), (4, 3 + 1, 2 + 1, 5 + 1))
         self.assertEqual(section.content_abs_x(), section._box_abs + 4)
 
+    @lent
     def test_touching_boxes_share_one_border_and_square_junctions(self):
         """Boites collees (freres, ou enfant contre le bord interieur du parent) : un seul filet a la
         jonction, comme les colonnes, et coins droits a cet endroit."""
@@ -362,6 +379,7 @@ class LiveLookTest(WindowTestCase):
         self.assertEqual(kids[0]._box_style["radius"]["top_left"], 8)  # coin libre : rayon garde
         self.assertTrue(kids[0]._box_style["border_on"]["left"])
 
+    @lent
     def test_paragraph_padding_wraps_everything_under_the_title(self):
         """Paragraphes > Padding (paragraphe) : padding autour de tout ce que contient le titre
         (tableaux et sous-titres), pas de la ligne du titre."""
@@ -377,6 +395,7 @@ class LiveLookTest(WindowTestCase):
         self.assertEqual(section.content_abs_x() - section._box_abs,
                          section._box_thickness(section._box_style)["left"] + section._box_style["padding"][0] + 9)
 
+    @lent
     def test_header_click_zone_is_limited_to_the_title(self):
         section = self._titles(1)[0]
         head = section.head
@@ -386,34 +405,40 @@ class LiveLookTest(WindowTestCase):
         self.assertTrue(head._hit(right - 1))
         self.assertFalse(head._hit(right + 20))
 
+    @lent
     def test_table_radius_is_replayed_on_all_tables(self):
         with mock.patch.object(v2, "_set_flat_tables_style") as style:
             self._change("table_radius", 9)
         self.assertEqual(style.call_args.kwargs["radius"], 9)
 
+    @lent
     def test_table_padding_is_replayed(self):
         with mock.patch.object(v2, "_set_flat_tables_style") as style:
             self.fields["table_cell_padding"].setValue(False, {"left": 20, "top": 3, "right": 20, "bottom": 3})
             self._change("table_radius", self.fields["table_radius"].value() + 1)
         self.assertIn("padding", style.call_args.kwargs)
 
+    @lent
     def test_toggle_style_is_replayed_on_toggles(self):
         with mock.patch.object(v2, "_sync_toggle_style") as sync:
             self._change("toggle1_outer_width", self.fields["toggle1_outer_width"].value() + 3)
         self.assertTrue(sync.called)
 
+    @lent
     def test_unchanged_family_is_not_replayed(self):
         self._change("slider_thumb_height", self.fields["slider_thumb_height"].value() + 1)
         with mock.patch.object(v2, "_sync_toggle_style") as sync:
             self._change("slider_thumb_width", self.fields["slider_thumb_width"].value() + 1)
         self.assertFalse(sync.called)
 
+    @lent
     def test_resizable_toggle_reaches_the_tables(self):
         toggle = self.fields["columns_resizable"]
         toggle.setChecked(not toggle.isChecked())
         self.win._flush_live()
         self.assertEqual(self.win._columns_resizable, toggle.isChecked())
 
+    @lent
     def test_cancel_restores_the_original_look(self):
         section = self.win.findChildren(v2._Section)[0]
         before = section._head_layout.contentsMargins().top()
@@ -506,6 +531,7 @@ class EveryControlSignalsTest(WindowTestCase):
         else:                       # couleur : bascule app <-> sys, comme l'utilisateur
             c.system_toggle.setChecked(not c.system_toggle.isChecked())
 
+    @lent
     def test_every_control_triggers_the_live_preview(self):
         from settings_store import DEFAULT_SETTINGS
         settings = copy.deepcopy(DEFAULT_SETTINGS)

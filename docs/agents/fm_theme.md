@@ -131,6 +131,8 @@ Points relevés (2026-10-28) :
 - Les tests LENTS (Blender / Maya installés, fenêtre de réglages entièrement construite, sondes de fluidité) sont marqués et sautés par défaut, lancés seulement sur demande (ex. `--lent`) ou avant un commit qui touche leur zone.
 - La doc de chaque module indique sa commande de test.
 
+**FAIT (2026-10-28)** : `tests/run.py` (dictionnaire `MODULES` : module -> motifs de fichiers ; noms fm_* du plan, alias des docs actuelles `video`, `cad`…), `tests/_lent.py` (décorateur `@lent`, variable `PIPELINE_TESTS_LENTS=1`), ligne « Tests du module » en tête de chaque doc. Seuil retenu : test ≥ 10 s mesuré seul -> `@lent`. Marqués : intégration Blender / Houdini (`test_turntable`, `test_turntable_resume`, `test_hip_preview`), 20 lectures VLC, `NavigationBarTest` (appli complète, 15-50 s par test), préconstruction et cadre rouge des réglages, et les tests de `test_settings_cells` / `test_settings_window_v2` qui construisent la fenêtre entière (12-70 s chacun ; ces deux fichiers prenaient 15 et 19 min). À la renommée des paquets, mettre à jour les motifs de `MODULES`.
+
 Ordre : ce chantier est INDÉPENDANT de fm_theme et passe EN PREMIER (il allège toutes les requêtes suivantes, y compris la migration fm_theme). Un module par étape, tests du module verts et appli lancée à chaque étape, un commit par module : tests rapides par module (outil commun, utile dès la première étape) → fm_video (le plus isolé) → fm_markdown → fm_visionneuse → fm_board + fm_miro + fm_cad (ensemble, à cause du cycle) → découpage de `pipeline_browser.py` → autres gros fichiers.
 
 ## Organisation du code (proposition)

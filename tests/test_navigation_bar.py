@@ -3,6 +3,7 @@ tabs : rayon sur TOUS les onglets ; chemin rapide des reglages Bouton / Zone de 
 import os as _os, sys as _sys  # jamais les vrais reglages / presets de l'utilisateur (tests/_isolate.py)
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 import _isolate  # noqa: E402,F401
+from _lent import lent  # noqa: E402
 import os
 import shutil
 import sys
@@ -34,6 +35,7 @@ def settle(seconds=0.2):
         time.sleep(0.005)
 
 
+@lent
 class NavigationBarTest(unittest.TestCase):
     def setUp(self):
         app_style.apply_style(APP)

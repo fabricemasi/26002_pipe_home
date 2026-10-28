@@ -2,6 +2,8 @@
 
 Détail lu À LA DEMANDE (sorti d'AGENTS.md le 2026-10-26 pour alléger le contexte de chaque session) : à lire avant de travailler sur ce sujet. Contenu repris tel quel.
 
+**Tests du module** : `python tests/run.py fm_board` (`fm_miro` : tableau blanc seul, `fm_cad` : CAD seul) — rapides seulement ; ajouter `--lent` pour les tests lents (Blender, fenêtre entière…) avant un commit qui touche leur zone.
+
 ## Module « Board » (`board/`, clone local de Miro)
 
 Demande de l'utilisateur : tableau blanc infini, usage strictement personnel et LOCAL (aucun réseau, aucun compte, aucune dépendance en plus : QGraphicsView / QGraphicsScene, QtSvg, QPdfWriter, QUndoStack de PySide6). Seul PAQUET du dépôt (le reste est en modules plats) ; il ne dépend d'aucun code propre à la fenêtre principale (habillage des panneaux et menus : `_PanelFrame`, `M`, rôles de texte, `settings_menu.Menu` / `menu_row`, `_SliderField`, `_ColorPickerPopup`). Le CONTENU du canvas suit Miro, pas le thème sombre de l'appli (exigence non négociable de l'utilisateur).

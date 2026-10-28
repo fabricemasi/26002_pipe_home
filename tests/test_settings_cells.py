@@ -5,6 +5,7 @@ plage des curseurs, enregistrement en temps reel."""
 import os as _os, sys as _sys  # jamais les vrais reglages / presets de l'utilisateur (tests/_isolate.py)
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 import _isolate  # noqa: E402,F401
+from _lent import lent  # noqa: E402
 import copy
 import shiboken6
 import os
@@ -382,6 +383,7 @@ class AccordionTest(WindowTestCase):
 
 
 class GapsTableTest(WindowTestCase):
+    @lent
     def test_title_padding_lives_in_the_paragraph_tables(self):
         """Plus de sous-section « Padding (titre seulement) » ni « Retraits » : le padding du titre (avec
         avant / apres) est la ligne « Padding (titre) » de Paragraphes > Niveau N."""
@@ -394,6 +396,7 @@ class GapsTableTest(WindowTestCase):
         captions = [c.text() for c in cells.split_of(field)._cap_labels]
         self.assertEqual(captions, ["LIER LES 4", "G", "H", "B", "D", "AVANT", "APRÈS"])
 
+    @lent
     def test_background_tables_one_per_level(self):
         win = build()
         frames = [f for f in win.findChildren(_TableFrame) if f.dimsKey() == "TITRES/Paragraphes#0"]
@@ -412,11 +415,13 @@ class ToggleStylesTest(WindowTestCase):
         self.win = build()
         self.addCleanup(self.win.close)
 
+    @lent
     def test_coche_has_a_skin_row_with_text_and_icon_choices(self):
         labels = [sp.label for sp in v2.CATALOG["toggle1 : Coche"]]
         for wanted in ("Habillage", "Texte", "Police du texte", "Icône", "Couleur de l'icône"):
             self.assertIn(wanted, labels)
 
+    @lent
     def test_skin_text_and_icon_are_painted_inside_the_coche(self):
         import settings_widgets as sw
         from settings_store import DEFAULT_SETTINGS
@@ -438,6 +443,7 @@ class ToggleStylesTest(WindowTestCase):
         self.assertNotEqual(plain, with_text)
         self.assertNotEqual(with_text, with_icon)
 
+    @lent
     def test_menu_of_the_style_cell_offers_a_new_toggle(self):
         from PySide6.QtWidgets import QMenu
         picker = self.win.findChildren(v2._ToggleStylePicker)[0]
@@ -448,6 +454,7 @@ class ToggleStylesTest(WindowTestCase):
         cell.populate_menu(menu)
         self.assertIn("Ajouter un nouveau toggle…", [a.text() for a in menu.actions()])
 
+    @lent
     def test_adding_a_toggle_creates_its_subsection_card_and_settings(self):
         picker = self.win.findChildren(v2._ToggleStylePicker)[0]
         cards_before = len(picker._cards)
@@ -467,6 +474,7 @@ class ToggleStylesTest(WindowTestCase):
         self.assertEqual(self.win.add_toggle_style("Autre"), "toggle5")
         self.assertEqual(self.win.settings["toggle_styles"][-1]["name"], "Autre (2)")    # noms uniques
 
+    @lent
     def test_cards_have_the_same_width_and_the_column_grows_with_them(self):
         picker = self.win.findChildren(v2._ToggleStylePicker)[0]
         self.win.add_toggle_style("Un toggle au nom nettement plus long")
@@ -478,6 +486,7 @@ class ToggleStylesTest(WindowTestCase):
             cell = cell.parentWidget()
         self.assertGreaterEqual(cell.width(), picker.minimumSizeHint().width())
 
+    @lent
     def test_rename_and_delete_from_the_card_and_the_subsection_title(self):
         from PySide6.QtWidgets import QMenu
         from settings_widgets import add_context_extras
@@ -511,6 +520,7 @@ class ToggleStylesTest(WindowTestCase):
         delete = next(a for a in menu.actions() if a.text() == "Supprimer le toggle")
         self.assertFalse(delete.isEnabled())
 
+    @lent
     def test_toggle_tables_are_linked_between_styles(self):
         self.win.add_toggle_style("Nouveau")
         v2.expand_all(self.win.stack.currentWidget())
@@ -525,6 +535,7 @@ class ToggleStylesTest(WindowTestCase):
         for frame in frames[1:]:
             self.assertEqual(frame._flat_head._widths, head._widths)
 
+    @lent
     def test_right_click_on_any_toggle_changes_its_style_and_it_is_kept(self):
         from PySide6.QtWidgets import QMenu
         from settings_widgets import _SelectField, add_toggle_style_menu
@@ -552,6 +563,7 @@ class ToggleStylesTest(WindowTestCase):
         self.assertEqual(again._style_key(), base)
         self.assertEqual(win.settings["toggle_style_overrides"], {})
 
+    @lent
     def test_icon_toggle_shows_its_images_and_plays_the_sequence(self):
         import shutil
         import tempfile
@@ -593,6 +605,7 @@ class ToggleStylesTest(WindowTestCase):
             finally:
                 sw._sync_toggle_style(copy.deepcopy(_DEFAULTS))
 
+    @lent
     def test_icon_rows_are_greyed_while_the_type_is_qt(self):
         specs = {getattr(sp, "key", sp): w for sp, w in self.win.stores["General"]["specs"]}
         kind, icons, frames = specs["toggle1_kind"], specs["toggle1_icon_on"], specs["toggle1_icon_frames"]
@@ -606,6 +619,7 @@ class ToggleStylesTest(WindowTestCase):
         kind._select("Qt")
         self.assertFalse(icons.isEnabled())
 
+    @lent
     def test_split_cell_captions_have_their_own_header_color(self):
         from settings_layout import _TABLE_HEAD
         labels = [sp.label for sp in v2.CATALOG["Tableaux"]]
@@ -627,6 +641,7 @@ class ToggleStylesTest(WindowTestCase):
             merged["table_cell_head_color"] = "tableHead"
             self.win._restyle_tables(merged)
 
+    @lent
     def test_selection_color_tints_selected_columns(self):
         import settings_widgets as sw
         labels = [sp.label for sp in v2.CATALOG["Tableaux"]]
@@ -643,6 +658,7 @@ class ToggleStylesTest(WindowTestCase):
         finally:
             sw._TABLE_SELECTION["color"] = "#5f9bd0"
 
+    @lent
     def test_custom_style_keys_survive_loading(self):
         from settings_store import _DYNAMIC_KEY
         self.assertTrue(_DYNAMIC_KEY.match("toggle3_outer_width"))
@@ -653,6 +669,7 @@ class ToggleStylesTest(WindowTestCase):
 class RoundTripTest(WindowTestCase):
     """Ce que l'utilisateur dimensionne est retrouve a la reouverture."""
 
+    @lent
     def test_everything_dimensioned_comes_back_in_a_new_window(self):
         v2.AUTOSAVE = True
         disk = {}
@@ -746,6 +763,7 @@ class SliderRangeTest(WindowTestCase):
         finally:
             v2.AUTOSAVE = False
 
+    @lent
     def test_saved_range_comes_back_in_new_fields(self):
         win = v2.SettingsWindowV2()
         win.settings["slider_ranges"] = {"item_column_width": [100, 999]}
@@ -780,11 +798,13 @@ class AutosaveTest(WindowTestCase):
         self.addCleanup(lambda: setattr(v2, "AUTOSAVE", False))
         self.addCleanup(self.win.close)
 
+    @lent
     def test_window_size_is_saved(self):
         self.win._persist_now()
         self.assertTrue(self.geometry)
         self.assertEqual(self.geometry[-1][0], v2.GEOMETRY_KEY)
 
+    @lent
     def test_table_dims_are_saved_without_validating(self):
         frame = next(f for f in self.win.findChildren(_TableFrame) if f.dimsKey() == "Tableaux#0")
         head = frame._flat_head
@@ -795,6 +815,7 @@ class AutosaveTest(WindowTestCase):
         self.assertEqual(saved["cols"][0], head._widths[0])
         self.assertEqual(saved["align"]["r0c1"], "center,top")
 
+    @lent
     def test_a_resize_arms_the_debounced_save(self):
         self.win._persist_timer.stop()
         self.win.resize(self.win.width() + 20, self.win.height())
@@ -845,9 +866,11 @@ class LinkedParagraphTablesTest(WindowTestCase):
         self.addCleanup(self.win.close)
         self.frames = [f for f in self.win.findChildren(_TableFrame) if f.dimsKey() == "TITRES/Paragraphes#0"]
 
+    @lent
     def test_five_tables_share_one_key(self):
         self.assertEqual(len(self.frames), 5)
 
+    @lent
     def test_column_row_and_sub_cell_changes_reach_every_level(self):
         source, others = self.frames[0], self.frames[1:]
         source._flat_head._set_width(0, 233)                                   # largeur de colonne
@@ -864,6 +887,7 @@ class LinkedParagraphTablesTest(WindowTestCase):
             twin = cells.split_of(frame._extra_dims.cells[key].content())
             self.assertEqual(twin.widths(), split.widths())
 
+    @lent
     def test_old_per_level_dims_seed_the_shared_one(self):
         out = v2._renamed_dims({"TITRE/Fond/Niveau 1#0": {"cols": [111, 222]}})
         self.assertEqual(out["TITRES/Paragraphes#0"], {"cols": [111, 222]})
@@ -888,6 +912,7 @@ class SpaceAboveTest(WindowTestCase):
         action = next(a for a in menu.actions() if isinstance(a, QWidgetAction))
         return menu, action.defaultWidget().findChild(_SliderField)
 
+    @lent
     def test_space_above_a_table(self):
         frame = next(f for f in self.win.findChildren(_TableFrame) if f.dimsKey() == "TITRES/Polices#0")
         cell = frame._extra_dims.cells["r0c0"]
@@ -906,6 +931,7 @@ class SpaceAboveTest(WindowTestCase):
         slider.setValue(self.win.TABLE_SPACE[False])             # la valeur par defaut ne l'est pas
         self.assertNotIn(key, self.win.settings["element_spaces"])
 
+    @lent
     def test_space_above_a_title_separates_it_from_its_sibling(self):
         node = next(n for n in self.win.findChildren(v2._LazyNode) if n.node.title == "Paragraphes")
         prev = node._head._box_prev
@@ -915,6 +941,7 @@ class SpaceAboveTest(WindowTestCase):
         self.assertEqual(node._space_above_px, 20)
         self.assertFalse(node._head._touches(prev, "top"))
 
+    @lent
     def test_space_above_any_other_element_of_the_window(self):
         """Hors tableaux et titres (barre d'onglets, pied de fenetre...) : le clic droit que personne
         ne prend arrive a la fenetre, qui propose aussi l'espace ; retrouve par son chemin."""
@@ -932,11 +959,13 @@ class SpaceAboveTest(WindowTestCase):
         self.assertIs(widget_at_path(self.win, key[3:]), element)
         self.assertEqual(self.win.settings["element_spaces"][key], 12)
 
+    @lent
     def test_folder_reorder_row_in_the_columns_table(self):
         spec = next(sp for sp in v2.CATALOG["G Colonnes"] if sp.key == "folder_reorder_enabled")
         self.assertEqual((spec.label, spec.kind, spec.default), ("Permettre le replacement des dossiers", "bool", True))
         self.assertIn("folder_reorder_enabled", _DEFAULTS)
 
+    @lent
     def test_space_target_and_paths(self):
         """Moteur commun (fenetre principale et reglages) : element empile verticalement sous le clic,
         chemin stable aller-retour."""
@@ -957,6 +986,7 @@ class SpaceAboveTest(WindowTestCase):
         set_space_above(block, 18)
         self.assertEqual(col.itemAt(1).spacerItem().sizeHint().height(), 18)
 
+    @lent
     def test_saved_spaces_come_back(self):
         frame = next(f for f in self.win.findChildren(_TableFrame) if f.dimsKey() == "TITRES/Polices#0")
         key = self.win._space_key(frame)
@@ -986,11 +1016,13 @@ class FreeColumnsTest(WindowTestCase):
         m = self.frame.layout().contentsMargins()
         return m.left() + m.right()
 
+    @lent
     def test_no_stretch_column_and_table_is_the_sum_of_its_columns(self):
         self.assertTrue(all(self.head._widths))
         self.assertEqual(self.frame.width(), sum(self.head._widths) + self._outer())
         self.assertFalse(self.frame._grip.isVisible())
 
+    @lent
     def test_widening_a_column_widens_the_table_only(self):
         before, width = list(self.head._widths), self.frame.width()
         self.head.beginDrag((0, 1), 500)
@@ -1001,6 +1033,7 @@ class FreeColumnsTest(WindowTestCase):
         self.assertEqual(self.head._widths[1:], before[1:])            # les autres ne bougent pas
         self.assertEqual(self.frame.width(), width + 60)
 
+    @lent
     def test_selected_columns_are_not_limited_by_the_table(self):
         self.head._selected = {0, 1}
         start = self.head._widths[0]
@@ -1011,6 +1044,7 @@ class FreeColumnsTest(WindowTestCase):
         self.assertEqual(self.head._widths[1], start + 900)
         self.assertEqual(self.frame.width(), sum(self.head._widths) + self._outer())
 
+    @lent
     def test_widening_a_sub_cell_widens_its_column(self):
         split = next(sp for sp in self.frame.findChildren(cells.SplitCell) if len(sp._cells) == 5)
         split.snap_provider = None
@@ -1021,6 +1055,7 @@ class FreeColumnsTest(WindowTestCase):
         self.assertGreater(self.head._widths[1], column)
         self.assertGreaterEqual(self.head._widths[1], split.minimumSizeHint().width())
 
+    @lent
     def test_selected_columns_get_exactly_the_same_width(self):
         """4 colonnes selectionnees, de largeurs differentes : apres redimensionnement elles ont
         EXACTEMENT la meme largeur reelle (entete ET cellules de chaque ligne)."""
@@ -1044,6 +1079,7 @@ class FreeColumnsTest(WindowTestCase):
         for r in range(5):
             self.assertEqual(len({state.cells[f"r{r}c{c}"].width() for c in (1, 2, 3, 4)}), 1)
 
+    @lent
     def test_selected_sub_cells_get_exactly_the_same_width(self):
         """4 sous-cellules selectionnees : MEME largeur reelle, meme si leurs contenus different ;
         les autres (et la colonne du tableau) s'adaptent."""
@@ -1059,6 +1095,7 @@ class FreeColumnsTest(WindowTestCase):
         split._end_drag()
         self.assertGreaterEqual(self.head._widths[1], split.minimumSizeHint().width())
 
+    @lent
     def test_cell_contents_never_constrain_a_column(self):
         """Le contenu des cellules ne contraint plus la largeur d'une colonne : les cellules divisees
         s'y plient (sous-cellules reglees reduites du meme facteur, egales entre elles), puis
@@ -1081,6 +1118,7 @@ class FreeColumnsTest(WindowTestCase):
         self.assertEqual(split._shown, [0, 200, 200, 200, 200])        # elles reviennent
         self.assertEqual([split._cells[k].width() for k in range(1, 5)], [200] * 4)
 
+    @lent
     def test_last_sub_cell_has_a_right_border_when_it_stops_short(self):
         """Derniere sous-cellule reglee, plus etroite que la colonne : son bord droit a un filet et se tire."""
         split = next(sp for sp in self.frame.findChildren(cells.SplitCell) if len(sp._cells) == 5)
@@ -1102,6 +1140,7 @@ class FreeColumnsTest(WindowTestCase):
         app.processEvents()
         self.assertIsNone(split._right_edge())                         # libre : elle va jusqu'au bord
 
+    @lent
     def test_old_stretch_width_is_converted(self):
         cols = list(self.head._widths)
         cols[1] = 0                                                   # ancienne colonne extensible
@@ -1394,6 +1433,7 @@ class RowMoveTest(WindowTestCase):
         app.processEvents()
         return overlay
 
+    @lent
     def test_ctrl_drag_on_the_first_cell_moves_the_row_and_it_is_kept(self):
         rows = list(self.mover.rows)
         overlay = self._drag(0, 2)
@@ -1410,6 +1450,7 @@ class RowMoveTest(WindowTestCase):
         self.frame.applyDims(dims)
         self.assertEqual(self.mover.order[:3], [1, 2, 0])
 
+    @lent
     def test_without_ctrl_or_when_disabled_nothing_moves(self):
         self._drag(0, 2, modifiers=Qt.NoModifier)
         self.assertEqual(self.mover.order, sorted(self.mover.order))
@@ -1418,6 +1459,7 @@ class RowMoveTest(WindowTestCase):
         self.assertEqual(self.mover.order, sorted(self.mover.order))
         self.assertIn("table_rows_movable", [sp.key for sp in v2.CATALOG["Tableaux"]])
 
+    @lent
     def test_same_opacities_for_columns_split_cells_and_rows(self):
         from settings_layout import _ReorderOverlay
         self.assertEqual((_ReorderOverlay.GHOST_OPACITY, _ReorderOverlay.ORIGIN_OPACITY), (0.75, 0.25))

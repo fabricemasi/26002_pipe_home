@@ -20,7 +20,8 @@ Pipeline Browser : navigateur de fichiers en colonnes (Miller columns) en PySide
 - Lancer : `pipeline_browser_debug.bat` (crée `.venv`, installe PySide6/ezdxf/matplotlib, lance l'appli) ou `python pipeline_browser.py` (`pythonw` pour éviter la console).
 - Dépendances : `requirements.txt` (PySide6 ; optionnels : OpenEXR, numpy, ezdxf, matplotlib).
 - Tests (unittest, offscreen Qt, certains exigent Blender installé) :
-  - tous : `python -m unittest discover -s tests`
+  - **par module (à préférer)** : `python tests/run.py <module>` (sans argument : liste des modules) ; les tests marqués `@lent` (`tests/_lent.py` : Blender, fenêtre de réglages entière, appli complète) sont sautés sauf avec `--lent`. Tout nouveau fichier de test est rangé dans `MODULES` de `tests/run.py`.
+  - tous : `python -m unittest discover -s tests` (lents sautés aussi, sauf `PIPELINE_TESTS_LENTS=1`)
   - un fichier : `python -m unittest discover -s tests -p test_turntable.py`
   - un test : `python -m unittest tests.test_render_log.RenderLogTest.test_requested_columns_and_render_metadata` (lancer depuis la racine ; les tests importent `previews`, `detail_panel`… : patcher un nom dans le module qui l'utilise, pas dans celui qui l'a importé).
 - Tout fichier de test commence par `import _isolate` (`tests/_isolate.py` : réglages, presets et état des fenêtres redirigés vers des COPIES temporaires) — OBLIGATOIRE (un test a déjà écrit dans le vrai preset de l'utilisateur). Doubler des fonctions de presets : les remplacer dans `settings_store`. Détail : `docs/agents/pieges-generaux.md`.

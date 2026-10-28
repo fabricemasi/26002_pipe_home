@@ -3,6 +3,7 @@ meme rendu Blender que les autres fichiers 3D. Le rendu reel est saute sans Houd
 import os as _os, sys as _sys  # jamais les vrais reglages / presets de l'utilisateur (tests/_isolate.py)
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 import _isolate  # noqa: E402,F401
+from _lent import lent  # noqa: E402
 import os
 import shutil
 import subprocess
@@ -46,6 +47,7 @@ class HoudiniDispatchTest(unittest.TestCase):
         self.assertIn("hython introuvable", messages[-1])
 
 
+@lent
 @unittest.skipUnless(previews._hython_executable() and previews._blender_executable(), "Houdini ou Blender absent")
 class HoudiniRenderTest(unittest.TestCase):
     """Scene fabriquee par hython (une sphere affichee, une boite masquee), rendue de bout en bout."""

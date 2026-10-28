@@ -2,6 +2,8 @@
 
 Détail lu À LA DEMANDE (sorti d'AGENTS.md le 2026-10-26 pour alléger le contexte de chaque session) : à lire avant de travailler sur ce sujet. Contenu repris tel quel.
 
+**Tests du module** : `python tests/run.py reglages` — rapides seulement ; ajouter `--lent` pour les tests lents (Blender, fenêtre entière…) avant un commit qui touche leur zone.
+
 ### Réglages
 **Fenêtre v1 RETIRÉE** (octobre 2026, nettoyage du code, accord de l'utilisateur) : la classe `SettingsWindow` n'existe plus ; un seul bouton de réglages (roue dentée) qui ouvre la v2 (`PipelineBrowser.open_settings` → `open_settings_v2`). `settings_window.py` ne garde que les briques communes (barre de titre `_SettingsTitleBar`, `_PanelFrame`, Fenêtres additionnelles, `_OmitListField`). Le bouton caché `btn_style` reste créé : `widget_path` indexe les enfants par classe, le retirer décalerait les positions / espaces enregistrés de la barre. Les valeurs que lisait la v1 (avec `DEFAULT_SETTINGS`) sont figées dans `tests/_v1_reference.py` : `test_settings_v2_ported` et `test_settings_window_v2` y comparent la v2. Des commentaires citent encore d'anciennes méthodes de la v1 (historique : `git show 206fac8:settings_window.py`).
 Enregistrer UNE clé d'état temps réel : `settings_store.save_live_state(clé, valeur)` (écrit cette clé dans le fichier tel qu'il est), jamais `load_settings()` + `save_settings()` (cela fige dans le fichier les valeurs du preset actif, même périmées).

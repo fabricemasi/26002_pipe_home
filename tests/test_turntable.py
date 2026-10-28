@@ -2,6 +2,7 @@
 import os as _os, sys as _sys  # jamais les vrais reglages / presets de l'utilisateur (tests/_isolate.py)
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 import _isolate  # noqa: E402,F401
+from _lent import lent  # noqa: E402
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import json
@@ -22,6 +23,7 @@ import time
 import previews as pv
 
 
+@lent
 class TurntableIntegrationTest(unittest.TestCase):
     def test_legacy_alembic_is_not_retried_as_transient_failure(self):
         with tempfile.TemporaryDirectory(prefix="turntable_legacy_") as work:

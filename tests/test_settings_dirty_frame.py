@@ -3,6 +3,7 @@ ROUGE (M["dirty_frame"]) ; a l'ouverture et apres Appliquer / Enregistrer, la bo
 import os as _os, sys as _sys  # jamais les vrais reglages / presets de l'utilisateur (tests/_isolate.py)
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 import _isolate  # noqa: E402,F401
+from _lent import lent  # noqa: E402
 import os
 import sys
 import time
@@ -55,6 +56,7 @@ class DirtyFrameTest(unittest.TestCase):
         self.assertEqual(label.text(), "a jour")
         self.assertIsNone(win.panel._alert)
 
+    @lent
     def test_a_real_field_change_turns_it_red(self):
         win = v2.SettingsWindowV2()
         self.addCleanup(win.deleteLater)

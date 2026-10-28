@@ -4,6 +4,7 @@ son, volume), lecture automatique, zoom initial intelligent, YUV -> RVB du shade
 
 Vidéos générées par FFmpeg : l'image n est un gris connu (4 n). Rien n'est écrit dans les vrais réglages."""
 import _isolate  # noqa: F401
+from _lent import lent  # noqa: E402
 
 import shutil
 import subprocess
@@ -158,6 +159,7 @@ class VlcEngineTest(_PaneCase):
         self.assertFalse(pane._playing)
         self.assertEqual(pane._vlc.displayed, 0)
 
+    @lent
     def test_twenty_plays_keep_the_sound(self):
         """Cause du bug « plus de son à partir de la 3e lecture » : après la fin du média, LibVLC refuse play() ;
         chaque lecture repart d'un lecteur arrêté, volume / muet reposés quand la sortie audio est créée."""

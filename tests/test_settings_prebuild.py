@@ -3,6 +3,7 @@ qu'un clic sur une section l'affiche aussitot. Rien n'est modifie par cette cons
 import os as _os, sys as _sys  # jamais les vrais reglages / presets de l'utilisateur (tests/_isolate.py)
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 import _isolate  # noqa: E402,F401
+from _lent import lent  # noqa: E402
 import os
 import sys
 import time
@@ -18,6 +19,7 @@ app = QApplication.instance() or QApplication([])
 import settings_window_v2 as v2
 
 
+@lent
 class PrebuildTest(unittest.TestCase):
     def test_everything_is_built_in_the_background_without_a_change(self):
         v2.SettingsWindowV2.PREBUILD = True
