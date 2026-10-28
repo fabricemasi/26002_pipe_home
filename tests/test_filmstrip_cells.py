@@ -23,7 +23,7 @@ from PySide6.QtWidgets import QApplication
 
 app = QApplication.instance() or QApplication([])
 
-from fm_visionneuse import focus
+from fm_visionneuse import focus, gallery
 import settings_window_v2 as v2
 import ui_state
 from settings_store import DEFAULT_SETTINGS
@@ -116,7 +116,7 @@ class GalleryCellsTest(unittest.TestCase):
         focus.FocusGallery.SPLIT_CELLS = True
         # L'ancien padding de cellule (Reglages > Tableaux) n'existe plus dans la planche ; ces tests de la case
         # divisee en ont besoin.
-        patcher = mock.patch.object(focus, "_gallery_look", lambda: {"padding": {k: 8 for k in
+        patcher = mock.patch.object(gallery, "_gallery_look", lambda: {"padding": {k: 8 for k in
                                                                                  ("left", "top", "right", "bottom")}})
         patcher.start()
         self.addCleanup(patcher.stop)

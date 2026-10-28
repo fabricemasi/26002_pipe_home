@@ -40,7 +40,7 @@ Application (ordre de dépendance) :
 - `row_delegates.py` (`RowDelegate`, `ProjectTileDelegate`), `column_config.py` (dialogue de configuration des colonnes), `capture_widgets.py` (capture, `_PreviewBlock`, `_ColumnCard`…), `column.py` (`Column`), `preview_column.py` (`PreviewColumn`, export PureRef), `detail_panel.py` (`DetailPanel`, inspecteur).
 - `software_launch.py` : ouvrir un logiciel (Blender, Houdini) dans le dossier d'une colonne (détail : `docs/agents/colonnes.md`).
 - `fm_markdown/preview.py` (ex `markdown_preview.py`, importé `as markdown_preview`) : rendu Markdown -> HTML partagé par le module Markdown et l'inspecteur (détail : `docs/agents/fm_markdown.md`).
-- `focus.py` : visionneuse, pellicule, planche (détail : `docs/agents/visionneuse.md`).
+- `fm_visionneuse/` (ex `focus.py`, `file_attributes.py`, `file_filters.py`) : visionneuse, pellicule, planche, attributs, filtres (détail : `docs/agents/fm_visionneuse.md`).
 - `lightroom_bridge.py` : dossiers liés à un catalogue Lightroom Classic (détail : `docs/agents/apercus.md`).
 - `pipeline_browser.py` : `IconButton`, `TitleBar`, `PipelineBrowser(QMainWindow)`, `apply_all_settings`, `main()` (`load_settings()` → `apply_all_settings()` → `QApplication` → `apply_style()` → fenêtre). Point d'entrée.
 
@@ -63,7 +63,7 @@ Le détail de chaque module (choix de l'utilisateur, pièges, mesures, tests) es
 - `docs/agents/pieges-generaux.md` : pièges de fluidité déjà rencontrés, isolation des tests.
 - `docs/agents/colonnes.md` : colonnes (configuration `.pipeline_*.json`, animations, navigation réactive, réseau, dessin), boutons de mode de la barre, lancement des logiciels, opérations sur les fichiers (confirmations, corbeille, glisser-déposer).
 - `docs/agents/apercus.md` : pipeline d'aperçus, caches, rendus Blender / Maya / Houdini, rendu automatique SUSPENDU, Lightroom.
-- `docs/agents/visionneuse.md` : visionneuse, pellicule, planche, PureRef, cadre « Visionneuse », attributs des fichiers, filtres.
+- `docs/agents/fm_visionneuse.md` : visionneuse, pellicule, planche, PureRef, cadre « Visionneuse », attributs des fichiers, filtres.
 - `docs/agents/fm_markdown.md` : module Markdown / code (`fm_markdown/`, ex `mdeditor/` + `markdown_preview.py`), aperçu des notes, CSS / Obsidian.
 - `docs/agents/board.md` : module Board (`board/`, clone de Miro).
 - `docs/agents/cad.md` : module CAD du board (`board/cad*.py`).

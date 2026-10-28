@@ -12,7 +12,8 @@ from PySide6.QtGui import QImage, QKeyEvent, QPixmap, QMouseEvent, QTextCursor
 from PySide6.QtWidgets import QApplication, QWidget
 
 from fm_visionneuse import file_attributes
-from fm_visionneuse import focus
+from fm_visionneuse import focus, gallery_paint
+from app_style import scaled
 
 _app = QApplication.instance() or QApplication([])
 
@@ -98,7 +99,7 @@ class GalleryAttributesTest(unittest.TestCase):
         self.assertEqual(layout["stars"][0].left(), room.left() + gap)
         self.assertEqual(layout["flags"]["delete"].right(), room.right() - gap)   # drapeaux / « + » : coin droit
         self.assertEqual(layout["plus"].right(), room.right() - gap)
-        self.assertLessEqual(layout["unit"], focus.scaled(16))         # petits
+        self.assertLessEqual(layout["unit"], scaled(16))         # petits
         cell = self._rect(0)
         for rect in layout["colors"] + layout["stars"]:
             self.assertTrue(QRect(QPoint(0, 0), cell.size()).contains(rect))   # reste dans la case
@@ -240,14 +241,14 @@ class GalleryAttributesTest(unittest.TestCase):
         gallery.__dict__.get("_attr_values", {}).clear()
         index = gallery.model().index(4, 0)
         size = gallery.gridSize()
-        self.addCleanup(setattr, focus, "SHOW_KEYWORDS", False)
+        self.addCleanup(setattr, gallery_paint, "SHOW_KEYWORDS", False)
         hidden = gallery.cell_pixmap(index, size).toImage()
         QApplication.sendEvent(gallery, QKeyEvent(QEvent.KeyPress, Qt.Key_I, Qt.NoModifier, "i"))
-        self.assertTrue(focus.SHOW_KEYWORDS)
+        self.assertTrue(gallery_paint.SHOW_KEYWORDS)
         shown = gallery.cell_pixmap(index, size).toImage()
         self.assertNotEqual(hidden, shown)
         QApplication.sendEvent(gallery, QKeyEvent(QEvent.KeyPress, Qt.Key_I, Qt.NoModifier, "i"))
-        self.assertFalse(focus.SHOW_KEYWORDS)
+        self.assertFalse(gallery_paint.SHOW_KEYWORDS)
         self.assertEqual(hidden, gallery.cell_pixmap(index, size).toImage())
 
 

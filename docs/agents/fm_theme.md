@@ -95,7 +95,7 @@ Remplace l'intention « copier les modules de réglages dans chaque nouvelle app
 
 | Nouveau paquet | Aujourd'hui | Doc à lire (une seule, celle du module de la requête) |
 |---|---|---|
-| `fm_visionneuse/` | `focus.py` (visionneuse, pellicule, planche) | `docs/agents/fm_visionneuse.md` (ex `visionneuse.md`) |
+| `fm_visionneuse/` | `focus.py` (visionneuse, pellicule, planche) + `file_attributes.py`, `file_filters.py` — **FAIT 2026-10-28** (focus.py découpé en 11 sous-modules, façade gardée) | `docs/agents/fm_visionneuse.md` (ex `visionneuse.md`) |
 | `fm_markdown/` | `mdeditor/` + `markdown_preview.py` (devenu `fm_markdown/preview.py` : cœur du module, en cycle avec lui ; l'inspecteur, les colonnes et la fenêtre l'importent comme service) — **FAIT 2026-10-28** | `docs/agents/fm_markdown.md` (ex `markdown.md`) |
 | `fm_board/` | COQUE commune de `board/` : vue, scène, modèle, sérialisation, presse-papiers, export (choix de l'utilisateur 2026-10-28) | `docs/agents/fm_board.md` (ex `board.md`, partie commune) |
 | `fm_miro/` | partie tableau blanc de `board/` : post-it, images, formes, connecteurs, import Miro (`items`, `smart`, `miro_io`…) ; nom choisi par l'utilisateur | `docs/agents/fm_miro.md` (ex `board.md`, partie tableau blanc) |
@@ -114,7 +114,7 @@ Règles :
 
 Points relevés (2026-10-28) :
 - **Board et CAD dépendent l'un de l'autre** : `board/model.py`, `scene.py`, `ui.py`, `view.py`, `__init__.py` importent `cad_*` ; `cad.py`, `cad_items.py`, `cad_import.py`, `cad_ui.py` importent `items`, `model`, `ui`, `scene`. Imports relatifs (`from . import …`) à transformer en `from fm_cad import …` / `from fm_miro import …` / `from fm_board import …`. Garder les `__init__.py` minimaux pour que ce cycle reste chargeable ; à terme, la coque fm_board ne connaît fm_miro et fm_cad que par des points d'entrée (un registre où chaque module inscrit ses types d'éléments, outils et barres), et fm_cad n'importe plus fm_miro.
-- `focus.py` est un module plat de ~4 900 lignes : le découper par responsabilité (visionneuse, pellicule, planche, panneau d'infos) en le passant en paquet.
+- FAIT : `focus.py` était un module plat de ~4 900 lignes : le découper par responsabilité (visionneuse, pellicule, planche, panneau d'infos) en le passant en paquet.
 - Les chemins de données par `Path(__file__)` (`mdeditor/toolbar.json`, `mdeditor/web/`…) suivent le paquet ; vérifier ceux qui remontent vers la racine (`parent.parent`).
 - Les tests patchent des noms par module (`board.ui.X`…) : à renommer avec les paquets.
 - **Avant de commencer** : commiter (ou mettre de côté) le travail CAD en cours (`board/cad*.py`, `tests/test_cad.py`, `docs/agents/cad.md`, `settings_store.py`, `settings_window_v2.py`), sinon le renommage se mélange à ces modifications.
@@ -133,7 +133,16 @@ Points relevés (2026-10-28) :
 
 **FAIT (2026-10-28)** : `tests/run.py` (dictionnaire `MODULES` : module -> motifs de fichiers ; noms fm_* du plan, alias des docs actuelles `video`, `cad`…), `tests/_lent.py` (décorateur `@lent`, variable `PIPELINE_TESTS_LENTS=1`), ligne « Tests du module » en tête de chaque doc. Seuil retenu : test ≥ 10 s mesuré seul -> `@lent`. Marqués : intégration Blender / Houdini (`test_turntable`, `test_turntable_resume`, `test_hip_preview`), 20 lectures VLC, `NavigationBarTest` (appli complète, 15-50 s par test), préconstruction et cadre rouge des réglages, et les tests de `test_settings_cells` / `test_settings_window_v2` qui construisent la fenêtre entière (12-70 s chacun ; ces deux fichiers prenaient 15 et 19 min). À la renommée des paquets, mettre à jour les motifs de `MODULES`.
 
-Ordre : ce chantier est INDÉPENDANT de fm_theme et passe EN PREMIER (il allège toutes les requêtes suivantes, y compris la migration fm_theme). Un module par étape, tests du module verts et appli lancée à chaque étape, un commit par module : tests rapides par module (outil commun, utile dès la première étape) → fm_video (le plus isolé) → fm_markdown → fm_visionneuse → fm_board + fm_miro + fm_cad (ensemble, à cause du cycle) → découpage de `pipeline_browser.py` → autres gros fichiers.
+Ordre : ce chantier est INDÉPENDANT de fm_theme et passe EN PREMIER (il allège toutes les requêtes suivantes, y compris la migration fm_theme). Un module par étape, tests du module verts et appli lancée à chaque étape, un commit par module : tests rapides par module (outil commun, utile dès la première étape) → fm_video (le plus isolé) → fm_markdown → fm_visionneuse → fm_board + fm_miro + fm_cad (ensemble, à cause du cycle) → découpage de `pipeline_browser.py` → autres gros fichiers. → fenêtres de réglages par module (ci-dessous) → seulement ensuite fm_theme.
+
+### Une fenêtre de réglages par module (demande de l'utilisateur, 2026-10-28)
+
+- Une fenêtre de réglages GÉNÉRALE pour fm_browser (allégée), et UNE fenêtre de réglages PAR MODULE (vidéo, Markdown, visionneuse, board / MRO, CAD), construites avec les mêmes briques (v2).
+- Ouverture : un bouton dans le CADRE du module dans la barre de navigation (choix de l'utilisateur).
+- La définition des réglages d'un module (arbre, catalogue, valeurs par défaut) VIT DANS SON PAQUET (ex. `fm_video/settings.py`) : une requête sur les réglages vidéo ne lit que `fm_video/`. Les onglets correspondants quittent `settings_window_v2.py` ; les défauts quittent `settings_store.py` (qui les rassemble au chargement).
+- Les CLÉS ne changent pas (`video_*`, `md_*`, `viewer_*`, `board_*`) : réglages et presets de l'utilisateur intacts.
+- À partir de fm_board / fm_miro / fm_cad, chaque module isolé range directement ses définitions de réglages dans son paquet ; fm_video, fm_markdown, fm_visionneuse sont rattrapés à l'étape « fenêtres de réglages par module ».
+- Presets : voir la recommandation dans la réponse du 2026-10-28 (à confirmer par l'utilisateur), à reporter ici une fois décidée.
 
 ## Organisation du code (proposition)
 
