@@ -121,7 +121,7 @@ Points relevés (2026-10-28) :
 
 ### Découpage des gros fichiers de fm_browser (ajouté le 2026-10-28, accord de l'utilisateur)
 
-- **`pipeline_browser.py` (~9 800 lignes)** : le couper par responsabilité, sans changer le comportement (ex. barre de titre / `IconButton`, gestion des colonnes et de la navigation, raccourcis, branchement des modules et leurs `HOOKS`, application des réglages `apply_all_settings` / `_apply_settings`, `main()`). Découpage exact à établir en début d'étape d'après les classes et méthodes ; `PipelineBrowser` peut rester une classe composée de mixins par fichier. Gain : toute requête sur la fenêtre principale ne lit plus que le fichier de sa responsabilité.
+- **FAIT 2026-10-28** (19 fichiers dans `main_window/`, mixins ; carte `docs/agents/fm_browser.md`). **`pipeline_browser.py` (~9 800 lignes)** : le couper par responsabilité, sans changer le comportement (ex. barre de titre / `IconButton`, gestion des colonnes et de la navigation, raccourcis, branchement des modules et leurs `HOOKS`, application des réglages `apply_all_settings` / `_apply_settings`, `main()`). Découpage exact à établir en début d'étape d'après les classes et méthodes ; `PipelineBrowser` peut rester une classe composée de mixins par fichier. Gain : toute requête sur la fenêtre principale ne lit plus que le fichier de sa responsabilité.
 - Ensuite, au même principe : `previews.py` (~5 300), `settings_widgets.py` (~4 800, plutôt pendant fm_theme), `column.py`, `browser_core.py`, `detail_panel.py`.
 - Une doc `docs/agents/fm_browser.md` (ou la carte en tête de `colonnes.md`) indique quel fichier porte quelle responsabilité.
 

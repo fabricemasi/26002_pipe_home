@@ -42,7 +42,7 @@ Application (ordre de dépendance) :
 - `fm_markdown/preview.py` (ex `markdown_preview.py`, importé `as markdown_preview`) : rendu Markdown -> HTML partagé par le module Markdown et l'inspecteur (détail : `docs/agents/fm_markdown.md`).
 - `fm_visionneuse/` (ex `focus.py`, `file_attributes.py`, `file_filters.py`) : visionneuse, pellicule, planche, attributs, filtres (détail : `docs/agents/fm_visionneuse.md`).
 - `lightroom_bridge.py` : dossiers liés à un catalogue Lightroom Classic (détail : `docs/agents/apercus.md`).
-- `pipeline_browser.py` : `IconButton`, `TitleBar`, `PipelineBrowser(QMainWindow)`, `apply_all_settings`, `main()` (`load_settings()` → `apply_all_settings()` → `QApplication` → `apply_style()` → fenêtre). Point d'entrée.
+- `pipeline_browser.py` : point d'entrée et CŒUR de `PipelineBrowser(QMainWindow)` (`__init__`, navigation, événements de la fenêtre), `main()` (`load_settings()` → `apply_all_settings()` → `QApplication` → `apply_style()` → fenêtre). Le reste de la fenêtre est découpé par responsabilité dans le paquet `main_window/` (mixins : colonnes, cheminement, visionneuse, planche, repli, réglages, branchement des modules ; `TitleBar`, mode « Déplacer l'interface ») — carte : `docs/agents/fm_browser.md`.
 
 Fenêtre de réglages (ordre de dépendance) : `settings_store.py` (palette `M`, `DEFAULT_SETTINGS`, `load/save_settings`, presets), `settings_theme.py` (rôles de texte, arrondis communs), `settings_menu.py` (menus contextuels, voir `docs/agents/reglages.md`), `settings_dialogs.py` (fenêtre de confirmation `confirm`, briques des réglages), `settings_widgets.py` (champs de base : `_Toggle`, `_MiniSlider`, `_FontSelectField`…), `settings_colorpicker.py`, `settings_layout.py` (sections/tableaux), `settings_sections.py` (registre des champs, polices/couleurs/entêtes/géométrie), `settings_window.py` (briques communes ; la fenêtre v1 est RETIRÉE, seule la v2 `settings_window_v2.py` existe).
 
@@ -61,6 +61,7 @@ Enregistrer UNE clé d'état temps réel : `settings_store.save_live_state(clé,
 Le détail de chaque module (choix de l'utilisateur, pièges, mesures, tests) est dans `docs/agents/`, lu seulement quand on travaille dessus. Avant de modifier un sujet : lire son fichier. Après une demande de l'utilisateur ou un piège trouvé : l'y noter (jamais ici, sauf règle valable pour toute l'appli).
 
 - `docs/agents/pieges-generaux.md` : pièges de fluidité déjà rencontrés, isolation des tests.
+- `docs/agents/fm_browser.md` : fenêtre principale découpée (`pipeline_browser.py` + `main_window/`) : quel fichier porte quelle responsabilité, où patcher dans les tests.
 - `docs/agents/colonnes.md` : colonnes (configuration `.pipeline_*.json`, animations, navigation réactive, réseau, dessin), boutons de mode de la barre, lancement des logiciels, opérations sur les fichiers (confirmations, corbeille, glisser-déposer).
 - `docs/agents/apercus.md` : pipeline d'aperçus, caches, rendus Blender / Maya / Houdini, rendu automatique SUSPENDU, Lightroom.
 - `docs/agents/fm_visionneuse.md` : visionneuse, pellicule, planche, PureRef, cadre « Visionneuse », attributs des fichiers, filtres.

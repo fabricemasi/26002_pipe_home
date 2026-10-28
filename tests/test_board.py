@@ -1304,7 +1304,7 @@ class BoardModeTest(unittest.TestCase):
         doc.modelspace().add_line((0, 0), (40, 0))
         doc.saveas(source)
         before = source.read_bytes()
-        with mock.patch("pipeline_browser.open_path", side_effect=AssertionError("logiciel externe ouvert")):
+        with mock.patch("main_window.viewer.open_path", side_effect=AssertionError("logiciel externe ouvert")):
             win.on_activated(source)                                    # lu en fond, puis ouvert
             for _ in range(200):
                 settle(0.05)

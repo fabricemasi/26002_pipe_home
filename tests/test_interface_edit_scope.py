@@ -36,7 +36,7 @@ class EditScopeTest(unittest.TestCase):
         self.main = QWidget()
         self.main.resize(700, 500)
         self.main.show()
-        self.patch = patch("pipeline_browser.load_settings", return_value={})
+        self.patch = patch("main_window.interface_move.load_settings", return_value={})
         self.patch.start()
         self.mode = _InterfaceMoveMode(self.main)
         self.mode._edit_sync.stop()
@@ -651,7 +651,7 @@ class EditScopeTest(unittest.TestCase):
         later.deleteLater()
 
     def test_edit_appearance_is_saved_when_override_settings_change(self):
-        with patch("pipeline_browser.save_live_state") as save:
+        with patch("main_window.interface_move.save_live_state") as save:
             self.mode._apply_edit_settings({
                 "edit_selection_background": "#30ff0000",
                 "edit_selection_border_thickness": 5,
@@ -866,7 +866,7 @@ class StartupRestoreTest(unittest.TestCase):
         return window, label
 
     def _mode(self, saved):
-        patcher = patch("pipeline_browser.load_settings", return_value={"interface_move_positions": saved})
+        patcher = patch("main_window.interface_move.load_settings", return_value={"interface_move_positions": saved})
         patcher.start()
         self.addCleanup(patcher.stop)
         mode = _InterfaceMoveMode(QWidget())

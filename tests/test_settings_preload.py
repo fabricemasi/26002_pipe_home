@@ -48,7 +48,7 @@ class PreloadTest(unittest.TestCase):
         patch = mock.patch.object(pb.PipelineBrowser, "_app_used_recently", lambda _self: used)
         patch.start()
         self.addCleanup(patch.stop)
-        with mock.patch.object(pb, "settings_window_v2_preload_enabled", lambda: True):
+        with mock.patch("main_window.settings_link.settings_window_v2_preload_enabled", lambda: True):
             win._start_settings_idle_watch()
         self.addCleanup(win._settings_idle_timer.stop)
         self.addCleanup(win._stop_settings_idle_load)

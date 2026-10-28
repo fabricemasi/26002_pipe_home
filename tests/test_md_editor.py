@@ -478,7 +478,7 @@ class PaintedTargetRestoreTest(unittest.TestCase):
         self.addCleanup(window.deleteLater)
         painted = QRect(400, 10, 40, 12)
         view._edit_geometry = {"F:/photos": {"row": QRect(0, 0, 500, 40), "media-photo": QRect(painted)}}
-        with mock.patch("pipeline_browser.load_settings", return_value={"interface_move_positions": {}}):
+        with mock.patch("main_window.interface_move.load_settings", return_value={"interface_move_positions": {}}):
             mode = pb._InterfaceMoveMode(QWidget())
         mode._edit_sync.stop()
         self.addCleanup(APP.removeEventFilter, mode)

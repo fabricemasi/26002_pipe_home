@@ -275,7 +275,7 @@ class PlancheTest(unittest.TestCase):
         saved = ui_state.APPLIED_SETTINGS
         ui_state.APPLIED_SETTINGS = dict(saved or settings_store.load_settings())
         self.addCleanup(setattr, ui_state, "APPLIED_SETTINGS", saved)
-        with mock.patch.object(pb, "save_settings") as save, \
+        with mock.patch("main_window.viewer_chrome.save_settings") as save, \
                 mock.patch.object(browser_core, "_sync_default_preset_override") as preset:
             win._on_filter_row_style({"viewer_filter_row_bg_color": "#80ff0000"})
             save.assert_called_once()                          # tout de suite, pas 300 ms apres

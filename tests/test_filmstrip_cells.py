@@ -445,7 +445,7 @@ class FilmSettingsTest(unittest.TestCase):
         saved, presets = {}, {"fab": {"viewer_film_image_cell_bg": "#00000000"}}
         fake = type("W", (), {})()
         fake._film_style_pending = {"viewer_film_image_cell_bg": "#ff112233"}
-        with mock.patch.object(pb, "load_settings", lambda: {"default_preset": "fab"}),                 mock.patch.object(pb, "save_settings", saved.update),                 mock.patch.object(browser_core, "_load_presets", lambda: presets),                 mock.patch.object(browser_core, "_save_presets", lambda p: None):
+        with mock.patch("main_window.viewer_chrome.load_settings", lambda: {"default_preset": "fab"}),                 mock.patch("main_window.viewer_chrome.save_settings", saved.update),                 mock.patch.object(browser_core, "_load_presets", lambda: presets),                 mock.patch.object(browser_core, "_save_presets", lambda p: None):
             pb.PipelineBrowser._flush_filmstrip_style(fake)
         self.assertEqual(saved["viewer_film_image_cell_bg"], "#ff112233")
         self.assertEqual(presets["fab"]["viewer_film_image_cell_bg"], "#ff112233")
