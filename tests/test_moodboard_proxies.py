@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import numpy as np
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication
-from video.thumbs import MoodboardProxyCache
+from fm_video.thumbs import MoodboardProxyCache
 
 APP = QApplication.instance() or QApplication([])
 
@@ -28,7 +28,7 @@ class MoodboardProxiesTest(unittest.TestCase):
 
     def test_proxy_is_1200_wide_in_film_moodboards_folder_and_reused(self):
         pixels = np.full((675, 1200, 3), 128, np.uint8)
-        with mock.patch("video.thumbs.video_thumbnail", return_value=pixels) as decode:
+        with mock.patch("fm_video.thumbs.video_thumbnail", return_value=pixels) as decode:
             small = self.cache.pixels(self.source, 12, 100)
             decode.assert_called_once_with(self.source, 12, 675)
         target = self.cache.filename(12)
@@ -36,7 +36,7 @@ class MoodboardProxiesTest(unittest.TestCase):
                          f"{self.path.stem} - {self.cache.identity}")
         self.assertEqual(QImage(str(target)).size().toTuple(), (1200, 675))
         self.assertEqual(small.shape[0], 100)
-        with mock.patch("video.thumbs.video_thumbnail") as decode:
+        with mock.patch("fm_video.thumbs.video_thumbnail") as decode:
             # Nouvelle ouverture et zoom : le JPEG suffit, sans décoder la vidéo.
             large = MoodboardProxyCache(self.path).pixels(self.source, 12, 2000)
             decode.assert_not_called()
@@ -55,7 +55,7 @@ class MoodboardProxiesTest(unittest.TestCase):
 
     def _make_board(self, indices=(0, 7), layout=(2, 1)):
         self.cache.prepare(indices, layout)
-        with mock.patch("video.thumbs.video_thumbnail", return_value=np.zeros((675, 1200, 3), np.uint8)):
+        with mock.patch("fm_video.thumbs.video_thumbnail", return_value=np.zeros((675, 1200, 3), np.uint8)):
             for index in indices:
                 self.cache.pixels(self.source, index, 100)
 
@@ -71,7 +71,7 @@ class MoodboardProxiesTest(unittest.TestCase):
         new = MoodboardProxyCache(self.path, 640)
         self.assertFalse(new.prepare([0, 7], (2, 1)))
         self.assertTrue(all(not path.exists() for path in old))
-        with mock.patch("video.thumbs.video_thumbnail", return_value=np.zeros((360, 640, 3), np.uint8)):
+        with mock.patch("fm_video.thumbs.video_thumbnail", return_value=np.zeros((360, 640, 3), np.uint8)):
             for index in (0, 7):
                 new.pixels(self.source, index, 100)
         self.assertEqual(set(new.filename(0).parent.glob("*.jpg")), {new.filename(i) for i in (0, 7)})
@@ -86,7 +86,7 @@ class MoodboardProxiesTest(unittest.TestCase):
 
     def test_small_sources_still_produce_exactly_1200_pixels(self):
         source = SimpleNamespace(width=160, height=96)
-        with mock.patch("video.thumbs.video_thumbnail", return_value=np.zeros((96, 160, 3), np.uint8)):
+        with mock.patch("fm_video.thumbs.video_thumbnail", return_value=np.zeros((96, 160, 3), np.uint8)):
             self.cache.pixels(source, 0, 100)
         self.assertEqual(QImage(str(self.cache.filename(0))).size().toTuple(), (1200, 720))
 
@@ -136,7 +136,7 @@ class MoodboardProxiesTest(unittest.TestCase):
         self._make_board()
         self.cache.export([0, 7], (2, 1))
         self.cache.prepare([0], (1, 1))
-        with mock.patch('video.thumbs.video_thumbnail', return_value=np.zeros((675, 1200, 3), np.uint8)):
+        with mock.patch('fm_video.thumbs.video_thumbnail', return_value=np.zeros((675, 1200, 3), np.uint8)):
             self.cache.pixels(self.source, 0, 100)
         self.cache.export([0], (1, 1))
         outputs = list(self.cache.directory.glob('.moodboard - *.png'))
@@ -145,21 +145,21 @@ class MoodboardProxiesTest(unittest.TestCase):
 
     def test_configured_width_preserves_ratio_and_default_proxies(self):
         cache = MoodboardProxyCache(self.path, 640)
-        with mock.patch("video.thumbs.video_thumbnail", return_value=np.zeros((360, 640, 3), np.uint8)):
+        with mock.patch("fm_video.thumbs.video_thumbnail", return_value=np.zeros((360, 640, 3), np.uint8)):
             cache.pixels(self.source, 0, 100)
         self.assertEqual(QImage(str(cache.filename(0))).size().toTuple(), (640, 360))
         self.assertNotEqual(cache.filename(0), self.cache.filename(0))
 
     def test_read_only_directory_keeps_moodboard_working(self):
-        with mock.patch("video.thumbs.video_thumbnail", return_value=np.zeros((675, 1200, 3), np.uint8)), \
-                mock.patch("video.thumbs.tempfile.mkstemp", side_effect=PermissionError):
+        with mock.patch("fm_video.thumbs.video_thumbnail", return_value=np.zeros((675, 1200, 3), np.uint8)), \
+                mock.patch("fm_video.thumbs.tempfile.mkstemp", side_effect=PermissionError):
             pixels = self.cache.pixels(self.source, 0, 100)
         self.assertEqual(pixels.shape[0], 100)
         self.assertFalse(self.cache.filename(0).exists())
 
     def test_fast_board_change_does_not_publish_old_images(self):
         from test_video_module import wait
-        from video.thumbs import ThumbnailLoader
+        from fm_video.thumbs import ThumbnailLoader
         started, release = threading.Event(), threading.Event()
         source = SimpleNamespace(kind="video", width=1920, height=1080, close=lambda: None)
 
@@ -169,8 +169,8 @@ class MoodboardProxiesTest(unittest.TestCase):
                 release.wait(5)
             return np.zeros((height, round(height * 16 / 9), 3), np.uint8)
 
-        with mock.patch("video.media.open_media", return_value=source), \
-                mock.patch("video.thumbs.video_thumbnail", side_effect=decode):
+        with mock.patch("fm_video.media.open_media", return_value=source), \
+                mock.patch("fm_video.thumbs.video_thumbnail", side_effect=decode):
             loader = ThumbnailLoader(self.path, moodboard_proxies=True)
             images = {}
             loader.ready.connect(lambda index, image: images.update({index: image}))
@@ -195,7 +195,7 @@ class MoodboardProxiesTest(unittest.TestCase):
 
     def test_real_video_worker_writes_and_reuses_proxies(self):
         from test_video_module import HAS_AV, FFMPEG, make_video, wait
-        from video.thumbs import ThumbnailLoader
+        from fm_video.thumbs import ThumbnailLoader
         if not HAS_AV or not FFMPEG:
             self.skipTest("PyAV et FFmpeg requis")
         video = self.path.with_suffix(".mp4")
@@ -206,7 +206,7 @@ class MoodboardProxiesTest(unittest.TestCase):
             loader.ready.connect(lambda index, image: images.update({index: image}))
             try:
                 if reopening:
-                    with mock.patch("video.thumbs.video_thumbnail", side_effect=AssertionError("redécodage")):
+                    with mock.patch("fm_video.thumbs.video_thumbnail", side_effect=AssertionError("redécodage")):
                         loader.request([0, 7])
                         self.assertTrue(wait(lambda: len(images) == 2, 5))
                 else:

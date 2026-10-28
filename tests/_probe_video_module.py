@@ -97,7 +97,7 @@ def double_click(name):
     return dt
 
 
-import video
+import fm_video as video
 video.preload()                                    # fait en fond 4,5 s après le démarrage de l'appli
 dt = double_click(CLIP)
 pane = win._video
@@ -172,7 +172,7 @@ print("touche I : informations affichées, image immobile ;", [t for t, _r in pa
 win._apply_settings(dict(settings, video_info_opacity=20))
 assert pane.overlay.look["opacity"] == 20
 # GPU = CPU
-from video import color as vcolor
+from fm_video import color as vcolor
 img = pane.viewer.grabFramebuffer()
 rect = pane.viewer.image_rect(); dpr = pane.viewer.devicePixelRatioF()
 frame = pane.viewer.frame

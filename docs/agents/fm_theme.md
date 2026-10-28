@@ -102,7 +102,7 @@ Remplace l'intention « copier les modules de réglages dans chaque nouvelle app
 | `fm_cad/` | `board/cad*.py` | `docs/agents/fm_cad.md` (ex `cad.md`) |
 
 fm_board est la coque : fm_miro et fm_cad sont deux modules qui s'y branchent. La répartition exacte des fichiers de `board/` (surtout `ui.py`, `commands.py`, `items.py`) entre coque et fm_miro est à établir au début de l'étape, en lisant leurs imports.
-| `fm_video/` | `video/` | `docs/agents/fm_video.md` (ex `video.md`) |
+| `fm_video/` | `video/` — **FAIT 2026-10-28** (paquet renommé, carte en tête de la doc) | `docs/agents/fm_video.md` (ex `video.md`) |
 
 Règles :
 - Un module n'importe que fm_theme (aujourd'hui les briques `settings_*`, `app_style`), ses propres fichiers et, si besoin, des services communs de fm_browser (`previews`, `config`) ; JAMAIS la fenêtre principale (`pipeline_browser.py`) : elle lui pose des `HOOKS`.

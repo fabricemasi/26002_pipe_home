@@ -30,8 +30,8 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import QObject, Signal
 
-from video import color as vcolor
-from video.media import Frame, MediaSource
+from fm_video import color as vcolor
+from fm_video.media import Frame, MediaSource
 
 VIDEO_CONTAINERS = {"mp4": ".mp4", "mov": ".mov", "mkv": ".mkv", "webm": ".webm"}
 SEQUENCE_FORMATS = {"exr": ".exr", "tiff": ".tif", "png": ".png", "dpx": ".dpx"}

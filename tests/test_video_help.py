@@ -6,8 +6,8 @@ from unittest.mock import patch
 from PySide6.QtWidgets import QApplication,QWidget,QSpinBox,QVBoxLayout
 from PySide6.QtCore import Qt,QEvent,QPoint
 from PySide6.QtGui import QKeyEvent,QCursor
-from video.help_ui import HelpController,Glossary,annotate
-from video.help_content import HELP,GLOSSARY,page
+from fm_video.help_ui import HelpController,Glossary,annotate
+from fm_video.help_content import HELP,GLOSSARY,page
 
 APP = QApplication.instance() or QApplication([])
 

@@ -32,7 +32,7 @@ except Exception:                          # noqa: BLE001
     HAS_AV = False
 FFMPEG = shutil.which("ffmpeg")
 try:
-    from video import vlc_engine
+    from fm_video import vlc_engine
     HAS_VLC = vlc_engine.available()
 except Exception:                          # noqa: BLE001
     HAS_VLC = False
@@ -92,7 +92,7 @@ class _PaneCase(unittest.TestCase):
 
     def make_pane(self, **settings):
         from settings_store import DEFAULT_SETTINGS
-        from video.pane import VideoPane
+        from fm_video.pane import VideoPane
         self.host = QWidget()
         self.host.resize(900, 600)
         values = dict(DEFAULT_SETTINGS, video_backend="cpu", video_volume=0)
@@ -207,7 +207,7 @@ class VlcEngineTest(_PaneCase):
 @unittest.skipUnless(HAS_AV and FFMPEG, "PyAV / FFmpeg absents")
 class ZoomAndColorTest(_PaneCase):
     def test_smart_zoom_keeps_small_images_at_100_and_fits_large_ones(self):
-        from video.viewer import CPUViewer
+        from fm_video.viewer import CPUViewer
         viewer = CPUViewer()
         viewer.resize(800, 500)
         viewer.smart()
@@ -222,7 +222,7 @@ class ZoomAndColorTest(_PaneCase):
         viewer.deleteLater()
 
     def test_image_rect_is_snapped_to_physical_pixels(self):
-        from video.viewer import CPUViewer
+        from fm_video.viewer import CPUViewer
         viewer = CPUViewer()
         viewer.resize(801, 501)
         viewer.set_image_size(320, 241)
@@ -235,7 +235,7 @@ class ZoomAndColorTest(_PaneCase):
 
     def test_yuv_conversion_matches_ffmpeg(self):
         """Conversion YUV -> RVB du module (celle du shader) = celle de FFmpeg (matrice BT.709 / 601, plage)."""
-        from video import media as vmedia
+        from fm_video import media as vmedia
         for size, matrix in (((1280, 720), "bt709"), ((640, 480), "bt470bg")):
             path = self.dir / f"bars_{size[0]}.mp4"
             subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-f", "lavfi", "-i",
@@ -274,7 +274,7 @@ class TimelineSecondsTest(_PaneCase):
         pane.timeline.repaint()                                            # graduations en secondes : pas d'erreur
 
     def test_fractional_rate_has_no_drift(self):
-        from video.timeline import Timeline
+        from fm_video.timeline import Timeline
         timeline = Timeline()
         timeline.set_media(100000, 0, Fraction(24000, 1001))
         fps = Fraction(24000, 1001)
@@ -314,7 +314,7 @@ class SliderResetTest(unittest.TestCase):
 @unittest.skipUnless(HAS_AV and FFMPEG, "PyAV / FFmpeg absents")
 class ExportFolderTest(_PaneCase):
     def test_missing_folder_is_refused_and_the_last_folder_is_remembered(self):
-        from video import pane as vpane
+        from fm_video import pane as vpane
         saved = {}
         old = vpane.HOOKS.get("save_state")
         vpane.HOOKS["save_state"] = lambda k, v: saved.__setitem__(k, v)
@@ -337,8 +337,8 @@ class ExportFolderTest(_PaneCase):
 @unittest.skipUnless(HAS_AV and FFMPEG, "PyAV / FFmpeg absents")
 class RifeTest(unittest.TestCase):
     def test_rife_doubles_the_rate_keeping_the_duration(self):
-        from video import export as vexport
-        from video import media as vmedia
+        from fm_video import export as vexport
+        from fm_video import media as vmedia
         exe = vexport.rife_path("")
         if not exe:
             self.skipTest("rife-ncnn-vulkan absent")
@@ -367,7 +367,7 @@ class RifeTest(unittest.TestCase):
 
 class ScopesTest(unittest.TestCase):
     def test_histogram_waveform_and_vectorscope(self):
-        from video import scopes
+        from fm_video import scopes
         rgb = np.zeros((20, 40, 3), np.float32)
         rgb[:, :20] = (1.0, 0.0, 0.0)                     # moitié rouge pur, moitié gris moyen
         rgb[:, 20:] = 0.5
@@ -381,8 +381,8 @@ class ScopesTest(unittest.TestCase):
 
     @unittest.skipUnless(HAS_AV and FFMPEG, "PyAV / FFmpeg absents")
     def test_small_rgb_of_a_yuv_frame(self):
-        from video import media as vmedia
-        from video import scopes
+        from fm_video import media as vmedia
+        from fm_video import scopes
         folder = Path(tempfile.mkdtemp(prefix="scopes_"))
         try:
             clip = folder / "c.mp4"
@@ -517,7 +517,7 @@ class SnapshotTest(_PaneCase):
         image = QImage(str(folder / "clip_001.png"))
         self.assertEqual((image.width(), image.height()), (pane.source.width, pane.source.height))
         # Couleurs TELLES QU'AFFICHÉES : même calcul que l'afficheur (OCIO, corrections).
-        from video import color as vcolor
+        from fm_video import color as vcolor
         cy, cx = image.height() // 2, image.width() // 2
         shown, _a = vcolor.process_np(pane.viewer.frame.pixels[cy:cy + 1, cx:cx + 1], pane._pipeline,
                                       pane.view_state())
@@ -557,7 +557,7 @@ class SnapshotTest(_PaneCase):
         pane.moodboard.set_zoom(2.0)
         folder = Path(tempfile.mkdtemp(prefix="moodshot_"))
         try:
-            from video import snapshot as vsnap
+            from fm_video import snapshot as vsnap
             with patch.object(vsnap, "snapshot_dir", return_value=folder):
                 pane.take_snapshot()
             path = folder / "z_mood_clip_001.png"
@@ -572,8 +572,8 @@ class SnapshotTest(_PaneCase):
             shutil.rmtree(folder, ignore_errors=True)
 
     def test_sequence_folder_is_named_after_the_sequence(self):
-        from video import snapshot as vsnap
-        from video import media as vmedia
+        from fm_video import snapshot as vsnap
+        from fm_video import media as vmedia
         seq = vmedia.Sequence(Path("D:/shot"), "beauty.", ".exr", 4, [1001, 1002])
         source = type("S", (), {"sequence": seq, "path": Path("D:/shot/beauty.1001.exr")})()
         self.assertEqual(vsnap.media_name(source), "beauty")
@@ -583,7 +583,7 @@ class SnapshotTest(_PaneCase):
 @unittest.skipUnless(HAS_AV and FFMPEG, "PyAV / FFmpeg absents")
 class BeforeAfterTest(_PaneCase):
     def test_each_grade_window_bypasses_only_its_own_corrections(self):
-        from video import color as vcolor
+        from fm_video import color as vcolor
         pane = self.make_pane(video_autoplay=False)
         self.assertTrue(pane.open(self.video))
         pane.fade_in()
@@ -661,7 +661,7 @@ class TimelineThumbsTest(_PaneCase):
         from PySide6.QtCore import QEvent, QPointF
         from PySide6.QtGui import QMouseEvent
         saved = []
-        from video import pane as vpane
+        from fm_video import pane as vpane
         vpane.HOOKS["save_state"] = lambda k, v: saved.append((k, v))
         try:
             pane = self.make_pane(video_autoplay=False, video_timeline_thumbs=True, video_timeline_thumb_height=40)
@@ -710,8 +710,8 @@ class TimelineThumbsTest(_PaneCase):
 
 class ThumbnailsTest(unittest.TestCase):
     def test_loader_reads_thumbnails_while_playing_and_resends_known_ones(self):
-        from video import thumbs as vthumbs
-        from video.thumbs import ThumbnailLoader
+        from fm_video import thumbs as vthumbs
+        from fm_video.thumbs import ThumbnailLoader
         folder = Path(tempfile.mkdtemp(prefix="thumbs_"))
         try:
             clip = folder / "c.mp4"
@@ -747,8 +747,8 @@ class AllLayersExportTest(unittest.TestCase):
             import OpenImageIO as oiio
         except Exception:                                      # noqa: BLE001
             self.skipTest("OpenImageIO absent")
-        from video import export as vexport
-        from video import media as vmedia
+        from fm_video import export as vexport
+        from fm_video import media as vmedia
         folder = Path(tempfile.mkdtemp(prefix="aov_"))
         try:
             for n in (1001, 1002, 1003):

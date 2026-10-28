@@ -15,7 +15,7 @@ rawpy
 # les .md restent en texte brut.
 markdown-it-py
 mdit-py-plugins
-# Module video (paquet video/) : decodage exact des videos (PyAV, FFmpeg integre), EXR / TIFF / DPX en pleine
+# Module video (paquet fm_video/) : decodage exact des videos (PyAV, FFmpeg integre), EXR / TIFF / DPX en pleine
 # precision (OpenImageIO), colorimetrie (OpenColorIO, configuration ACES integree), affichage GPU (PyOpenGL).
 # Tous optionnels : sans eux le module dit ce qui manque. Export : FFmpeg en ligne de commande (PATH).
 av

@@ -5,7 +5,7 @@ from PySide6.QtCore import QObject,QEvent,QTimer,Qt
 from PySide6.QtGui import QCursor,QKeySequence,QShortcut
 from PySide6.QtWidgets import (QApplication,QFrame,QVBoxLayout,QHBoxLayout,QTextBrowser,
                                QPushButton,QDialog,QLineEdit,QListWidget,QListWidgetItem)
-from video.help_content import HELP,GLOSSARY,SOURCES,page
+from fm_video.help_content import HELP,GLOSSARY,SOURCES,page
 
 
 def annotate(widget,key):

@@ -15,8 +15,8 @@ from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QPushButton, QWi
 import settings_window_v2 as v2
 from settings_quick_style import QuickStyleWindow
 from settings_store import M
-from video import export as vexport
-from video import media as vmedia
+from fm_video import export as vexport
+from fm_video import media as vmedia
 
 FORMATS = (("mp4", "MP4"), ("mov", "MOV"), ("mkv", "MKV"), ("webm", "WEBM"), ("exr", "Séquence EXR"),
            ("tiff", "Séquence TIFF"), ("png", "Séquence PNG"), ("dpx", "Séquence DPX"))
@@ -161,7 +161,7 @@ class ExportWindow(QuickStyleWindow):
 
     def _remember(self, values: dict):
         self._values.update(values)
-        from video.pane import HOOKS
+        from fm_video.pane import HOOKS
         hook = HOOKS.get("save_state")
         if hook is not None:
             keep = {k: v for k, v in self._values.items() if k != "x_name"}     # dossier retenu, pas le nom

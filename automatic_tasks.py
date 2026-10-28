@@ -164,7 +164,7 @@ class AutomaticTasks(QObject):
         """
         from browser_core import load_shortcuts
         from config import GLOBAL_OMIT_FILE_NAMES
-        from video.thumbs import MoodboardProxyCache
+        from fm_video.thumbs import MoodboardProxyCache
         status = getattr(self.browser, '_background_status', None)
         if status is not None:
             status.report('moodboard', 'Mise à jour des dossiers Moodboards existants')
@@ -306,8 +306,8 @@ class AutomaticTasks(QObject):
 
     @staticmethod
     def moodboard(path, settings, cancel):
-        from video.media import open_media
-        from video.thumbs import MoodboardProxyCache
+        from fm_video.media import open_media
+        from fm_video.thumbs import MoodboardProxyCache
         source = open_media(path, settings)
         try:
             source._stream.codec_context.thread_count = 1

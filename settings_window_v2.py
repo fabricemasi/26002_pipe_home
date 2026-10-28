@@ -686,7 +686,7 @@ CATALOG.update(_cad_groups())
 
 
 # ==========================================================================
-# Onglet « Module vidéo » (paquet video/) : réglages GÉNÉRAUX du lecteur (affichage, informations en surimpression,
+# Onglet « Module vidéo » (paquet fm_video/) : réglages GÉNÉRAUX du lecteur (affichage, informations en surimpression,
 # lecture, timeline, couleur / OCIO, LUT, performances, export). Défauts = settings_store.VIDEO_DEFAULTS ; appliqués
 # en direct (chemin rapide de `PipelineBrowser._apply_settings`, clés `video_`). Clic droit sur un titre de l'onglet
 # = « Restaurer les valeurs d'origine ».
@@ -722,7 +722,7 @@ def _ocio_choices(kind: str):
     def choices():
         try:
             from settings_store import load_settings
-            from video import color as vcolor
+            from fm_video import color as vcolor
             config = vcolor.load_config(load_settings().get("video_ocio_config", ""))
             if kind == "space":
                 names = vcolor.colorspace_names(config)
@@ -2813,7 +2813,7 @@ def tag_toggles(roots, scope: str, key: str):
 def make_field(spec: Spec, values: ScopeValues, colors: dict, on_range: Callable | None = None) -> QWidget:
     widget = FIELD_FACTORIES[spec.kind](spec, values, colors)
     if spec.key.startswith(('video_', 'vg_', 'vc_')):
-        from video.help_content import key_for_setting
+        from fm_video.help_content import key_for_setting
         help_key = key_for_setting(spec.key)
         if help_key:
             widget.setProperty('color_help_key', help_key)
@@ -3798,7 +3798,7 @@ class SettingsWindowV2(QDialog):
         self._restore_geometry()
 
         self.settings = load_settings()
-        from video.help_ui import HelpController
+        from fm_video.help_ui import HelpController
         self._color_help = HelpController(self,self.settings)
         self._original_settings = json.loads(json.dumps(self.settings))
         self._saved = False

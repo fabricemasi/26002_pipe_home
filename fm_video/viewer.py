@@ -17,7 +17,7 @@ from PySide6.QtCore import QPointF, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPainterPath, QSurfaceFormat
 from PySide6.QtWidgets import QWidget
 
-from video import color as vcolor
+from fm_video import color as vcolor
 
 # ==========================================================================
 # Géométrie commune : centrage, zoom, déplacement

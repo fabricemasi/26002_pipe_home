@@ -18,8 +18,8 @@ from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 APP = QApplication.instance() or QApplication(sys.argv)
 
 from settings_store import DEFAULT_SETTINGS  # noqa: E402
-from video import viewer as vviewer  # noqa: E402
-from video.pane import VideoPane  # noqa: E402
+from fm_video import viewer as vviewer  # noqa: E402
+from fm_video.pane import VideoPane  # noqa: E402
 
 
 def pump(seconds):

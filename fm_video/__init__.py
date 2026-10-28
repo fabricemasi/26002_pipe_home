@@ -1,4 +1,4 @@
-"""Module vidéo (paquet video/) : lecteur de vidéos et de séquences d'images (EXR, TIFF, DPX, PNG, JPEG…),
+"""Module vidéo (paquet fm_video/) : lecteur de vidéos et de séquences d'images (EXR, TIFF, DPX, PNG, JPEG…),
 navigation exacte à l'image près, timeline zoomable, colorimétrie OpenColorIO + corrections non destructives,
 LUT .cube, export FFmpeg / OpenImageIO, conversion de cadence (dont images intermédiaires).
 
@@ -55,18 +55,18 @@ def preload():
     """Importe les bibliothèques et modules du module (fil de fond, une fois) et charge la configuration OCIO par
     défaut : la 1re ouverture n'attend plus ~1,5 s d'imports. Ne crée aucun widget."""
     for module in ("numpy", "av", "OpenImageIO", "PyOpenColorIO", "OpenGL.GL", "OpenGL.GL.shaders",
-                   "video.media", "video.cache", "video.color", "video.timeline", "video.viewer", "video.export"):
+                   "fm_video.media", "fm_video.cache", "fm_video.color", "fm_video.timeline", "fm_video.viewer", "fm_video.export"):
         try:
             __import__(module)
         except Exception:                                   # noqa: BLE001 - bibliothèque absente : dite à l'ouverture
             pass
     try:
-        from video import color
+        from fm_video import color
         color.load_config("")
     except Exception:                                       # noqa: BLE001
         pass
     try:
-        from video import vlc_engine
+        from fm_video import vlc_engine
         vlc_engine.instance()                               # LibVLC prêt (plugins chargés) avant la 1re vidéo
     except Exception:                                       # noqa: BLE001 - VLC absent : moteur PyAV
         pass

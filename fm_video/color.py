@@ -380,7 +380,7 @@ class ViewState:
 
 def to_rgb_alpha(pixels: np.ndarray):
     """(RVB float32 H x W x 3, alpha H x W ou None) depuis 1 à 4 canaux, 0-1 pour les entiers."""
-    from video.media import normalized
+    from fm_video.media import normalized
     x = normalized(pixels)
     if x.ndim == 2:
         x = x[..., None]

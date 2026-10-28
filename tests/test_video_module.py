@@ -1,4 +1,4 @@
-"""Module vidéo (paquet video/) : séquences, lecture EXACTE image par image (avant / arrière), précision des
+"""Module vidéo (paquet fm_video/) : séquences, lecture EXACTE image par image (avant / arrière), précision des
 EXR / TIFF / PNG, colorimétrie (corrections, LUT .cube, OCIO, même calcul GPU / CPU vérifié par la sonde native),
 export (plage IN / OUT exacte, cadences, séquences, annulation, originaux intacts), module (centrage gardé par les
 informations, réglages en direct), onglet « Module vidéo » des réglages."""
@@ -21,8 +21,8 @@ from PySide6.QtWidgets import QApplication
 
 APP = QApplication.instance() or QApplication([])
 
-from video import color as vcolor          # noqa: E402
-from video import media as vmedia          # noqa: E402
+from fm_video import color as vcolor          # noqa: E402
+from fm_video import media as vmedia          # noqa: E402
 
 try:
     import av  # noqa: F401
@@ -229,7 +229,7 @@ class ImagePrecisionTest(unittest.TestCase):
         from PySide6.QtTest import QTest
         from PySide6.QtWidgets import QWidget
         from settings_store import DEFAULT_SETTINGS
-        from video.pane import VideoPane
+        from fm_video.pane import VideoPane
         for n in range(1001, 1021):
             write_image(self.dir / f"beauty.{n}.exr", np.full((8, 8, 3), n / 1000, np.float32), oiio.HALF)
         host = QWidget()
@@ -329,7 +329,7 @@ class ExportTest(unittest.TestCase):
         shutil.rmtree(cls.dir, ignore_errors=True)
 
     def run_job(self, source, **kw):
-        from video import export as vexport
+        from fm_video import export as vexport
         job = vexport.ExportJob(source, vexport.ExportSettings(overwrite=True, **kw))
         result = {}
         job.finished.connect(lambda ok, msg, path: result.update(ok=ok, msg=msg, path=path))
@@ -378,7 +378,7 @@ class ExportTest(unittest.TestCase):
             self.assertEqual((out.frame_count, out.fps), (expected, fps), f"{mode} {fps}")
 
     def test_resample_plan_is_rational(self):
-        from video.export import output_frame_plan
+        from fm_video.export import output_frame_plan
         plan = output_frame_plan(0, 23, Fraction(24), Fraction(30), "resample")
         self.assertEqual(len(plan), 30)
         self.assertEqual(plan[:6], [0, 0, 1, 2, 3, 4])
@@ -399,7 +399,7 @@ class ExportTest(unittest.TestCase):
         self.assertEqual(out.read(0).pixels.dtype, np.float32)
 
     def test_cancel_removes_the_temporary_file(self):
-        from video import export as vexport
+        from fm_video import export as vexport
         out = self.dir / "cancel.mp4"
         job = vexport.ExportJob(self.source(), vexport.ExportSettings(output=out, fmt="mp4", codec="h264",
                                                                        preset="veryslow", range=(0, 47),
@@ -430,7 +430,7 @@ class PaneTest(unittest.TestCase):
     def setUp(self):
         from PySide6.QtWidgets import QWidget
         from settings_store import DEFAULT_SETTINGS
-        from video.pane import VideoPane
+        from fm_video.pane import VideoPane
         self.host = QWidget()
         self.host.resize(900, 600)
         # Pas de lecture automatique : ces tests naviguent image par image depuis la pause.
@@ -549,7 +549,7 @@ class MoodboardUiTest(unittest.TestCase):
     def test_mode_pauses_and_replaces_view_with_resizable_video_samples(self):
         from PySide6.QtWidgets import QWidget
         from settings_store import DEFAULT_SETTINGS
-        from video.pane import VideoPane
+        from fm_video.pane import VideoPane
 
         class Source:
             frame_count = 1200

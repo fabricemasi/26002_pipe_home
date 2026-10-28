@@ -146,7 +146,7 @@ HELP['grade'] = _entry('Corrections primaires / niveaux',GLOSSARY['Lift / Gamma 
     'Ajuster un contrôle à la fois ; comparer le résultat et réinitialiser si nécessaire.',
     'Une correction par canal peut neutraliser une ombre ; vérifier qu’elle ne colore pas excessivement les autres zones.',
     'Les niveaux d’entrée/sortie interviennent après l’affichage dans le pipeline ; ils ne sont pas équivalents à l’exposition linéaire.',
-    'Le module applique les corrections selon l’ordre documenté dans video/color.py ; les opérations ne sont pas commutatives.',
+    'Le module applique les corrections selon l’ordre documenté dans fm_video/color.py ; les opérations ne sont pas commutatives.',
     'Les LUT et la transformation d’affichage peuvent modifier l’effet perçu. Les points noirs/blancs du proxy ne décrivent pas le gamut ou les limites de capture.')
 
 

@@ -21,7 +21,7 @@ import numpy as np
 from PySide6.QtCore import QObject, Signal, Qt
 from PySide6.QtGui import QImage, QImageReader
 
-from video import color as vcolor
+from fm_video import color as vcolor
 
 THUMB_H = 48                    # hauteur de décodage par défaut (pixels)
 PLAY_GAP_S = 0.12               # repos entre deux miniatures pendant la lecture (fichier local)
@@ -144,7 +144,7 @@ class MoodboardProxyCache:
     def export(self, indices, layout, is_current=None):
         if not self.disk_enabled:
             return
-        from video.moodboard_export import export_board
+        from fm_video.moodboard_export import export_board
         export_board(self, indices, layout, is_current)
 
     def save_selection(self):
@@ -271,7 +271,7 @@ class ThumbnailLoader(QObject):
         self._edit_versions = {}
         self.height = THUMB_H
         try:
-            from video.vlc_engine import is_remote
+            from fm_video.vlc_engine import is_remote
             self._remote = bool(is_remote(path))
         except Exception:                                    # noqa: BLE001
             self._remote = False
@@ -363,7 +363,7 @@ class ThumbnailLoader(QObject):
             self._cond.notify()
 
     def _run(self):
-        from video import media as vmedia
+        from fm_video import media as vmedia
         try:
             source = vmedia.open_media(self.path, self.settings)
         except Exception:                                    # noqa: BLE001 - média illisible : pas de miniatures

@@ -21,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 
-from video import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
+from fm_video import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 
 # Nombre d'images que la lecture vers l'avant décode sans saut (au-delà : saut à l'image clé d'avant).
 FORWARD_DECODE_LIMIT = 150

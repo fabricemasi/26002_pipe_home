@@ -1729,7 +1729,7 @@ MARKDOWN_DEFAULTS: dict[str, Any] = {
 }
 DEFAULT_SETTINGS.update(MARKDOWN_DEFAULTS)
 
-# Module vidéo (paquet video/) : réglages GÉNÉRAUX, onglet « Module vidéo » des réglages. Source unique des défauts.
+# Module vidéo (paquet fm_video/) : réglages GÉNÉRAUX, onglet « Module vidéo » des réglages. Source unique des défauts.
 VIDEO_DEFAULTS: dict[str, Any] = {
     # Ouverture
     "video_open_videos": True, "video_open_sequences": True, "video_detect_sequences": True,

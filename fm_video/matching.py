@@ -102,7 +102,7 @@ def fit_distribution(source,reference):
 
 def export_cube(model,path,size=33,intensity=1.0,cancelled=lambda:False):
     """Écrit rouge le plus rapide ; valide l'interpolation via le lecteur existant."""
-    from video.color import Lut
+    from fm_video.color import Lut
     if size not in (17,33,65,129):
         raise ValueError('Résolutions prises en charge : 17, 33, 65, 129.')
     path = Path(path)

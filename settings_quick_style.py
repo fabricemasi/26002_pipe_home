@@ -72,7 +72,7 @@ class QuickStyleWindow(QDialog):
         self.setAttribute(Qt.WA_DeleteOnClose, True)
         settings = settings or load_settings()
         if name.startswith('Module vidéo'):
-            from video.help_ui import HelpController
+            from fm_video.help_ui import HelpController
             self._color_help = HelpController(self, settings)
         v2.seed_window_look(settings)
         self._dims_key = f"{NAME}/{name}#0"

@@ -364,11 +364,11 @@ class _MoodboardCanvas(QWidget):
         return self.pixmaps.get(index)
 
 
-from video import color as vcolor
-from video import media as vmedia
-from video.cache import FrameCache, FrameLoader
-from video.timeline import Timeline
-from video.viewer import InfoOverlay, create_viewer
+from fm_video import color as vcolor
+from fm_video import media as vmedia
+from fm_video.cache import FrameCache, FrameLoader
+from fm_video.timeline import Timeline
+from fm_video.viewer import InfoOverlay, create_viewer
 
 HOOKS = {
     "settings": lambda: {},
@@ -785,7 +785,7 @@ class VideoPane(QWidget):
         self._background_save_timer.setInterval(300)
         self._background_save_timer.timeout.connect(self._save_background)
         self._background_pending = {}
-        from video.help_ui import HelpController, annotate
+        from fm_video.help_ui import HelpController, annotate
         self._color_help = HelpController(self,self._settings)
         for widget in (self.background_select,self.background_slider,self.background_value):
             annotate(widget,'background')
@@ -908,7 +908,7 @@ class VideoPane(QWidget):
         self.timeline.rangeChanged.connect(lambda _a, _b: self._update_info())
         root.addWidget(self.timeline)
         self.overlay = InfoOverlay(self.viewer)
-        from video.scopes import ScopesPanel
+        from fm_video.scopes import ScopesPanel
         self.scopes = ScopesPanel(self.viewer)
         self._scope_worker = None
         self._scope_at = 0.0
@@ -929,7 +929,7 @@ class VideoPane(QWidget):
 
     def _fallback_cpu(self, message: str):
         """OpenGL indisponible : même module en affichage CPU (message dans les informations)."""
-        from video.viewer import CPUViewer
+        from fm_video.viewer import CPUViewer
         old = self.viewer
         layout = self.content_layout
         new = CPUViewer(self)
@@ -1085,7 +1085,7 @@ class VideoPane(QWidget):
     def _open_color_analysis(self, index):
         self.pause()
         if self._analysis is None:
-            from video.analysis import ColorAnalysis
+            from fm_video.analysis import ColorAnalysis
             self._analysis = ColorAnalysis(self.content)
             self._analysis.back.connect(self._close_color_analysis)
             self._analysis.settingsChanged.connect(self._analysis_setting)
@@ -1316,7 +1316,7 @@ class VideoPane(QWidget):
                                 self.mood_gap_slider.value())
         self._sync_moodboard_selection()
         if self._mood_thumbs is None:
-            from video.thumbs import ThumbnailLoader
+            from fm_video.thumbs import ThumbnailLoader
             self._mood_thumbs = ThumbnailLoader(source.path if source.kind == "video" else self.path,
                                                 self._settings, self, limit=40, max_height=4096,
                                                 exact_video=False, workers=1,
@@ -1384,7 +1384,7 @@ class VideoPane(QWidget):
         source = self.source
         if source is None:
             return
-        from video.moodboard_timing import timestamp
+        from fm_video.moodboard_timing import timestamp
         exact = source.kind!='video' or source.index_ready
         self.moodboard.frame_slider.setEnabled(source.kind=='video' and exact)
         self.moodboard.frame_slider.setToolTip('Ajuster cette image entre ses voisines' if exact else 'Indexation des timestamps réels en cours…')
@@ -1417,7 +1417,7 @@ class VideoPane(QWidget):
         if self._mood_edit_slot!=slot:
             self._mood_edit_slot = slot
             self._mood_edit_old = self._mood_selections.get(slot,slot)
-        from video.moodboard_timing import adjusted_frame
+        from fm_video.moodboard_timing import adjusted_frame
         frame = adjusted_frame(source,self._moodboard_paths,self._mood_selections,slot,self._mood_edit_old,amount)
         self._mood_adjust_pending = (slot,frame,final)
         if final:
@@ -1615,7 +1615,7 @@ class VideoPane(QWidget):
         self.buttons["scopes"].set_checked(visible)
         if visible:
             if self._scope_worker is None:
-                from video.scopes import ScopeWorker
+                from fm_video.scopes import ScopeWorker
                 self._scope_worker = ScopeWorker(self)
                 self._scope_worker.ready.connect(self.scopes.set_result)
             self.scopes.reposition()
@@ -1654,7 +1654,7 @@ class VideoPane(QWidget):
         frame = self._stable_frame()
         if self.source is None or frame is None or not frame.has_image:
             return
-        from video import snapshot as vsnap
+        from fm_video import snapshot as vsnap
         if self._snapshots is None:
             self._snapshots = vsnap.SnapshotSaver(self)
             self._snapshots.done.connect(self._snapshot_done)
@@ -1669,7 +1669,7 @@ class VideoPane(QWidget):
     def _snapshot_moodboard(self, region=None):
         if self.source is None:
             return
-        from video import snapshot as vsnap
+        from fm_video import snapshot as vsnap
         if self._snapshots is None:
             self._snapshots = vsnap.SnapshotSaver(self)
             self._snapshots.done.connect(self._snapshot_done)
@@ -2020,7 +2020,7 @@ class VideoPane(QWidget):
             self._reopen_grade_windows()
 
     def open_export_window(self):
-        from video.export_window import ExportWindow
+        from fm_video.export_window import ExportWindow
         window = self._windows.get("export")
         if window is not None:
             try:
@@ -2216,7 +2216,7 @@ class VideoPane(QWidget):
         """Miniatures de la timeline (Réglages > Module vidéo > Timeline) : lecteur en fond, propre à ce média."""
         if (not _setting(self._settings, "video_timeline_thumbs") and not self._moodboard_on) or source.frame_count <= 1:
             return
-        from video.thumbs import ThumbnailLoader
+        from fm_video.thumbs import ThumbnailLoader
         if source.width and source.height:
             self.timeline.thumb_aspect = source.width / source.height
         loader = ThumbnailLoader(source.path if source.kind == "video" else self.path, self._settings, self)
@@ -2252,14 +2252,14 @@ class VideoPane(QWidget):
         if source.kind != "video" or _setting(self._settings, "video_engine") == "pyav":
             return "pyav"
         try:
-            from video import vlc_engine
+            from fm_video import vlc_engine
             return "vlc" if vlc_engine.available() else "pyav"
         except Exception:                                    # noqa: BLE001 - python-vlc / VLC absents
             return "pyav"
 
     def _ensure_vlc(self):
         if self._vlc is None:
-            from video.vlc_engine import VlcPlayer
+            from fm_video.vlc_engine import VlcPlayer
             self._vlc = VlcPlayer(self)
             self._vlc.frameReady.connect(self._on_vlc_frame)
             self._vlc.ended.connect(self._on_vlc_ended)
@@ -2766,7 +2766,7 @@ class VideoPane(QWidget):
                 rows.append(("Canal", self._channel.upper()))
             if _setting(s, "video_diagnostics"):
                 if self._engine == "vlc" and self._vlc is not None:
-                    from video import vlc_engine
+                    from fm_video import vlc_engine
                     rows += [("LibVLC", vlc_engine.version()), ("Images de VLC", str(self._vlc.displayed))]
                 rows += [("Moteur d'affichage", getattr(self.viewer, "engine", "?")),
                          ("Cache", f"{self.cache.used_bytes / 2**20:.0f} / {self.cache.max_bytes / 2**20:.0f} Mo")]
@@ -2788,7 +2788,7 @@ class VideoPane(QWidget):
     def _access_text(self) -> str:
         if self.path is None:
             return ""
-        from video.vlc_engine import is_remote
+        from fm_video.vlc_engine import is_remote
         if is_remote(self.path):
             return f"réseau (cache {_setting(self._settings, 'video_cache_network_ms')} ms)"                 if self._engine == "vlc" else "réseau"
         return f"local (cache {_setting(self._settings, 'video_cache_local_ms')} ms)" if self._engine == "vlc"             else "local"

@@ -3,8 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 import numpy as np
-from video.matching import fit_pair,fit_distribution,export_cube
-from video.color import load_cube
+from fm_video.matching import fit_pair,fit_distribution,export_cube
+from fm_video.color import load_cube
 
 
 class MatchingTest(unittest.TestCase):

@@ -4,10 +4,10 @@ Demande de référence : document joint « PROMPT CODEX — PIPE FMZ », octobre
 
 ## Inspection de l'existant
 
-- `video/pane.py` orchestre lecture VLC/PyAV, timeline, moodboard et corrections.
-- `video/viewer.py` affiche via shader OpenGL ou repli CPU.
-- `video/color.py` contient déjà le traitement OCIO, les corrections primaires et les LUT.
-- `video/thumbs.py` possède les proxies persistants et un worker dédié au moodboard.
+- `fm_video/pane.py` orchestre lecture VLC/PyAV, timeline, moodboard et corrections.
+- `fm_video/viewer.py` affiche via shader OpenGL ou repli CPU.
+- `fm_video/color.py` contient déjà le traitement OCIO, les corrections primaires et les LUT.
+- `fm_video/thumbs.py` possède les proxies persistants et un worker dédié au moodboard.
 - `settings_store.py` et `settings_window_v2.py` restent le système unique des réglages.
 - Les captures de référence demandent une palette horizontale et une lecture par zones tonales.
 - Les trois références chatgpt.com/s ne sont pas accessibles par l'outil de consultation.
@@ -35,7 +35,7 @@ L'analyse porte sur les pixels du proxy d'affichage avec hypothèse sRGB SDR. El
 - Afficher les histogrammes calculés, intégrer scopes existants avec conventions et unités explicites.
 - Gestion ICC / métadonnées HDR, gamut et comparaison entre sources avec espaces déclarés.
 - Navigation temporelle par vignette, modification locale persistante, Undo/Redo et overlays de temps VFR.
-- Courbes éditables, roues et secondaires supplémentaires en réutilisant `video/color.py`.
+- Courbes éditables, roues et secondaires supplémentaires en réutilisant `fm_video/color.py`.
 - Moteurs de matching A/B/C/D, export LUT et évaluation numérique sur images indépendantes.
 - Aide Ctrl+Shift, glossaire et Settings détaillés correspondants.
 - Validation native DPI, lecture longue, réseau et benchmarks complets.
@@ -49,7 +49,7 @@ Ne pas présenter l'ensemble de ces fonctions comme terminé : cette étape est 
 - Ordre de palette par clarté ou proportion ; exclusions des noirs/blancs limitées à la palette.
 - Paramètres d'extraction exposés dans les Settings existants.
 - Échantillonnage réparti sur toute l'image et sans filtrage qui invente des teintes de frontière.
-- Waveform et vectorscope réutilisent `video/scopes.py`, activables à la demande seulement ; unités Y′ encodé et Cb/Cr précisées. Régions transparentes exclues des scopes spatiaux.
+- Waveform et vectorscope réutilisent `fm_video/scopes.py`, activables à la demande seulement ; unités Y′ encodé et Cb/Cr précisées. Régions transparentes exclues des scopes spatiaux.
 - Annulation coopérative dans le clustering, debounce 100 ms, arrêt au retour/changement de média.
 - Correction du hook de persistance manquant : valeurs vidéo écrites dans le fichier et le preset, avec synchronisation de la fenêtre des réglages.
 - La largeur d'affichage respecte aussi la largeur naturelle du média lorsque les proxies sont agrandis.
@@ -61,7 +61,7 @@ Validation deuxième étape : 7 tests d'analyse passent ; suite vidéo : 8 réus
 ## Troisième étape — matching et export LUT SDR
 
 - Accessible par « Matching / LUT… » dans Dominante couleur.
-- Moteur indépendant `video/matching.py`, UI asynchrone `video/matching_ui.py`.
+- Moteur indépendant `fm_video/matching.py`, UI asynchrone `fm_video/matching_ui.py`.
 - Méthode scènes différentes : transport affine des moyennes/covariances RGB encodées sRGB, avec régularisation spectrale et gains bornés ; il s'agit d'une estimation statistique globale.
 - Méthode paire alignée : régression polynomiale degré 2 régularisée vers l'identité. Dimensions identiques exigées, correspondances spatiales sous responsabilité de l'utilisateur. Un pixel sur cinq réservé à l'évaluation sur cette paire.
 - Source et référence externes sélectionnables ; lecture en fond, cache des images sélectionnées, conversion ICC vers sRGB lorsque Qt possède un profil valide. Sans profil : hypothèse sRGB explicitée. Images transparentes rejetées pour ne pas fabriquer des correspondances.
@@ -77,8 +77,8 @@ Restent notamment les modèles de look à référence unique/multiples, le recal
 
 ## Quatrième étape — aide pédagogique
 
-- Base centrale `video/help_content.py` : glossaire de plus de 35 notions et explications à huit rubriques pour palette, histogrammes, ROI/pipette, scopes, matching, LUT, fond, exposition, saturation et corrections/OCIO.
-- `video/help_ui.py` : Ctrl+Shift, délai, popup défilable et positionnement borné à l'écran (cadre natif compris). F1 ouvre l'explication du contrôle ayant le focus.
+- Base centrale `fm_video/help_content.py` : glossaire de plus de 35 notions et explications à huit rubriques pour palette, histogrammes, ROI/pipette, scopes, matching, LUT, fond, exposition, saturation et corrections/OCIO.
+- `fm_video/help_ui.py` : Ctrl+Shift, délai, popup défilable et positionnement borné à l'écran (cadre natif compris). F1 ouvre l'explication du contrôle ayant le focus.
 - Le geste fonctionne avant ou après le survol ; relâchement, masquage du module ou fenêtre inactive ferment l'aide. Le filtre ne consomme pas Ctrl/Shift et son timer est arrêté hors du geste.
 - Glossaire avec recherche sans accents, accès par bouton depuis analyse et matching. Références documentaires W3C et OpenColorIO accessibles dans le glossaire.
 - Annotations partagées sur les contrôles d'analyse/matching, fonds du module, contrôles vidéo pertinents des Settings et fenêtres de corrections. Aucun parcours des 32 000 widgets pendant un survol.

@@ -11,9 +11,9 @@ from unittest.mock import patch
 import numpy as np
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QUndoStack
-from video.moodboard_timing import adjusted_frame,timestamp
-from video.thumbs import ThumbnailLoader,MoodboardProxyCache
-from video.pane import _MoodFrameCommand
+from fm_video.moodboard_timing import adjusted_frame,timestamp
+from fm_video.thumbs import ThumbnailLoader,MoodboardProxyCache
+from fm_video.pane import _MoodFrameCommand
 
 APP = QApplication.instance() or QApplication([])
 
@@ -52,8 +52,8 @@ class MoodboardTimingTest(unittest.TestCase):
             path.write_bytes(b'video test')
             source = SimpleNamespace(kind='video',width=160,height=90,frame_count=10,close=lambda:None,
                 thumbnail=lambda index,height:np.full((90,160,3),index*20,np.uint8))
-            with patch('video.media.open_media',return_value=source), \
-                 patch('video.thumbs.video_thumbnail',side_effect=lambda source,index,height:source.thumbnail(index,height)):
+            with patch('fm_video.media.open_media',return_value=source), \
+                 patch('fm_video.thumbs.video_thumbnail',side_effect=lambda source,index,height:source.thumbnail(index,height)):
                 loader = ThumbnailLoader(path,dict(video_moodboard_proxy_width=128),moodboard_proxies=True)
                 images,edits = {},[]
                 loader.ready.connect(lambda index,image:images.update({index:image}))
@@ -86,7 +86,7 @@ class MoodboardTimingTest(unittest.TestCase):
 
     def test_real_vfr_edit_decodes_the_selected_frame(self):
         from test_video_module import HAS_AV,FFMPEG,make_video,_gray
-        from video.media import open_media
+        from fm_video.media import open_media
         if not HAS_AV or not FFMPEG:
             self.skipTest('PyAV et FFmpeg requis')
         with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1]) as folder:

@@ -15,7 +15,7 @@ import numpy as np
 from PySide6.QtCore import QObject, QRect, Signal
 from PySide6.QtGui import QImage
 
-from video import color as vcolor
+from fm_video import color as vcolor
 
 ZONE_PREFIX = "z_crop_"
 BAND = 128                      # lignes calculées d'un coup (voir render)

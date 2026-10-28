@@ -15,7 +15,7 @@ from collections import OrderedDict
 
 from PySide6.QtCore import QObject, Signal
 
-from video.media import Frame, MediaError, MediaSource
+from fm_video.media import Frame, MediaError, MediaSource
 
 
 class FrameCache:

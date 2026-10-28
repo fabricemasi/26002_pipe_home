@@ -15,7 +15,7 @@ from PySide6.QtCore import QObject, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
-from video import color as vcolor
+from fm_video import color as vcolor
 
 MAX_W = 360
 SIZE = 192                      # côté des images de scope (pixels logiques)

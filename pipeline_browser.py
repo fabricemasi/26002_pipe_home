@@ -781,7 +781,7 @@ class TitleBar(QWidget):
         return group
 
     def video_group(self) -> "_ViewerGroup":
-        """Cadre « Vidéo » (module video/) : memes habillage et place que « Visionneuse »."""
+        """Cadre « Vidéo » (module fm_video/) : memes habillage et place que « Visionneuse »."""
         group = getattr(self, "_video_group", None)
         if group is None:
             group = self._video_group = _ViewerGroup(self, "Vidéo")
@@ -3365,7 +3365,7 @@ class PipelineBrowser(QMainWindow):
         self.btn_text_editor = IconButton("text_editor", role_color("buttons", "#c4cacf"), C["text"])
         # Board (paquet board/, facon Miro) : grise tant que la selection n'est pas un fichier .mro.
         self.btn_board = IconButton("board", role_color("buttons", "#c4cacf"), C["text"])
-        # Module video (paquet video/) : grise tant que la selection n'est pas une video ou une image.
+        # Module video (paquet fm_video/) : grise tant que la selection n'est pas une video ou une image.
         self.btn_video = IconButton("video", role_color("buttons", "#c4cacf"), C["text"])
         self.btn_video.setToolTip("Module vidéo (vidéo, séquence d'images EXR / TIFF / PNG…)")
         self.btn_video.clicked.connect(self._toggle_video)
@@ -8973,7 +8973,7 @@ class PipelineBrowser(QMainWindow):
         self._set_button_usable(self.btn_board, on_board or (not viewer_open and is_file and (
             board.is_board_file(path) or board.is_cad_drawing(path))))
         self.btn_board.set_alert(self._mode_on_color() if on_board else None)
-        import video
+        import fm_video as video
         on_video = getattr(self, "_video", None) is not None
         self._set_button_usable(self.btn_video, on_video or (not viewer_open and is_file
                                                              and video.is_media_file(path)))
@@ -9244,19 +9244,19 @@ class PipelineBrowser(QMainWindow):
         group.raise_()
         self.titlebar.place_viewer_group()
 
-    # -- Module video (paquet video/) --
+    # -- Module video (paquet fm_video/) --
 
     def _preload_video(self):
         """Bibliotheques lourdes du module video (PyOpenGL ~1,2 s, PyAV, OpenImageIO, OpenColorIO + configuration
         ACES integree) importees dans un fil de fond : la 1re ouverture du module ne les attend plus."""
         import threading
-        import video
+        import fm_video as video
         threading.Thread(target=video.preload, name="video-preload", daemon=True).start()
 
     def _video_claims(self, path) -> bool:
         """Le double-clic va-t-il au module video ? Videos (reglage « Double-clic sur une video ») ; images EXR /
         TIFF / DPX numerotees d'une sequence (reglage « … sa sequence »)."""
-        import video
+        import fm_video as video
         settings = ui_state.APPLIED_SETTINGS or {}
         path = Path(path)
         if not path.is_file():
@@ -9264,12 +9264,12 @@ class PipelineBrowser(QMainWindow):
         if video.is_video_file(path):
             return bool(settings.get("video_open_videos", True))
         if path.suffix.lower() in video.PRO_IMAGE_EXTENSIONS and settings.get("video_open_sequences", True):
-            from video.media import find_sequence
+            from fm_video.media import find_sequence
             return find_sequence(path) is not None
         return False
 
     def _install_video_hooks(self):
-        import video.pane as video_pane
+        import fm_video.pane as video_pane
         from app_style import resolve_color_ref
         from browser_core import _resolve_font_family
         video_pane.HOOKS.update({
@@ -9309,7 +9309,7 @@ class PipelineBrowser(QMainWindow):
         if self._video is not None:
             self._close_video()
             return
-        import video
+        import fm_video as video
         _column, path = self._selected_path()
         if path is not None and path.is_file() and video.is_media_file(path):
             self._open_video(path)
@@ -9325,7 +9325,7 @@ class PipelineBrowser(QMainWindow):
             return False
         self._install_video_hooks()
         if self._video is None:
-            from video.pane import VideoPane
+            from fm_video.pane import VideoPane
             pane = VideoPane(self.scroll.viewport(), ui_state.APPLIED_SETTINGS or {})
             pane.closeRequested.connect(self._close_video)
             pane.stateChanged.connect(self._layout_video_buttons)

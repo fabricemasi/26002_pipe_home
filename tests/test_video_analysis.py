@@ -1,7 +1,7 @@
 import _isolate
 import unittest
 import numpy as np
-from video.analysis import analyze_rgb
+from fm_video.analysis import analyze_rgb
 
 
 class AnalysisTest(unittest.TestCase):
@@ -46,7 +46,7 @@ class AnalysisWidgetTest(unittest.TestCase):
     def test_roi_and_transparency_are_respected_by_worker(self):
         from PySide6.QtCore import QRect
         from PySide6.QtGui import QImage, QColor
-        from video.analysis import _Task,_Signals
+        from fm_video.analysis import _Task,_Signals
         image = QImage(20,10,QImage.Format_RGBA8888)
         image.fill(QColor(0,0,0,0))
         for y in range(10):
@@ -62,7 +62,7 @@ class AnalysisWidgetTest(unittest.TestCase):
         self.assertEqual(results[0]['samples'],0)
 
     def test_latest_request_and_return_cancel_pending_analysis(self):
-        from video.analysis import ColorAnalysis
+        from fm_video.analysis import ColorAnalysis
         from PySide6.QtGui import QImage
         widget = ColorAnalysis()
         image = QImage(20,10,QImage.Format_RGB888)

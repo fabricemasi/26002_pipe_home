@@ -7,7 +7,7 @@ from PySide6.QtCore import QObject,Signal,QRunnable,QThreadPool,QTimer,Qt
 from PySide6.QtGui import QImage,QImageReader,QColorSpace
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QPushButton,QLabel,QComboBox,
                                QSpinBox,QCheckBox,QFileDialog)
-from video.matching import Match,fit_pair,fit_distribution,export_cube
+from fm_video.matching import Match,fit_pair,fit_distribution,export_cube
 
 
 def _rgb(image):
@@ -166,7 +166,7 @@ class MatchingDialog(QDialog):
         root.addWidget(self.paths)
         root.addWidget(QLabel('sRGB SDR encodé · ICC converti si présent, sinon hypothèse sRGB. '
                               'La paire exige le même cadrage et des pixels correspondants.',self))
-        from video.analysis import _Image
+        from fm_video.analysis import _Image
         self.preview = _Image(self)
         self.preview.image = image.copy()
         root.addWidget(self.preview,1)
@@ -194,7 +194,7 @@ class MatchingDialog(QDialog):
         self.status = QLabel('Choisir une référence pour calculer le matching.',self)
         self.status.setWordWrap(True)
         root.addWidget(self.status)
-        from video.help_ui import annotate
+        from fm_video.help_ui import annotate
         for widget,key in ((self.method,'matching'),(self.intensity,'matching'),(self.preview,'matching'),
                            (self.status,'matching'),(self.size,'lut'),(self.export,'lut'),(restore,'lut'),
                            (self.memory,'lut'),(self.before,'matching')):

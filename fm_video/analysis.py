@@ -107,7 +107,7 @@ class _Task(QRunnable):
             result = analyze_rgb(pixels, self.count, self.options.get('exclude_black',False),
                                  self.options.get('exclude_white',False),self.cancel.is_set)
             if result is not None and self.options.get('scopes') and not self.cancel.is_set():
-                from video.scopes import compute, _gray_image
+                from fm_video.scopes import compute, _gray_image
                 # Ces scopes décrivent des valeurs ENCODÉES sRGB SDR : Y' est
                 # distinct du Y linéaire des statistiques de luminance.
                 if (rgba[:,:,3] == 255).all():
@@ -282,7 +282,7 @@ class ColorAnalysis(QWidget):
         matching = QPushButton('Matching / LUT…',self)
         matching.clicked.connect(self._open_matching)
         row.addWidget(matching)
-        from video.help_ui import HelpController,annotate
+        from fm_video.help_ui import HelpController,annotate
         ancestor = self.parentWidget()
         self.help = None
         while ancestor is not None and self.help is None:
@@ -335,7 +335,7 @@ class ColorAnalysis(QWidget):
         histogram_controls.addWidget(log)
         layout.addLayout(histogram_controls)
         layout.addWidget(self.histogram)
-        from video.scopes import ScopesPanel, SIZE
+        from fm_video.scopes import ScopesPanel, SIZE
         self.scopes = ScopesPanel(self)
         self.scopes.setMinimumSize(SIZE*3+40,SIZE+28)
         self.scopes.setMaximumHeight(SIZE+28)
@@ -486,7 +486,7 @@ class ColorAnalysis(QWidget):
     def _open_matching(self):
         if self.image.image.isNull():
             return
-        from video.matching_ui import MatchingDialog
+        from fm_video.matching_ui import MatchingDialog
         dialog = getattr(self,'matching_dialog',None)
         if dialog is not None and dialog.isVisible():
             dialog.raise_()
