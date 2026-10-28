@@ -30,10 +30,11 @@ from __future__ import annotations
 import math
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt
-from PySide6.QtGui import QColor, QCursor, QFont, QFontMetricsF, QImage, QPainter, QPen, QPixmap, QPolygonF, QRegion
+from PySide6.QtGui import QColor, QCursor, QFont, QFontMetricsF, QImage, QPainter, QPen, QPixmap, QPolygonF, QRegion, QTransform
 from PySide6.QtWidgets import QWidget
 
 from . import cad_geometry as geo
+from .cad_items import paint_grips
 
 MARKER_STYLE = {"end": "square", "mid": "triangle", "cen": "circle", "gcen": "circle_x", "qua": "diamond",
                 "int": "x", "extint": "x_square", "appint": "x_square", "ext": "dots", "per": "perp",
@@ -44,12 +45,13 @@ BADGE_ROOM = 22             # place (pixels logiques, de chaque cote du centre) 
 _CURSORS: dict = {}
 
 
-def crosshair_rects(cx: int, cy: int, arm: int, half: int) -> list:
+def crosshair_rects(cx: int, cy: int, arm: int, half: int, box: bool = True) -> list:
     """Le reticule en rectangles de PIXELS PHYSIQUES entiers (x, y, largeur, hauteur), centre sur le pixel (cx, cy) :
     quatre bras d'UN pixel de large (`arm` pixels depuis le centre) et la boite de selection de demi-cote `half`
     (contour d'un pixel). Avec la boite, les bras PARTENT DE SON BORD (dedans vide, comme AutoCAD : demande de
     l'utilisateur) ; sans elle (invite de point, fenetre de selection), une croix pleine. Le meme dessin pour le
-    curseur du systeme et pour le reticule peint par l'overlay."""
+    curseur du systeme et pour le reticule peint par l'overlay. `box` False : les bras s'arretent au bord de la boite
+    sans la dessiner (reticule aimante sur une poignee : son contour tient lieu de boite)."""
     rects = []
     if arm > 0 and half > 0:
         if arm > half:
@@ -59,7 +61,7 @@ def crosshair_rects(cx: int, cy: int, arm: int, half: int) -> list:
     elif arm > 0:
         rects.append((cx - arm, cy, 2 * arm + 1, 1))
         rects.append((cx, cy - arm, 1, 2 * arm + 1))
-    if half > 0:
+    if half > 0 and box:
         side = 2 * half + 1
         rects += [(cx - half, cy - half, side, 1), (cx - half, cy + half, side, 1),
                   (cx - half, cy - half + 1, 1, side - 2), (cx + half, cy - half + 1, 1, side - 2)]
@@ -94,7 +96,7 @@ def native_cursor(reach: int, pickbox: int, color: str, ratio: float, badge: str
     cursor = _CURSORS.get(key)
     if cursor is not None:
         return cursor
-    room = max(reach, BADGE_ROOM) if badge else reach
+    room = max(reach, pickbox, BADGE_ROOM if badge else 0)     # reach 0 : le carre de selection seul
     size = 2 * room + 1
     device = max(1, round(size * ratio))
     centre = round(room * ratio)
@@ -557,26 +559,30 @@ class CadOverlay(QWidget):
         if snap is not None:
             c = to_view(snap[0])
             arm = min(max(snap[1], 6.0), look["marker_px"] * 1.6)
-            add("grid_snap", QRectF(c.x() - arm - 2, c.y() - arm - 2, 2 * arm + 4, 2 * arm + 4), c, look["marker"],
+            pad = max(arm, look["marker_px"] / 2.0) + 4         # trait jusqu'a 3 pixels, cale au pixel
+            add("grid_snap", QRectF(c.x() - pad, c.y() - pad, 2 * pad, 2 * pad), c, look["marker"],
                 look["marker_px"] / 2.0, arm)
         cursor = state.get("cursor")
         if cursor is not None and state.get("paint_cursor"):
             half = look["pickbox_px"] if state.get("pickbox") else 0
+            gap = state.get("grip_gap", 0) if not half else 0      # aimante sur une poignee : bras arretes a son bord
             badge = state.get("memory")
-            if look["crosshair"] and look.get("crosshair_full"):
+            box_only = state.get("box_only")                # commande de modification : le carre seul
+            if look["crosshair"] and look.get("crosshair_full") and not box_only:
                 # Reticule jusqu'aux bords de la vue : deux traits (zones minces), la boite de selection a part.
                 w, h = float(self.width()), float(self.height())
                 pad = max(2, half + 2)      # les traits englobent la boite : une seule zone par trait a repeindre
-                add("cursor_h", QRectF(0, cursor.y() - pad, w, 2 * pad), cursor, look["cursor"], w, half)
-                add("cursor_v", QRectF(cursor.x() - pad, 0, 2 * pad, h), cursor, look["cursor"], h, half)
+                stop = half or gap / (self.devicePixelRatioF() or 1.0)     # `gap` : pixels physiques
+                add("cursor_h", QRectF(0, cursor.y() - pad, w, 2 * pad), cursor, look["cursor"], w, stop)
+                add("cursor_v", QRectF(cursor.x() - pad, 0, 2 * pad, h), cursor, look["cursor"], h, stop)
                 if half:
                     add("cursor", QRectF(cursor.x() - half - 2, cursor.y() - half - 2, 2 * half + 4, 2 * half + 4),
                         cursor, look["cursor"], 0, half)
             else:
-                reach = look["crosshair_px"] if look["crosshair"] else 0
+                reach = look["crosshair_px"] if look["crosshair"] and not box_only else 0
                 span = max(reach, half) + 2
                 add("cursor", QRectF(cursor.x() - span, cursor.y() - span, 2 * span, 2 * span), cursor,
-                    look["cursor"], reach, half)
+                    look["cursor"], reach, half, gap)
             if badge:
                 add("badge", QRectF(cursor.x() - 2, cursor.y() - 2, BADGE_ROOM + 4, BADGE_ROOM + 4), cursor,
                     look["cursor"], badge)
@@ -735,10 +741,7 @@ class CadOverlay(QWidget):
         painter.drawPolyline(QPolygonF(points))
 
     def _paint_grip(self, painter, look, c, color, size):
-        painter.setPen(QPen(QColor("#ffffff"), 1.0))
-        painter.setBrush(QColor(color))
-        painter.drawRect(QRectF(c.x() - size / 2, c.y() - size / 2, size, size))
-        painter.setBrush(Qt.NoBrush)
+        paint_grips(painter, (c,), size, color, look.get("grip_border", "#ffffff"))
 
     def _paint_pixels(self, painter, rects, color):
         """Rectangles de pixels PHYSIQUES entiers : traits d'UN pixel, nets (jamais a cheval sur deux rangees)."""
@@ -754,9 +757,13 @@ class CadOverlay(QWidget):
         ratio = self.devicePixelRatioF() or 1.0
         return math.floor(c.x() * ratio), math.floor(c.y() * ratio), ratio
 
-    def _paint_cursor(self, painter, look, c, color, reach, half):
+    def _paint_cursor(self, painter, look, c, color, reach, half, gap=0):
         cx, cy, ratio = self._centre_pixel(c)
-        self._paint_pixels(painter, crosshair_rects(cx, cy, round(reach * ratio), round(half * ratio)), color)
+        if gap and not half:
+            rects = crosshair_rects(cx, cy, round(reach * ratio), gap, box=False)     # `gap` : pixels physiques
+        else:
+            rects = crosshair_rects(cx, cy, round(reach * ratio), round(half * ratio))
+        self._paint_pixels(painter, rects, color)
 
     def _paint_cursor_h(self, painter, look, c, color, width, half=0):
         cx, cy, ratio = self._centre_pixel(c)
@@ -775,29 +782,54 @@ class CadOverlay(QWidget):
     def _paint_badge(self, painter, look, c, color, source):
         paint_memory_badge(painter, c.x() + 0.5, c.y() + 0.5, source, color)
 
-    def _paint_grid_snap(self, painter, look, c, color, s, arm):
-        """Accrochage a la grille (RESOL) : losange sur le croisement vise + amorces des deux lignes de grille."""
-        color = QColor(color)
-        pen = QPen(color, 2.0)
+    @staticmethod
+    def _marker_pen(painter, look, c: QPointF, color, s: float) -> tuple:
+        """Peintre passe en pixels PHYSIQUES pour un marqueur d'epaisseur EXACTE (Reglages : 1, 2 ou 3 pixels) : centre
+        cale pour que chaque trait couvre des pixels entiers (epaisseur impaire : centre d'un pixel ; paire : son
+        coin), demi-cote entier — le meme trait sur tout le pourtour (signale : « pas constant sur tout son
+        pourtour », le centre tombait n'importe ou entre deux pixels) ; courbes et diagonales anticrenelees. Rend
+        (x, y, demi-cote) dans ce repere ; l'appelant fait `painter.save()` / `restore()`."""
+        ratio = painter.device().devicePixelRatioF() or 1.0
+        q = painter.transform().map(c)
+        width = max(1, round(float(look.get("marker_width", 2)) * ratio))
+        shift = 0.5 if width % 2 else 0.0
+        x = math.floor(q.x() * ratio) + shift
+        y = math.floor(q.y() * ratio) + shift
+        painter.setTransform(QTransform.fromScale(1.0 / ratio, 1.0 / ratio))
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        pen = QPen(QColor(color), width)
         pen.setJoinStyle(Qt.MiterJoin)
+        pen.setCapStyle(Qt.SquareCap)
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
-        x, y = c.x(), c.y()
+        return x, y, max(1.0, float(round(s * ratio)))
+
+    def _paint_grid_snap(self, painter, look, c, color, s, arm):
+        """Accrochage a la grille (RESOL) : losange sur le croisement vise + amorces des deux lignes de grille."""
+        ratio = painter.device().devicePixelRatioF() or 1.0
+        painter.save()
+        x, y, s = self._marker_pen(painter, look, c, color, s)
+        arm = round(arm * ratio)
         painter.drawPolygon(QPolygonF([QPointF(x, y - s), QPointF(x + s, y), QPointF(x, y + s), QPointF(x - s, y)]))
         faint = QColor(color)
         faint.setAlphaF(0.55)
-        painter.setPen(QPen(faint, 1.0))
+        painter.setPen(QPen(faint, max(1, round(ratio))))
         for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
             painter.drawLine(QPointF(x + dx * s, y + dy * s), QPointF(x + dx * arm, y + dy * arm))
+        painter.restore()
 
     def _paint_marker(self, painter, look, mode, c: QPointF, color, s):
+        painter.save()
+        try:
+            self._draw_marker(painter, look, mode, c, color, s)
+        finally:
+            painter.restore()
+
+    def _draw_marker(self, painter, look, mode, c: QPointF, color, s):
+        x, y, s = self._marker_pen(painter, look, c, color, s)
+        c = QPointF(x, y)
         color = QColor(color)
-        pen = QPen(color, 2.0)
-        pen.setJoinStyle(Qt.MiterJoin)
-        painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
         style = MARKER_STYLE.get(mode, "square")
-        x, y = c.x(), c.y()
         if style == "square":
             painter.drawRect(QRectF(x - s, y - s, 2 * s, 2 * s))
         elif style == "triangle":
@@ -817,8 +849,9 @@ class CadOverlay(QWidget):
                 painter.drawRect(QRectF(x - s, y - s, 2 * s, 2 * s))
         elif style == "dots":
             painter.setBrush(color)
+            dot = 1.4 * (painter.device().devicePixelRatioF() or 1.0)
             for dx in (-s, 0.0, s):
-                painter.drawEllipse(QPointF(x + dx, y), 1.4, 1.4)
+                painter.drawEllipse(QPointF(x + dx, y), dot, dot)
             painter.setBrush(Qt.NoBrush)
         elif style == "perp":
             painter.drawLine(QPointF(x - s, y + s), QPointF(x + s, y + s))

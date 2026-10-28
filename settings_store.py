@@ -763,6 +763,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "board_cad_osnap_node": False, "board_cad_osnap_ins": False,
     "board_cad_aperture": 10,
     "board_cad_markers": True, "board_cad_marker_size": 12, "board_cad_marker_color": "#ff7a00",
+    "board_cad_marker_thickness": 2,
     "board_cad_tooltips": True, "board_cad_magnet": True,
     "board_cad_ortho": False, "board_cad_polar": False, "board_cad_polar_increment": "45",
     "board_cad_polar_custom": 45,
@@ -795,7 +796,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "board_cad_aa_filter": 75,                     # largeur du filtre de reduction du suréchantillonnage (% de pixel, rayon)
     "board_cad_aa_samples": "8",                   # suréchantillonnage du rendu GPU : 1 (aucun), 2, 4, 8, 16, 32, 64
     "board_cad_antialiasing": True, "board_cad_linear_blend": True, "board_cad_crisp_lines": True, "board_cad_dense_px": 4,
-    "board_cad_grip_color": "#2f6bff", "board_cad_track_color": "#18a058", "board_cad_ghost_color": "#5f6b78",
+    "board_cad_grip_color": "#2f6bff", "board_cad_grip_border_color": "#ffffff", "board_cad_track_color": "#18a058", "board_cad_ghost_color": "#5f6b78",
     # Cadres de selection du CAD (Reglages > Module CAD > Selection) : fenetre (gauche -> droite) et capture
     # (droite -> gauche) — fond, bordure par cote, arrondis, type de ligne (solid | dash | dot) et son echelle (%)
     **{f"board_cad_{frame}_{key}": value for frame, bg, edge, line in (

@@ -35,7 +35,7 @@ import math
 
 import bisect
 
-from PySide6.QtCore import QLineF, QPointF, QRectF, Qt, QTimer
+from PySide6.QtCore import QLineF, QPointF, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QGuiApplication, QImage, QPainter, QPainterPath, QPainterPathStroker, QPen, QTransform
 from PySide6.QtWidgets import QGraphicsItem, QStyle
 
@@ -45,8 +45,39 @@ from .items import ITEM_CLASSES, BoardItem
 
 GRIP_PX = 8                 # poignees (grips), pixels d'ecran ; reglable (board_cad_grip_size)
 GRIP_COLOR = "#2f6bff"      # grip froid (bleu, comme AutoCAD) ; reglable (board_cad_grip_color)
+GRIP_BORDER = "#ffffff"     # contour des poignees ; reglable (board_cad_grip_border_color)
 DENSE_PX = 4.0              # motif plus serre que ca a l'ecran : trait continu ; reglable (board_cad_dense_px)
 MAX_DASHES = 4000
+
+
+def paint_grips(painter, points, size: float, fill, border):
+    """Poignees : carres PARFAITS de `size` pixels d'ecran, poses sur les pixels PHYSIQUES (sans anticrenelage : ni
+    bord flou ni cote plus epais qu'un autre), contour d'UN pixel PLEINEMENT OPAQUE de la couleur `border` sur tout le
+    pourtour (demande de l'utilisateur), dedans de la couleur `fill` (sa transparence ne touche pas le contour : les
+    deux ne se recouvrent pas). Cote IMPAIR (taille paire : un pixel de plus) : centre EXACTEMENT sur le pixel du point,
+    comme le reticule (une taille paire laissait 2 pixels de contour d'un cote, 1 de l'autre). `points` : dans le
+    repere courant du peintre (element, vue ou zone GPU)."""
+    ratio = painter.device().devicePixelRatioF() or 1.0
+    world = painter.transform()
+    side = max(3, round(size * ratio)) | 1
+    edge = max(1, round(ratio))
+    ink = QColor(border)
+    ink.setAlpha(255)
+    inside = QColor(fill)
+    painter.save()
+    painter.setTransform(QTransform.fromScale(1.0 / ratio, 1.0 / ratio))
+    painter.setRenderHint(QPainter.Antialiasing, False)
+    for point in points:
+        q = world.map(QPointF(point))
+        x0 = math.floor(q.x() * ratio) - side // 2
+        y0 = math.floor(q.y() * ratio) - side // 2
+        painter.fillRect(QRect(x0, y0, side, edge), ink)
+        painter.fillRect(QRect(x0, y0 + side - edge, side, edge), ink)
+        painter.fillRect(QRect(x0, y0 + edge, edge, side - 2 * edge), ink)
+        painter.fillRect(QRect(x0 + side - edge, y0 + edge, edge, side - 2 * edge), ink)
+        if side > 2 * edge:
+            painter.fillRect(QRect(x0 + edge, y0 + edge, side - 2 * edge, side - 2 * edge), inside)
+    painter.restore()
 
 
 class PixelLines:
@@ -545,7 +576,6 @@ class CadLineItem(BoardItem):
     def paint_selection(self, painter):
         if not self.isSelected():
             return
-        zoom = self._zoom()
         accent = QColor(getattr(self.scene(), "accent", GRIP_COLOR))
         a, b = self._local_points()
         halo = QColor(accent)
@@ -556,11 +586,12 @@ class CadLineItem(BoardItem):
         painter.setBrush(Qt.NoBrush)
         painter.drawLine(a, b)
         if getattr(self.scene(), "cad_show_grips", True) and not self.locked():
-            size = self._grip_px() / zoom
-            painter.setPen(QPen(QColor("#ffffff"), 1.0 / zoom))
-            painter.setBrush(QColor(getattr(self.scene(), "cad_grip_color", GRIP_COLOR)))
-            for point in (a, QPointF((a.x() + b.x()) / 2, (a.y() + b.y()) / 2), b):
-                painter.drawRect(QRectF(point.x() - size / 2, point.y() - size / 2, size, size))
+            self._paint_grips(painter, (a, QPointF((a.x() + b.x()) / 2, (a.y() + b.y()) / 2), b))
+
+    def _paint_grips(self, painter, points):
+        scene = self.scene()
+        paint_grips(painter, points, self._grip_px(), getattr(scene, "cad_grip_color", GRIP_COLOR),
+                    getattr(scene, "cad_grip_border", GRIP_BORDER))
 
 
 class CadCurveItem(CadLineItem):
@@ -703,7 +734,6 @@ class CadCurveItem(CadLineItem):
     def paint_selection(self, painter):
         if not self.isSelected():
             return
-        zoom = self._zoom()
         accent = QColor(getattr(self.scene(), "accent", GRIP_COLOR))
         halo = QColor(accent)
         halo.setAlpha(110)
@@ -713,11 +743,7 @@ class CadCurveItem(CadLineItem):
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(self._center)
         if getattr(self.scene(), "cad_show_grips", True) and not self.locked():
-            size = self._grip_px() / zoom
-            painter.setPen(QPen(QColor("#ffffff"), 1.0 / zoom))
-            painter.setBrush(QColor(getattr(self.scene(), "cad_grip_color", GRIP_COLOR)))
-            for _name, point in cad_shapes.grips(self.kind, self.data):
-                painter.drawRect(QRectF(point[0] - size / 2, -point[1] - size / 2, size, size))
+            self._paint_grips(painter, [QPointF(p[0], -p[1]) for _name, p in cad_shapes.grips(self.kind, self.data)])
 
     def snap_primitives(self):
         return self.prims()
@@ -1009,7 +1035,6 @@ class CadTextItem(CadCurveItem):
     def paint_selection(self, painter):
         if not self.isSelected():
             return
-        zoom = self._zoom()
         accent = QColor(getattr(self.scene(), "accent", GRIP_COLOR))
         halo = QColor(accent)
         halo.setAlpha(150)
@@ -1019,11 +1044,7 @@ class CadTextItem(CadCurveItem):
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(self._box_path())
         if getattr(self.scene(), "cad_show_grips", True) and not self.locked():
-            size = self._grip_px() / zoom
-            painter.setPen(QPen(QColor("#ffffff"), 1.0 / zoom))
-            painter.setBrush(QColor(getattr(self.scene(), "cad_grip_color", GRIP_COLOR)))
-            for _name, point in cad_shapes.grips(self.kind, self.data):
-                painter.drawRect(QRectF(point[0] - size / 2, -point[1] - size / 2, size, size))
+            self._paint_grips(painter, [QPointF(p[0], -p[1]) for _name, p in cad_shapes.grips(self.kind, self.data)])
 
 
 class _HatchFill(QGraphicsItem):
@@ -1176,7 +1197,6 @@ class CadHatchItem(CadCurveItem):
     def paint_selection(self, painter):
         if not self.isSelected():
             return
-        zoom = self._zoom()
         accent = QColor(getattr(self.scene(), "accent", GRIP_COLOR))
         halo = QColor(accent)
         halo.setAlpha(150)
@@ -1186,11 +1206,7 @@ class CadHatchItem(CadCurveItem):
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(self._fill.area_path())
         if getattr(self.scene(), "cad_show_grips", True) and not self.locked():
-            size = self._grip_px() / zoom
-            painter.setPen(QPen(QColor("#ffffff"), 1.0 / zoom))
-            painter.setBrush(QColor(getattr(self.scene(), "cad_grip_color", GRIP_COLOR)))
-            for _name, point in cad_shapes.grips(self.kind, self.data):
-                painter.drawRect(QRectF(point[0] - size / 2, -point[1] - size / 2, size, size))
+            self._paint_grips(painter, [QPointF(p[0], -p[1]) for _name, p in cad_shapes.grips(self.kind, self.data)])
 
 
 # -- rendu a melange LINEAIRE (anticrenelage corrige du gamma) --------------------------------------------------------

@@ -154,6 +154,7 @@ class CadController(QObject):
         self.look = {
             "accent": accent, "marker": resolve_color_ref(g("board_cad_marker_color"), "#ff7a00"),
             "marker_px": max(4, int(g("board_cad_marker_size") or 12)),
+            "marker_width": max(1, min(3, int(g("board_cad_marker_thickness") or 2))),
             "show_markers": bool(g("board_cad_markers", True)), "tooltips": bool(g("board_cad_tooltips", True)),
             "magnet": bool(g("board_cad_magnet", True)),
             "grip_px": max(4, int(g("board_cad_grip_size") or 8)),
@@ -166,6 +167,7 @@ class CadController(QObject):
             "ghost": resolve_color_ref(g("board_cad_ghost_color"), "#5f6b78"),
             "track": resolve_color_ref(g("board_cad_track_color"), "#18a058"),
             "grip_color": resolve_color_ref(g("board_cad_grip_color"), "#2f6bff"),
+            "grip_border": resolve_color_ref(g("board_cad_grip_border_color"), "#ffffff"),
             "precision": max(0, min(8, int(g("board_cad_precision", 4) or 0))),
             "sel_window": self._frame_look("board_cad_window", 0),
             "sel_crossing": self._frame_look("board_cad_crossing", 1),
@@ -180,6 +182,7 @@ class CadController(QObject):
         restyle = dense != getattr(self.scene, "cad_dense_px", None)
         self.scene.cad_grip_px = self.look["grip_px"]
         self.scene.cad_grip_color = self.look["grip_color"]
+        self.scene.cad_grip_border = self.look["grip_border"]
         self.scene.cad_dense_px = dense
         self.scene.cad_antialiasing = bool(g("board_cad_antialiasing", True))
         self.scene.cad_crisp = bool(g("board_cad_crisp_lines", True))
@@ -401,6 +404,10 @@ class CadController(QObject):
         res = self.res
         if look.get("magnet") and point_prompt and res is not None and res.kind == "osnap":
             return None, True                               # aimant : sur les objets, jamais sur la grille
+        if self.box_only():
+            native = native_cursor(0, look["pickbox_px"], look["cursor"], self.view.viewport().devicePixelRatioF(),
+                                   self.memory_color())
+            return native, native is None
         if look.get("crosshair_full"):
             return None, True                               # bras jusqu'aux bords : aucun curseur du systeme
         if self.selecting_area():
@@ -414,6 +421,11 @@ class CadController(QObject):
         box = 0 if point_prompt or self.selecting_area() else look["pickbox_px"]
         native = native_cursor(look["crosshair_px"], box, look["cursor"], ratio, self.memory_color())
         return native, native is None
+
+    def box_only(self) -> bool:
+        """Commande de MODIFICATION en cours (AJUSTER, DECALER, DEPLACER…) : le reticule n'est plus que le petit carre
+        de selection, sans bras, jusqu'a la fin de la commande (demande de l'utilisateur)."""
+        return self.command is not None and getattr(self.command, "MODIFY", False)
 
     def selecting_area(self) -> bool:
         """Une fenetre de selection ou un trace a main levee est en cours : le carre central du reticule disparait
@@ -1228,9 +1240,14 @@ class CadController(QObject):
             if self.command is None and self.engine.settings.osnap:
                 # Hors commande aussi, le reticule s'aimante au point caracteristique approche (demande de
                 # l'utilisateur) : marqueur + aimant seulement ; le clic garde la selection a la place de la souris.
-                res = self.engine.resolve(self.cursor_doc, self.scale(), None, None, 0, None, None)
-                if res.kind == "osnap" and res.candidate is not None and self._magnetic(res.candidate):
-                    self.hover_snap = res
+                # Le 1er candidat AIMANTE (pas le 1er tout court) : a une extremite commune, le point de la ligne
+                # non selectionnee passait devant (doublon retire) et l'aimant ne prenait plus que dans la zone de la
+                # poignee (6 px au lieu de 10 : signale « la distance de detection est fausse sur un des 3 points »).
+                found = self.engine.candidates(self.cursor_doc, self.scale(), None, keep=self._magnetic)
+                candidate = next((c for c in found if self._magnetic(c)), None)
+                if candidate is not None:
+                    self.hover_snap = cad_snap.Resolution(candidate.point, "osnap", candidate, [candidate],
+                                                          list(candidate.guides), candidate.label)
 
     def _acquire_tick(self):
         if self.res is not None and self.res.candidate is not None and self.engine.note_hover(self.res.candidate):
@@ -1649,7 +1666,14 @@ class CadController(QObject):
         prompt = self.prompt()
         res = self.res
         point_prompt = prompt is not None and prompt.kind == "point"
-        state["pickbox"] = not point_prompt and not self.selecting_area()
+        state["box_only"] = self.box_only()
+        # Reticule aimante sur une poignee : son contour tient lieu de boite (la boite par-dessus, d'une autre couleur
+        # et d'un pixel plus petite, brouillait le contour : signale « pas opaque sur les coins »).
+        on_grip = self.hover_grip is not None and self.hover_snap is not None and look["magnet"]
+        state["pickbox"] = state["box_only"] or (not point_prompt and not self.selecting_area() and not on_grip)
+        if on_grip:
+            ratio = self.view.viewport().devicePixelRatioF() or 1.0
+            state["grip_gap"] = (max(3, round(look["grip_px"] * ratio)) | 1) // 2    # demi-cote (pixels physiques)
         state["paint_cursor"] = self.cursor_view is not None and self._cursor_plan()[1]
         state["memory"] = self.memory_color()
         highlights = []

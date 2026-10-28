@@ -55,6 +55,7 @@ class Command:
     NAME = ""
     LABEL = ""
     REPEATABLE = True
+    MODIFY = False      # commande de modification : le reticule n'est plus que le carre de selection (demande de l'utilisateur)
 
     def __init__(self, ctx):
         self.ctx = ctx
@@ -177,6 +178,7 @@ class _SelectingCommand(Command):
     capture ; Entree termine), comme AutoCAD."""
 
     EDITS = True
+    MODIFY = True
 
     def start(self):
         items = self.ctx.selection()
@@ -311,6 +313,7 @@ class MatchPropCommand(Command):
     NAME = "MATCHPROP"
     LABEL = "Pipette"
     IMMEDIATE_PICK = True          # le controleur transmet chaque choix aussitot (`picked`)
+    MODIFY = True
 
     def start(self):
         selection = self.ctx.selection()
@@ -688,6 +691,7 @@ class OffsetCommand(Command):
     NAME = "OFFSET"
     LABEL = "Décaler"
     IMMEDIATE_PICK = True
+    MODIFY = True
 
     def start(self):
         memory = self.ctx.tool_memory
@@ -833,6 +837,7 @@ class _CornerCommand(Command):
     survol du second, une etape d'annulation par coin ; options memorisees (`ctx.tool_memory`)."""
 
     IMMEDIATE_PICK = True
+    MODIFY = True
     TOOL = ""
 
     def start(self):
@@ -2053,6 +2058,7 @@ class TrimCommand(Command):
     NAME = "TRIM"
     LABEL = "Ajuster"
     IMMEDIATE_PICK = True
+    MODIFY = True
 
     def start(self):
         memory = self.ctx.tool_memory

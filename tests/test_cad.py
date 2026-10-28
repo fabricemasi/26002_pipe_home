@@ -3032,7 +3032,7 @@ class TrimQuickTest(CadBoardCase):
         APP.processEvents()
         self.assertIsNotNone(self.ctl.lasso)
         state = self.ctl.overlay_state()
-        self.assertFalse(state["pickbox"])                                      # pas de carre pendant le trace
+        self.assertTrue(state["pickbox"])                                       # modification : le carre seul reste, meme pendant le trace
         self.assertTrue(state["path"])
         self.assertTrue(state["ghosts"])
         QTest.mouseRelease(viewport, Qt.LeftButton, Qt.NoModifier, self.vp((13, 15)))
@@ -3070,6 +3070,139 @@ class TrimQuickTest(CadBoardCase):
         self.click((55, -40))
         self.assertEqual(self.horizontals()[:2], [((0.0, 0.0), (30.0, 0.0)), ((70.0, 0.0), (100.0, 0.0))])
         self.type("")
+
+
+class MarkersAndGripsTest(CadBoardCase):
+    """Demandes de l'utilisateur : poignees parfaitement carrees au contour d'UN pixel opaque (couleur reglable),
+    marqueurs d'epaisseur exacte (1, 2 ou 3 pixels) sur tout le pourtour, reticule reduit au carre pendant une
+    modification, aimant juste a une extremite commune."""
+
+    def test_grips_are_square_with_an_opaque_one_pixel_border(self):
+        from PySide6.QtGui import QImage, QPainter
+        from board.cad_items import paint_grips
+        for ratio in (1.0, 2.0):
+            image = QImage(round(40 * ratio), round(40 * ratio), QImage.Format_ARGB32_Premultiplied)
+            image.setDevicePixelRatio(ratio)
+            image.fill(0)
+            painter = QPainter(image)
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            paint_grips(painter, [QPointF(20.37, 19.71)], 8, "#802f6bff", "#80ff0000")    # couleurs translucides
+            painter.end()
+            painted = [(x, y) for x in range(image.width()) for y in range(image.height())
+                       if image.pixelColor(x, y).alpha() > 0]
+            xs, ys = {x for x, _ in painted}, {y for _, y in painted}
+            side = round(8 * ratio) | 1                                               # impair : centre sur le pixel
+            self.assertEqual((len(xs), len(ys)), (side, side), ratio)                    # carre parfait
+            self.assertEqual(min(xs) + side // 2, int(20.37 * ratio), ratio)
+            edge = round(ratio)
+            x0, y0 = min(xs), min(ys)
+            for x in range(x0, x0 + side):
+                for y in range(y0, y0 + side):
+                    c = image.pixelColor(x, y)
+                    border = min(x - x0, y - y0, x0 + side - 1 - x, y0 + side - 1 - y) < edge
+                    if border:
+                        self.assertEqual((c.red(), c.green(), c.blue(), c.alpha()), (255, 0, 0, 255), (ratio, x, y))
+                    else:
+                        self.assertEqual(c.alpha(), 0x80, (ratio, x, y))          # le dedans garde sa transparence
+
+    def test_grip_border_color_is_a_setting(self):
+        item = self.line((0, 0), (200, 0))
+        self.ctl.apply_settings(dict(self.ctl.settings, board_cad_grip_border_color="#ff0000",
+                                     board_cad_grip_color="#0000ff"))
+        self.assertEqual(self.pane.scene.cad_grip_border, "#ff0000")
+        item.setSelected(True)
+        settle()
+        image = self.pane.view.viewport().grab().toImage()
+        ratio = image.devicePixelRatio()
+        for point in ((0, 0), (100, 0), (200, 0)):
+            c = self.ctl.doc_to_view(point)
+            cx, cy = int(c.x() * ratio), int(c.y() * ratio)
+            reds = [x for x in range(cx - 10, cx + 11) if image.pixelColor(x, cy - 2).name() == "#ff0000"]
+            self.assertEqual(len(reds), 2, point)                                   # bords gauche et droit, 1 px chacun
+            self.assertEqual(reds[1] - reds[0] + 1, 9, point)
+            self.assertEqual(cx - reds[0], reds[1] - cx, point)                     # centre sur le point
+            self.assertEqual(image.pixelColor(cx, cy - 2).name(), "#0000ff")
+
+    def test_markers_have_the_same_exact_thickness_on_every_side(self):
+        from PySide6.QtGui import QImage, QPainter
+        overlay = self.ctl.overlay
+        for width in (1, 2, 3):
+            for centre in (QPointF(20.0, 20.0), QPointF(20.5, 20.5), QPointF(20.3, 19.8)):
+                image = QImage(40, 40, QImage.Format_ARGB32_Premultiplied)
+                image.fill(0)
+                painter = QPainter(image)
+                painter.setRenderHint(QPainter.Antialiasing, True)
+                overlay._paint_marker(painter, dict(self.ctl.look, marker_width=width), "end", centre, "#ff0000", 6.0)
+                painter.end()
+
+                def run(cells):
+                    return sum(1 for x, y in cells if image.pixelColor(x, y).alpha() == 255)
+                row = [(x, 20) for x in range(40)]
+                col = [(20, y) for y in range(40)]
+                left = run([(x, y) for x, y in row if x < 20])
+                right = run([(x, y) for x, y in row if x > 20])
+                top = run([(x, y) for x, y in col if y < 20])
+                bottom = run([(x, y) for x, y in col if y > 20])
+                self.assertEqual((left, right, top, bottom), (width,) * 4, (width, centre))
+                partial = [(x, y) for x, y in row + col if 0 < image.pixelColor(x, y).alpha() < 255]
+                self.assertEqual(partial, [], (width, centre))                     # aucun bord a moitie couvert
+
+    def test_no_pick_box_over_a_grip_the_cursor_sticks_to(self):
+        item = self.line((0, 0), (200, 0))
+        item.setSelected(True)
+        self.move((100, 60))
+        self.move((201, 1))
+        self.assertIsNotNone(self.ctl.hover_grip)
+        state = self.ctl.overlay_state()
+        self.assertFalse(state["pickbox"])                                        # le contour de la poignee suffit
+        self.assertEqual(state["grip_gap"], 4)                                    # bras arretes au bord (9 px)
+        cursor = [op for op in self.ctl.overlay._layout(state)[0] if op[0] == "cursor"][0]
+        self.assertEqual(cursor[2][4], 4)
+        self.move((100, 60))
+        self.assertTrue(self.ctl.overlay_state()["pickbox"])
+
+    def test_marker_thickness_is_a_setting(self):
+        self.assertEqual(self.ctl.look["marker_width"], 2)
+        self.ctl.apply_settings(dict(self.ctl.settings, board_cad_marker_thickness=3))
+        self.assertEqual(self.ctl.look["marker_width"], 3)
+
+    def test_modifying_commands_leave_only_the_pick_box(self):
+        self.line((0, 0), (200, 0))
+        self.move((50, 80))
+        self.assertFalse(self.ctl.box_only())
+        for name in ("TRIM", "OFFSET", "MOVE", "ERASE", "FILLET"):
+            self.type(name)
+            self.move((60, 90))
+            self.move((50, 80))
+            self.assertTrue(self.ctl.box_only(), name)
+            state = self.ctl.overlay_state()
+            self.assertTrue(state["pickbox"], name)
+            native, painted = self.ctl._cursor_plan()
+            if native is not None:                                                # curseur du systeme : le carre seul
+                box = self.ctl.look["pickbox_px"]
+                self.assertEqual(native.pixmap().width(), round((2 * box + 1) * native.pixmap().devicePixelRatio()))
+            else:
+                ops = [op for op in self.ctl.overlay._layout(state)[0] if op[0].startswith("cursor")]
+                self.assertTrue(all(op[0] == "cursor" and op[2][3] == 0 for op in ops), name)   # bras : 0
+            QTest.keyClick(self.pane.view, Qt.Key_Escape)
+            QTest.keyClick(self.pane.view, Qt.Key_Escape)
+            APP.processEvents()
+            self.assertFalse(self.ctl.box_only(), name)
+        self.type("L")
+        self.assertFalse(self.ctl.box_only())                                     # dessin : le reticule entier
+
+    def test_magnet_reaches_as_far_at_a_shared_end_of_a_selected_line(self):
+        self.line((0, 0), (200, 0))
+        wire = self.line((0, 0), (0, 150))                                        # extremite commune en (0, 0)
+        for selected in (wire, [i for i in self.ctl.cad_items() if i is not wire][0]):
+            self.pane.scene.clearSelection()
+            selected.setSelected(True)
+            for offset in ((9, 0), (-9, 0), (0, 9), (0, -9), (6, 6), (-6, -6)):
+                self.move((100, 80))
+                self.move(offset)
+                self.assertIsNotNone(self.ctl.hover_snap, (offset, selected.points()))
+                self.assertEqual(self.ctl.hover_snap.point, (0.0, 0.0))
+                self.assertIs(self.ctl.hover_snap.candidate.entity, selected)
 
 
 class SelectionFrameTest(CadBoardCase):

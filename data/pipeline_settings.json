@@ -399,13 +399,29 @@
   "extra_window_title_text_font_smoothing": "current",
   "extra_window_title_text_font_color": "#8d949a",
   "quick_style_positions": {
-    "MRO : CAD : dessin": [
-      874,
-      199
+    "Filtres": [
+      1774,
+      501
     ],
     "MRO : CAD : accrochages": [
       855,
       0
+    ],
+    "MRO : CAD : dessin": [
+      874,
+      199
+    ],
+    "Module vidéo : Corrections colorimétriques": [
+      1012,
+      266
+    ],
+    "Module vidéo : Corrections par canal et niveaux": [
+      1025,
+      376
+    ],
+    "Module vidéo : export": [
+      822,
+      268
     ]
   },
   "viewer_button_order": [],
@@ -418,7 +434,7 @@
   "board_snap_resize": true,
   "board_snap_distance": 10,
   "board_pen_presets": {},
-  "board_cad_osnap": false,
+  "board_cad_osnap": true,
   "board_cad_osnap_end": true,
   "board_cad_osnap_mid": true,
   "board_cad_osnap_cen": true,
@@ -435,26 +451,27 @@
   "board_cad_osnap_ins": false,
   "board_cad_aperture": 10,
   "board_cad_markers": true,
-  "board_cad_marker_size": 12,
+  "board_cad_marker_size": 14,
   "board_cad_marker_color": "#ff7a00",
+  "board_cad_marker_thickness": 3,
   "board_cad_tooltips": true,
   "board_cad_magnet": true,
-  "board_cad_ortho": true,
+  "board_cad_ortho": false,
   "board_cad_polar": false,
   "board_cad_polar_increment": "45",
   "board_cad_polar_custom": 45,
   "board_cad_otrack": false,
   "board_cad_track_polar": true,
   "board_cad_dyn": false,
-  "board_cad_grid_snap": false,
+  "board_cad_grid_snap": true,
   "board_cad_unit": "cm",
   "board_cad_linetypes": [
     {
       "key": "continuous",
       "name": "Continu",
       "sequence": [],
-      "distribute": false,
-      "resize": false,
+      "distribute": true,
+      "resize": true,
       "end1": {
         "style": "round",
         "radius": 50.0
@@ -464,8 +481,8 @@
         "radius": 50.0
       },
       "inner": {
-        "style": "flat",
-        "radius": 50.0
+        "style": "radius",
+        "radius": 22.0
       },
       "extra": 0.0
     },
@@ -476,19 +493,19 @@
         3.0,
         1.5
       ],
-      "distribute": false,
-      "resize": false,
+      "distribute": true,
+      "resize": true,
       "end1": {
-        "style": "flat",
+        "style": "round",
         "radius": 50.0
       },
       "end2": {
-        "style": "flat",
+        "style": "round",
         "radius": 50.0
       },
       "inner": {
-        "style": "flat",
-        "radius": 50.0
+        "style": "radius",
+        "radius": 22.0
       },
       "extra": 3.0
     },
@@ -499,19 +516,19 @@
         1.5,
         0.75
       ],
-      "distribute": false,
-      "resize": false,
+      "distribute": true,
+      "resize": true,
       "end1": {
-        "style": "flat",
+        "style": "round",
         "radius": 50.0
       },
       "end2": {
-        "style": "flat",
+        "style": "round",
         "radius": 50.0
       },
       "inner": {
-        "style": "flat",
-        "radius": 50.0
+        "style": "radius",
+        "radius": 22.0
       },
       "extra": 1.5
     },
@@ -524,8 +541,8 @@
         1.5,
         1.5
       ],
-      "distribute": false,
-      "resize": false,
+      "distribute": true,
+      "resize": true,
       "end1": {
         "style": "round",
         "radius": 50.0
@@ -536,7 +553,7 @@
       },
       "inner": {
         "style": "radius",
-        "radius": 20.0
+        "radius": 22.0
       },
       "extra": 8.0
     },
@@ -549,19 +566,19 @@
         0.0,
         1.5
       ],
-      "distribute": false,
-      "resize": false,
+      "distribute": true,
+      "resize": true,
       "end1": {
-        "style": "flat",
+        "style": "round",
         "radius": 50.0
       },
       "end2": {
-        "style": "flat",
+        "style": "round",
         "radius": 50.0
       },
       "inner": {
-        "style": "flat",
-        "radius": 50.0
+        "style": "radius",
+        "radius": 22.0
       },
       "extra": 3.0
     },
@@ -572,19 +589,19 @@
         0.0,
         1.5
       ],
-      "distribute": false,
-      "resize": false,
+      "distribute": true,
+      "resize": true,
       "end1": {
-        "style": "flat",
+        "style": "round",
         "radius": 50.0
       },
       "end2": {
-        "style": "flat",
+        "style": "round",
         "radius": 50.0
       },
       "inner": {
-        "style": "flat",
-        "radius": 50.0
+        "style": "radius",
+        "radius": 22.0
       },
       "extra": 0.0
     },
@@ -599,19 +616,19 @@
         1.5,
         1.5
       ],
-      "distribute": false,
-      "resize": false,
+      "distribute": true,
+      "resize": true,
       "end1": {
-        "style": "flat",
+        "style": "round",
         "radius": 50.0
       },
       "end2": {
-        "style": "flat",
+        "style": "round",
         "radius": 50.0
       },
       "inner": {
-        "style": "flat",
-        "radius": 50.0
+        "style": "radius",
+        "radius": 22.0
       },
       "extra": 8.0
     }
@@ -630,17 +647,17 @@
   "board_grid_dot_size": 2,
   "board_grid_origin_x": 0,
   "board_grid_origin_y": 0,
-  "board_grid_axes": false,
-  "board_grid_axes_color": "#66ff2f2f",
+  "board_grid_axes": true,
+  "board_grid_axes_color": "#27ffffff",
   "board_grid_axes_thickness": 1,
-  "board_cad_pickbox": 5,
-  "board_cad_grip_size": 8,
+  "board_cad_pickbox": 3,
+  "board_cad_grip_size": 9,
   "board_cad_pickadd": false,
   "board_cad_crosshair": true,
   "board_cad_crosshair_size": 120,
   "board_cad_crosshair_full": false,
   "board_cad_crosshair_auto_color": false,
-  "board_cad_crosshair_color": "#676767",
+  "board_cad_crosshair_color": "#ffffff",
   "board_cad_crosshair_memory": true,
   "board_cad_dim_text": 250,
   "board_cad_dim_arrow": 250,
@@ -672,8 +689,59 @@
   "board_cad_crisp_lines": true,
   "board_cad_dense_px": 4,
   "board_cad_grip_color": "#cc2f6bff",
+  "board_cad_grip_border_color": "#ffffff",
   "board_cad_track_color": "#18a058",
   "board_cad_ghost_color": "#5f6b78",
+  "board_cad_window_bg": "#803c7eff",
+  "board_cad_window_border_enabled": {
+    "top": true,
+    "right": true,
+    "bottom": true,
+    "left": true
+  },
+  "board_cad_window_border_enabled_linked": true,
+  "board_cad_window_border": {
+    "top": "#ffffff",
+    "right": "#ffffff",
+    "bottom": "#ffffff",
+    "left": "#ffffff"
+  },
+  "board_cad_window_border_thickness": 1,
+  "board_cad_window_radius": {
+    "top_left": 0,
+    "top_right": 0,
+    "bottom_right": 0,
+    "bottom_left": 0
+  },
+  "board_cad_window_radius_linked": true,
+  "board_cad_window_line": "solid",
+  "board_cad_window_line_scale": 100,
+  "board_cad_crossing_bg": "#8056c850",
+  "board_cad_crossing_border_enabled": {
+    "top": true,
+    "right": true,
+    "bottom": true,
+    "left": true
+  },
+  "board_cad_crossing_border_enabled_linked": true,
+  "board_cad_crossing_border": {
+    "top": "#ffffff",
+    "right": "#ffffff",
+    "bottom": "#ffffff",
+    "left": "#ffffff"
+  },
+  "board_cad_crossing_border_thickness": 1,
+  "board_cad_crossing_radius": {
+    "top_left": 0,
+    "top_right": 0,
+    "bottom_right": 0,
+    "bottom_left": 0
+  },
+  "board_cad_crossing_radius_linked": true,
+  "board_cad_crossing_line": "dash",
+  "board_cad_crossing_line_scale": 100,
+  "board_cad_trim_mode": "quick",
+  "board_cad_trim_edge": false,
   "viewer_focus_image_border": {
     "top": "#989898",
     "right": "#989898",
@@ -1257,6 +1325,41 @@
       "cols": [
         472,
         331
+      ]
+    },
+    "Sélection/Fenêtre (de gauche à droite)#0": {
+      "width": 983,
+      "cols": [
+        120,
+        861
+      ],
+      "split": {
+        "r1c1": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "r2c1": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "r3c1": [
+          0,
+          0
+        ]
+      }
+    },
+    "Sélection/Clic et poignées#0": {
+      "width": 687,
+      "cols": [
+        351,
+        334
       ]
     }
   },
@@ -3249,7 +3352,10 @@
   "video_grade": {},
   "video_grade_presets": {},
   "video_export_last": {},
-  "video_last_zoom": {},
+  "video_last_zoom": {
+    "mode": "smart",
+    "scale": 1.0
+  },
   "video_scopes": false,
   "toggle3_outer_width": 18,
   "toggle3_outer_height": 18,
@@ -3316,5 +3422,6 @@
   "toggle3_icon_on": "",
   "toggle3_icon_off": "",
   "toggle3_icon_frames": [],
-  "toggle3_anim_ms": 600
+  "toggle3_anim_ms": 600,
+  "interface_move_positions": {}
 }

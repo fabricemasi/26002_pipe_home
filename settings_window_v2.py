@@ -527,6 +527,8 @@ def _cad_groups() -> dict:
         Spec("board_cad_markers", "Marqueurs d'accrochage", "bool", True),
         Spec("board_cad_marker_size", "Taille des marqueurs (pixels)", "slider", 12,
              {"min": 6, "max": 30, "active_when": ("board_cad_markers", True)}),
+        Spec("board_cad_marker_thickness", "Épaisseur des marqueurs (pixels)", "slider", 2,
+             {"min": 1, "max": 3, "active_when": ("board_cad_markers", True)}),
         Spec("board_cad_marker_color", "Couleur des marqueurs", "color_app", "#ff7a00",
              {"title": "Marqueurs d'accrochage", "active_when": ("board_cad_markers", True)}),
         Spec("board_cad_tooltips", "Infobulles (type d'accrochage, polaire, commandes)", "bool", True),
@@ -574,6 +576,8 @@ def _cad_groups() -> dict:
         Spec("board_cad_pickadd", "Clic = ajouter à la sélection (Maj = retirer), comme PICKADD", "bool", False),
         Spec("board_cad_grip_size", "Taille des poignées (pixels)", "slider", 8, {"min": 4, "max": 20}),
         Spec("board_cad_grip_color", "Couleur des poignées", "color_app", "#2f6bff", {"title": "Poignées"}),
+        Spec("board_cad_grip_border_color", "Couleur du contour des poignées", "color_app", "#ffffff",
+             {"title": "Contour des poignées"}),
     ]
 
     # Cadres de selection (demande de l'utilisateur) : fenetre (gauche -> droite) et capture (droite -> gauche).

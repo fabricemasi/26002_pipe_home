@@ -223,8 +223,10 @@ class SnapEngine:
                 out.append((entity, prim))
         return out
 
-    def candidates(self, cursor, scale: float, base=None, modes=None) -> list[Candidate]:
-        """Tous les candidats d'accrochage a portee du curseur, tries (priorite, distance a l'ecran)."""
+    def candidates(self, cursor, scale: float, base=None, modes=None, keep=None) -> list[Candidate]:
+        """Tous les candidats d'accrochage a portee du curseur, tries (priorite, distance a l'ecran). Un meme point
+        (extremite commune de deux lignes) n'est garde qu'une fois : le premier, ou celui que `keep(candidat)`
+        prefere (l'aimant hors commande veut celui de la ligne SELECTIONNEE)."""
         modes = self.settings.modes if modes is None else modes
         aperture = self.settings.aperture_px / scale
         near = self._near(cursor, aperture)
@@ -293,12 +295,14 @@ class SnapEngine:
                     add("par", q, None, seg, [("par", base, q), ("acquired", a, b)], dist_px=off)
         # Inutile de garder deux fois le meme point (extremite commune de deux lignes) : le premier suffit.
         found.sort(key=lambda c: (c.priority, c.distance_px))
-        unique, seen = [], set()
+        unique, seen = [], {}
         for cand in found:
             key = (cand.mode, round(cand.point[0], 9), round(cand.point[1], 9))
             if key not in seen:
-                seen.add(key)
+                seen[key] = len(unique)
                 unique.append(cand)
+            elif keep is not None and not keep(unique[seen[key]]) and keep(cand):
+                unique[seen[key]] = cand
         return unique
 
     def _arc_candidates(self, cursor, scale, base, modes, entity, arc, add):
