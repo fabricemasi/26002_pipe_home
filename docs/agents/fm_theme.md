@@ -89,6 +89,33 @@ Les **« Override settings »** (`settings_element_style.py`, `element_style_ove
 
 Remplace l'intention « copier les modules de réglages dans chaque nouvelle appli, pas de paquet partagé » de `reglages.md` : les futures applis importeront fm_theme.
 
+## Isolation des modules de fm_browser (demande de l'utilisateur, 2026-10-28)
+
+**But PRIMORDIAL : que chaque requête de l'utilisateur soit traitée le plus efficacement possible** (moins de fichiers à lire, moins de recherche, tests ciblés). Les modules restent DANS fm_browser (une seule appli), mais chacun devient un paquet isolé, renommé :
+
+| Nouveau paquet | Aujourd'hui | Doc à lire (une seule, celle du module de la requête) |
+|---|---|---|
+| `fm_visionneuse/` | `focus.py` (visionneuse, pellicule, planche) | `docs/agents/fm_visionneuse.md` (ex `visionneuse.md`) |
+| `fm_markdown/` | `mdeditor/` (+ `markdown_preview.py` s'il ne sert qu'à lui et à l'inspecteur : à décider à l'inventaire) | `docs/agents/fm_markdown.md` (ex `markdown.md`) |
+| `fm_board/` | `board/` sauf `cad*.py` | `docs/agents/fm_board.md` (ex `board.md`) |
+| `fm_cad/` | `board/cad*.py` | `docs/agents/fm_cad.md` (ex `cad.md`) |
+| `fm_video/` | `video/` | `docs/agents/fm_video.md` (ex `video.md`) |
+
+Règles :
+- Un module n'importe que fm_theme (aujourd'hui les briques `settings_*`, `app_style`), ses propres fichiers et, si besoin, des services communs de fm_browser (`previews`, `config`) ; JAMAIS la fenêtre principale (`pipeline_browser.py`) : elle lui pose des `HOOKS`.
+- Le travail sur un module ne lit que son paquet et sa doc. L'index d'AGENTS.md pointe vers les nouvelles docs.
+- Les tests de chaque module sont regroupés et lançables seuls (ex. `python -m unittest discover -s tests -p "test_cad*.py"`), pour ne jamais lancer toute la suite pour une retouche.
+- Les CLÉS de réglages ne changent pas (`board_*`, `md_*`, `video_*`…) : renommer les paquets ne doit rien faire perdre des réglages ni des presets de l'utilisateur.
+
+Points relevés (2026-10-28) :
+- **Board et CAD dépendent l'un de l'autre** : `board/model.py`, `scene.py`, `ui.py`, `view.py`, `__init__.py` importent `cad_*` ; `cad.py`, `cad_items.py`, `cad_import.py`, `cad_ui.py` importent `items`, `model`, `ui`, `scene`. Imports relatifs (`from . import …`) à transformer en `from fm_cad import …` / `from fm_board import …`. Garder les `__init__.py` minimaux pour que ce cycle reste chargeable ; à terme, réduire le sens fm_board → fm_cad à des points d'entrée (un registre posé par fm_cad).
+- `focus.py` est un module plat de ~4 900 lignes : le découper par responsabilité (visionneuse, pellicule, planche, panneau d'infos) en le passant en paquet.
+- Les chemins de données par `Path(__file__)` (`mdeditor/toolbar.json`, `mdeditor/web/`…) suivent le paquet ; vérifier ceux qui remontent vers la racine (`parent.parent`).
+- Les tests patchent des noms par module (`board.ui.X`…) : à renommer avec les paquets.
+- **Avant de commencer** : commiter (ou mettre de côté) le travail CAD en cours (`board/cad*.py`, `tests/test_cad.py`, `docs/agents/cad.md`, `settings_store.py`, `settings_window_v2.py`), sinon le renommage se mélange à ces modifications.
+
+Ordre : ce chantier est INDÉPENDANT de fm_theme et passe EN PREMIER (il allège toutes les requêtes suivantes, y compris la migration fm_theme). Un module par étape, tests du module verts et appli lancée à chaque étape, un commit par module : fm_video (le plus isolé) → fm_markdown → fm_visionneuse → fm_board + fm_cad (ensemble, à cause du cycle).
+
 ## Organisation du code (proposition)
 
 - fm_theme dans le **même dépôt**, paquet `fm_theme/` (comme `board/`, `video/`), avec son point d'entrée (`python -m fm_theme` lance l'éditeur). Un dépôt séparé plus tard si une autre appli doit l'utiliser sans fm_browser.
