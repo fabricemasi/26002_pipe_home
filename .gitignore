@@ -49,3 +49,4 @@ data/mdeditor/
 video_checks_*/
 _o[0-9]*.txt
 p.out
+data/error_log.txt
