@@ -20,8 +20,8 @@ from PySide6.QtWidgets import QApplication
 
 app = QApplication.instance() or QApplication([])
 
-import file_attributes as fa
-import focus
+from fm_visionneuse import file_attributes as fa
+from fm_visionneuse import focus
 import settings_store
 import ui_state
 

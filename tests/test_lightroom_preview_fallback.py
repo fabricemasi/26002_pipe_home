@@ -14,7 +14,7 @@ from PySide6.QtCore import QSize
 from PySide6.QtWidgets import QApplication
 
 import lightroom_bridge
-import focus
+from fm_visionneuse import focus
 import previews
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

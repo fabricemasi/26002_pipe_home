@@ -23,7 +23,7 @@ from PySide6.QtWidgets import QApplication
 
 app = QApplication.instance() or QApplication([])
 
-import focus
+from fm_visionneuse import focus
 import settings_window_v2 as v2
 import ui_state
 from settings_store import DEFAULT_SETTINGS

@@ -15,7 +15,7 @@ from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication, QWidget
 
 import lightroom_bridge
-import focus
+from fm_visionneuse import focus
 
 _app = QApplication.instance() or QApplication([])
 

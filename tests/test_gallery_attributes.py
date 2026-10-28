@@ -11,8 +11,8 @@ from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QPointF, QRect, Qt
 from PySide6.QtGui import QImage, QKeyEvent, QPixmap, QMouseEvent, QTextCursor
 from PySide6.QtWidgets import QApplication, QWidget
 
-import file_attributes
-import focus
+from fm_visionneuse import file_attributes
+from fm_visionneuse import focus
 
 _app = QApplication.instance() or QApplication([])
 

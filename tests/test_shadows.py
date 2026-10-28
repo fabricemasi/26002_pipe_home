@@ -198,7 +198,7 @@ class ViewerTest(unittest.TestCase):
         self.addCleanup(setattr, ui_state, "APPLIED_SETTINGS", self.old)
 
     def test_focus_image_shadow_and_hit_area(self):
-        import focus
+        from fm_visionneuse import focus
         s = ui_state.APPLIED_SETTINGS
         s["viewer_focus_image_shadow_enabled"] = {k: True for k in ("top", "right", "bottom", "left")}
         s["viewer_focus_image_shadow"] = {k: "#ffff0000" for k in ("top", "right", "bottom", "left")}
@@ -224,7 +224,7 @@ class ViewerTest(unittest.TestCase):
         self.assertTrue(overlay.mask().contains(QPoint(rect.center().x(), rect.bottom() + 5)))   # masque : ombre comprise
 
     def test_film_look_has_the_shadows(self):
-        import focus
+        from fm_visionneuse import focus
         s = ui_state.APPLIED_SETTINGS
         s["viewer_film_image_shadow_enabled"] = {"top": False, "right": False, "bottom": True, "left": False}
         look_ = focus._film_look()

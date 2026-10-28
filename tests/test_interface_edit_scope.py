@@ -399,7 +399,7 @@ class EditScopeTest(unittest.TestCase):
 
     def test_gallery_text_and_image_expose_the_requested_scopes_and_style_controls(self):
         import settings_element_style as styles
-        from focus import FocusGallery
+        from fm_visionneuse.focus import FocusGallery
         gallery = FocusGallery(self.main, [], None)
         gallery.setGeometry(20, 100, 300, 260)
         gallery.show()
@@ -434,7 +434,7 @@ class EditScopeTest(unittest.TestCase):
     def test_gallery_info_style_applies_to_the_lower_text_and_can_move(self):
         import settings_element_style as styles
         import ui_state
-        from focus import FocusGallery
+        from fm_visionneuse.focus import FocusGallery
         gallery = FocusGallery(self.main, [], None)
         gallery.setGeometry(20, 100, 300, 260)
         gallery.show()
@@ -468,7 +468,7 @@ class EditScopeTest(unittest.TestCase):
     def test_gallery_all_text_scope_styles_name_and_lower_info(self):
         import settings_element_style as styles
         import ui_state
-        from focus import FocusGallery
+        from fm_visionneuse.focus import FocusGallery
         gallery = FocusGallery(None, [], None)
         self.addCleanup(gallery.deleteLater)
         path = "C:/images/airplane.png"
@@ -495,7 +495,7 @@ class EditScopeTest(unittest.TestCase):
     def test_gallery_text_color_scope_does_not_color_image_background(self):
         import settings_element_style as styles
         import ui_state
-        from focus import FocusGallery
+        from fm_visionneuse.focus import FocusGallery
         gallery = FocusGallery(None, [], None)
         self.addCleanup(gallery.deleteLater)
         paths = ["C:/images/one.png", "C:/images/two.png"]

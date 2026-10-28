@@ -229,7 +229,7 @@ def _avatar() -> QLabel:
 def _default_glyph(key: str, size: int) -> QPixmap | None:
     """Rendu actuel (glyphe peint) d'une icone de la visionneuse sans icone perso, pour la montrer dans
     ICONES / Visionneuse > Icones ; None pour les autres cles."""
-    import focus
+    from fm_visionneuse import focus
     import previews as pb_previews
     from PySide6.QtCore import QRect
     from PySide6.QtGui import QColor, QPainter

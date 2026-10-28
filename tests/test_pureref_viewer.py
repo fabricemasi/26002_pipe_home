@@ -23,7 +23,7 @@ from PySide6.QtWidgets import QApplication
 
 app = QApplication.instance() or QApplication([])
 
-import focus
+from fm_visionneuse import focus
 import pipeline_browser as pb
 import preview_column as pc
 

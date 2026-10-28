@@ -23,7 +23,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 APP = QApplication.instance() or QApplication([])
 
-import focus
+from fm_visionneuse import focus
 import previews
 
 

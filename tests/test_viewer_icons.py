@@ -20,7 +20,7 @@ from PySide6.QtWidgets import QApplication
 
 APP = QApplication.instance() or QApplication([])
 
-import focus
+from fm_visionneuse import focus
 import preview_column
 import previews
 import settings_window_v2 as v2

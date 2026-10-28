@@ -21,8 +21,8 @@ from PySide6.QtWidgets import QApplication
 
 app = QApplication.instance() or QApplication([])
 
-import file_attributes as fa
-import focus
+from fm_visionneuse import file_attributes as fa
+from fm_visionneuse import focus
 import settings_store
 import settings_window_v2 as v2
 import ui_state
@@ -122,7 +122,7 @@ class ColorMarkTest(unittest.TestCase):
         image.fill(0)
         painter = QPainter(image)
         corners = {k: 6 for k in ("top_left", "top_right", "bottom_right", "bottom_left")}
-        with mock.patch("focus._gallery_mark_radius", return_value=corners):
+        with mock.patch("fm_visionneuse.focus._gallery_mark_radius", return_value=corners):
             focus._paint_color_mark(painter, look, QRect(0, 0, 60, 40), "#00ff00")
         painter.end()
 

@@ -89,7 +89,7 @@ for name in costs:
     def timed(self, *a, _real=real, _name=name):
         t = time.perf_counter(); r = _real(self, *a); costs[_name].append((time.perf_counter() - t) * 1000); return r
     setattr(pb.FocusGallery, name, timed)
-import focus
+from fm_visionneuse import focus
 profile = cProfile.Profile()
 for attempt in range(2):
     frames.clear(); paints.clear()

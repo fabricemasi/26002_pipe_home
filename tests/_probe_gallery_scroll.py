@@ -9,7 +9,8 @@ from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt
 from PySide6.QtGui import QColor, QImage, QWheelEvent
 from PySide6.QtWidgets import QApplication, QWidget
 app = QApplication(sys.argv)
-import focus, ui_state
+from fm_visionneuse import focus
+import ui_state
 from settings_store import DEFAULT_SETTINGS
 ui_state.APPLIED_SETTINGS = copy.deepcopy(DEFAULT_SETTINGS)
 ui_state.APPLIED_SETTINGS["viewer_scroll_animated"] = True

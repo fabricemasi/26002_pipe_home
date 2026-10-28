@@ -2782,7 +2782,7 @@ class FocusGallery(QListWidget):
         index = self.indexAt(pos)
         if not index.isValid():
             return None
-        import file_attributes
+        from fm_visionneuse import file_attributes
         key = index.data(Qt.UserRole)
         if key == self.hidden_path or not file_attributes.eligible(Path(key)):
             return None
@@ -2803,7 +2803,7 @@ class FocusGallery(QListWidget):
 
     def _apply_attr(self, key: str, kind: str, value):
         """Clic sur un element d'attribut : note, couleur, drapeau (re-clic = aucun) ou fenetre des mots cles."""
-        import file_attributes
+        from fm_visionneuse import file_attributes
         path = Path(key)
         current = self.attr_values(key)
         if kind == "star":
@@ -2841,7 +2841,7 @@ class FocusGallery(QListWidget):
             self._keywords_window = None
 
     def _keywords_saved(self, key: str, words: list):
-        import file_attributes
+        from fm_visionneuse import file_attributes
         file_attributes.update(Path(key), keywords=words)
         merged = dict(self.attr_values(key))
         if words:
@@ -3303,7 +3303,7 @@ class FocusGallery(QListWidget):
         hit = memo.get(key)
         if hit is not None and (now - hit[0] < 2.0 or self._busy()):
             return hit[1]
-        import file_attributes
+        from fm_visionneuse import file_attributes
         path = Path(key)
         try:
             from lightroom_bridge import is_managed, attributes
@@ -3320,7 +3320,7 @@ class FocusGallery(QListWidget):
 
     def hold_attrs(self, key: str, values: dict, seconds: float = 30.0):
         """Valeurs que l'on vient de choisir (barre de survol) : montrees aussitot, case refaite."""
-        import file_attributes
+        from fm_visionneuse import file_attributes
         self.__dict__.setdefault("_attr_hold", {})[key] = (time.monotonic() + seconds,
                                                            file_attributes._clean(values))
         self.__dict__.setdefault("_attr_values", {}).pop(key, None)
@@ -4334,7 +4334,7 @@ class FileAttributesEditor(QObject):
         self.stars = _StarRating()
         self.colors = _ColorLabels()
         # Mots cles : saisis a la volee, separes par des espaces, autocompletion des mots deja employes.
-        import file_attributes
+        from fm_visionneuse import file_attributes
         self.keywords = _WordsField(suggestions=file_attributes.known_keywords, width=scaled(150))
         self.keywords.setPlaceholderText("ciel nuit ville…")
         self.status = _StatusFlags()
@@ -4355,7 +4355,7 @@ class FileAttributesEditor(QObject):
         self._load(values)
 
     def _load(self, known: dict | None = None):
-        import file_attributes
+        from fm_visionneuse import file_attributes
         if not self.rows:
             return
         if not file_attributes.eligible(self._path):
@@ -4379,7 +4379,7 @@ class FileAttributesEditor(QObject):
             self._loading = False
 
     def _save(self, **changes):
-        import file_attributes
+        from fm_visionneuse import file_attributes
         if self._loading or not file_attributes.eligible(self._path):
             return
         file_attributes.update(self._path, **changes)
@@ -4389,7 +4389,7 @@ class FileAttributesEditor(QObject):
             self.on_saved(self._path, changes)
 
     def _save_keywords(self):
-        import file_attributes
+        from fm_visionneuse import file_attributes
         try:
             words = self.keywords.words()
         except RuntimeError:
@@ -4421,7 +4421,7 @@ class KeywordsWindow(QWidget):
         from settings_store import M
         from settings_theme import _text_label
         from settings_window import _PanelFrame
-        import file_attributes
+        from fm_visionneuse import file_attributes
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.key = key
         self._done = False
@@ -4624,7 +4624,7 @@ class FocusInfoPanel(QWidget):
     def _show(self, sections: list):
         """Meme forme qu'avant (memes sections, memes libelles : cas courant d'un dossier) : seules
         les valeurs changent, aucun widget n'est reconstruit. Sinon : tableaux reconstruits."""
-        import file_attributes
+        from fm_visionneuse import file_attributes
         self._sections = sections
         shape = (file_attributes.eligible(self._path),
                  tuple((title, tuple(label for label, _v in rows)) for title, rows in sections))
@@ -4761,7 +4761,7 @@ def filter_window(spec: dict, scopes: list[tuple[str, str]], settings: dict | No
     reglages, mise en forme retenue sous « Filtres »), une ligne par critere. `scopes` : (cle, libelle) des
     portees proposees ; `provenances` : (cle, libelle) des provenances (file_filters.provenance_choices).
     Valeurs en direct par `styleChanged` -> dict du filtre (file_filters)."""
-    import file_filters as ff
+    from fm_visionneuse import file_filters as ff
     from settings_cells import _TextField
     from settings_quick_style import QuickStyleWindow
     from settings_widgets import _SelectField, _SliderField, _Toggle
@@ -4790,7 +4790,7 @@ def filter_window(spec: dict, scopes: list[tuple[str, str]], settings: dict | No
     colors = _ColorLabels(multi=True)
     colors.setValues(spec["color"])
     # Mots cles : comme dans les attributs, separes par des espaces, autocompletion des mots deja employes.
-    import file_attributes
+    from fm_visionneuse import file_attributes
     from settings_cells import _WordsField
     keywords = _WordsField(spec["keywords"], suggestions=file_attributes.known_keywords, width=width)
     keywords.setPlaceholderText("ciel nuit…")

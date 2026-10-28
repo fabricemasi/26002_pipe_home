@@ -142,14 +142,14 @@ from previews import (
 from browser_core import (
     _FadeOverlay,
 )
-from focus import (
+from fm_visionneuse.focus import (
     FilterChips, FocusFilmstrip, FocusGallery, FocusImageLoader, FocusInfoPanel, FocusOverlay, filter_window, fit_rect,
     placeholder_pixmap,
 )
-import file_attributes
-import file_filters
-from focus import thumbnail as focus_thumbnail
-import focus as _focus
+from fm_visionneuse import file_attributes
+from fm_visionneuse import file_filters
+from fm_visionneuse.focus import thumbnail as focus_thumbnail
+from fm_visionneuse import focus as _focus
 from config import (
     PUR_PREVIEW_EXTENSIONS,
 )
@@ -1778,7 +1778,7 @@ class _InterfaceMoveMode(QObject):
                 pass
             gallery_styles = getattr(__import__("ui_state"), "GALLERY_STYLE_OVERRIDES", {}) or {}
             try:
-                from focus import FocusGallery
+                from fm_visionneuse.focus import FocusGallery
                 for gallery in window.findChildren(FocusGallery):
                     if not gallery.isVisible():
                         continue
@@ -1950,7 +1950,7 @@ class _InterfaceMoveMode(QObject):
                         if target is not None:
                             targets.append(target)
             try:
-                from focus import FocusGallery
+                from fm_visionneuse.focus import FocusGallery
                 galleries = window.findChildren(FocusGallery)
             except ImportError:
                 galleries = []
@@ -2110,7 +2110,7 @@ class _InterfaceMoveMode(QObject):
             node = node.parentWidget()
         column = next((node for node in chain if isinstance(node, Column)), None)
         try:
-            from focus import FocusGallery
+            from fm_visionneuse.focus import FocusGallery
         except ImportError:
             FocusGallery = ()
         gallery = next((node for node in chain if isinstance(node, FocusGallery)), None) if FocusGallery else None
@@ -6658,7 +6658,7 @@ class PipelineBrowser(QMainWindow):
     def _on_focus_preview_ready(self, path_str: str, mtime: float, image):
         """Apercu du pipeline arrive : vignette de la pellicule, voisine du ruban, ou image au
         centre qui n'avait encore rien de mieux (il remplace la carte / la petite vignette)."""
-        import focus
+        from fm_visionneuse import focus
         focus._FILM.pop(path_str, None)
         focus._FILM_FAILED.pop(path_str, None)
         focus._CELLS.pop(path_str, None)

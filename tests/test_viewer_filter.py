@@ -22,9 +22,9 @@ APP = QApplication.instance() or QApplication([])
 
 import app_style
 import browser_core
-import file_attributes as fa
-import file_filters as ff
-import focus
+from fm_visionneuse import file_attributes as fa
+from fm_visionneuse import file_filters as ff
+from fm_visionneuse import focus
 import pipeline_browser as pb
 import settings_store
 import ui_state

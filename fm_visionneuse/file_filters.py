@@ -26,7 +26,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
-import file_attributes
+from fm_visionneuse import file_attributes
 from config import DATA_DIR, HIDDEN_PREFIXES, PREVIEWABLE_EXTENSIONS, PUR_PREVIEW_EXTENSIONS
 
 SCOPE_LOCAL, SCOPE_ROOT = "local", "root"
