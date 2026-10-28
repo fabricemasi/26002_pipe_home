@@ -107,6 +107,8 @@ fm_board est la coque : fm_miro et fm_cad sont deux modules qui s'y branchent. L
 Règles :
 - Un module n'importe que fm_theme (aujourd'hui les briques `settings_*`, `app_style`), ses propres fichiers et, si besoin, des services communs de fm_browser (`previews`, `config`) ; JAMAIS la fenêtre principale (`pipeline_browser.py`) : elle lui pose des `HOOKS`.
 - Le travail sur un module ne lit que son paquet et sa doc. L'index d'AGENTS.md pointe vers les nouvelles docs.
+- **Une doc par module, qui COMMENCE par une carte** : pour chaque fonctionnalité (ex. pour fm_video : lecture, moodboard, analyse colorimétrique, scopes, export…), les fichiers qui la portent, puis les choix de l'utilisateur et les pièges, en sections par fonctionnalité. But : ouvrir directement les bons fichiers sans chercher (validé par l'utilisateur, 2026-10-28).
+- Découper une doc en sous-docs (`docs/agents/<module>/<fonctionnalité>.md` + un court fichier d'entrée = la carte) seulement quand elle dépasse ~150-200 lignes ; lignes courtes (pas de paragraphes d'un seul tenant). À faire en priorité pour `reglages.md` (~90 Ko) quand fm_theme sera en place.
 - Les tests de chaque module sont regroupés et lançables seuls (ex. `python -m unittest discover -s tests -p "test_cad*.py"`), pour ne jamais lancer toute la suite pour une retouche.
 - Les CLÉS de réglages ne changent pas (`board_*`, `md_*`, `video_*`…) : renommer les paquets ne doit rien faire perdre des réglages ni des presets de l'utilisateur.
 
