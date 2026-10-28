@@ -1,0 +1,98 @@
+# fm_theme / fm_browser : document de conception
+
+État : **PROJET VALIDÉ, rien n'est codé** (rédigé et validé par l'utilisateur le 2026-10-27). Lire en entier avant de toucher à la séparation thème / appli.
+
+## Objectif
+
+Séparer l'ensemble en **deux entités** :
+
+- **fm_theme** : l'aspect graphique de toutes les applis de l'utilisateur. Une bibliothèque (tokens, widgets stylés, chargeur de presets) et une petite appli d'édition des presets.
+- **fm_browser** : tout le reste (navigateur en colonnes, aperçus, visionneuse, inspecteur, modules Board / CAD, Markdown, vidéo). Une seule appli, **pas de découpage des modules pour l'instant** (choix de l'utilisateur), mais rien ne doit l'empêcher plus tard : chaque module ne dépend que de fm_theme et de lui-même, jamais de la fenêtre principale (déjà le cas via les `HOOKS`).
+
+But secondaire, demandé par l'utilisateur : des requêtes plus légères. Une demande de style se traite dans fm_theme, une demande de fonctionnalité dans fm_browser, sans lire l'autre.
+
+## Règle de partage
+
+> **fm_theme définit l'APPARENCE, les applis définissent le COMPORTEMENT.**
+
+- fm_theme n'importe jamais rien de fm_browser (ni `browser_core`, `column`, `previews`…). Sens unique : fm_browser → fm_theme.
+- Une appli ne fixe jamais une couleur, une police, un arrondi, une marge elle-même : elle demande un élément fm_theme (et sa variante). Si un aspect nouveau manque, on crée une **variante** dans fm_theme. C'est la règle actuelle « styles jamais inventés », rendue structurelle.
+- Un élément propre à une appli (une colonne qui affiche des badges d'étapes, un tableau avec tri ou glisser-déposer) garde son comportement dans l'appli et prend son apparence dans une variante fm_theme. Si une variante commence à embarquer du comportement, elle sort de fm_theme.
+
+## Types d'éléments et variantes
+
+Chaque **type d'élément** a un catalogue de **variantes nommées**, sur le modèle des styles de toggles actuels (`toggle_styles`, `toggle1_*`, `toggle2_*`…) :
+
+| Type | Exemples de variantes | Existant à reprendre |
+|---|---|---|
+| palette / couleurs | (une par preset) | `M`, `_sync_dynamic_M`, `SEMANTIC_COLOR_SLOTS` |
+| rôles de texte | titre fenêtre, libellé, valeur… | `TEXT_ROLES` (`settings_theme.py`) |
+| titres (niveaux 1-5) | | `_TITLE_LEVEL_STYLE`, `_title_font`… |
+| toggle | « pilule », « carré »… | `toggle_styles`, `_Toggle` |
+| slider | | `_SLIDER_STYLE`, `_MiniSlider` |
+| champ de saisie / bouton | | `INPUT_LOOK`, `_register_input` / `_register_radius` |
+| tableau | « réglages », « compact »… | `_flat_cells_table`, `build_cells_table`, `_TABLE_HEAD` |
+| colonne | « miller », « tuiles »… | style des lignes et entêtes de `Column` (`item_*`, `header_*`) |
+| panneau / fenêtre additionnelle / barre de titre | | `_PanelFrame`, `_SettingsTitleBar`, `extra_*` |
+| menu contextuel | | `settings_menu.py`, `ctx_menu*` |
+| onglets, ombres, sélecteur de couleur | | `tabs_*`, `SHADOW_PREFIXES`, `settings_colorpicker.py` |
+
+Une variante est de deux natures :
+
+- **Données** : couleurs, arrondis, bordures, padding, polices, hauteurs. Créées et modifiées dans l'appli fm_theme, sans code.
+- **Façon de dessiner** (ex. un tableau en cartes plutôt qu'en lignes, un toggle à image) : du code, écrit une fois dans la bibliothèque. Les variantes de ce dessin redeviennent des données (un champ `kind` dans la variante choisit le dessin).
+
+Une variante absente du preset chargé → repli sur la variante par défaut du type. Rien ne casse.
+
+## Presets
+
+- Un **preset = un thème complet** : valeurs générales (palette, polices par rôle, arrondis communs) + pour chaque type d'élément son catalogue de variantes et sa variante par défaut.
+- Créés, dupliqués, renommés, supprimés **dans l'appli fm_theme** (reprendre `save_preset`, `duplicate_preset`, `rename_preset`, `delete_preset`, `unique_preset_name`).
+- Stockés **dans le dépôt** (choix de l'utilisateur, 2026-10-27), dossier `fm_theme/presets/`, un fichier par preset (`<nom>.json`), partagé par toutes les applis et synchronisé avec le reste. Les tests ne doivent jamais y écrire (redirection par `_isolate`, comme les presets actuels).
+- Chaque fichier porte un numéro de format (`"format": 1`) pour pouvoir le migrer plus tard.
+- **Noms de variantes stables** : les applis y font référence par nom. Renommer une variante dans fm_theme crée un alias de l'ancien nom.
+
+## Choix du preset par appli
+
+- Chaque appli enregistre **dans ses propres réglages** le nom du preset choisi (ex. clé `theme_preset` de fm_browser). Choisir un preset pour une appli ne touche aucune autre appli.
+- **Variante par défaut surchargeable par appli** (décidé par l'utilisateur le 2026-10-27) : dans ses propres réglages, une appli peut choisir pour chaque type d'élément une autre variante par défaut que celle du preset (ex. clé `theme_default_variants` : `{"tableau": "compact"}`). Ordre de résolution d'un élément : variante nommée dans le code → surcharge de l'appli → défaut du preset → première variante du type. Le preset n'est jamais modifié par ce choix.
+- L'appli le charge au lancement et **surveille le fichier** (`QFileSystemWatcher`) : un preset modifié dans fm_theme se met à jour en direct dans les applis ouvertes.
+- Fluidité (règle n° 1 de l'appli) : un changement de thème ne reconstruit jamais une fenêtre. Seuls les widgets inscrits au type d'élément modifié se restylent (mécanisme déjà en place pour les arrondis : `_register_input` / `_register_radius`). Mesurer sur la fenêtre de réglages entièrement construite avant de valider.
+
+## Ce que deviennent les réglages actuels
+
+`DEFAULT_SETTINGS` (≈ 1 600 clés) mélange aujourd'hui l'aspect et le fonctionnement. Il faut le couper en deux :
+
+- **→ fm_theme** : palette, rôles de texte, titres, toggles, sliders, champs, boutons, tableaux, panneaux, fenêtres additionnelles, menus contextuels, onglets, ombres.
+- **→ fm_browser (fonctionnement)** : `root_path`, colonnes (`DEFAULT_COLUMNS`, `.pipeline_*.json`), raccourcis, logiciels, aperçus et rendus, état temps réel (`_LIVE_STATE_KEYS`), dispositions (`table_dims`, `ui_spaces`, `element_spaces`, `title_order`, `context_menu_layouts`…).
+- **Aspect des éléments propres à fm_browser** (cheminement `crumb_*`, badges d'étapes `step_*`, visionneuse `viewer_*`, Markdown `md_*`, board `board_*`, vidéo `video_*`) : décidé par l'utilisateur le 2026-10-27, ils **restent dans fm_browser** mais ne contiennent plus de valeurs brutes, **seulement des références à fm_theme** (rôle de texte, couleur de palette, variante de panneau…). Changer de preset fm_theme les restyle donc aussi.
+
+La fenêtre de réglages v2 se coupe de même :
+
+- la partie **aspect** devient l'appli fm_theme (mêmes briques, mêmes gabarits `over/Notes.txt`) ;
+- la partie **fonctionnement** reste dans fm_browser, construite avec les widgets de fm_theme.
+
+Les **« Override settings »** (`settings_element_style.py`, `element_style_overrides`) et le « Changement de style à la volée » (`QuickStyleWindow`) ressemblent déjà à des variantes locales : un override est une variante cachée propre à un élément. À convertir plutôt qu'à réécrire ; ils restent enregistrés côté appli (ils désignent des éléments de l'appli).
+
+Remplace l'intention « copier les modules de réglages dans chaque nouvelle appli, pas de paquet partagé » de `reglages.md` : les futures applis importeront fm_theme.
+
+## Organisation du code (proposition)
+
+- fm_theme dans le **même dépôt**, paquet `fm_theme/` (comme `board/`, `video/`), avec son point d'entrée (`python -m fm_theme` lance l'éditeur). Un dépôt séparé plus tard si une autre appli doit l'utiliser sans fm_browser.
+- Contenu : `settings_store` (partie aspect), `settings_theme`, `settings_widgets`, `settings_cells`, `settings_layout`, `settings_menu`, `settings_colorpicker`, `settings_dialogs`, `app_style`, briques de `settings_window`, `settings_quick_style`, `settings_element_style` (partie générique).
+- Les variables réassignées à l'exécution (`ui_state.X`) qui relèvent de l'aspect passent dans fm_theme avec la même règle de lecture (toujours par le module, jamais `from … import`).
+- Tests : ceux des briques passent dans `fm_theme/tests` (avec leur propre `_isolate`), ceux de l'appli restent dans `tests/`.
+
+## Ordre de migration (chaque étape laisse l'appli fonctionnelle, tests verts)
+
+1. **Inventaire** : classer chaque clé de `DEFAULT_SETTINGS` en aspect (fm_theme) / fonctionnement (fm_browser) / aspect propre à fm_browser (à convertir en références) ; script qui produit la liste, validée par l'utilisateur.
+2. **Paquet `fm_theme/`** : déplacer les briques sans changer leur comportement, modules d'origine gardés comme simples réexportations le temps de la transition. Vérifier qu'aucun import ne va de fm_theme vers fm_browser.
+3. **Format de preset fm_theme** : types d'éléments + variantes ; convertisseur depuis `pipeline_settings.presets.json` (les presets actuels deviennent des presets fm_theme, rien n'est perdu).
+4. **fm_browser charge son preset** (`theme_preset`), surveillance du fichier, restylage ciblé. Mesure de fluidité.
+5. **Appli fm_theme** : la fenêtre de réglages v2 réduite à l'aspect, gestion des presets et des variantes.
+6. **Réglages de fm_browser** réduits au fonctionnement.
+7. Généraliser les variantes aux types qui n'en ont pas encore (tableaux, colonnes…), au fil des demandes.
+
+## Questions ouvertes
+
+Aucune à ce jour (toutes tranchées le 2026-10-27). Prochaine étape : l'inventaire des clés (étape 1).

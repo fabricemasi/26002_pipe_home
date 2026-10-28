@@ -65,6 +65,7 @@ Le détail de chaque module (choix de l'utilisateur, pièges, mesures, tests) es
 - `docs/agents/cad.md` : module CAD du board (`board/cad*.py`).
 - `docs/agents/video.md` : module vidéo (`video/`).
 - `docs/agents/reglages.md` : fenêtre de réglages v2 et ses briques (tableaux, toggles, presets, menus contextuels, fenêtres additionnelles, « Changement de style à la volée », « Override settings », couleurs, cheminement / barre de navigation, préchargement), gabarits de lignes, réutilisation dans d'autres applis.
+- `docs/agents/fm_theme.md` : PROJET (non codé) de séparation en deux entités, fm_theme (aspect : variantes d'éléments, presets) et fm_browser (tout le reste) ; ordre de migration, questions ouvertes.
 
 ## Déplacements : Ctrl + glisser (règle de l'appli)
 

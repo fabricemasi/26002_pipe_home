@@ -52,6 +52,8 @@ Les quatre premiers sont dans `element_style_overrides` (seulement ce qui diffè
 
 ## Réutilisation de la fenêtre de réglages (intention)
 
+**Projet en cours qui remplacera cette intention** : paquet partagé fm_theme au lieu de copies, voir `docs/agents/fm_theme.md`. Tant qu'il n'est pas codé, les règles ci-dessous restent valables (elles préparent cette séparation).
+
 La fenêtre de réglages (surtout la fenêtre « Paramètres généraux », mode `general`, et ses briques : `settings_widgets.py`, `settings_layout.py`, `settings_theme.py`, `settings_colorpicker.py`, gabarits de `over/Notes.txt`) servira de **point de départ aux fenêtres de réglages des futures applications** de l'utilisateur : on copiera ces modules dans la nouvelle appli puis on les fera évoluer là-bas (pas de paquet partagé pour l'instant). Conséquences, à respecter dès maintenant :
 - Garder le moteur (widgets, sections, tableaux, rôles de texte, arrondis, construction de haut en bas, réutilisation de la fenêtre) **séparé des réglages propres à Pipeline Browser** (colonnes, étapes, logiciels, aperçus, racine de projets).
 - Ne pas ajouter de nouvelle dépendance de `settings_*` vers du code propre à l'appli (`browser_core`, `column`, `previews`…) ; passer par des paramètres, des signaux ou un module de réglages dédié.
