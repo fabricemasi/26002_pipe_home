@@ -75,7 +75,7 @@ class SettingsLinkMixin:
         from settings_store import theme_in_use
         import fm_theme.presets as theme_presets
         self._theme_watch_name = name
-        watcher.watch(theme_presets.preset_path(name) if theme_in_use(settings) else None)
+        watcher.watch(theme_presets.find_preset(name) if theme_in_use(settings) else None)
 
     def _on_theme_file_changed(self):
         """Preset fm_theme enregistre ailleurs : relu et applique (seul ce qui a change est refait)."""

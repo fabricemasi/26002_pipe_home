@@ -212,7 +212,7 @@ class WiringTest(WindowTestCase):
         self.assertEqual([label for label, _t in v2.SCOPES], ["General"])
         self.assertEqual({m: [label for label, _t in s] for m, s in v2.MODULE_SCOPES.items()},
                          {"video": [v2.VIDEO_TAB], "markdown": [v2.MARKDOWN_TAB], "board": [v2.MRO_TAB, v2.CAD_TAB],
-                          "viewer": [v2.VIEWER_TAB]})
+                          "viewer": [v2.VIEWER_TAB], "theme": [v2.THEME_TAB]})       # theme : editeur fm_theme
         self.assertEqual(v2.MARKDOWN_TAB, "Markdown")
         self.assertEqual(v2.MRO_TAB, "Module MRO")
         self.assertNotIn("Visionneuse", [n.title for n in v2.GENERAL_TREE])

@@ -142,6 +142,89 @@ def list_presets(folder: Path | None = None) -> dict[str, Path]:
     return dict(sorted(found.items(), key=lambda item: item[0].lower()))
 
 
+# -- Gestion (éditeur fm_theme) : un renommage garde l'ancien nom en alias (`alias`), qu'une appli liée à
+# l'ancien nom retrouve (`find_preset`) : choisir un preset dans une appli ne doit jamais se casser.
+
+_CORE_KEYS = ("format", "nom", "general", "types")
+
+
+def find_preset(name: str, folder: Path | None = None) -> Path | None:
+    """Fichier du preset `name`, ou de celui qui porte `name` en alias (renommé) ; None s'il n'existe pas."""
+    if not name:
+        return None
+    path = preset_path(name, folder)
+    if path.is_file():
+        return path
+    for candidate in sorted((folder or PRESETS_DIR).glob("*.json")):
+        try:
+            if name in (load_preset(candidate).get("alias") or ()):
+                return candidate
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def unique_name(base: str, folder: Path | None = None) -> str:
+    """`base`, ou `base 2`, `base 3`... : un nom de preset libre (nom ou alias)."""
+    base = (base or "Preset").strip() or "Preset"
+    name, n = base, 2
+    while find_preset(name, folder) is not None:
+        name, n = f"{base} {n}", n + 1
+    return name
+
+
+def _with_extras(preset: dict, previous: dict) -> dict:
+    """Garde les clés hors format de base (`alias`...) d'une version précédente du preset."""
+    preset.update({k: v for k, v in previous.items() if k not in _CORE_KEYS})
+    return preset
+
+
+def update_preset(name: str, changes: dict, drop: tuple = (), folder: Path | None = None) -> dict:
+    """Modifie les valeurs d'aspect du preset `name` (clés à plat) ; les autres clés sont ignorées."""
+    path = find_preset(name, folder)
+    previous = load_preset(path)
+    values = to_settings(previous)
+    values.update({k: v for k, v in changes.items() if theme_key(k)})
+    for key in drop:
+        values.pop(key, None)
+    preset = _with_extras(from_settings(values, previous["nom"]), previous)
+    save_preset(preset, folder)
+    return preset
+
+
+def new_preset(name: str, values: dict, folder: Path | None = None) -> str:
+    """Nouveau preset (nom rendu unique) à partir de réglages à plat. Retourne son nom."""
+    name = unique_name(name, folder)
+    save_preset(from_settings(values, name), folder)
+    return name
+
+
+def duplicate_preset(name: str, new: str | None = None, folder: Path | None = None) -> str:
+    previous = load_preset(find_preset(name, folder))
+    return new_preset(new or f"{previous['nom']} copie", to_settings(previous), folder)
+
+
+def rename_preset(old: str, new: str, folder: Path | None = None) -> str:
+    """Renomme (nom rendu unique) ; l'ancien nom devient un alias. Retourne le nom retenu."""
+    path = find_preset(old, folder)
+    previous = load_preset(path)
+    new = (new or "").strip()
+    if not new or new == previous["nom"]:
+        return previous["nom"]
+    new = unique_name(new, folder)
+    preset = dict(previous, nom=new)
+    preset["alias"] = sorted(set(previous.get("alias") or ()) | {previous["nom"]})
+    save_preset(preset, folder)
+    path.unlink()
+    return new
+
+
+def delete_preset(name: str, folder: Path | None = None) -> None:
+    path = find_preset(name, folder)
+    if path is not None:
+        path.unlink()
+
+
 def convert_presets(source: Path, folder: Path | None = None) -> list[Path]:
     """Convertisseur : chaque preset de l'appli (`pipeline_settings.presets.json` : {nom: réglages à plat})
     devient un preset fm_theme. La source n'est pas modifiée."""

@@ -1,11 +1,11 @@
-"""Lanceur `python -m fm_theme` (fm_theme.bat, à la racine).
+"""Lanceur `python -m fm_theme` (fm_theme.bat, à la racine) : l'éditeur fm_theme.
 
-TEMPORAIRE, en attendant l'éditeur fm_theme (étape 5 de docs/agents/fm_theme.md) : ouvre SEULE la fenêtre de
-réglages de fm_browser (Général : l'aspect), sans le navigateur. Les modifications sont enregistrées dans les
-réglages et le preset actif, comme depuis l'appli ; une appli déjà ouverte ne les voit qu'à sa prochaine lecture
-des réglages (le canal temps réel est l'étape 4).
+La fenêtre de réglages réduite à l'ASPECT, qui lit et écrit un preset fm_theme (fm_theme/presets/<nom>.json),
+avec la gestion des presets et la diffusion en direct vers les applis ouvertes (theme_editor.py). Les applis
+liées à ce preset le relisent à l'enregistrement.
 
-Seul fichier du paquet qui importe fm_browser : un lanceur, jamais importé par la bibliothèque.
+Seul fichier du paquet qui importe fm_browser (l'éditeur s'appuie encore sur sa fenêtre de réglages) : un
+lanceur, jamais importé par la bibliothèque.
 """
 import sys
 
@@ -15,7 +15,8 @@ from PySide6.QtWidgets import QApplication
 
 def main() -> int:
     import pipeline_browser as pb
-    from settings_window_v2 import SettingsWindowV2
+    import theme_editor
+    from fm_theme.live import LiveServer
 
     pb._install_error_log()
     pb._install_qt_message_filter()
@@ -25,23 +26,8 @@ def main() -> int:
     app = QApplication(sys.argv)
     pb.apply_style(app)
     pb._install_context_menus()
-    window = SettingsWindowV2()
-    # Temps reel : pendant un geste, les valeurs d'aspect modifiees partent vers les applis ouvertes (canal
-    # local) ; a l'enregistrement, le preset fm_theme lie est ecrit et les applis relisent son fichier.
-    from fm_theme.live import LiveServer
-    from fm_theme.presets import theme_key
-    from settings_store import theme_in_use
-    server = LiveServer(app)
-
-    def broadcast(settings: dict):
-        keys = getattr(window, "live_changed_keys", None) or ()
-        values = {k: settings[k] for k in keys if k in settings and theme_key(k)}
-        name = theme_in_use(settings)
-        if name and values:
-            server.broadcast(name, values)
-
-    window.settingsChanged.connect(broadcast)
-    window.show()
+    editor = theme_editor.ThemeEditor(theme_editor.initial_preset(), server=LiveServer(app))
+    app._fm_theme_editor = editor            # garde l'editeur en vie
     return app.exec()
 
 

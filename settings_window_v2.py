@@ -790,6 +790,28 @@ GENERAL_TREE = (
 )
 
 
+# Editeur fm_theme (fm_theme.bat, theme_editor.py) : l'arbre general REDUIT a l'aspect generique (inventaire valide,
+# docs/agents/fm_theme_inventaire.md). Memes sections, memes champs ; « General » reprend l'echelle et l'arrondi de la
+# fenetre de l'onglet Application (qui melange aspect et fonctionnement).
+THEME_TAB = "Thème"
+THEME_SECTIONS = ("Couleurs", "Polices principales", "TITRES", "Toggles", "Sliders", "Zone de saisie", "Bouton",
+                  "Tableaux", "Tabs", "Menu contextuel", "Fenêtres additionnelles")
+CATALOG["Thème : Général"] = [s for s in CATALOG["Application"] if s.key in ("ui_scale", "window_radius")]
+
+
+def theme_tree(settings: dict | None = None) -> tuple:
+    """Arbre de l'onglet Thème : « General » (echelle, arrondi de la fenetre) puis les sections d'aspect."""
+    nodes = {n.title: n for n in general_tree(settings)}
+    return (Node("Général", "Thème : Général"),) + tuple(nodes[title] for title in THEME_SECTIONS)
+
+
+def tab_tree(label: str, settings: dict | None = None) -> tuple:
+    """Arbre d'un onglet : module a part, Thème (editeur fm_theme) ou General."""
+    if label in STANDALONE_TABS:
+        return STANDALONE_TABS[label]
+    return theme_tree(settings) if label == THEME_TAB else general_tree(settings)
+
+
 # Onglets de reglages generaux a part (pas une colonne) : leur arbre.
 STANDALONE_TABS = {MARKDOWN_TAB: MARKDOWN_TREE, VIDEO_TAB: VIDEO_TREE, MRO_TAB: MRO_TREE, CAD_TAB: CAD_TREE,
                    VIEWER_TAB: VIEWER_TREE}
@@ -813,6 +835,7 @@ MODULE_SCOPES: dict[str, list[tuple[str, str | None]]] = {
     "markdown": [(MARKDOWN_TAB, None)],
     "board": [(MRO_TAB, None), (CAD_TAB, None)],
     "viewer": [(VIEWER_TAB, None)],
+    "theme": [(THEME_TAB, None)],          # editeur fm_theme (pas dans la rangee de la fenetre generale)
 }
 MODULE_TITLES = {"video": "Vidéo", "markdown": "Markdown", "board": "Board", "viewer": "Visionneuse"}
 # Libelle AFFICHE d'un onglet quand il differe de son identifiant (cles retenues, tests).
@@ -2796,7 +2819,7 @@ def _toggle_style_listener(toggle: QWidget, key: str | None) -> None:
 TOGGLE_STYLE_LISTENERS.append(_toggle_style_listener)
 
 
-WIRED_SECTIONS = ("Colonnes", "Colonnes spéciales", "TITRES", "Tableaux", "Toggles", "Sliders", "Application", "Visionneuse",
+WIRED_SECTIONS = ("Général", "Colonnes", "Colonnes spéciales", "TITRES", "Tableaux", "Toggles", "Sliders", "Application", "Visionneuse",
                   "Menu contextuel", "Fenêtres additionnelles",
                   "Dossiers et fichiers à omettre", "LUT", "Polices principales", "Couleurs",
                   "Barre de navigation", "Bouton", "Tabs", "Zone de saisie",
@@ -2837,6 +2860,31 @@ class _TabGapWatcher(QObject):
             pass
 
 
+class AppSettingsStore:
+    """Magasin par defaut de la fenetre : les reglages de l'appli (pipeline_settings.json, preset actif, preset
+    fm_theme lie). On relit le disque a chaque ecriture : une autre fenetre a pu enregistrer entre-temps."""
+
+    def load(self) -> dict:
+        return load_settings()
+
+    def save_partial(self, partial: dict, drop: tuple = ()) -> None:
+        """Etat enregistre au fil de l'eau (dimensions, styles de toggle...) : ecrit tel quel."""
+        settings = load_settings()
+        settings.update(partial)
+        for key in drop:
+            settings.pop(key, None)
+        save_settings(settings)
+
+    def save_changes(self, changed: dict) -> dict:
+        """Enregistrer : seules les cles modifiees par la fenetre ; le preset actif (et le preset fm_theme lie)
+        les retient aussi. Retourne les reglages enregistres."""
+        settings = load_settings()
+        settings.update(changed)
+        save_settings(settings)
+        update_active_preset(settings)
+        return settings
+
+
 class SettingsWindowV2(QDialog):
     """Fenetre comparative. `build_seconds` = temps de construction du
     constructeur ; `page_seconds[label]` = temps de chaque onglet a sa
@@ -2848,11 +2896,13 @@ class SettingsWindowV2(QDialog):
 
     _RESIZE_BORDER = 6
 
-    def __init__(self, parent=None, eager: bool = False, module: str | None = None):
+    def __init__(self, parent=None, eager: bool = False, module: str | None = None, store=None):
         super().__init__(parent)
         t0 = time.perf_counter()
         # module=None : fenetre generale ; sinon fenetre du module (cle de MODULE_SCOPES), meme fonctionnement.
         self.module = module
+        # Ou lire / ecrire : les reglages de l'appli (AppSettingsStore) ou un preset fm_theme (theme_editor.ThemeStore).
+        self._store = store or AppSettingsStore()
         self.scopes = MODULE_SCOPES[module] if module else SCOPES
         self.eager = eager   # eager=True : construit TOUT d'un coup (pour mesurer l'apport du differe)
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
@@ -2861,7 +2911,7 @@ class SettingsWindowV2(QDialog):
         self.setMinimumSize(640, 480)
         self._restore_geometry()
 
-        self.settings = load_settings()
+        self.settings = self._store.load()
         from fm_video.help_ui import HelpController
         self._color_help = HelpController(self,self.settings)
         self._original_settings = json.loads(json.dumps(self.settings))
@@ -2904,7 +2954,7 @@ class SettingsWindowV2(QDialog):
         root = QVBoxLayout(panel)
         root.setContentsMargins(1, 1, 1, 1)
         root.setSpacing(0)
-        title = f"Réglages : {MODULE_TITLES[module]}" if module else "Réglages"
+        title = f"Réglages : {MODULE_TITLES.get(module, module)}" if module else "Réglages"
         self.titlebar = _SettingsTitleBar(self, title=title)
         self.titlebar.closeClicked.connect(self.reject)
         self.titlebar.saveClicked.connect(self._on_apply)      # clic sur « modifications non enregistrees »
@@ -2979,11 +3029,7 @@ class SettingsWindowV2(QDialog):
         """Ecrit `partial` sur le disque tout de suite, sans toucher au reste (relit le disque : une
         autre fenetre a pu enregistrer entre-temps) — comme le fait _on_save. `drop` : cles a retirer
         (reglages d'un style de toggle supprime)."""
-        settings = load_settings()
-        settings.update(partial)
-        for key in drop:
-            settings.pop(key, None)
-        save_settings(settings)
+        self._store.save_partial(partial, drop)
         self.settings.update(partial)
         self._original_settings.update(json.loads(json.dumps(partial)))
         for key in drop:
@@ -3697,11 +3743,8 @@ class SettingsWindowV2(QDialog):
         values = self.wired_values()
         for key in ("title_order", "element_spaces", "element_spaces_below"):
             values[key] = dict(self.settings.get(key) or {})
-        settings = load_settings()
-        settings.update({k: v for k, v in values.items() if v != self._original_settings.get(k)})
-        save_settings(settings)
-        # Preset actif : le mettre a jour aussi, sinon le recharger plus tard rejouerait l'ancienne valeur.
-        update_active_preset(settings)
+        settings = self._store.save_changes(
+            {k: v for k, v in values.items() if v != self._original_settings.get(k)})
         self.settings = settings
         self._show_dirty(False)
         self.settingsSaved.emit(settings)
@@ -3714,7 +3757,7 @@ class SettingsWindowV2(QDialog):
     def reopen(self):
         """Rouvre la fenetre gardee en memoire apres sa fermeture : reprend ce qui a change dehors (tableau a la
         volee, presets, touches de la visionneuse...) comme `external_values`, puis s'affiche."""
-        fresh = load_settings()
+        fresh = self._store.load()
 
         def dump(value):
             return json.dumps(value, sort_keys=True, default=str)
@@ -3863,7 +3906,7 @@ class SettingsWindowV2(QDialog):
             sections = 0
             for label, title in self.scopes:
                 try:
-                    sections += count(STANDALONE_TABS.get(label) or general_tree(self.settings))
+                    sections += count(tab_tree(label, self.settings))
                 except Exception:                              # noqa: BLE001 - estimation seulement
                     pass
             total = self._prebuild_units_total = len(self.scopes) + 2 * sections
@@ -3985,7 +4028,7 @@ class SettingsWindowV2(QDialog):
         top_key = f"{values.name}|"
         with _section_host(inner):
             sections = []
-            nodes = STANDALONE_TABS.get(label) or general_tree(self.settings)
+            nodes = tab_tree(label, self.settings)
             for node in self._ordered_children(nodes, top_key):
                 _add_stacked(lay, sections, _LazyNode(
                     node, level, values, colors, store, self.eager, None, inner,

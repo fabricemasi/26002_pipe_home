@@ -1240,7 +1240,7 @@ def preset_values(settings: dict) -> dict:
 def theme_in_use(settings: dict) -> str:
     """Nom du preset fm_theme dont l'aspect est a l'ecran ("" : aucun, ou introuvable)."""
     name = settings.get("theme_preset") or ""
-    return name if name and _theme_presets.preset_path(name).is_file() else ""
+    return name if _theme_presets.find_preset(name) is not None else ""
 
 
 def _load_theme_values(name: str) -> dict:
@@ -1248,8 +1248,8 @@ def _load_theme_values(name: str) -> dict:
     if not name:
         return {}
     try:
-        return _theme_presets.to_settings(_theme_presets.load_preset(_theme_presets.preset_path(name)))
-    except (OSError, ValueError, KeyError):
+        return _theme_presets.to_settings(_theme_presets.load_preset(_theme_presets.find_preset(name)))
+    except (OSError, ValueError, KeyError, TypeError):
         return {}
 
 
@@ -1259,15 +1259,14 @@ def update_theme_preset(settings: dict) -> bool:
     name = theme_in_use(settings)
     if not name:
         return False
-    path = _theme_presets.preset_path(name)
     try:
-        current = _theme_presets.load_preset(path)
-    except (OSError, ValueError):
+        current = _theme_presets.to_settings(_theme_presets.load_preset(_theme_presets.find_preset(name)))
+    except (OSError, ValueError, TypeError):
         return False
-    preset = _theme_presets.from_settings(json.loads(json.dumps(settings)), current.get("nom") or name)
-    if _theme_presets.to_settings(preset) == _theme_presets.to_settings(current):
+    theme = {k: v for k, v in json.loads(json.dumps(settings)).items() if _theme_presets.theme_key(k)}
+    if theme == current:
         return False
-    _theme_presets.save_preset(preset)
+    _theme_presets.update_preset(name, theme)
     return True
 
 
@@ -1277,7 +1276,8 @@ def _link_theme_presets() -> None:
     presets = _load_presets()
     changed = False
     for preset_name, values in presets.items():
-        if isinstance(values, dict) and not values.get("theme_preset")                 and _theme_presets.preset_path(preset_name).is_file():
+        if (isinstance(values, dict) and not values.get("theme_preset")
+                and _theme_presets.find_preset(preset_name) is not None):
             values["theme_preset"] = preset_name
             changed = True
     if changed:
