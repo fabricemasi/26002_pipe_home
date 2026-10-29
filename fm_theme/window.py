@@ -26,8 +26,8 @@ from fm_theme.style import (
     start_native_move,
 )
 from fm_theme.theme import _set_text_role
-from settings_store import (
-    DEFAULT_SETTINGS,
+from fm_theme.hooks import default_settings
+from fm_theme.tokens import (
     M,
     _coerce_corner_radius,
     _coerce_side_enabled,
@@ -101,7 +101,7 @@ class _SettingsTitleBar(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 0, 0, 0)
         layout.setSpacing(9)
-        import previews as pb_previews
+        from fm_theme.hooks import ui_icon
 
         # Icone et croix A L'ECHELLE DU TITRE (role « window_title ») : en tailles fixes (9 px, police 11)
         # elles restaient minuscules a cote d'un titre plus grand (signale, fenetres d'override).
@@ -120,7 +120,7 @@ class _SettingsTitleBar(QWidget):
         # d'origine — voir la remarque de l'utilisateur, "cette icone sera
         # aussi utilisee sur la fenetre de settings elle-meme avant le
         # titre dans la barre de navigation".
-        custom_gear = pb_previews.custom_ui_icon_pixmap(pb_previews.UI_ICON_SETTINGS_GEAR, icon)
+        custom_gear = ui_icon("settings_gear", icon)
         if custom_gear is not None:
             dot.setPixmap(custom_gear)
             dot.setStyleSheet("background: transparent;")
@@ -164,9 +164,9 @@ class _SettingsTitleBar(QWidget):
             self._text_h = QFontMetrics(font).height()
             icon = max(12, round(self._text_h * 0.95))
             if self._dot.width() != icon:
-                import previews as pb_previews
+                from fm_theme.hooks import ui_icon
                 self._dot.setFixedSize(icon, icon)
-                gear = pb_previews.custom_ui_icon_pixmap(pb_previews.UI_ICON_SETTINGS_GEAR, icon)
+                gear = ui_icon("settings_gear", icon)
                 if gear is not None:
                     self._dot.setPixmap(gear)
         bw, bh = look.get("button_size") or (self.close_btn.width(), self.close_btn.height())
@@ -322,7 +322,7 @@ def seed_extra_window_look(settings: dict) -> None:
     """Habillage des fenetres additionnelles d'apres `settings` ; les fenetres ouvertes le reprennent."""
     from fm_theme.menu import _font as _gabarit_font      # police d'une ligne gabarit (role de l'appli resolu)
     from fm_theme.widgets import shadow_look
-    s = {**DEFAULT_SETTINGS, **(settings or {})}
+    s = {**default_settings(), **(settings or {})}
     colors = s.get("colors") or {}
 
     def res(value):
@@ -404,7 +404,7 @@ def install_extra_window(window: QWidget, panel: "_PanelFrame", outer, root, tit
     _EXTRA_WINDOWS.append(window)
     window.destroyed.connect(lambda *_a, w=window: _EXTRA_WINDOWS.remove(w) if w in _EXTRA_WINDOWS else None)
     if not EXTRA_WINDOW_LOOK:
-        seed_extra_window_look(DEFAULT_SETTINGS)
+        seed_extra_window_look(default_settings())
     apply_extra_window_look(window)
 
 

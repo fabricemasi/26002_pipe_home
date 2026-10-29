@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from fm_theme.theme import _set_text_role
-from settings_store import (
+from fm_theme.tokens import (
     M,
     _resolve_color_value,
     _ICONS_DIR,
@@ -940,7 +940,7 @@ class _TabStrip(QWidget):
             for side in ("top", "right", "bottom", "left"))
         family = look.get("tabs_font_family") or ""
         if family:
-            from browser_core import _resolve_font_family
+            from fm_theme.style import _resolve_font_family
             family = _resolve_font_family(family, int(look.get("tabs_font_size", 11)),
                                           700 if look.get("tabs_font_bold") else 400)
         # La police est AUSSI posee dans la feuille de style de chaque tab : la feuille globale des boutons
@@ -2010,7 +2010,7 @@ def _seed_flat_tables_style(radius: int, border: tuple) -> None:
 # ou d'un dessin (table_look_scope), le style commun revient aussitot apres.
 
 def _look_targets() -> dict:
-    from settings_store import M
+    from fm_theme.tokens import M
     from fm_theme.widgets import _TABLE_INNER_BORDER, _TABLE_SELECTION
     return {"flat": _FLAT_TABLE_STYLE, "head": _TABLE_HEAD, "selection": _TABLE_SELECTION,
             "inner": _TABLE_INNER_BORDER, "M": M}
@@ -2114,9 +2114,8 @@ def apply_part_looks(frame: QWidget) -> None:
         cell._text_look = look.get("font") or None
     padding_hook = getattr(frame, "_flat_cell_padding", None)
     if padding_hook is not None:
-        import settings_window_v2 as v2
-        from settings_store import load_settings
-        padding_hook(v2._padding_tuple(load_settings().get("table_cell_padding") or {}))
+        from fm_theme.hooks import load_settings
+        padding_hook(_padding_tuple(load_settings().get("table_cell_padding") or {}))
     _refresh_text_roles(frame)
     # Textes sans role (QLabel simples) : police propre posee sur leur apparence d'origine.
     from fm_theme.theme import TEXT_ROLES, text_look_font, text_look_of
@@ -2274,3 +2273,9 @@ def _build_flat_table(
     _register_flat_table(frame, row_meta)   # avant le verrou : le padding courant change la hauteur
     _lock_min_height(frame)
     return frame, row_meta, resizer
+
+
+def _padding_tuple(sides: dict) -> tuple:
+    """Padding {cote: px} d'un reglage -> (gauche, haut, droite, bas)."""
+    return (int(sides.get("left", 14)), int(sides.get("top", 8)), int(sides.get("right", 14)),
+            int(sides.get("bottom", 8)))

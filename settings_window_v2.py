@@ -48,7 +48,7 @@ from settings_cells import (
 
 from app_style import apply_dwm_frame, resize_hit_test
 from settings_layout import (
-    _ReorderOverlay, _reflow_ancestors,
+    _padding_tuple, _ReorderOverlay, _reflow_ancestors,
     _Section, _SectionHeader, _SubSection, _TabStrip, _TABLE_HEAD, _ResizableTableHeader, _TableRow,
     set_tab_look,
     _make_accordion,
@@ -2507,11 +2507,6 @@ def _head_hex(colors: dict, value: str) -> str:
     if value.startswith("#"):
         return value
     return with_alpha(colors.get(_SLOT_REAL.get(value, "chrome"), "#000000"), alpha)
-
-
-def _padding_tuple(sides: dict) -> tuple:
-    return (int(sides.get("left", 14)), int(sides.get("top", 8)), int(sides.get("right", 14)),
-            int(sides.get("bottom", 8)))
 
 
 # Sections de l'onglet General deja BRANCHEES (lues, appliquees en direct,

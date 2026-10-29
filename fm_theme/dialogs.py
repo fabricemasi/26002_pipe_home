@@ -10,7 +10,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
-from settings_store import M
+from fm_theme.tokens import M
 from fm_theme.theme import _set_text_role
 from fm_theme.widgets import _Btn, _PickerCloseButton, _PopupHeader
 

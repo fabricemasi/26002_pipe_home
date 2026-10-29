@@ -14,7 +14,7 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QLabel, QWidget
 
 from fm_theme.style import get_button_radius, get_input_radius
-from settings_store import M
+from fm_theme.tokens import M
 
 
 def _qfont(size: int, weight: int = 400, mono: bool = False, tracking: float = 0.0) -> QFont:
@@ -178,7 +178,7 @@ def _input_radius() -> int:
 def apply_input_look(values: dict) -> None:
     """Reglages > Zone de saisie : rayon, hauteur, couleur, bordures de TOUTES les zones de saisie inscrites (menus
     deroulants, champs texte, boites de valeur des curseurs...) — rejoue leur habillage."""
-    import settings_store as store
+    import fm_theme.tokens as store
     store.set_input_look(values)
     radius = values.get("input_corner_radius")
     if radius is not None:
@@ -217,7 +217,7 @@ _PENDING_TIMER: list = []
 
 
 def _restyle_input(widget) -> None:
-    import settings_store as store
+    import fm_theme.tokens as store
     try:
         base = getattr(widget, "_default_height", None)
         if base is None:

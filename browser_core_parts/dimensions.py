@@ -1,6 +1,6 @@
 """Dimensions et configuration des colonnes. Carte : docs/agents/colonnes.md."""
 
-from app_style import scaled, ITEM_FONT_ROLE_LABELS
+from app_style import scaled
 
 # ==========================================================================
 # Design tokens : voir app_style.py (C, STYLESHEET, font()) partage entre
@@ -123,7 +123,7 @@ COLUMN_SETTINGS: dict[str, dict[str, int]] = {
 # INVERSE de la table de settings_window (qui, elle, va du role vers le
 # libelle affiche dans le selecteur) — utilise par Column.refresh_fonts
 # pour resoudre la famille REELLEMENT choisie pour ce role.
-_ITEM_FONT_LABEL_TO_ROLE = {label: role for role, label in ITEM_FONT_ROLE_LABELS.items()}
+from app_style import _ITEM_FONT_LABEL_TO_ROLE  # noqa: E402  (source unique : fm_theme.style)
 
 def _col_key(title: str) -> str:
     return title if title in COLUMN_SETTINGS else "Contenu"

@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from fm_theme.style import font as app_font, resolve_color_ref
-from settings_store import DEFAULT_SETTINGS
+from fm_theme.hooks import default_settings
 
 _SIDES = ("top", "right", "bottom", "left")
 _CORNERS = ("top_left", "top_right", "bottom_right", "bottom_left")
@@ -65,7 +65,7 @@ def install(values=None, load_layouts=None, save_layouts=None, font_family=None,
 
 
 def _values() -> dict:
-    merged = dict(DEFAULT_SETTINGS)
+    merged = dict(default_settings())
     provider = _STATE["values"]
     if provider is not None:
         merged.update(provider() or {})

@@ -33,7 +33,7 @@ from fm_theme.layout import (
     _TABLE_HEAD, _lock_min_height, _prestyle_flat_frame, _prestyle_flat_row, _register_cells_table,
     _ResizableTableHeader, _reflow_ancestors, _style_flat_table, _table_row, _wire_resizable_columns,
 )
-from settings_store import M, input_bg, input_border_decl, input_height
+from fm_theme.tokens import M, input_bg, input_border_decl, input_height
 from fm_theme.theme import _input_radius, _register_input, _set_text_role
 from fm_theme.widgets import (
     Menu, menu_row,
@@ -1069,8 +1069,9 @@ _ABOVE_FRAMES: list = []            # tableaux qui ont des textes (restyles quan
 def seed_above_text_look(settings: dict) -> None:
     """Police / couleur des textes au-dessus des lignes (ligne gabarit Tableaux > Texte au dessus)."""
     from fm_theme.menu import _font
-    from settings_store import DEFAULT_SETTINGS, _resolve_color_value
-    s = {**DEFAULT_SETTINGS, **(settings or {})}
+    from fm_theme.hooks import default_settings
+    from fm_theme.tokens import _resolve_color_value
+    s = {**default_settings(), **(settings or {})}
     _ABOVE_TEXT_LOOK["font"] = _font(s, "table_above_text", 11)
     _ABOVE_TEXT_LOOK["color"] = _resolve_color_value(s["table_above_text_font_color"], s.get("colors") or {})
     for frame in list(_ABOVE_FRAMES):
@@ -2571,7 +2572,7 @@ def keep_table_dims(frame: QWidget, key: str, settings: dict | None = None) -> N
     dimensions enregistrees (`table_dims[key]`) a son affichage et enregistre aussitot celles tirees a
     la main, comme les tableaux des reglages. `key` sert aussi d'identifiant (Override settings)."""
     from PySide6.QtCore import QTimer
-    from settings_store import load_settings, save_settings
+    from fm_theme.hooks import load_settings, save_settings
     from fm_theme.widgets import _TABLE_DIMS
     frame._dims_key = key
     saved = ((settings if settings is not None else load_settings()).get("table_dims") or {}).get(key)

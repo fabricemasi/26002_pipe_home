@@ -292,6 +292,17 @@ ITEM_FONT_ROLE_LABELS = {
     "files": "Police fichiers",
     "code": "Police code",
 }
+_ITEM_FONT_LABEL_TO_ROLE = {label: role for role, label in ITEM_FONT_ROLE_LABELS.items()}
+
+
+def _resolve_font_family(label: str, size: int, weight: int = 400, fallback_role: str = "folders") -> str:
+    """Resout un libelle de police stocke (voir ITEM_FONT_ROLE_LABELS) vers un nom de police REEL : police
+    d'un role de l'appli (voir Polices principales) ou nom de police systeme litteral (vide : police du
+    role `fallback_role`)."""
+    role = _ITEM_FONT_LABEL_TO_ROLE.get(label)
+    if role is not None:
+        return role_font(role, size, weight).family()
+    return label or role_font(fallback_role, size, weight).family()
 
 
 def set_role_font(role: str, family: str, size: int, bold: bool,
@@ -490,7 +501,6 @@ def _control_font(prefix: str) -> str:
     family = look.get(f"{prefix}_font_family") or ""
     family_css = ""
     if family:
-        from browser_core import _resolve_font_family
         resolved = _resolve_font_family(family, int(look.get(f"{prefix}_font_size", 11)),
                                         700 if look.get(f"{prefix}_font_bold") else 400)
         family_css = f'font-family: "{resolved.replace(chr(34), "")}";'

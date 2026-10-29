@@ -6,6 +6,7 @@ import os as _os, sys as _sys  # jamais les vrais reglages / presets de l'utilis
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 import _isolate  # noqa: E402,F401
 from _lent import lent  # noqa: E402
+import fm_theme.tokens  # noqa: E402
 import copy
 import shiboken6
 import os
@@ -573,7 +574,7 @@ class ToggleStylesTest(WindowTestCase):
         import settings_widgets as sw
         folder = tempfile.mkdtemp()
         self.addCleanup(lambda: shutil.rmtree(folder, ignore_errors=True))
-        with mock.patch.object(settings_store, "_TOGGLE_ICONS_DIR", Path(folder) / "toggle_icons"):
+        with mock.patch.object(fm_theme.tokens, "_TOGGLE_ICONS_DIR", Path(folder) / "toggle_icons"):
             paths = {}
             for name, color in (("on", "#00ff00"), ("off", "#ff0000"), ("step2", "#0000ff"), ("step10", "#ffff00")):
                 image = QImage(20, 20, QImage.Format_ARGB32)

@@ -43,7 +43,7 @@ from fm_theme.style import (
 )
 from fm_theme.theme import _input_radius, _qfont, _register_input, _register_radius, _set_text_role
 from fm_theme.menu import Menu, menu_row  # noqa: F401 (reexporte : menus contextuels)
-from settings_store import (
+from fm_theme.tokens import (
     M,
     input_bg,
     input_border_decl,
@@ -1390,7 +1390,7 @@ def _sync_toggle_style(settings: dict) -> None:
     """Registre des styles = la liste des reglages (toggle_style_list), dans son ordre : un style
     supprime en sort, un style renomme change de nom ; puis les reglages de chacun."""
     global _TOGGLE_STYLE
-    from settings_store import toggle_style_list
+    from fm_theme.tokens import toggle_style_list
     styles = toggle_style_list(settings)
     kept = {entry["key"]: _toggle_style_dict(entry["key"]) for entry in styles}
     _TOGGLE_STYLES.clear()
@@ -1800,7 +1800,7 @@ def _toggle_image_pixmap(name: str, width: int, height: int, dpr: float | None =
     """Image importee pour un toggle « icones » (data/toggle_icons/), a ses couleurs d'origine,
     ajustee dans width x height (proportions gardees), nette en haute densite. Cache par
     (nom, taille, date du fichier)."""
-    from settings_store import _TOGGLE_ICONS_DIR
+    from fm_theme.tokens import _TOGGLE_ICONS_DIR
     path = _TOGGLE_ICONS_DIR / name
     try:
         mtime = path.stat().st_mtime
@@ -1872,7 +1872,7 @@ def _toggle_icon_pixmap(name: str, size: int, color: str, dpr: float | None = No
     key = (name, size, color, dpr)
     if key in _TOGGLE_ICON_CACHE:
         return _TOGGLE_ICON_CACHE[key]
-    from settings_store import _ICONS_DIR
+    from fm_theme.tokens import _ICONS_DIR
     path = _ICONS_DIR / name
     pix = None
     if path.is_file() and size > 0:

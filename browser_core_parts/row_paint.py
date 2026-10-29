@@ -4,11 +4,10 @@ import json
 from PySide6.QtCore import QRect, QSize, Qt
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication
-from app_style import C, font, role_font, resolve_color_ref, column_style_for
+from app_style import C, font, resolve_color_ref, column_style_for
 import ui_state
 from previews import _smooth_scale_down
 from settings_widgets import _paint_bordered_rect, _radius_any, _radius_dict, _rounded_rect_path, paint_shadow, shadow_look
-from . import dimensions as _dimensions
 
 # Reglable en direct (voir apply_all_settings/STEP_BADGE_STYLE, Settings >
 # Colonnes > Projets > Colonnes > "Icone de niveaux") — ces 2 constantes ne
@@ -436,19 +435,8 @@ def _paint_row_image(
         _paint_bordered_rect(painter, img_rect, radius, border_enabled, thickness, border_colors, None)
         painter.setRenderHint(QPainter.Antialiasing, False)
 
-def _resolve_font_family(label: str, size: int, weight: int = 400, fallback_role: str = "folders") -> str:
-    """Resout un libelle de police stocke (voir item_font_family/
-    _ITEM_FONT_LABEL_TO_ROLE) vers un nom de police REEL : "police du
-    soft" (role, voir Polices principales) ou nom de police systeme
-    litteral — meme logique que _resolve_row_font_color ci-dessous,
-    partagee ici pour Colonnes > Apercu > Zone titre (Titre/Apercu des
-    dossiers) — voir la remarque de l'utilisateur, "je veux le choix de
-    la police (titre + apercu des dossiers) (choix entre polices appli ou
-    polices systeme)"."""
-    role = _dimensions._ITEM_FONT_LABEL_TO_ROLE.get(label)
-    if role is not None:
-        return role_font(role, size, weight).family()
-    return label or role_font(fallback_role, size, weight).family()
+# Libelle de police -> nom reel : dans fm_theme (aspect), reexporte ici pour browser_core.
+from app_style import _resolve_font_family  # noqa: E402,F401
 
 def _resolve_row_font_color(title: str):
     """Police/couleur EFFECTIVES du texte d'une ligne, pour LE style de
