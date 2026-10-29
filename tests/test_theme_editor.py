@@ -131,10 +131,21 @@ class EditorVariantTest(WindowTestCase):
         compact = tp.add_variant(name, "bouton", "compact")
         editor.edit_variant("bouton", compact, save=False)
         self.assertFalse(editor.store.is_default("bouton"))
-        editor.store.save_changes({"button_radius": 13})
+        corners = {"top_left": 13, "top_right": 13, "bottom_right": 13, "bottom_left": 13}
+        editor.store.save_changes({"button_radius": 13, "button_corner_radius": corners})
         preset = tp.load_preset(tp.find_preset(name))
         self.assertEqual(preset["types"]["bouton"]["variantes"][compact]["radius"], 13)
         self.assertNotEqual(tp.to_settings(preset)["button_radius"], 13)
+        # Retour à « standard » puis à la variante : ses valeurs reviennent dans les champs, SUR PLACE.
+        section = next(n for n in editor.window.stack.findChildren(v2._LazyNode) if n.node.title == "Bouton")
+        section._head.head.clicked.emit()
+        editor.edit_variant("bouton", "standard", save=False)
+        rebuilt = []
+        section.rebuild_group = lambda: rebuilt.append(1)
+        editor.edit_variant("bouton", compact, save=False)
+        self.assertEqual(editor.window.wired_values()["button_corner_radius"], corners)
+        self.assertEqual(rebuilt, [])                               # rien de reconstruit
+        self.assertFalse(editor.window._dirty)                      # valeurs de référence, pas une modification
         editor.window.live_changed_keys = {"button_radius"}
         editor._broadcast({"button_radius": 13})
         self.assertEqual(sent, [])                                  # les applis n'utilisent pas cette variante

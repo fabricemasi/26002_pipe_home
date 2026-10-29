@@ -1804,6 +1804,99 @@ def read_spec(spec: Spec, widget: QWidget) -> dict:
     return FIELD_READERS[spec.kind](spec, widget)
 
 
+# -- Pose de valeurs dans un champ DEJA construit (inverse de FIELD_READERS) : `external_values` s'en sert pour
+# changer les valeurs affichees sans reconstruire la section (~0,3 s pour Bouton ; editeur fm_theme : changer de
+# variante). `v` = toutes les cles lues du champ, mises a jour. Retourne False si le champ ne sait pas (sa
+# section est alors reconstruite, comme avant).
+
+def _w_linked(widget: QWidget, spec: Spec, v: dict) -> bool:
+    """Cote / coin « lies » : pas de pose possible ; il doit rester tel quel."""
+    return f"{spec.key}_linked" not in v or v[f"{spec.key}_linked"] == widget.isLinked()
+
+
+def _w_sides(spec, w, v) -> bool:
+    if not _w_linked(w, spec, v):
+        return False
+    w.setValue(_coerce_side_enabled(v[spec.key]), v[spec.params["colors_key"]] or {})   # ancien format : un bool
+    if "thickness_key" in spec.params:
+        w._v2_thickness.setValue(int(v[spec.params["thickness_key"]]))
+    return True
+
+
+def _w_title_padding(spec, w, v) -> bool:
+    w.setValue(v[f"{spec.key}_linked"], v[spec.key])
+    w._v2_parts["before"].setValue(int(v[spec.params["before_key"]]))
+    w._v2_parts["after"].setValue(int(v[spec.params["after_key"]]))
+    return True
+
+
+def _w_font_gabarit(spec, w, v) -> bool:
+    k, parts = _gabarit_keys(spec), w._v2_parts
+    if "char" in parts:
+        parts["char"].setText(v[spec.params["char_key"]])
+    if "family" in parts:
+        parts["family"].setValue(v[k["family"]] or "Systeme")
+    for name in ("bold", "italic"):
+        if name in parts:
+            parts[name].setChecked(bool(v[k[name]]))
+    if "size" in parts:
+        parts["size"].setValue(int(v[k["size"]]))
+    if "smoothing" in parts:
+        parts["smoothing"].setValue(bool(v[k["smoothing_enabled"]]), v[k["smoothing"]])
+    if "color" in parts:
+        parts["color"].setValue(v[k["color"]])
+    return True
+
+
+def _w_inner_line(spec, w, v) -> bool:
+    prefix = f"{spec.params.get('prefix', 'table_inner')}_{spec.params['axis']}"
+    w.setValue(bool(v[f"{prefix}_enabled"]), v[f"{prefix}_color"], int(v[f"{prefix}_thickness"]))
+    return True
+
+
+def _w_bg_fill(spec, w, v) -> bool:
+    w._v2_parts["enabled"].setChecked(bool(v[spec.key]))
+    w._v2_parts["color"].setValue(v[spec.params["color_key"]])
+    return True
+
+
+def _w_value(spec, w, v) -> bool:
+    w.setValue(v[spec.key])
+    return True
+
+
+FIELD_WRITERS: dict[str, Callable] = {
+    "slider": lambda sp, w, v: (w.setValue(int(v[sp.key])), True)[1],
+    "bool": lambda sp, w, v: (w.setChecked(bool(v[sp.key])), True)[1],
+    "color": _w_value, "color_app": _w_value, "header_color": _w_value, "toggle_style": _w_value,
+    "corners": lambda sp, w, v: (w.setValue(v[f"{sp.key}_linked"], _coerce_corner_radius(   # absent : le defaut
+        sp.default if v[sp.key] is None else v[sp.key])), True)[1],
+    "padding": lambda sp, w, v: isinstance(v[sp.key], dict) and (w.setValue(v[f"{sp.key}_linked"], v[sp.key]), True)[1],
+    "title_padding": _w_title_padding,
+    "sides": _w_sides, "sides_thick": _w_sides, "shadow": _w_sides,
+    "inner_line": _w_inner_line,
+    "bg_fill": _w_bg_fill,
+    "font_gabarit": _w_font_gabarit,
+    "xy": lambda sp, w, v: (w._v2_parts["first"].setValue(int(v[sp.key])),
+                            w._v2_parts["second"].setValue(int(v[sp.params["second_key"]])), True)[2],
+}
+
+
+def write_spec(spec: Spec, widget: QWidget, values: dict) -> bool:
+    """Pose dans `widget` les valeurs de `values` qui le concernent. False : ce champ ne sait pas (a refaire)."""
+    writer = FIELD_WRITERS.get(spec.kind)
+    if writer is None:
+        return False
+    current = read_spec(spec, widget)
+    if not any(k in values for k in current):
+        return True
+    current.update({k: values[k] for k in current if k in values})
+    try:
+        return bool(writer(spec, widget, current))
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return False
+
+
 def hook_ranges(widget: QWidget, key: str, settings: dict, on_range: Callable | None):
     """Clic droit sur chaque curseur de `widget` = modifier sa plage ; la plage enregistree
     (`slider_ranges`) est reappliquee a la construction. Cle : celle du reglage, suivie de `#rang` si le
@@ -3718,13 +3811,36 @@ class SettingsWindowV2(QDialog):
             new, self.settings["colors"] = self.settings["colors"], palette
             self._restyle_colors({"colors": new})
         changed = set(values)
+        # D'abord SUR PLACE (champs deja construits : `write_spec`) ; seules les sections dont un champ ne sait
+        # pas poser sa valeur sont reconstruites.
+        failed = self._write_in_place(values)
         for node in self.findChildren(_LazyNode):
             group = node.node.group
             if not (node._built and group and group in CATALOG):
                 continue
-            keys = {k for sp in CATALOG[group] for k in (sp.key, *sp.extra_keys, f"{sp.key}_linked")}
-            if keys & changed:
+            specs = [sp for sp in CATALOG[group] if not isinstance(sp, str)]
+            keys = {k for sp in specs for k in (sp.key, *sp.extra_keys, f"{sp.key}_linked")}
+            if keys & changed and any(id(sp) in failed for sp in specs):
                 node.rebuild_group()
+
+    def _write_in_place(self, values: dict) -> set:
+        """Pose `values` dans les champs construits ; retourne les `id` des specs qui n'ont pas su. Ni « non enregistre »
+        ni apercu en direct : ce sont les valeurs de reference de la fenetre."""
+        failed, was_dirty = set(), self._dirty
+        for store in self.stores.values():
+            for spec, widget in store.get("specs", ()):
+                if isinstance(spec, str):
+                    continue
+                try:
+                    ok = write_spec(spec, widget, values)
+                except RuntimeError:                     # widget detruit
+                    continue
+                if not ok:
+                    failed.add(id(spec))        # Spec : dict dedans, pas hachable
+        self._live_timer.stop()
+        self._show_dirty(was_dirty)
+        self._last_live_snapshot = json.dumps(self.current_values(), sort_keys=True, default=str)
+        return failed
 
     def _on_save(self):
         self._write_settings()
