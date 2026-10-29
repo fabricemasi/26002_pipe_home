@@ -28,6 +28,13 @@ for _name in ("_PER_USER_PATH", "_PRESETS_PATH", "_WINDOW_STATE_PATH"):
         shutil.copyfile(_real, _copy)          # memes valeurs que l'utilisateur, mais jamais son fichier
     setattr(settings_store, _name, _copy)
 
+# Presets fm_theme (fm_theme/presets/, dans le dépôt) : copie temporaire, jamais les vrais fichiers.
+import fm_theme.presets as _theme_presets  # noqa: E402
+_theme_copy = _TMP / "fm_theme_presets"
+if _theme_presets.PRESETS_DIR.is_dir():
+    shutil.copytree(_theme_presets.PRESETS_DIR, _theme_copy)
+_theme_presets.PRESETS_DIR = _theme_copy
+
 REAL_DATA_UNTOUCHED = True
 
 # État de la FENÊTRE PRINCIPALE (distinct de celui des réglages ci-dessus).
