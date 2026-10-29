@@ -20,7 +20,7 @@ fm_board est la COQUE du board : fm_miro (tableau blanc, `docs/agents/fm_miro.md
 | Panneau `BoardPane`, barres d'outils, barre contextuelle, polices, commentaires, menus | `ui.py` | BARRES D'OUTILS, MENUS CONTEXTUELS, POLICES |
 | API du paquet (`is_board_file`, `create_board_file`, `EXTENSION`, `is_cad_drawing`) | `__init__.py` | — |
 | Ouverture / fermeture dans l'appli | hors paquet : `pipeline_browser.py` (`_open_board`, `_close_board`), `column.py` (`_create_board_file`) | Création |
-| Réglages (onglet « Module MRO ») | hors paquet : `settings_window_v2.py`, défauts `settings_store.py` (à ranger dans le paquet : fenêtres de réglages par module) | RÉGLAGES |
+| Réglages (onglet « MRO » de la fenêtre « Réglages : Board », bouton engrenage du cadre « Board ») | `settings.py` (lignes `CATALOG["MRO…"]`, `MRO_TREE`, titres `BOARD_MENU_GROUPS`), `settings_defaults.py` (`BOARD_DEFAULTS`) ; les lignes « Menus contextuels » sont des copies de celles de l'appli, faites par `settings_window_v2.py` (`_board_menu_spec`, `BOARD_MENU_FOLLOW`) et `settings_store.py` (`BOARD_MENU_KEYS`) | RÉGLAGES |
 
 À savoir : la classe de base des éléments `BoardItem` est encore dans `fm_miro/items.py` (la coque en dépend) ; elle reviendra dans la coque avec le registre.
 Règle d'isolation : jamais `pipeline_browser.py` (qui pose `fm_board.ui.ICON_PROVIDER`, `SETTING_WRITER`, `fm_cad.cad_export.ODA_PROVIDER`).

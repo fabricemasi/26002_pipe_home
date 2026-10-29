@@ -27,7 +27,7 @@ Branché sur la coque fm_board (`docs/agents/fm_board.md`) ; `cad_items` hérite
 | Interface : barre CAD, barre de commande, panneaux | `cad_ui.py`, `cad_linetype_ui.py` | INTERFACE, LISIBILITÉ, RÉGLAGES DU DESSIN |
 | Export / ouverture DXF / DWG | `cad_export.py`, `cad_import.py` | EXPORT DXF / DWG, OUVRIR UN DXF / DWG, ODA |
 | Fluidité : pan, latence, grille | `cad_gpu.py`, `fm_board/view.py`, `fm_board/scene.py` | LATENCE SOURIS / ZOOM, PAN FLUIDE, GRILLE RAPIDE |
-| Réglages (onglet « Module CAD ») | hors paquet : `settings_window_v2.py` (`CAD_TREE`), `settings_store.py` | ONGLET « Module CAD » |
+| Réglages (onglet « CAD » de la fenêtre « Réglages : Board ») | `settings.py` (`_cad_groups`, `CAD_TREE`, `CAD_GROUPS` aussi lus par la fenêtre « accrochages et suivi » de `cad_ui.py`), `settings_defaults.py` (`CAD_DEFAULTS`) | ONGLET « Module CAD » |
 
 Tests : `test_cad.py`, `test_cad_text.py`, `test_cad_aliases.py`. Sondes : `tests/_probe_cad*.py`, `_probe_gpu_*.py`.
 

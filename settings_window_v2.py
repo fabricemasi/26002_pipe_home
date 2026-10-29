@@ -81,10 +81,12 @@ from settings_lut import LUT_HELP_TEXT, LutTestImagesField
 from settings_sections import _FONT_ROLES
 from settings_v2_app import FontRoleField, LogicielsField, RootPathField, SemanticColorField, UiIconField, icon_table
 from settings_v2_app import _button as _settings_button
-from settings_catalog import CATALOG, Node, Spec, _gabarit_extra, _shadow_spec
+from settings_catalog import _BORD, CATALOG, Node, Spec, _ctx_font, _gabarit_extra, _shadow_spec
 # Reglages des modules : definis dans LEUR paquet (inscrits dans CATALOG a l'import).
 from fm_video.settings import VIDEO_TAB, VIDEO_TREE
 from fm_markdown.settings import MARKDOWN_TAB, MARKDOWN_TREE, MD_ALIGN, MD_MODES, MD_OPEN_MD
+from fm_board.settings import BOARD_MENU_GROUPS, MRO_TAB, MRO_TREE
+from fm_cad.settings import CAD_TAB, CAD_TREE
 from app_style import SEMANTIC_COLOR_SLOTS
 
 
@@ -131,7 +133,6 @@ CATALOG["Selection : Non selectionne"] = _selection_specs(
     "item_selection_idle", "item_idle_color", "@itemIdle", True, "Non selectionne")
 
 # -- General > Colonnes : la section telle que l'ancienne fenetre la construit --
-_BORD = lambda prefix, w=140, b=54: {"colors_key": prefix, "thickness_key": f"{prefix}_thickness", "width": w, "box": b}
 
 
 CATALOG["G Colonnes"] = [
@@ -400,255 +401,6 @@ CATALOG["Visionneuse"] = [
 ]
 
 
-def _board_icon_rows():
-    """Reglages > Module MRO > Icones : une ligne par bouton du module (meme champ que les autres icones)."""
-    try:
-        from fm_board.model import ICON_ROWS
-    except Exception:                                   # noqa: BLE001 - paquet absent : pas de lignes
-        return []
-    return [Spec(f"ui_icon:ui_board_{kind}", label, "ui_icon", None, {"ui_key": f"ui_board_{kind}"})
-            for kind, label in ICON_ROWS]
-
-
-CATALOG["MRO : Icones"] = _board_icon_rows()
-
-# Module « Board » (board/, fichiers .mro) : reglages GENERAUX (le canvas d'un board se regle dans le board).
-CATALOG["MRO"] = [
-    Spec("board_snap_enabled", "Magnétisme (Alt tenu = sans)", "bool", True),
-    Spec("board_snap_objects", "Aimanter aux autres objets (bords, centres)", "bool", True,
-         {"active_when": ("board_snap_enabled", True)}),
-    Spec("board_snap_grid", "Aimanter à la grille (niveau affiché)", "bool", False,
-         {"active_when": ("board_snap_enabled", True)}),
-    Spec("board_snap_resize", "Aimanter aussi en redimensionnant", "bool", True,
-         {"active_when": ("board_snap_enabled", True)}),
-    Spec("board_snap_guides", "Guides d'alignement", "bool", True, {"active_when": ("board_snap_enabled", True)}),
-    Spec("board_snap_distance", "Distance d'aimantation (pixels d'écran)", "slider", 6,
-         {"min": 1, "max": 30, "active_when": ("board_snap_enabled", True)}),
-]
-
-
-CATALOG["MRO : Navigation"] = [
-    Spec("board_zoom_speed", "Vitesse du zoom (par cran de molette)", "slider", 15, {"min": 1, "max": 100, "unit": "%"}),
-    Spec("board_zoom_fine", "Zoom fin, Maj tenu (par cran de molette)", "slider", 3, {"min": 1, "max": 50, "unit": "%"}),
-]
-
-
-CATALOG["MRO : Ouverture"] = [
-    Spec("board_open_cad_drawings", "Double-clic sur un dessin DXF / DWG : Module MRO", "bool", True),
-]
-
-# Grille UNIQUE du board et du module CAD (fm_board/scene.py, `grid_look`). Affichee ou non : bouton « Grille » de la
-# barre d'outils du board (F7 en mode CAD), reglage de chaque board. Chaque ligne peut etre remplacee par dessin
-# (barre CAD > Reglages du dessin, `page["cad"]["overrides"]`).
-CATALOG["MRO : Grille"] = [
-    Spec("board_grid_step", "Pas de base de la grille", "slider", 400,
-         {"min": 1, "max": 100000, "scale": 100, "unit": "", "box": 84}),
-    Spec("board_grid_unit", "Unité du pas et de l'origine", "choice", "board",
-         {"choices": (("board", "Unités du board (1/96 de pouce)"), ("cad", "Unité de mesure du CAD")), "width": 230}),
-    Spec("board_grid_factor", "Facteur entre deux niveaux", "slider", 4, {"min": 2, "max": 10, "unit": "×"}),
-    Spec("board_grid_levels", "Niveaux visibles au plus", "slider", 12, {"min": 1, "max": 12, "unit": ""}),
-    Spec("board_grid_fade_start", "Apparition d'un niveau à (pixels d'écran)", "slider", 12, {"min": 1, "max": 200}),
-    Spec("board_grid_fade_full", "Niveau plein à (pixels d'écran)", "slider", 60, {"min": 2, "max": 400}),
-    Spec("board_grid_origin_x", "Origine X", "slider", 0,
-         {"min": -1000000, "max": 1000000, "scale": 100, "unit": "", "box": 84}),
-    Spec("board_grid_origin_y", "Origine Y (vers le haut)", "slider", 0,
-         {"min": -1000000, "max": 1000000, "scale": 100, "unit": "", "box": 84}),
-    Spec("board_grid_style", "Style", "choice", "lines",
-         {"choices": (("lines", "Lignes"), ("dots", "Points aux croisements"), ("crosses", "Croix aux croisements")),
-          "width": 200}),
-    Spec("board_grid_thickness", "Épaisseur (pixels)", "slider", 1, {"min": 1, "max": 6}),
-    Spec("board_grid_dot_size", "Taille des points / croix (pixels)", "slider", 2,
-         {"min": 1, "max": 12, "active_when": ("board_grid_style", ["dots", "crosses"])}),
-    Spec("board_grid_auto_color", "Couleur automatique (noire sur canvas clair, blanche sur sombre)", "bool", True),
-    Spec("board_grid_intensity", "Intensité d'un niveau plein (couleur automatique)", "slider", 66,
-         {"min": 5, "max": 1000, "scale": 10, "unit": "%", "active_when": ("board_grid_auto_color", True)}),
-    Spec("board_grid_color", "Couleur d'un niveau plein (son opacité compte)", "color_app", "#11000000",
-         {"title": "Grille", "active_when": ("board_grid_auto_color", False)}),
-    Spec("board_grid_axes", "Axes passant par l'origine", "bool", False),
-    Spec("board_grid_axes_color", "Couleur des axes", "color_app", "#66ff2f2f",
-         {"title": "Axes de la grille", "active_when": ("board_grid_axes", True)}),
-    Spec("board_grid_axes_thickness", "Épaisseur des axes (pixels)", "slider", 1,
-         {"min": 1, "max": 6, "active_when": ("board_grid_axes", True)}),
-]
-
-
-MRO_TAB = "Module MRO"
-CAD_TAB = "Module CAD"
-
-
-def _cad_groups() -> dict:
-    """Onglet « Module CAD » : lignes par section (cles `board_cad_*`). Memes lignes dans la fenetre « accrochages et
-    suivi » ouverte depuis la barre d'outils CAD (« Changement de style a la volee », `CAD_GROUPS`)."""
-    from fm_cad import cad_model
-    from fm_cad.cad_snap import ENGLISH, LABELS, MODES
-    osnap = ("board_cad_osnap", True)
-    snap = [Spec("board_cad_osnap", "Accrochages aux objets — OSNAP (F3)", "bool", True)]
-    for mode in MODES:
-        snap.append(Spec(f"board_cad_osnap_{mode}", f"Accrochage : {LABELS[mode]} ({ENGLISH[mode]})", "bool",
-                         mode in ("end", "mid", "int", "ext", "cen"), {"active_when": osnap}))
-    snap += [
-        Spec("board_cad_aperture", "Distance de détection (pixels d'écran)", "slider", 10, {"min": 2, "max": 40}),
-        Spec("board_cad_markers", "Marqueurs d'accrochage", "bool", True),
-        Spec("board_cad_marker_size", "Taille des marqueurs (pixels)", "slider", 12,
-             {"min": 6, "max": 30, "active_when": ("board_cad_markers", True)}),
-        Spec("board_cad_marker_thickness", "Épaisseur des marqueurs (pixels)", "slider", 2,
-             {"min": 1, "max": 3, "active_when": ("board_cad_markers", True)}),
-        Spec("board_cad_marker_color", "Couleur des marqueurs", "color_app", "#ff7a00",
-             {"title": "Marqueurs d'accrochage", "active_when": ("board_cad_markers", True)}),
-        Spec("board_cad_tooltips", "Infobulles (type d'accrochage, polaire, commandes)", "bool", True),
-    ]
-    tracking = [
-        Spec("board_cad_ortho", "Mode orthogonal — ORTHO (F8)", "bool", False),
-        Spec("board_cad_polar", "Suivi polaire (F10)", "bool", False),
-        Spec("board_cad_polar_increment", "Incrément polaire", "choice", "45",
-             {"choices": (("15", "15°"), ("30", "30°"), ("45", "45°"), ("90", "90°"), ("custom", "Personnalisé")),
-              "width": 140}),
-        Spec("board_cad_polar_custom", "Incrément personnalisé (degrés)", "slider", 45,
-             {"min": 1, "max": 180, "unit": "°", "active_when": ("board_cad_polar_increment", "custom")}),
-        Spec("board_cad_otrack", "Suivi d'accrochage — OTRACK (F11)", "bool", False),
-        Spec("board_cad_track_polar", "Suivi d'accrochage selon les angles polaires (sinon orthogonal)", "bool",
-             True, {"active_when": ("board_cad_otrack", True)}),
-        Spec("board_cad_track_color", "Couleur des lignes de suivi", "color_app", "#18a058",
-             {"title": "Lignes de suivi"}),
-        Spec("board_cad_dyn", "Saisie dynamique — DYN (F12)", "bool", True),
-    ]
-    # Une seule grille (celle du board : Reglages > Module MRO > Grille ; F7 = l'afficher) : RESOL s'y accroche.
-    grid = [
-        Spec("board_cad_grid_snap", "Accrochage à la grille du board (niveau affiché) — RESOL (F9)", "bool", False),
-    ]
-    units = [
-        Spec("board_cad_unit", "Unité de mesure (saisie, affichage, types de ligne)", "choice", "mm",
-             {"choices": tuple((k, cad_model.UNITS[k][0]) for k in cad_model.UNIT_CHOICES), "width": 200}),
-    ]
-    linetypes = [Spec("board_cad_linetypes", "Types de ligne", "cad_linetypes", [])]
-    # Tout ce qui concerne le reticule (chaque ligne est aussi remplacable par dessin : reglages du dessin).
-    crosshair = [
-        Spec("board_cad_crosshair", "Réticule en croix", "bool", True),
-        Spec("board_cad_crosshair_size", "Longueur des bras (pixels)", "slider", 40,
-             {"min": 8, "max": 400, "active_when": [("board_cad_crosshair", True), ("board_cad_crosshair_full", False)]}),
-        Spec("board_cad_crosshair_full", "Bras jusqu'aux bords de la vue", "bool", False,
-             {"active_when": ("board_cad_crosshair", True)}),
-        Spec("board_cad_crosshair_auto_color", "Couleur automatique (selon le fond du canvas)", "bool", True),
-        Spec("board_cad_crosshair_color", "Couleur du réticule", "color_app", "#1a1a1a",
-             {"title": "Réticule", "active_when": ("board_cad_crosshair_auto_color", False)}),
-        Spec("board_cad_pickbox", "Carré central : demi-côté (pixels d'écran, = boîte de sélection)", "slider", 5,
-             {"min": 1, "max": 20}),
-        Spec("board_cad_magnet", "Aimant : le réticule saute sur le point accroché (objets)", "bool", True),
-        Spec("board_cad_crosshair_memory", "Indicateur « propriétés en mémoire » (pipette) sur le réticule", "bool", True),
-    ]
-    selection = [
-        Spec("board_cad_pickadd", "Clic = ajouter à la sélection (Maj = retirer), comme PICKADD", "bool", False),
-        Spec("board_cad_grip_size", "Taille des poignées (pixels)", "slider", 8, {"min": 4, "max": 20}),
-        Spec("board_cad_grip_color", "Couleur des poignées", "color_app", "#2f6bff", {"title": "Poignées"}),
-        Spec("board_cad_grip_border_color", "Couleur du contour des poignées", "color_app", "#ffffff",
-             {"title": "Contour des poignées"}),
-    ]
-
-    # Cadres de selection (demande de l'utilisateur) : fenetre (gauche -> droite) et capture (droite -> gauche).
-    def frame(prefix: str, bg: str, title: str) -> list:
-        return [
-            Spec(f"{prefix}_bg", "Couleur de fond", "color_app", bg, {"title": f"Fond — {title}"}),
-            Spec(f"{prefix}_border_enabled", "Bordure", "sides_thick", True, _BORD(f"{prefix}_border"),
-                 extra_keys=(f"{prefix}_border", f"{prefix}_border_thickness")),
-            Spec(f"{prefix}_radius", "Border radius", "corners", 0, {"max": 40}),
-            Spec(f"{prefix}_line", "Type de ligne", "line_pattern", "solid" if "window" in prefix else "dash",
-                 {"scale_key": f"{prefix}_line_scale"}, extra_keys=(f"{prefix}_line_scale",)),
-        ]
-    window_frame = frame("board_cad_window", "#283c6eff", "fenêtre")
-    crossing_frame = frame("board_cad_crossing", "#2850c878", "capture")
-    trim = [
-        Spec("board_cad_trim_mode", "Mode par défaut (Rapide : tous les objets coupent, comme AutoCAD)", "choice",
-             "quick", {"choices": (("quick", "Rapide"), ("standard", "Standard")), "width": 170}),
-        Spec("board_cad_trim_edge", "Arêtes de coupe prolongées (EDGEMODE)", "bool", False),
-    ]
-    display = [
-        Spec("board_cad_gpu", "Rendu GPU (OpenGL) des entités CAD — essai, fluidité du zoom et du déplacement", "bool",
-             False),
-        Spec("board_cad_lineweights", "Afficher les épaisseurs de ligne (éteint : simples lignes, comme AutoCAD)", "bool", True),
-        Spec("board_cad_aa_samples", "Anticrénelage du rendu GPU (échantillons par pixel)", "choice", "8",
-             {"choices": (("1", "Couverture exacte seule"), ("2", "2x"), ("4", "4x"), ("8", "8x"), ("16", "16x"),
-                          ("32", "32x"), ("64", "64x")), "width": 200}),
-        Spec("board_cad_aa_filter", "Adoucissement du suréchantillonnage (rayon du filtre)", "slider", 75,
-             {"min": 50, "max": 200, "unit": "%"}),
-        Spec("board_cad_antialiasing", "Anticrénelage des lignes", "bool", True),
-        Spec("board_cad_linear_blend", "Anticrénelage corrigé du gamma (bords et arrondis lisses)", "bool", True,
-             {"active_when": ("board_cad_antialiasing", True)}),
-        Spec("board_cad_crisp_lines", "Traits fins nets (horizontaux et verticaux calés sur les pixels)", "bool", True),
-        Spec("board_cad_dense_px", "Motif de ligne trop serré : trait continu sous (pixels)", "slider", 4,
-             {"min": 1, "max": 20}),
-        Spec("board_cad_ghost_color", "Couleur des fantômes (déplacer, copier)", "color_app", "#5f6b78",
-             {"title": "Fantômes"}),
-        Spec("board_cad_bar_color", "Fond des barres du CAD (outils et commande)", "color_app", "#0a0a0a",
-             {"title": "Barres du CAD"}),
-        Spec("board_cad_precision", "Décimales affichées", "slider", 4, {"min": 0, "max": 8, "unit": ""}),
-    ]
-    dims = [
-        Spec("board_cad_dim_text", "Hauteur du texte", "slider", 250,
-             {"min": 10, "max": 100000, "scale": 100, "unit": "", "box": 84}),
-        Spec("board_cad_dim_arrow", "Taille des flèches", "slider", 250,
-             {"min": 0, "max": 100000, "scale": 100, "unit": "", "box": 84}),
-        Spec("board_cad_dim_gap", "Écart des lignes d'attache à leur origine", "slider", 100,
-             {"min": 0, "max": 100000, "scale": 100, "unit": "", "box": 84}),
-        Spec("board_cad_dim_over", "Dépassement des lignes d'attache", "slider", 125,
-             {"min": 0, "max": 100000, "scale": 100, "unit": "", "box": 84}),
-        Spec("board_cad_dim_scale", "Échelle des cotations (texte, flèches, écarts)", "slider", 100,
-             {"min": 1, "max": 100000, "unit": "%", "box": 84}),
-        Spec("board_cad_dim_arrow_kind", "Forme des flèches", "choice", "triangle",
-             {"choices": (("triangle", "Triangle"), ("open", "Ouverte"), ("tick", "Trait oblique")), "width": 170}),
-        Spec("board_cad_dim_decimals", "Décimales (zéros de fin retirés)", "slider", 2, {"min": 0, "max": 8, "unit": ""}),
-    ]
-    hatches = [
-        Spec("board_cad_hatch_pattern", "Motif par défaut", "choice", "lines",
-             {"choices": (("solid", "Plein"), ("lines", "Lignes"), ("cross", "Croisé"), ("brick", "Briques")),
-              "width": 170}),
-        Spec("board_cad_hatch_angle", "Angle du motif", "slider", 45, {"min": 0, "max": 179, "unit": "°"}),
-        Spec("board_cad_hatch_spacing", "Espacement des traits", "slider", 300,
-             {"min": 1, "max": 1000000, "scale": 100, "unit": "", "box": 84}),
-        Spec("board_cad_hatch_alpha", "Opacité du remplissage plein", "slider", 35, {"min": 0, "max": 100, "unit": "%"}),
-    ]
-    justify = tuple((code, f"{code} — {label}") for code, label in (
-        ("L", "Gauche (ligne de base)"), ("C", "Centre (ligne de base)"), ("R", "Droite (ligne de base)"),
-        ("TL", "Haut gauche"), ("TC", "Haut centre"), ("TR", "Haut droite"), ("ML", "Milieu gauche"),
-        ("MC", "Milieu centre"), ("MR", "Milieu droite"), ("BL", "Bas gauche"), ("BC", "Bas centre"),
-        ("BR", "Bas droite")))
-
-    def font_choices():
-        from PySide6.QtGui import QFontDatabase
-        return tuple((family, family) for family in QFontDatabase.families())
-    texts = [
-        Spec("board_cad_text_height", "Hauteur du texte (capitales)", "slider", 250,
-             {"min": 1, "max": 100000, "scale": 100, "unit": "", "box": 84}),
-        Spec("board_cad_text_font", "Police", "choice", "Arial", {"choices": font_choices, "width": 220}),
-        Spec("board_cad_text_justify", "Justification du texte (TEXTE)", "choice", "L",
-             {"choices": justify, "width": 220}),
-        Spec("board_cad_mtext_justify", "Justification du texte multiligne (MTEXTE)", "choice", "TL",
-             {"choices": justify, "width": 220}),
-        Spec("board_cad_text_spacing", "Interligne (100 % = 5/3 de la hauteur, comme AutoCAD)", "slider", 100,
-             {"min": 25, "max": 400, "unit": "%"}),
-    ]
-    shortcuts = [
-        Spec("board_cad_pgp_path", "Fichier d'alias (.pgp d'AutoCAD)", "cad_pgp_path", ""),
-    ]
-    try:
-        from fm_board.model import CAD_ICON_ROWS
-    except Exception:                                   # noqa: BLE001 - paquet absent : pas de lignes
-        CAD_ICON_ROWS = []
-    icons = [Spec(f"ui_icon:ui_board_{kind}", label, "ui_icon", None, {"ui_key": f"ui_board_{kind}"})
-             for kind, label in CAD_ICON_ROWS]
-    return {"CAD : Unités": units, "CAD : Types de ligne": linetypes, "CAD : Accrochages": snap,
-            "CAD : Suivi et saisie": tracking, "CAD : Grille": grid, "CAD : Réticule": crosshair,
-            "CAD : Sélection et poignées": selection, "CAD : Fenêtre de sélection": window_frame,
-            "CAD : Capture": crossing_frame, "CAD : Ajuster": trim, "CAD : Affichage": display, "CAD : Cotations": dims, "CAD : Hachures": hatches,
-            "CAD : Textes": texts,
-            "CAD : Raccourcis clavier": shortcuts,
-            "CAD : Icônes": icons}
-
-
-CAD_GROUPS = ("CAD : Accrochages", "CAD : Suivi et saisie", "CAD : Grille", "CAD : Réticule",
-              "CAD : Sélection et poignées", "CAD : Affichage")
-CATALOG.update(_cad_groups())
-
-
 def _f_extension_list(spec, v, colors):
     field = _OmitListField(prompt=spec.params.get("prompt", "Extension :"))
     field.set_values(_normalized_extensions(v.seed(spec.key, spec.default)))
@@ -766,12 +518,6 @@ FILTER_ROW_SPECS = [
 CATALOG["Visionneuse : Filtres"] = CATALOG["Visionneuse : Filtres"] + FILTER_ROW_SPECS
 
 # -- Menu contextuel (settings_menu : tous les menus contextuels, lus a chaque ouverture) --
-def _ctx_font(prefix: str, label: str, size: int, color: str, bold: bool = False) -> Spec:
-    return Spec(f"{prefix}_font_family", label, "font_gabarit", "",
-                {"prefix": prefix, "size": (6, 32), "size_default": size, "color_default": color,
-                 "color_title": "Couleur du texte", "bold_default": bold}, extra_keys=_gabarit_extra(prefix))
-
-
 # Fenetres additionnelles (demande de l'utilisateur) : toutes les fenetres en plus de la principale.
 CATALOG["Fenêtres additionnelles"] = [
     Spec("extra_window_border_enabled", "Bordures", "sides_thick", True,
@@ -843,23 +589,6 @@ CATALOG["Menu contextuel : Separateurs"] = [
     Spec("ctx_menu_sep_thickness", "Épaisseur", "slider", 1, {"min": 0, "max": 8}),
     Spec("ctx_menu_sep_padding", "Marges", "padding", {}),
 ]
-# Module « Board » : Reglages > Module MRO > Barres d'outils (habillage des barres flottantes du board).
-CATALOG["MRO : Barres d'outils"] = [
-    Spec("board_toolbar_bg_color", "Couleur de fond", "color_app", "#16181a", {"title": "Fond des barres d'outils"}),
-    Spec("board_toolbar_border_enabled", "Bordures", "sides_thick", True,
-         {"colors_key": "board_toolbar_border", "thickness_key": "board_toolbar_border_thickness",
-          "width": 90, "box": 54}, extra_keys=("board_toolbar_border", "board_toolbar_border_thickness")),
-    Spec("board_toolbar_corner_radius", "Border radius", "corners", 0, {"max": 30}),
-    Spec("board_toolbar_padding", "Padding du fond", "padding", {}),
-    _shadow_spec("board_toolbar_shadow"),
-    _ctx_font("board_toolbar_text", "Police", 12, "#d6d9dc"),
-    Spec("board_toolbar_invert", "Icônes et textes en négatif", "bool", False),
-    Spec("board_toolbar_focus_width", "Largeur du focus et du survol", "slider", 26, {"min": 0, "max": 30}),
-    Spec("board_toolbar_focus_color", "Couleur de fond focus", "color_app", "#6e3f6f9f"),
-    Spec("board_toolbar_focus_radius", "Border radius focus", "slider", 6, {"min": 0, "max": 30}),
-    Spec("board_toolbar_hover_color", "Couleur de fond survol", "color_app", "#232729"),
-    Spec("board_toolbar_hover_radius", "Border radius survol", "slider", 6, {"min": 0, "max": 30}),
-]
 
 
 def _board_menu_spec(spec: "Spec") -> "Spec":
@@ -882,9 +611,6 @@ def _board_menu_spec(spec: "Spec") -> "Spec":
 # Lignes du board qui SUIVENT celles de l'appli tant que leur override est coupe : {cle board: (interrupteur,
 # cle de l'appli)} (lu par ScopeValues.seed : le champ montre alors la valeur de l'appli).
 BOARD_MENU_FOLLOW: dict = {}
-BOARD_MENU_GROUPS = (("Menu", "Menu contextuel : Menu"), ("Lignes", "Menu contextuel : Lignes"),
-                     ("Survol", "Menu contextuel : Survol"), ("Libellés", "Menu contextuel : Libelles"),
-                     ("Séparateurs", "Menu contextuel : Separateurs"))
 for _title, _group in BOARD_MENU_GROUPS:
     CATALOG[f"MRO : {_group}"] = [_board_menu_spec(sp) for sp in CATALOG[_group]]
     for _spec in CATALOG[_group]:
@@ -1187,40 +913,6 @@ VIEWER_TREE = (
     Node("Regroupement", "Visionneuse : Regroupement"),
     Node("Filtres", "Visionneuse : Filtres"),
     Node("Icônes", "Visionneuse : Icones"),
-)
-
-
-# Onglet « Module MRO » (module Board, paquet board/ ; avant : section MRO de l'onglet General).
-MRO_TREE = (
-    Node("Ouverture", "MRO : Ouverture"),
-    Node("Navigation", "MRO : Navigation"),
-    Node("Magnétisme", "MRO"),
-    Node("Grille", "MRO : Grille"),
-    Node("Barres d'outils", "MRO : Barres d'outils"),
-    Node("Menus contextuels", children=tuple(Node(t, f"MRO : {g}") for t, g in BOARD_MENU_GROUPS)),
-    Node("Icônes", "MRO : Icones"),
-)
-
-# Onglet « Module CAD » (voir CATALOG["CAD : …"]).
-CAD_TREE = (
-    Node("Unités", "CAD : Unités"),
-    Node("Types de ligne", "CAD : Types de ligne"),
-    Node("Accrochages", "CAD : Accrochages"),
-    Node("Suivi et saisie", "CAD : Suivi et saisie"),
-    Node("Grille", "CAD : Grille"),
-    Node("Réticule", "CAD : Réticule"),
-    Node("Sélection", children=(
-        Node("Clic et poignées", "CAD : Sélection et poignées"),
-        Node("Fenêtre (de gauche à droite)", "CAD : Fenêtre de sélection"),
-        Node("Capture (de droite à gauche)", "CAD : Capture"),
-    )),
-    Node("Ajuster", "CAD : Ajuster"),
-    Node("Affichage", "CAD : Affichage"),
-    Node("Cotations", "CAD : Cotations"),
-    Node("Hachures", "CAD : Hachures"),
-    Node("Textes", "CAD : Textes"),
-    Node("Raccourcis clavier", "CAD : Raccourcis clavier"),
-    Node("Icônes", "CAD : Icônes"),
 )
 
 

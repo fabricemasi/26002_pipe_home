@@ -975,7 +975,8 @@ class CadChrome:
         import settings_window_v2 as v2
         from settings_quick_style import QuickStyleWindow
         from settings_store import DEFAULT_SETTINGS
-        specs = [spec for group in v2.CAD_GROUPS for spec in v2.CATALOG[group]]
+        from fm_cad.settings import CAD_GROUPS
+        specs = [spec for group in CAD_GROUPS for spec in v2.CATALOG[group]]
         values = {k: v for k, v in DEFAULT_SETTINGS.items() if k.startswith("board_cad_")}
         values.update({k: v for k, v in (self.pane._settings or {}).items() if k.startswith("board_cad_")})
         values.update({k: v for k, v in self.ctl.settings.items() if k.startswith("board_cad_")})

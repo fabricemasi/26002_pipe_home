@@ -740,74 +740,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Bouton « Récursif » de la visionneuse / planche (etat temps reel) : toutes les photos du dossier,
     # sous-dossiers compris (PipelineBrowser._toggle_recursive).
     "viewer_recursive": False,
-    # Module « Board » (board/, .mro) : magnetisme GENERAL (Reglages > Module MRO ; Alt tenu = sans). Seuil en pixels
-    # d'ecran (meme effet a tout zoom). Les reglages propres a un board (couleur du canvas...) sont dans le .mro.
-    # Double-clic sur un dessin DXF / DWG dans une colonne : ouvert dans le module MRO (lu, jamais reecrit).
-    "board_open_cad_drawings": True,
-    "board_snap_enabled": True,
-    "board_snap_objects": True,
-    "board_snap_grid": False,
-    "board_snap_guides": True,
-    "board_snap_resize": True,
-    "board_snap_distance": 6,
-    # Presets des outils de dessin du board (etat temps reel) : {outil: [{color, width, opacity?} x 3]}.
-    "board_pen_presets": {},
-    # Module CAD du board (board/cad*.py, Reglages > Module CAD et sa fenetre « accrochages et suivi ») :
-    # bascules (F3 OSNAP, F7 grille, F8 ORTHO, F9 accrochage a la grille, F10 polaire, F11 suivi, F12 saisie
-    # dynamique), modes d'accrochage, distances en pixels d'ECRAN (meme effet a tout zoom).
-    "board_cad_osnap": True,
-    "board_cad_osnap_end": True, "board_cad_osnap_mid": True, "board_cad_osnap_cen": True,
-    "board_cad_osnap_gcen": False, "board_cad_osnap_qua": False, "board_cad_osnap_int": True,
-    "board_cad_osnap_appint": False, "board_cad_osnap_ext": True, "board_cad_osnap_per": False,
-    "board_cad_osnap_tan": False, "board_cad_osnap_nea": False, "board_cad_osnap_par": False,
-    "board_cad_osnap_node": False, "board_cad_osnap_ins": False,
-    "board_cad_aperture": 10,
-    "board_cad_markers": True, "board_cad_marker_size": 12, "board_cad_marker_color": "#ff7a00",
-    "board_cad_marker_thickness": 2,
-    "board_cad_tooltips": True, "board_cad_magnet": True,
-    "board_cad_ortho": False, "board_cad_polar": False, "board_cad_polar_increment": "45",
-    "board_cad_polar_custom": 45,
-    "board_cad_otrack": False, "board_cad_track_polar": True,
-    "board_cad_dyn": True,
-    "board_cad_grid_snap": False,
-    "board_cad_unit": "mm",                       # unite de mesure (mm, cm, m, km) ; override par dessin
-    "board_cad_linetypes": [],                    # types de ligne (vide = ceux d'origine, fm_cad.cad_model)
-    # Grille unique du board et du CAD (Reglages > Module MRO > Grille) : pas en centiemes, intensite en dixiemes de %
-    "board_grid_step": 400, "board_grid_unit": "board", "board_grid_factor": 4, "board_grid_fade_start": 12,
-    "board_grid_fade_full": 60, "board_grid_style": "lines", "board_grid_thickness": 1, "board_grid_auto_color": True,
-    "board_grid_intensity": 66, "board_grid_color": "#11000000", "board_grid_levels": 12, "board_grid_dot_size": 2,
-    "board_grid_origin_x": 0, "board_grid_origin_y": 0, "board_grid_axes": False, "board_grid_axes_color": "#66ff2f2f",
-    "board_grid_axes_thickness": 1,
-    "board_cad_pickbox": 5, "board_cad_grip_size": 8, "board_cad_pickadd": False,
-    "board_cad_crosshair": True, "board_cad_crosshair_size": 40, "board_cad_crosshair_full": False,
-    "board_cad_crosshair_auto_color": True, "board_cad_crosshair_color": "#1a1a1a", "board_cad_crosshair_memory": True,
-    "board_cad_dim_text": 250, "board_cad_dim_arrow": 250, "board_cad_dim_gap": 100, "board_cad_dim_over": 125,
-    "board_cad_dim_scale": 100, "board_cad_dim_arrow_kind": "triangle", "board_cad_dim_decimals": 2,   # cotations (centiemes d'unite de mesure)
-    "board_cad_hatch_pattern": "lines", "board_cad_hatch_angle": 45, "board_cad_hatch_spacing": 300,
-    "board_cad_hatch_alpha": 35,                   # hachures : motif, angle, espacement (centiemes d'unite de mesure), opacite du plein
-    "board_cad_text_height": 250, "board_cad_text_font": "Arial", "board_cad_text_justify": "L",
-    "board_cad_mtext_justify": "TL", "board_cad_text_spacing": 100,   # textes : hauteur (centiemes d'unite de mesure), police, justifications, interligne (%)
-    "board_cad_pgp_path": "",                      # fichier .pgp d'AutoCAD : alias de commandes du CAD (fm_cad/cad_aliases.py)
-    "board_cad_gpu": False,                        # rendu GPU (OpenGL) des entites CAD (fm_cad/cad_gpu.py)
-    "board_cad_bar_color": "#0a0a0a",              # fond de la barre d'outils et de la barre de commande du CAD
-    "board_zoom_speed": 15, "board_zoom_fine": 3,           # zoom du board : % par cran de molette (Maj = fin)
-    "board_cad_precision": 4,
-    "board_cad_lineweights": True,                 # affichage des epaisseurs de ligne (faux : simples lignes d'un pixel, comme AutoCAD)
-    "board_cad_aa_filter": 75,                     # largeur du filtre de reduction du suréchantillonnage (% de pixel, rayon)
-    "board_cad_aa_samples": "8",                   # suréchantillonnage du rendu GPU : 1 (aucun), 2, 4, 8, 16, 32, 64
-    "board_cad_antialiasing": True, "board_cad_linear_blend": True, "board_cad_crisp_lines": True, "board_cad_dense_px": 4,
-    "board_cad_grip_color": "#2f6bff", "board_cad_grip_border_color": "#ffffff", "board_cad_track_color": "#18a058", "board_cad_ghost_color": "#5f6b78",
-    # Cadres de selection du CAD (Reglages > Module CAD > Selection) : fenetre (gauche -> droite) et capture
-    # (droite -> gauche) — fond, bordure par cote, arrondis, type de ligne (solid | dash | dot) et son echelle (%)
-    **{f"board_cad_{frame}_{key}": value for frame, bg, edge, line in (
-        ("window", "#283c6eff", "#285ae6", "solid"), ("crossing", "#2850c878", "#28a05a", "dash"))
-       for key, value in (
-           ("bg", bg), ("border_enabled", {"top": True, "right": True, "bottom": True, "left": True}),
-           ("border_enabled_linked", True), ("border", {"top": edge, "right": edge, "bottom": edge, "left": edge}),
-           ("border_thickness", 1), ("radius", {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0}),
-           ("radius_linked", True), ("line", line), ("line_scale", 100))},
-    "board_cad_trim_mode": "quick",                # AJUSTER : quick (Rapide, comme AutoCAD) | standard
-    "board_cad_trim_edge": False,                  # AJUSTER : aretes de coupe prolongees (EDGEMODE = 1)
     "viewer_focus_image_border": {"top": "#5f666b", "right": "#5f666b", "bottom": "#5f666b", "left": "#5f666b"},
     "viewer_focus_image_border_thickness": 1,
     "viewer_focus_image_border_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
@@ -1494,28 +1426,11 @@ del _sides_key
 _DYNAMIC_KEY = re.compile(r"^toggle(?:[3-9]\d*|[1-9]\d+)_")
 
 
-# Module « Board » (board/) — Reglages > Module MRO > Barres d'outils : apparence d'origine par defaut (palette des
-# panneaux des reglages : fond #16181a, filet #2a2e32 d'un pixel, angles droits ; texte #d6d9dc).
-DEFAULT_SETTINGS.update({
-    "board_toolbar_bg_color": "#16181a",
-    "board_toolbar_border_enabled": {s: True for s in ("top", "right", "bottom", "left")},
-    "board_toolbar_border": {s: "#2a2e32" for s in ("top", "right", "bottom", "left")},
-    "board_toolbar_border_thickness": 1, "board_toolbar_border_enabled_linked": True,
-    "board_toolbar_corner_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
-    "board_toolbar_corner_radius_linked": True,
-    "board_toolbar_padding": {s: 6 for s in ("top", "right", "bottom", "left")},
-    "board_toolbar_padding_linked": True,
-    "board_toolbar_shadow_enabled": {s: False for s in ("top", "right", "bottom", "left")},
-    "board_toolbar_shadow": {s: "#8c000000" for s in ("top", "right", "bottom", "left")},
-    "board_toolbar_shadow_size": 10, "board_toolbar_shadow_enabled_linked": True,
-    "board_toolbar_text_font_family": "", "board_toolbar_text_font_size": 12, "board_toolbar_text_font_bold": False,
-    "board_toolbar_text_font_italic": False, "board_toolbar_text_font_color": "#d6d9dc",
-    "board_toolbar_text_font_smoothing_enabled": False, "board_toolbar_text_font_smoothing": "current",
-    "board_toolbar_invert": False,                 # icones et textes des barres en negatif
-    "board_toolbar_focus_width": 26, "board_toolbar_focus_color": "#6e3f6f9f",
-    "board_toolbar_focus_radius": 6, "board_toolbar_hover_color": "#232729",
-    "board_toolbar_hover_radius": 6,
-})
+# Board (MRO) et CAD : défauts dans leur paquet (fm_board/settings_defaults.py, fm_cad/settings_defaults.py).
+from fm_board.settings_defaults import BOARD_DEFAULTS  # noqa: E402
+from fm_cad.settings_defaults import CAD_DEFAULTS  # noqa: E402
+DEFAULT_SETTINGS.update(BOARD_DEFAULTS)
+DEFAULT_SETTINGS.update(CAD_DEFAULTS)
 # Reglages > Module MRO > Menus contextuels : les MEMES reglages que Menu contextuel, propres au board (`board_<cle>`),
 # chacun avec son interrupteur d'override (`board_ovr_<cle>`, coupe = suit le menu de l'appli).
 BOARD_MENU_KEYS = tuple(k for k in DEFAULT_SETTINGS if k.startswith("ctx_menu"))

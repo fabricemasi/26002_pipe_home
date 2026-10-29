@@ -27,6 +27,7 @@ app = QApplication.instance() or QApplication([])
 
 import settings_store
 import settings_window_v2 as v2
+import fm_cad.settings as cad_settings
 from _window_cleanup import WindowTestCase, track_class  # fenetres detruites apres chaque test
 
 track_class(v2.SettingsWindowV2)
@@ -611,7 +612,7 @@ class CadTabAndIconTablesTest(WindowTestCase):
                           "CAD : Sélection et poignées", "CAD : Fenêtre de sélection", "CAD : Capture",   # Sélection
                           "CAD : Ajuster", "CAD : Affichage",
                           "CAD : Cotations", "CAD : Hachures", "CAD : Textes", "CAD : Raccourcis clavier", "CAD : Icônes"])
-        self.assertLessEqual(set(v2.CAD_GROUPS), set(leaves))
+        self.assertLessEqual(set(cad_settings.CAD_GROUPS), set(leaves))
         for group in ("CAD : Cotations", "CAD : Hachures", "CAD : Textes", "CAD : Fenêtre de sélection", "CAD : Capture",
                       "CAD : Ajuster"):                                                            # mêmes clés / défauts que DEFAULT_SETTINGS
             for spec in v2.CATALOG[group]:
@@ -619,7 +620,7 @@ class CadTabAndIconTablesTest(WindowTestCase):
                     self.assertIn(key, settings_store.DEFAULT_SETTINGS, key)
                 if spec.kind not in ("sides_thick", "corners"):        # ceux-la : un dict par cote / coin
                     self.assertEqual(settings_store.DEFAULT_SETTINGS[spec.key], spec.default, spec.key)
-        for group in v2.CAD_GROUPS:
+        for group in cad_settings.CAD_GROUPS:
             for spec in v2.CATALOG[group]:
                 self.assertIn(spec.key, settings_store.DEFAULT_SETTINGS, spec.key)
                 self.assertEqual(settings_store.DEFAULT_SETTINGS[spec.key], spec.default, spec.key)

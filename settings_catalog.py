@@ -34,6 +34,9 @@ class Node:
 
 CATALOG: dict[str, list[Spec]] = {}
 
+# Parametres d'une ligne « Bordure » (sides_thick) : cles de couleur et d'epaisseur, largeurs.
+_BORD = lambda prefix, w=140, b=54: {"colors_key": prefix, "thickness_key": f"{prefix}_thickness", "width": w, "box": b}
+
 
 def _shadow_spec(prefix: str, label: str = "Ombres", **kw) -> "Spec":
     """Ligne « Ombres » : lier les 4 | G | H | B | D (un toggle par cote) | Couleur (UNE pour les 4, opacite
@@ -58,3 +61,9 @@ def _gabarit_extra(prefix: str, color_key: str | None = None, only: tuple | None
         elif name != "smoothing_enabled":
             keys.append(f"{prefix}_font_{name}")
     return tuple(dict.fromkeys(keys))
+
+
+def _ctx_font(prefix: str, label: str, size: int, color: str, bold: bool = False) -> Spec:
+    return Spec(f"{prefix}_font_family", label, "font_gabarit", "",
+                {"prefix": prefix, "size": (6, 32), "size_default": size, "color_default": color,
+                 "color_title": "Couleur du texte", "bold_default": bold}, extra_keys=_gabarit_extra(prefix))
