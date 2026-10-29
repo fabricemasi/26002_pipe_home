@@ -91,7 +91,7 @@ class SettingsWindowTest(unittest.TestCase):
         self._real = v2.load_settings
         v2.load_settings = lambda: copy.deepcopy(_DEFAULTS)
         self.addCleanup(setattr, v2, "load_settings", self._real)
-        self.win = v2.SettingsWindowV2()
+        self.win = v2.SettingsWindowV2(module="theme")  # aspect generique : fenetre Theme (etape 6 de fm_theme)
         self.win.resize(1300, 900)
         self.win.show()
         page = self.win.stack.currentWidget()

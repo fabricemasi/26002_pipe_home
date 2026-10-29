@@ -33,6 +33,15 @@ class TreeTest(unittest.TestCase):
             self.assertNotIn(app_only, titles)
         self.assertEqual([s.key for s in v2.CATALOG["Thème : Général"]], ["ui_scale", "window_radius"])
 
+    def test_general_window_no_longer_holds_the_aspect(self):
+        """Étape 6 : fm_browser garde le fonctionnement et son aspect propre ; l'aspect générique est dans Thème."""
+        titles = [n.title for n in v2.tab_tree("General")]
+        for title in v2.THEME_SECTIONS:
+            self.assertNotIn(title, titles)
+        for kept in ("Colonnes", "Barre de navigation", "Application", "ICONES"):
+            self.assertIn(kept, titles)
+        self.assertNotIn("ui_scale", [s.key for s in v2.CATALOG["Application"]])
+
 
 class StoreTest(unittest.TestCase):
     def test_aspect_goes_to_the_preset_and_the_rest_to_the_app(self):

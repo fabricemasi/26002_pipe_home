@@ -231,9 +231,11 @@ class ThemeEditor:
     """L'editeur : une fenetre v2 « Theme » sur le preset `name`, refaite a chaque changement de preset ;
     pendant un geste, les cles d'aspect modifiees partent vers les applis ouvertes (`server`)."""
 
-    def __init__(self, name: str, server=None):
+    def __init__(self, name: str, server=None, listeners=()):
         self.name = name
         self.server = server
+        # Rappels (preset, valeurs) dans le meme processus : fenetre principale de fm_browser ouverte avec l'editeur.
+        self.listeners = list(listeners)
         self.window = None
         self.open(name)
 
@@ -332,14 +334,17 @@ class ThemeEditor:
             self.open(name)
 
     def _broadcast(self, settings: dict):
-        if self.server is None:
+        if self.server is None and not self.listeners:
             return
         keys = getattr(self.window, "live_changed_keys", None) or ()
         # Une variante qui n'est pas celle par defaut ne part pas vers les applis : elles ne l'utilisent pas.
         values = {k: settings[k] for k in keys if k in settings and tp.theme_key(k)
                   and self.store.is_default(tp.theme_key(k)[0])}
         if values:
-            self.server.broadcast(self.name, values)
+            if self.server is not None:
+                self.server.broadcast(self.name, values)
+            for listener in self.listeners:
+                listener(self.name, values)
 
 
 def initial_preset() -> str:

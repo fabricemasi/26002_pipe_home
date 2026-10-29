@@ -40,7 +40,7 @@ class TitleReorderTest(unittest.TestCase):
         self.win = self._open()
 
     def _open(self):
-        win = v2.SettingsWindowV2()
+        win = v2.SettingsWindowV2(module="theme")  # aspect generique : fenetre Theme (etape 6 de fm_theme)
         win.resize(1300, 900)
         win.show()
         for _ in range(5):

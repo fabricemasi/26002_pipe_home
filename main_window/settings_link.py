@@ -99,6 +99,22 @@ class SettingsLinkMixin:
         settings.update(values)
         self._apply_settings(settings, set(values))
 
+    def open_theme_editor(self):
+        """Editeur fm_theme (aspect generique) sur le preset fm_theme lie, dans ce processus : ses gestes
+        s'appliquent en direct a cette fenetre (`_on_theme_live`), ses enregistrements par le fichier surveille."""
+        import theme_editor
+        from settings_store import theme_in_use
+        editor = getattr(self, "_theme_editor", None)
+        try:
+            if editor is not None and editor.window.isVisible():
+                editor.window.raise_()
+                editor.window.activateWindow()
+                return
+        except RuntimeError:
+            pass
+        name = theme_in_use(ui_state.APPLIED_SETTINGS or load_settings()) or theme_editor.initial_preset()
+        self._theme_editor = theme_editor.ThemeEditor(name, listeners=[self._on_theme_live])
+
     def _refresh_preset_ui(self, settings: dict | None = None):
         import settings_window_v2
         settings = settings or ui_state.APPLIED_SETTINGS or load_settings()
@@ -118,6 +134,8 @@ class SettingsLinkMixin:
             pass
         window = self._preset_manager = PresetManagerWindow(ui_state.APPLIED_SETTINGS or load_settings(), parent=self)
         window.presetsChanged.connect(lambda: self.preset_picker.refresh())
+        # Theme d'un preset change : s'il est a l'ecran, l'aspect suit tout de suite.
+        window.themeChanged.connect(lambda _n: self._apply_settings(load_settings()))
         window.destroyed.connect(lambda *_a: setattr(self, "_preset_manager", None))
         window.adjustSize()
         anchor = self.preset_picker.mapToGlobal(QPoint(0, self.preset_picker.height() + 6))
@@ -158,6 +176,7 @@ class SettingsLinkMixin:
         dialog.prebuild_progress = self._on_settings_prebuild_progress
         self._wire_settings_dialog(dialog)
         dialog.moduleSettingsRequested.connect(self.open_module_settings)
+        dialog.themeEditorRequested.connect(self.open_theme_editor)
         self._settings_dialog_v2 = dialog
         return dialog
 

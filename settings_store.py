@@ -1164,6 +1164,10 @@ def load_settings(startup: bool = False) -> dict[str, Any]:
             # des ce premier chargement, LEQUEL preset par defaut vient
             # justement d'etre applique.
             settings["default_preset"] = default_preset
+    # Etape 6 : l'aspect generique ne se regle plus que dans fm_theme ; sans preset fm_theme lie, l'aspect
+    # actuel en devient un (« Thème actuel »), lie au preset a l'ecran (ou au fichier, sans preset).
+    if startup and not theme_in_use(settings):
+        _link_current_theme(settings, name, raw)
     # Aspect generique : le preset fm_theme lie (theme_preset) par-dessus.
     theme = _load_theme_values(settings.get("theme_preset") or "")
     if theme:
@@ -1268,6 +1272,27 @@ def update_theme_preset(settings: dict) -> bool:
         return False
     _theme_presets.update_preset(name, theme)
     return True
+
+
+def _link_current_theme(settings: dict, preset_name: str, raw: dict) -> None:
+    """Cree un preset fm_theme de l'aspect a l'ecran et le lie (preset de l'appli a l'ecran, sinon le fichier)."""
+    theme = _theme_presets.new_preset("Thème actuel", settings)
+    settings["theme_preset"] = theme
+    presets = _load_presets()
+    if preset_name and preset_name in presets:
+        presets[preset_name]["theme_preset"] = theme
+        _save_presets(presets)
+    else:
+        raw["theme_preset"] = theme
+        save_settings(raw)
+
+
+def set_preset_theme(preset_name: str, theme: str) -> None:
+    """« Gérer les presets » : le preset fm_theme lie a un preset de l'appli."""
+    presets = _load_presets()
+    if preset_name in presets:
+        presets[preset_name]["theme_preset"] = theme
+        _save_presets(presets)
 
 
 def _link_theme_presets() -> None:

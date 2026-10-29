@@ -797,6 +797,8 @@ THEME_TAB = "Thème"
 THEME_SECTIONS = ("Couleurs", "Polices principales", "TITRES", "Toggles", "Sliders", "Zone de saisie", "Bouton",
                   "Tableaux", "Tabs", "Menu contextuel", "Fenêtres additionnelles")
 CATALOG["Thème : Général"] = [s for s in CATALOG["Application"] if s.key in ("ui_scale", "window_radius")]
+# Etape 6 : ces deux reglages ne sont plus dans Application (General de fm_browser), seulement dans le Theme.
+CATALOG["Application"] = [s for s in CATALOG["Application"] if s.key not in ("ui_scale", "window_radius")]
 
 
 def theme_tree(settings: dict | None = None) -> tuple:
@@ -806,10 +808,13 @@ def theme_tree(settings: dict | None = None) -> tuple:
 
 
 def tab_tree(label: str, settings: dict | None = None) -> tuple:
-    """Arbre d'un onglet : module a part, Thème (editeur fm_theme) ou General."""
+    """Arbre d'un onglet : module a part, Thème (editeur fm_theme) ou General. General = fonctionnement et aspect
+    PROPRE a fm_browser : l'aspect generique (THEME_SECTIONS) se regle dans fm_theme (etape 6, bouton « Thème »)."""
     if label in STANDALONE_TABS:
         return STANDALONE_TABS[label]
-    return theme_tree(settings) if label == THEME_TAB else general_tree(settings)
+    if label == THEME_TAB:
+        return theme_tree(settings)
+    return tuple(n for n in general_tree(settings) if n.title not in THEME_SECTIONS)
 
 
 # Onglets de reglages generaux a part (pas une colonne) : leur arbre.
@@ -2986,6 +2991,7 @@ class SettingsWindowV2(QDialog):
     settingsChanged = Signal(dict)     # apercu en direct (rien n'est ecrit sur le disque)
     settingsSaved = Signal(dict)       # apres Enregistrer
     moduleSettingsRequested = Signal(str)   # fenetre generale : bouton d'un module (cle de MODULE_SCOPES)
+    themeEditorRequested = Signal()         # fenetre generale : bouton « Thème » (editeur fm_theme)
 
     _RESIZE_BORDER = 6
 
@@ -3407,6 +3413,11 @@ class SettingsWindowV2(QDialog):
                               height=27, padding="0 13px")
                 button.clicked.connect(lambda _c=False, m=module: self.moduleSettingsRequested.emit(m))
                 lay.addWidget(button)
+            # Aspect generique (couleurs, polices, toggles, tableaux...) : l'editeur fm_theme, sur le preset lie.
+            theme = _Btn("Thème", M["accent"], M["accent_border"], M["accent_fg"], M["accent_hover"],
+                         height=27, weight=600, padding="0 13px")
+            theme.clicked.connect(self.themeEditorRequested.emit)
+            lay.addWidget(theme)
         lay.addStretch(1)
         cancel = _Btn("Annuler", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"],
                       height=27, padding="0 13px")

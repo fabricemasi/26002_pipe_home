@@ -78,6 +78,7 @@ class PresetManagerWindow(QDialog):
     `presetsChanged()` : la liste, un nom ou le preset par defaut a change."""
 
     presetsChanged = Signal()
+    themeChanged = Signal(str)       # le preset fm_theme lie a ce preset de l'appli a change
 
     _SAVE_DELAY = 400
 
@@ -144,6 +145,9 @@ class PresetManagerWindow(QDialog):
         rows = []
         self._names = {}
         self._defaults = {}
+        import fm_theme.presets as theme_presets
+        themes = list(theme_presets.list_presets()) or [""]
+        app_presets = store._load_presets()
         for name in names:
             field = v2._TextField(name, width=200)
             field.editingFinished.connect(lambda f=field, n=name: self._rename(n, f.text()))
@@ -167,13 +171,19 @@ class PresetManagerWindow(QDialog):
             delete.clicked.connect(lambda _c=False, n=name: self._delete(n))
             box.addWidget(delete)
             box.addStretch(1)
-            rows.append([field, (state, "center", "center"), (toggle, "center", "center"),
+            # Thème (aspect generique) lie a ce preset : un preset fm_theme (alias compris).
+            linked = app_presets.get(name, {}).get("theme_preset") or ""
+            path = theme_presets.find_preset(linked) if linked else None
+            linked = theme_presets.load_preset(path)["nom"] if path else themes[0]
+            theme = _SelectField(themes, linked, width=150)
+            theme.changed.connect(lambda value, n=name: self._set_theme(n, value))
+            rows.append([field, (state, "center", "center"), (toggle, "center", "center"), theme,
                          actions])
         if not rows:
             empty = v2._label("Aucun preset : « Nouveau preset » enregistre les réglages à l'écran.")
-            rows.append([empty, QLabel(""), QLabel(""), QLabel("")])
+            rows.append([empty, QLabel(""), QLabel(""), QLabel(""), QLabel("")])
         frame, _head, _cells = build_cells_table(
-            [("Preset", 230), ("Actif", 84), ("Par défaut", 112), ("Actions", 280)], rows)
+            [("Preset", 230), ("Actif", 84), ("Par défaut", 112), ("Thème", 170), ("Actions", 280)], rows)
         frame._dims_key = self._dims_key
         normalize_toggles(frame)
         frame.dimsChanged.connect(self._dims_timer.start)
@@ -219,6 +229,10 @@ class PresetManagerWindow(QDialog):
         self._armed = None
         store.delete_preset(name)
         self._changed()
+
+    def _set_theme(self, name: str, theme: str):
+        store.set_preset_theme(name, theme)
+        self.themeChanged.emit(name)
 
     def _set_default(self, name: str, checked: bool):
         """Un seul preset par defaut : les autres toggles s'eteignent SUR PLACE (pas de tableau refait,

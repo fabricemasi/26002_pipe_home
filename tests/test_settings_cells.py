@@ -45,8 +45,8 @@ def tearDownModule():
     v2.load_settings = _real_load_settings
 
 
-def build():
-    win = v2.SettingsWindowV2()
+def build(module: str | None = None):
+    win = v2.SettingsWindowV2(module=module)
     v2.expand_all(win.stack.currentWidget())
     for node in win.stack.currentWidget().findChildren(v2._LazyNode):
         node.set_collapsed(False)
@@ -124,7 +124,8 @@ class TablesTest(WindowTestCase):
         self.assertEqual(len(captions(by_kind["corners"])), 5)
 
     def test_title_fonts_table_reproduces_the_v1_columns(self):
-        frame = next(f for f in self.frames if f.dimsKey().startswith("TITRES/Polices"))
+        frames = build("theme").findChildren(_TableFrame)  # aspect generique : fenetre Theme (etape 6 de fm_theme)
+        frame = next(f for f in frames if f.dimsKey().startswith("TITRES/Polices"))
         titles = [c.text() for c in frame._flat_head._cells]
         self.assertEqual(titles, ["NIVEAU", "POLICE", "GRAS", "ITALIQUE", "HAUTEUR", "NIVEAU DE LISSAGE", "COULEUR"])
         self.assertEqual(len(frame.findChildren(_TableRow)), 5)
@@ -133,7 +134,7 @@ class TablesTest(WindowTestCase):
 class CellsBehaviourTest(WindowTestCase):
     @classmethod
     def setUpClass(cls):
-        cls.win = build()
+        cls.win = build("theme")  # aspect generique : fenetre Theme (etape 6 de fm_theme)
         cls.win.resize(1300, 900)
         cls.win.show()
         for _ in range(5):
@@ -314,7 +315,7 @@ class SplitCellTest(WindowTestCase):
 class RowHeightTest(WindowTestCase):
     @classmethod
     def setUpClass(cls):
-        cls.win = build()
+        cls.win = build("theme")  # aspect generique : fenetre Theme (etape 6 de fm_theme)
         cls.win.resize(1300, 900)
         cls.win.show()
         for _ in range(5):
@@ -1155,7 +1156,7 @@ class SelectionEqualWidthAndSnapTest(WindowTestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.win = build()
+        cls.win = build("theme")  # aspect generique : fenetre Theme (etape 6 de fm_theme)
         cls.win.resize(1300, 900)
         cls.win.show()
         for _ in range(5):
@@ -1479,7 +1480,7 @@ class ColorPaletteFollowsTest(WindowTestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.win = build()
+        cls.win = build("theme")  # aspect generique : fenetre Theme (etape 6 de fm_theme)
 
     @classmethod
     def tearDownClass(cls):

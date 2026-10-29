@@ -181,6 +181,23 @@ class LinkedThemeTest(unittest.TestCase):
         self.assertFalse(settings_store.update_theme_preset(settings_store.load_settings()))
         self.assertEqual(path.stat().st_mtime_ns, before)
 
+    def test_without_any_theme_the_current_look_becomes_one(self):
+        """Étape 6 : l'aspect ne se règle plus que dans fm_theme ; sans thème lié, l'aspect actuel en devient un."""
+        settings_store._save_presets({})
+        settings_store.save_settings({"button_radius": 5})
+        settings = settings_store.load_settings(startup=True)
+        name = settings["theme_preset"]
+        self.assertTrue(name.startswith("Thème actuel"))
+        self.assertEqual(tp.to_settings(tp.load_preset(tp.find_preset(name)))["button_radius"], 5)
+        self.assertEqual(settings_store.load_settings()["theme_preset"], name)   # retenu dans le fichier
+        self.assertEqual(settings_store.load_settings(startup=True)["theme_preset"], name)   # pas un 2e
+
+    def test_preset_manager_links_another_theme(self):
+        settings_store.load_settings(startup=True)
+        tp.save_preset(tp.from_settings({"window_radius": 1}, "autre"))
+        settings_store.set_preset_theme("fab", "autre")
+        self.assertEqual(settings_store.load_settings()["window_radius"], 1)
+
     def test_missing_theme_keeps_the_aspect_in_the_app_preset(self):
         settings = settings_store.load_settings(startup=True)
         settings["theme_preset"] = "inconnu"

@@ -65,16 +65,19 @@ class PortedSectionsTest(unittest.TestCase):
         cls.win = v2.SettingsWindowV2()
         cls.labels = [label for label, _title in v2.SCOPES]
         open_nodes(cls.win, 0, PORTED)
+        cls.theme = v2.SettingsWindowV2(module="theme")  # aspect generique : fenetre Theme (etape 6 de fm_theme)
+        open_nodes(cls.theme, 0, PORTED + ("Général",))
 
     @classmethod
     def tearDownClass(cls):
         cls.win.deleteLater()
+        cls.theme.deleteLater()
         app.processEvents()
 
     def test_values_match_the_v1_window(self):
         # Valeurs lues par l'ancienne fenetre v1 (retiree), figees : _v1_reference.py.
         expected = V1_VALUES
-        values = self.win.wired_values()
+        values = {**self.win.wired_values(), **self.theme.wired_values()}
         groups = ("Application", "Omettre", "LUT", "Polices principales", "Raccourci",
                   "Icones : Logiciels", "Focus : Zone titre", "Projets : Icone de niveaux")
         keys = set()
@@ -99,7 +102,7 @@ class PortedSectionsTest(unittest.TestCase):
         slider.setValue(52)
 
     def test_skin_accent_and_focused_selection_are_independent(self):
-        rows = [(spec, w) for spec, w in self.win.stores["General"]["specs"]
+        rows = [(spec, w) for spec, w in self.theme.stores[v2.THEME_TAB]["specs"]
                 if not isinstance(spec, str) and spec.kind == "semantic_color"]
         by_slot = {spec.key: widget for spec, widget in rows}
         original = by_slot["colors:skinAccent"].value()
@@ -108,23 +111,24 @@ class PortedSectionsTest(unittest.TestCase):
         by_slot["colors:skinAccent"].field.changed.emit("#123456")
         self.assertEqual(by_slot["colors:skinAccent"].value(), "#123456")
         self.assertNotEqual(by_slot["colors:selCur"].value(), "#123456")
-        colors = self.win.wired_values()["colors"]
+        colors = self.theme.wired_values()["colors"]
         self.assertEqual(colors["accent"], "#123456")
         self.assertNotEqual(colors["sel_focus"], "#123456")
         by_slot["colors:skinAccent"].field.setValue(original)
         by_slot["colors:skinAccent"].field.changed.emit(original)
 
     def test_window_radius_is_a_toggle(self):
-        toggle = field(self.win, "General", "window_radius")
+        toggle = field(self.theme, v2.THEME_TAB, "window_radius")
         toggle.setChecked(True)
-        self.assertEqual(self.win.wired_values()["window_radius"], v2.WINDOW_RADIUS_ON)
+        self.assertEqual(self.theme.wired_values()["window_radius"], v2.WINDOW_RADIUS_ON)
         toggle.setChecked(False)
-        self.assertEqual(self.win.wired_values()["window_radius"], 0)
+        self.assertEqual(self.theme.wired_values()["window_radius"], 0)
 
     def test_new_navigation_and_control_sections_build(self):
-        open_nodes(self.win, 0, ("Barre de navigation", "Bouton", "Tabs", "Zone de saisie"))
-        keys = {spec.key for spec, _widget in self.win.stores["General"]["specs"]
-                if not isinstance(spec, str)}
+        open_nodes(self.win, 0, ("Barre de navigation",))
+        open_nodes(self.theme, 0, ("Bouton", "Tabs", "Zone de saisie"))
+        keys = {spec.key for win, label in ((self.win, "General"), (self.theme, v2.THEME_TAB))
+                for spec, _widget in win.stores[label]["specs"] if not isinstance(spec, str)}
         expected = {"navbar_height", "navbar_bottom_enabled", "navbar_title_font_family",
                     "button_bg_color", "button_border_enabled", "button_shadow_enabled",
                     "tabs_bg_color", "tabs_corner_radius", "input_bg_color", "input_corner_radius"}
