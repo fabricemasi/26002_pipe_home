@@ -32,7 +32,6 @@ Chaque **type d'élément** a un catalogue de **variantes nommées**, sur le mod
 | slider | | `_SLIDER_STYLE`, `_MiniSlider` |
 | champ de saisie / bouton | | `INPUT_LOOK`, `_register_input` / `_register_radius` |
 | tableau | « réglages », « compact »… | `_flat_cells_table`, `build_cells_table`, `_TABLE_HEAD` |
-| colonne | « miller », « tuiles »… | style des lignes et entêtes de `Column` (`item_*`, `header_*`) |
 | panneau / fenêtre additionnelle / barre de titre | | `_PanelFrame`, `_SettingsTitleBar`, `extra_*` |
 | menu contextuel | | `settings_menu.py`, `ctx_menu*` |
 | onglets, ombres, sélecteur de couleur | | `tabs_*`, `SHADOW_PREFIXES`, `settings_colorpicker.py` |
@@ -78,7 +77,7 @@ Conséquences sur la conception :
 
 - **→ fm_theme** : palette, rôles de texte, titres, toggles, sliders, champs, boutons, tableaux, panneaux, fenêtres additionnelles, menus contextuels, onglets, ombres.
 - **→ fm_browser (fonctionnement)** : `root_path`, colonnes (`DEFAULT_COLUMNS`, `.pipeline_*.json`), raccourcis, logiciels, aperçus et rendus, état temps réel (`_LIVE_STATE_KEYS`), dispositions (`table_dims`, `ui_spaces`, `element_spaces`, `title_order`, `context_menu_layouts`…).
-- **Aspect des éléments propres à fm_browser** (cheminement `crumb_*`, badges d'étapes `step_*`, visionneuse `viewer_*`, Markdown `md_*`, board `board_*`, vidéo `video_*`) : décidé par l'utilisateur le 2026-10-27, ils **restent dans fm_browser** mais ne contiennent plus de valeurs brutes, **seulement des références à fm_theme** (rôle de texte, couleur de palette, variante de panneau…). Changer de preset fm_theme les restyle donc aussi.
+- **Aspect des éléments propres à fm_browser** (colonnes `item_*` / `header_*` / `column_*` (choix de l'utilisateur, 2026-10-29 : les colonnes Miller n'existent que dans fm_browser), cheminement `crumb_*`, badges d'étapes `step_*`, visionneuse `viewer_*`, Markdown `md_*`, board `board_*`, vidéo `video_*`) : décidé par l'utilisateur le 2026-10-27, ils **restent dans fm_browser** mais ne contiennent plus de valeurs brutes, **seulement des références à fm_theme** (rôle de texte, couleur de palette, variante de panneau…). Changer de preset fm_theme les restyle donc aussi.
 
 La fenêtre de réglages v2 se coupe de même :
 
@@ -129,7 +128,7 @@ FAIT (2026-10-29) : fenêtres de réglages par module, partie FENÊTRE (`Setting
 
 FAIT (2026-10-29) : définitions des réglages de `fm_video`, `fm_markdown`, `fm_board`, `fm_cad` et `fm_visionneuse` dans leur paquet (`fm_video/settings.py`, `fm_video/settings_defaults.py`, briques sans Qt dans `settings_catalog.py`).
 
-L'étape « fenêtres de réglages par module » est TERMINÉE (2026-10-29). Presets : un seul jeu global, confirmé le 2026-10-29. fm_theme, étape 1 « Inventaire » : liste PRODUITE le 2026-10-29 (`tools/inventaire_reglages.py` → `fm_theme_inventaire.md` : 530 clés d'aspect générique, 853 d'aspect propre à fm_browser, 235 de fonctionnement), EN ATTENTE de validation par l'utilisateur. Corrections : dans le script (`EXCEPTIONS`, familles), puis relancer.
+L'étape « fenêtres de réglages par module » est TERMINÉE (2026-10-29). Presets : un seul jeu global, confirmé le 2026-10-29. fm_theme, étape 1 « Inventaire » : liste PRODUITE le 2026-10-29 (`tools/inventaire_reglages.py` → `fm_theme_inventaire.md` : 420 clés d'aspect générique, 960 d'aspect propre à fm_browser, 238 de fonctionnement ; colonnes rangées dans fm_browser à la demande de l'utilisateur), EN ATTENTE de validation par l'utilisateur. Corrections : dans le script (`EXCEPTIONS`, familles), puis relancer.
 
 ÉTAPE BROWSER_CORE (2026-10-29, faite par Codex, VALIDÉE et commitée par Claude Code) : façade `browser_core.py` (`__getattr__` pour les états réaffectés `_CONFIG_REVISION`, `_default_thumbnail`) + dix services dans `browser_core_parts/` ; carte dans `docs/agents/colonnes.md`. 26 sondes protégées par `tests/_probe_isolate.py`. Validation : pyflakes sans nom indéfini ; aucune copie figée d'un état réaffecté (`from x import ÉTAT`) ; patches des tests vérifiés (ceux qui passent encore par une façade agissent, le code testé lit le nom par la façade à l'appel) ; suite complète : 29 FAIL / ERROR, tous déjà connus.
 - `test_focus_viewer` (6 tests d'animation minutés : `ctrl_wheel`, `ripple`, `bump`, `new_image_resets_zoom`, `slide_starts`, `zoom_keeps_anchor`) : INTERMITTENTS selon la charge de la machine, 5 à 6 échecs par passe le 2026-10-29 sur 297d6bd (avant tout découpage de Codex) comme sur l'état actuel. Ne pas les attribuer à un découpage sans comparaison sur l'ancien commit (`git worktree add`).
