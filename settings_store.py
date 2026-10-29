@@ -151,6 +151,7 @@ def _theme_ui_icon(name: str, size: int):
 
 
 import fm_theme.hooks as _theme_hooks  # noqa: E402
+import fm_theme.presets as _theme_presets  # noqa: E402
 _theme_hooks.HOOKS["ui_icon"] = _theme_ui_icon
 
 # Visionneuse : défauts dans son paquet (source unique), fusionnés dans le dictionnaire ci-dessous.
@@ -951,6 +952,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Preset ACTIF (choisi dans le menu deroulant de la fenetre principale) : ses valeurs sont celles a
     # l'ecran, les modifications l'enregistrent. None = jamais choisi (on suit `default_preset`).
     "active_preset": None,
+    # Preset fm_theme (aspect generique : fm_theme/presets/<nom>.json) lie au preset de l'appli : chaque preset
+    # de fm_browser retient le sien (choix de l'utilisateur, 2026-10-29). "" = aucun (l'aspect vient du fichier).
+    "theme_preset": "",
 }
 
 # Section "TITRE" (voir SettingsWindow._section_titre/_TITLE_LEVEL_DEFAULTS,
@@ -1142,6 +1146,7 @@ def load_settings(startup: bool = False) -> dict[str, Any]:
     default_preset = settings.get("default_preset")
     name = preset_in_use(settings, startup)
     if startup:
+        _link_theme_presets()
         settings["active_preset"] = name if name and name in _load_presets() else ""
         if raw and raw.get("active_preset") != settings["active_preset"]:
             raw["active_preset"] = settings["active_preset"]
@@ -1159,14 +1164,19 @@ def load_settings(startup: bool = False) -> dict[str, Any]:
             # des ce premier chargement, LEQUEL preset par defaut vient
             # justement d'etre applique.
             settings["default_preset"] = default_preset
-            # Etat enregistre en temps reel par la fenetre v2 (dimensions, plages, styles de
-            # toggle crees) : il n'appartient pas au preset, qui l'ecraserait a chaque chargement.
-            for key in _LIVE_STATE_KEYS:
-                if key in raw:
-                    settings[key] = raw[key]
-            for key, value in raw.items():
-                if _DYNAMIC_KEY.match(key):
-                    settings[key] = value
+    # Aspect generique : le preset fm_theme lie (theme_preset) par-dessus.
+    theme = _load_theme_values(settings.get("theme_preset") or "")
+    if theme:
+        _merge(theme)
+    if name or theme:
+        # Etat enregistre en temps reel par la fenetre v2 (dimensions, plages, styles de
+        # toggle crees) : il n'appartient pas au preset, qui l'ecraserait a chaque chargement.
+        for key in _LIVE_STATE_KEYS:
+            if key in raw:
+                settings[key] = raw[key]
+        for key, value in raw.items():
+            if _DYNAMIC_KEY.match(key):
+                settings[key] = value
     for new_key, old_key in (("button_corner_radius", "button_radius"),
                              ("input_corner_radius", "input_radius")):
         if settings.get(new_key) is None:
@@ -1217,9 +1227,61 @@ def preset_in_use(settings: dict, startup: bool = False) -> str:
 
 def preset_values(settings: dict) -> dict:
     """Ce qu'un preset retient de `settings` (copie) : tout sauf `PRESET_EXCLUDED_KEYS` et les styles de
-    toggle crees a l'execution (etat temps reel)."""
+    toggle crees a l'execution (etat temps reel). Avec un preset fm_theme lie (`theme_preset`), l'aspect
+    generique n'y est pas : il est dans le preset fm_theme (source unique)."""
+    themed = bool(theme_in_use(settings))
     return {k: json.loads(json.dumps(v)) for k, v in settings.items()
-            if k not in PRESET_EXCLUDED_KEYS and not _DYNAMIC_KEY.match(k)}
+            if k not in PRESET_EXCLUDED_KEYS and not _DYNAMIC_KEY.match(k)
+            and not (themed and _theme_presets.theme_key(k))}
+
+
+# -- Preset fm_theme lie (aspect generique) ---------------------------------------------------------------
+
+def theme_in_use(settings: dict) -> str:
+    """Nom du preset fm_theme dont l'aspect est a l'ecran ("" : aucun, ou introuvable)."""
+    name = settings.get("theme_preset") or ""
+    return name if name and _theme_presets.preset_path(name).is_file() else ""
+
+
+def _load_theme_values(name: str) -> dict:
+    """Valeurs a plat du preset fm_theme `name` ({} : absent ou illisible, repli silencieux)."""
+    if not name:
+        return {}
+    try:
+        return _theme_presets.to_settings(_theme_presets.load_preset(_theme_presets.preset_path(name)))
+    except (OSError, ValueError, KeyError):
+        return {}
+
+
+def update_theme_preset(settings: dict) -> bool:
+    """Modifications d'aspect enregistrees : elles vont dans le preset fm_theme lie (toutes les applis qui
+    l'utilisent les voient). Fichier reecrit seulement si une valeur a change. Retourne True s'il l'a ete."""
+    name = theme_in_use(settings)
+    if not name:
+        return False
+    path = _theme_presets.preset_path(name)
+    try:
+        current = _theme_presets.load_preset(path)
+    except (OSError, ValueError):
+        return False
+    preset = _theme_presets.from_settings(json.loads(json.dumps(settings)), current.get("nom") or name)
+    if _theme_presets.to_settings(preset) == _theme_presets.to_settings(current):
+        return False
+    _theme_presets.save_preset(preset)
+    return True
+
+
+def _link_theme_presets() -> None:
+    """Migration (une fois, au lancement) : un preset de l'appli sans `theme_preset` est lie au preset
+    fm_theme de MEME NOM s'il existe (ceux convertis a l'etape 3 de fm_theme)."""
+    presets = _load_presets()
+    changed = False
+    for preset_name, values in presets.items():
+        if isinstance(values, dict) and not values.get("theme_preset")                 and _theme_presets.preset_path(preset_name).is_file():
+            values["theme_preset"] = preset_name
+            changed = True
+    if changed:
+        _save_presets(presets)
 
 
 def preset_names() -> list[str]:
@@ -1256,7 +1318,9 @@ def save_preset(name: str, values: dict) -> None:
 
 def update_active_preset(settings: dict) -> None:
     """Modifications enregistrees (fenetre de reglages, changement de style a la volee...) : le preset a
-    l'ecran les retient aussi, sinon load_settings le rejouerait par-dessus au prochain chargement."""
+    l'ecran les retient aussi, sinon load_settings le rejouerait par-dessus au prochain chargement. L'aspect
+    generique va dans le preset fm_theme lie (`update_theme_preset`)."""
+    update_theme_preset(settings)
     name = preset_in_use(settings)
     presets = _load_presets()
     if name and name in presets:

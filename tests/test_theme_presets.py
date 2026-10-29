@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import settings_store
 from fm_theme import presets as tp
@@ -89,6 +90,62 @@ class FilesTest(unittest.TestCase):
         for name, values in old.items():
             preset = tp.load_preset(tp.preset_path(name, self.folder / "out"))
             self.assertEqual(tp.to_settings(preset), theme_part(values))
+
+
+class LinkedThemeTest(unittest.TestCase):
+    """fm_browser lit et écrit son aspect générique dans le preset fm_theme lié (`theme_preset`)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        root = Path(self._tmp.name)
+        self._patches = [mock.patch.object(settings_store, "_PER_USER_PATH", root / "settings.json"),
+                         mock.patch.object(settings_store, "_PRESETS_PATH", root / "presets.json"),
+                         mock.patch.object(tp, "PRESETS_DIR", root / "theme")]
+        for patch in self._patches:
+            patch.start()
+        # Preset de l'appli « fab » (ancien format : aspect compris) et preset fm_theme « fab » converti.
+        app = {"window_radius": 3, "button_radius": 2, "crumb_spacing": 5}
+        (root / "presets.json").write_text(json.dumps({"fab": app}), encoding="utf-8")
+        tp.save_preset(tp.from_settings({"window_radius": 9, "button_radius": 7}, "fab"))
+        settings_store.save_settings({"default_preset": "fab"})
+
+    def tearDown(self):
+        for patch in self._patches:
+            patch.stop()
+        self._tmp.cleanup()
+
+    def test_startup_links_the_same_name_and_reads_the_theme(self):
+        settings = settings_store.load_settings(startup=True)
+        self.assertEqual(settings_store._load_presets()["fab"]["theme_preset"], "fab")
+        self.assertEqual(settings["theme_preset"], "fab")
+        self.assertEqual(settings["window_radius"], 9)          # aspect : le preset fm_theme l'emporte
+        self.assertEqual(settings["crumb_spacing"], 5)          # le reste : le preset de l'appli
+
+    def test_saved_aspect_goes_to_the_theme_and_the_rest_to_the_app_preset(self):
+        settings = settings_store.load_settings(startup=True)
+        settings.update(window_radius=12, crumb_spacing=8)
+        settings_store.save_settings(settings)
+        settings_store.update_active_preset(settings)
+        theme = tp.to_settings(tp.load_preset(tp.preset_path("fab")))
+        self.assertEqual(theme["window_radius"], 12)
+        app = settings_store._load_presets()["fab"]
+        self.assertEqual(app["crumb_spacing"], 8)
+        self.assertNotIn("window_radius", app)                  # source unique : le preset fm_theme
+        self.assertEqual(settings_store.load_settings()["window_radius"], 12)
+
+    def test_unchanged_theme_is_not_rewritten(self):
+        settings = settings_store.load_settings(startup=True)
+        settings_store.update_active_preset(settings)           # 1er enregistrement : preset complété
+        path = tp.preset_path("fab")
+        before = path.stat().st_mtime_ns
+        self.assertFalse(settings_store.update_theme_preset(settings_store.load_settings()))
+        self.assertEqual(path.stat().st_mtime_ns, before)
+
+    def test_missing_theme_keeps_the_aspect_in_the_app_preset(self):
+        settings = settings_store.load_settings(startup=True)
+        settings["theme_preset"] = "inconnu"
+        self.assertEqual(settings_store.theme_in_use(settings), "")
+        self.assertIn("window_radius", settings_store.preset_values(settings))
 
 
 if __name__ == "__main__":
