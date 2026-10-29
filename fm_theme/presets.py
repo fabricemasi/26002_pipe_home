@@ -101,9 +101,23 @@ def to_settings(preset: dict[str, Any]) -> dict[str, Any]:
         prefix = TYPE_PREFIXES.get(type_name)
         if prefix is None:                      # type inconnu (preset plus récent) : ignoré, rien ne casse
             continue
-        for fields in (entry.get("variantes") or {}).values():
-            values.update({f"{prefix}{field}": value for field, value in fields.items()})
+        # Une seule variante à plat : celle PAR DÉFAUT du type (les autres attendent qu'un élément les choisisse).
+        values.update({f"{prefix}{field}": value for field, value in variant_fields(entry).items()})
     return values
+
+
+def default_variant(entry: dict) -> str:
+    """Variante par défaut d'un type (repli : « standard », puis la première)."""
+    variants = entry.get("variantes") or {}
+    for name in (entry.get("defaut"), STANDARD):
+        if name in variants:
+            return name
+    return next(iter(variants), STANDARD)
+
+
+def variant_fields(entry: dict, variant: str | None = None) -> dict:
+    """Champs (sans préfixe) d'une variante d'un type (par défaut : sa variante par défaut)."""
+    return dict((entry.get("variantes") or {}).get(variant or default_variant(entry)) or {})
 
 
 def preset_path(name: str, folder: Path | None = None) -> Path:
@@ -145,9 +159,6 @@ def list_presets(folder: Path | None = None) -> dict[str, Path]:
 # -- Gestion (éditeur fm_theme) : un renommage garde l'ancien nom en alias (`alias`), qu'une appli liée à
 # l'ancien nom retrouve (`find_preset`) : choisir un preset dans une appli ne doit jamais se casser.
 
-_CORE_KEYS = ("format", "nom", "general", "types")
-
-
 def find_preset(name: str, folder: Path | None = None) -> Path | None:
     """Fichier du preset `name`, ou de celui qui porte `name` en alias (renommé) ; None s'il n'existe pas."""
     if not name:
@@ -173,23 +184,133 @@ def unique_name(base: str, folder: Path | None = None) -> str:
     return name
 
 
-def _with_extras(preset: dict, previous: dict) -> dict:
-    """Garde les clés hors format de base (`alias`...) d'une version précédente du preset."""
-    preset.update({k: v for k, v in previous.items() if k not in _CORE_KEYS})
-    return preset
+_DROP = object()
 
 
-def update_preset(name: str, changes: dict, drop: tuple = (), folder: Path | None = None) -> dict:
-    """Modifie les valeurs d'aspect du preset `name` (clés à plat) ; les autres clés sont ignorées."""
-    path = find_preset(name, folder)
-    previous = load_preset(path)
-    values = to_settings(previous)
-    values.update({k: v for k, v in changes.items() if theme_key(k)})
+def _set_value(preset: dict, key: str, value, editing: dict) -> None:
+    """Range une clé à plat dans le preset (`_DROP` : la retire) ; un type à variantes la range dans la variante
+    `editing[type]` (sinon sa variante par défaut)."""
+    where = theme_key(key)
+    if where is None:
+        return
+    type_name, variant, field = where
+    if type_name == "general":
+        target = preset.setdefault("general", {})
+    else:
+        entry = preset.setdefault("types", {}).setdefault(
+            type_name, {"defaut": None if type_name == "toggle" else STANDARD, "variantes": {}})
+        if not variant:                                   # clé propre au type (toggle_style...)
+            target = entry
+        else:
+            if type_name != "toggle":
+                variant = editing.get(type_name) or default_variant(entry)
+            target = entry.setdefault("variantes", {}).setdefault(variant, {})
+    if value is _DROP:
+        target.pop(field, None)
+    else:
+        target[field] = value
+
+
+def update_preset(name: str, changes: dict, drop: tuple = (), folder: Path | None = None,
+                  editing: dict | None = None) -> dict:
+    """Modifie les valeurs d'aspect du preset `name` (clés à plat ; les autres sont ignorées) SANS toucher aux
+    autres variantes : chaque type écrit dans la variante `editing[type]`, sinon dans sa variante par défaut."""
+    preset = load_preset(find_preset(name, folder))
+    for key, value in changes.items():
+        _set_value(preset, key, value, editing or {})
     for key in drop:
-        values.pop(key, None)
-    preset = _with_extras(from_settings(values, previous["nom"]), previous)
+        _set_value(preset, key, _DROP, editing or {})
     save_preset(preset, folder)
     return preset
+
+
+# -- Variantes d'un type (titres, curseurs, champs, boutons, tableaux, onglets, menus, fenêtres) : créées,
+# dupliquées, renommées (l'ancien nom reste en alias), supprimées, choisies par défaut. Les toggles gardent
+# leurs propres styles (toggle1, toggle2... : `toggle_styles`, menu des styles de la fenêtre de réglages).
+
+def _type_entry(preset: dict, type_name: str) -> dict:
+    if type_name not in TYPE_PREFIXES:
+        raise ValueError(f"type sans variantes gérées ici : {type_name}")
+    entry = preset.setdefault("types", {}).setdefault(type_name, {"defaut": STANDARD, "variantes": {}})
+    if not entry.setdefault("variantes", {}):
+        entry["variantes"][STANDARD] = {}
+    return entry
+
+
+def variant_names(preset: dict, type_name: str) -> list[str]:
+    return list(_type_entry(preset, type_name)["variantes"])
+
+
+def type_flat(preset: dict, type_name: str, variant: str | None = None) -> dict:
+    """Clés à plat (avec préfixe) d'une variante d'un type : ce que l'éditeur affiche quand on l'édite."""
+    prefix = TYPE_PREFIXES[type_name]
+    return {f"{prefix}{f}": v for f, v in variant_fields(_type_entry(preset, type_name), variant).items()}
+
+
+def resolve_variant(preset: dict, type_name: str, name: str) -> str:
+    """Nom actuel d'une variante (son nom, ou un ancien nom gardé en alias)."""
+    entry = _type_entry(preset, type_name)
+    return name if name in entry["variantes"] else (entry.get("alias") or {}).get(name, name)
+
+
+def _unique_variant(entry: dict, base: str) -> str:
+    base = (base or "variante").strip() or "variante"
+    name, n = base, 2
+    while name in entry["variantes"] or name in (entry.get("alias") or {}):
+        name, n = f"{base} {n}", n + 1
+    return name
+
+
+def _edit_variants(name: str, type_name: str, action, folder: Path | None = None):
+    preset = load_preset(find_preset(name, folder))
+    result = action(_type_entry(preset, type_name))
+    save_preset(preset, folder)
+    return result
+
+
+def add_variant(name: str, type_name: str, new: str, source: str | None = None,
+                folder: Path | None = None) -> str:
+    """Nouvelle variante (copie de `source`, sinon de la variante par défaut). Retourne son nom (unique)."""
+    def action(entry):
+        variant = _unique_variant(entry, new)
+        entry["variantes"][variant] = variant_fields(entry, source)
+        return variant
+    return _edit_variants(name, type_name, action, folder)
+
+
+def rename_variant(name: str, type_name: str, old: str, new: str, folder: Path | None = None) -> str:
+    """Renomme (nom unique) ; l'ancien nom devient un alias (les éléments qui le citent le retrouvent)."""
+    def action(entry):
+        new_name = (new or "").strip()
+        if old not in entry["variantes"] or not new_name or new_name == old:
+            return old
+        new_name = _unique_variant(entry, new_name)
+        entry["variantes"] = {(new_name if k == old else k): v for k, v in entry["variantes"].items()}
+        alias = entry.setdefault("alias", {})
+        alias.update({k: new_name for k, v in alias.items() if v == old})
+        alias[old] = new_name
+        if entry.get("defaut") == old:
+            entry["defaut"] = new_name
+        return new_name
+    return _edit_variants(name, type_name, action, folder)
+
+
+def delete_variant(name: str, type_name: str, variant: str, folder: Path | None = None) -> None:
+    """Supprime une variante (jamais la dernière) ; si c'était la variante par défaut, la première la remplace."""
+    def action(entry):
+        if variant in entry["variantes"] and len(entry["variantes"]) > 1:
+            del entry["variantes"][variant]
+            if entry.get("defaut") == variant:
+                entry["defaut"] = next(iter(entry["variantes"]))
+    _edit_variants(name, type_name, action, folder)
+
+
+def set_default_variant(name: str, type_name: str, variant: str, folder: Path | None = None) -> None:
+    """Variante par défaut d'un type : c'est elle que les applis reçoivent à plat."""
+    def action(entry):
+        if variant in entry["variantes"]:
+            entry["defaut"] = variant
+    _edit_variants(name, type_name, action, folder)
 
 
 def new_preset(name: str, values: dict, folder: Path | None = None) -> str:

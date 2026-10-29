@@ -122,5 +122,25 @@ class PreviewTest(WindowTestCase):
         self.assertIn(57, {t._outer_w for t in self.editor.preview.findChildren(_Toggle)})   # toggles de style 1
 
 
+class EditorVariantTest(WindowTestCase):
+    def test_editing_a_variant_writes_there_and_is_not_broadcast(self):
+        name = fresh_preset("Variantes")
+        editor = theme_editor.ThemeEditor(name)
+        sent = []
+        editor.server = type("S", (), {"broadcast": lambda _s, preset, values: sent.append(values)})()
+        compact = tp.add_variant(name, "bouton", "compact")
+        editor.edit_variant("bouton", compact, save=False)
+        self.assertFalse(editor.store.is_default("bouton"))
+        editor.store.save_changes({"button_radius": 13})
+        preset = tp.load_preset(tp.find_preset(name))
+        self.assertEqual(preset["types"]["bouton"]["variantes"][compact]["radius"], 13)
+        self.assertNotEqual(tp.to_settings(preset)["button_radius"], 13)
+        editor.window.live_changed_keys = {"button_radius"}
+        editor._broadcast({"button_radius": 13})
+        self.assertEqual(sent, [])                                  # les applis n'utilisent pas cette variante
+        editor.window.hide()
+        tp.delete_preset(name)
+
+
 if __name__ == "__main__":
     unittest.main()

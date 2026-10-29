@@ -92,6 +92,46 @@ class FilesTest(unittest.TestCase):
             self.assertEqual(tp.to_settings(preset), theme_part(values))
 
 
+class VariantTest(unittest.TestCase):
+    """Plusieurs variantes par type : seule celle par défaut arrive à plat dans les applis."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.folder = Path(self._tmp.name)
+        tp.save_preset(tp.from_settings({"button_radius": 2, "button_height": 24, "window_radius": 8}, "p"),
+                       self.folder)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def preset(self):
+        return tp.load_preset(tp.find_preset("p", self.folder))
+
+    def test_new_variant_is_edited_apart_and_only_the_default_is_flat(self):
+        compact = tp.add_variant("p", "bouton", "compact", folder=self.folder)
+        tp.update_preset("p", {"button_radius": 9}, folder=self.folder, editing={"bouton": compact})
+        self.assertEqual(tp.to_settings(self.preset())["button_radius"], 2)          # défaut : standard
+        self.assertEqual(tp.type_flat(self.preset(), "bouton", compact),
+                         {"button_radius": 9, "button_height": 24})
+        tp.update_preset("p", {"window_radius": 3}, folder=self.folder)           # sans variante : rien d'autre
+        self.assertEqual(self.preset()["types"]["bouton"]["variantes"]["standard"]["radius"], 2)
+        tp.set_default_variant("p", "bouton", compact, folder=self.folder)
+        self.assertEqual(tp.to_settings(self.preset())["button_radius"], 9)
+
+    def test_rename_keeps_an_alias_and_delete_never_leaves_none(self):
+        compact = tp.add_variant("p", "bouton", "compact", folder=self.folder)
+        tp.set_default_variant("p", "bouton", compact, folder=self.folder)
+        new = tp.rename_variant("p", "bouton", compact, "serré", folder=self.folder)
+        self.assertEqual(tp.resolve_variant(self.preset(), "bouton", "compact"), new)
+        self.assertEqual(self.preset()["types"]["bouton"]["defaut"], new)
+        tp.delete_variant("p", "bouton", new, folder=self.folder)
+        self.assertEqual(tp.variant_names(self.preset(), "bouton"), ["standard"])
+        self.assertEqual(self.preset()["types"]["bouton"]["defaut"], "standard")
+        tp.delete_variant("p", "bouton", "standard", folder=self.folder)           # la dernière : gardée
+        self.assertEqual(tp.variant_names(self.preset(), "bouton"), ["standard"])
+        self.assertEqual(tp.add_variant("p", "bouton", "standard", folder=self.folder), "standard 2")
+
+
 class LinkedThemeTest(unittest.TestCase):
     """fm_browser lit et écrit son aspect générique dans le preset fm_theme lié (`theme_preset`)."""
 

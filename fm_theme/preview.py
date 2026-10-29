@@ -101,6 +101,10 @@ class PreviewPanel(QFrame):
         self._title = _label("", "card_title")
         self._title.setContentsMargins(16, 12, 16, 4)
         outer.addWidget(self._title)
+        # Outils de la section (barre des variantes de l'éditeur) : sous le titre, au-dessus des éléments.
+        self._tools = QVBoxLayout()
+        self._tools.setContentsMargins(16, 0, 16, 4)
+        outer.addLayout(self._tools)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
@@ -118,6 +122,17 @@ class PreviewPanel(QFrame):
             "Menu contextuel": self._menu, "Fenêtres additionnelles": self._window,
         }
         self.show_section(None)
+
+    def set_tools(self, widget: QWidget | None) -> None:
+        """Remplace les outils affichés sous le titre (None : aucun)."""
+        while self._tools.count():
+            old = self._tools.takeAt(0).widget()
+            if old is not None:
+                old.hide()
+                old.setParent(None)
+                old.deleteLater()
+        if widget is not None:
+            self._tools.addWidget(widget)
 
     def section(self) -> str:
         return self._section or GALLERY

@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 import fm_theme.presets as tp
 from fm_theme.preview import WIDTH as PREVIEW_WIDTH, PreviewPanel
@@ -30,9 +30,23 @@ class ThemeStore:
 
     def __init__(self, name: str):
         self.name = name
+        # Variante EDITEE par type (titres, boutons...) ; absente : la variante par defaut du type.
+        self.editing: dict[str, str] = {}
 
     def _theme_values(self) -> dict:
-        return json.loads(json.dumps(tp.to_settings(tp.load_preset(tp.find_preset(self.name)))))
+        preset = tp.load_preset(tp.find_preset(self.name))
+        values = tp.to_settings(preset)
+        for type_name, variant in self.editing.items():
+            values.update(tp.type_flat(preset, type_name, variant))
+        return json.loads(json.dumps(values))
+
+    def is_default(self, type_name: str) -> bool:
+        """La variante editee de ce type est-elle sa variante par defaut (celle que recoivent les applis) ?"""
+        variant = self.editing.get(type_name)
+        if not variant:
+            return True
+        entry = (tp.load_preset(tp.find_preset(self.name)).get("types") or {}).get(type_name) or {}
+        return variant == tp.default_variant(entry)
 
     def load(self) -> dict:
         settings = load_settings()
@@ -56,13 +70,13 @@ class ThemeStore:
         theme, rest = self._split(partial)
         theme_drop = tuple(k for k in drop if tp.theme_key(k))
         if theme or theme_drop:
-            tp.update_preset(self.name, theme, drop=theme_drop)
+            tp.update_preset(self.name, theme, drop=theme_drop, editing=self.editing)
         self._save_app(rest, tuple(k for k in drop if k not in theme_drop))
 
     def save_changes(self, changed: dict) -> dict:
         theme, rest = self._split(changed)
         if theme:
-            tp.update_preset(self.name, theme)
+            tp.update_preset(self.name, theme, editing=self.editing)
         self._save_app(rest)
         return self.load()
 
@@ -134,6 +148,85 @@ class PresetBar(QWidget):
         self._editor.switch_to(remaining[0], save=False)
 
 
+# Section de l'editeur -> type d'element a variantes (fm_theme.presets.TYPE_PREFIXES). Toggles : leurs styles.
+SECTION_TYPES = {"TITRES": "titres", "Sliders": "slider", "Zone de saisie": "champ", "Bouton": "bouton",
+                 "Tableaux": "tableau", "Tabs": "onglets", "Menu contextuel": "menu",
+                 "Fenêtres additionnelles": "fenetre"}
+
+
+class VariantBar(QWidget):
+    """Variantes du type de la section ouverte (au-dessus de l'apercu) : variante editee, « par defaut » (celle
+    que recoivent les applis), nom, Nouvelle (copie de l'editee), Renommer (l'ancien nom reste en alias),
+    Definir par defaut, Supprimer (deux clics, jamais la derniere)."""
+
+    def __init__(self, editor: "ThemeEditor", type_name: str):
+        super().__init__()
+        self._editor, self._type = editor, type_name
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        preset = tp.load_preset(tp.find_preset(editor.name))
+        names = tp.variant_names(preset, type_name)
+        entry = preset["types"][type_name]
+        self.current = editor.store.editing.get(type_name) or tp.default_variant(entry)
+        is_default = self.current == tp.default_variant(entry)
+        top = QHBoxLayout()
+        top.setSpacing(6)
+        self.select = _SelectField(names, self.current, width=150)
+        self.select.changed.connect(lambda v: editor.edit_variant(type_name, v))
+        top.addWidget(self.select)
+        mark = QLabel("par défaut" if is_default else "")
+        mark.setStyleSheet(f"color: {M['label_dim']}; background: transparent;")
+        top.addWidget(mark)
+        top.addStretch(1)
+        layout.addLayout(top)
+        self.name_field = _TextField(self.current, width=150)
+        layout.addWidget(self.name_field)
+        rows = ((("Nouvelle", self._add), ("Renommer", self._rename)),
+                (("Par défaut", self._set_default), ("Supprimer", self._delete)))
+        for row in rows:
+            line = QHBoxLayout()
+            line.setSpacing(6)
+            for text, slot in row:
+                button = _btn(text)
+                button.clicked.connect(slot)
+                line.addWidget(button)
+                if text == "Supprimer":
+                    self.delete = button
+                    button.setEnabled(len(names) > 1)
+                if text == "Par défaut":
+                    button.setEnabled(not is_default)
+            line.addStretch(1)
+            layout.addLayout(line)
+        self._armed = QTimer(self, singleShot=True, interval=DELETE_CONFIRM_MS)
+        self._armed.timeout.connect(lambda: self.delete.setText("Supprimer"))
+
+    def _add(self):
+        self._editor.save_pending()
+        new = tp.add_variant(self._editor.name, self._type, self.name_field.text()
+                             if self.name_field.text() != self.current else f"{self.current} copie", self.current)
+        self._editor.edit_variant(self._type, new, save=False)
+
+    def _rename(self):
+        new = tp.rename_variant(self._editor.name, self._type, self.current, self.name_field.text())
+        self._editor.edit_variant(self._type, new, save=False)
+
+    def _set_default(self):
+        self._editor.save_pending()
+        tp.set_default_variant(self._editor.name, self._type, self.current)
+        self._editor.edit_variant(self._type, self.current, save=False)
+
+    def _delete(self):
+        if not self._armed.isActive():
+            self.delete.setText("Confirmer la suppression")
+            self._armed.start()
+            return
+        self._armed.stop()
+        tp.delete_variant(self._editor.name, self._type, self.current)
+        preset = tp.load_preset(tp.find_preset(self._editor.name))
+        self._editor.edit_variant(self._type, tp.default_variant(preset["types"][self._type]), save=False)
+
+
 class ThemeEditor:
     """L'editeur : une fenetre v2 « Theme » sur le preset `name`, refaite a chaque changement de preset ;
     pendant un geste, les cles d'aspect modifiees partent vers les applis ouvertes (`server`)."""
@@ -148,7 +241,8 @@ class ThemeEditor:
         old = self.window
         self.name = name
         _save_window_geometry(name, LAST_PRESET_KEY)
-        window = self.window = v2.SettingsWindowV2(None, module="theme", store=ThemeStore(name))
+        self.store = ThemeStore(name)
+        window = self.window = v2.SettingsWindowV2(None, module="theme", store=self.store)
         window.titlebar._title.setText(f"fm_theme : {name}")
         window._tab_subbar.layout().insertWidget(0, PresetBar(self))
         window.settingsChanged.connect(self._broadcast)
@@ -193,12 +287,32 @@ class ThemeEditor:
             node._head.collapsedChanged.connect(lambda collapsed, n=node: self._section_toggled(n, collapsed))
         opened = [n for n in nodes if not n.is_collapsed()]
         self.preview.show_section(opened[0].node.title if opened else None)
+        self._refresh_variant_bar()
 
     def _section_toggled(self, node, collapsed: bool):
         if not collapsed:
             self.preview.show_section(node.node.title)
         elif self.preview.section() == node.node.title:
             self.preview.show_section(None)
+        self._refresh_variant_bar()
+
+    def _refresh_variant_bar(self):
+        """Barre des variantes du type de la section affichee dans l'apercu (aucune pour les autres)."""
+        type_name = SECTION_TYPES.get(self.preview.section())
+        self.preview.set_tools(VariantBar(self, type_name) if type_name else None)
+
+    def edit_variant(self, type_name: str, variant: str, save: bool = True):
+        """Edite une autre variante du type : ses valeurs passent dans les champs, l'apercu la montre."""
+        if save:
+            self.save_pending()
+        self.store.editing[type_name] = variant
+        window = self.window
+        values = {k: v for k, v in self.store.load().items() if tp.theme_key(k)
+                  and tp.theme_key(k)[0] == type_name}
+        window.external_values(values)
+        window._apply_look(window.settings, values)          # fenetre et apercu : la variante editee
+        window._last_live_snapshot = None
+        self._refresh_variant_bar()
 
     def _refresh_preview(self, _settings: dict):
         """Couleurs, polices, échelle : les boutons gardent les couleurs de leur construction, l'aperçu est refait."""
@@ -221,7 +335,9 @@ class ThemeEditor:
         if self.server is None:
             return
         keys = getattr(self.window, "live_changed_keys", None) or ()
-        values = {k: settings[k] for k in keys if k in settings and tp.theme_key(k)}
+        # Une variante qui n'est pas celle par defaut ne part pas vers les applis : elles ne l'utilisent pas.
+        values = {k: settings[k] for k in keys if k in settings and tp.theme_key(k)
+                  and self.store.is_default(tp.theme_key(k)[0])}
         if values:
             self.server.broadcast(self.name, values)
 
