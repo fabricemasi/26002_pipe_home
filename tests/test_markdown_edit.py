@@ -90,7 +90,7 @@ class InspectorEditTest(unittest.TestCase):
         self.panel = dp.DetailPanel()
         self.addCleanup(self.panel.deleteLater)
         _FakeBox.asked = 0
-        patcher = mock.patch.object(dp, "QMessageBox", _FakeBox)
+        patcher = mock.patch("detail_panel_parts.markdown.QMessageBox", _FakeBox)
         patcher.start()
         self.addCleanup(patcher.stop)
 

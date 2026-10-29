@@ -137,7 +137,7 @@ class RenderLogTest(unittest.TestCase):
         window.root_field = QLineEdit("missing", window)
         panel = dp.DetailPanel(window)
         try:
-            with patch.object(dp, "_write_render_log", side_effect=OSError("Accès refusé")), \
+            with patch("detail_panel_parts.render_log._write_render_log", side_effect=OSError("Accès refusé")), \
                     patch.object(QMessageBox, "warning") as warning:
                 panel.open_render_log_button.click()
                 self.assertIn("Accès refusé", warning.call_args.args[2])

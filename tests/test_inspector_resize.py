@@ -40,7 +40,7 @@ class InspectorResizeTest(unittest.TestCase):
                 width = panel.width()
                 point = QPoint(handle.width() - 1, panel.height() // 2)
                 origin = panel.mapToGlobal(point)
-                with patch.object(dp, "_persist_detail_panel_width"):
+                with patch("detail_panel_parts.resize._persist_detail_panel_width"):
                     QApplication.sendEvent(handle, QMouseEvent(QEvent.MouseButtonPress, QPointF(point),
                         QPointF(origin), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
                     QApplication.sendEvent(panel, QMouseEvent(QEvent.MouseMove, QPointF(point + QPoint(20, 0)),
@@ -98,7 +98,7 @@ class InspectorResizeTest(unittest.TestCase):
                                                           Qt.NoButton, Qt.NoButton))
                     self.assertEqual(handle.cursor().shape(), Qt.SizeHorCursor)
                     width = panel.width()
-                    with patch.object(dp, "_persist_detail_panel_width"), \
+                    with patch("detail_panel_parts.resize._persist_detail_panel_width"), \
                             patch.object(panel, "grabMouse") as grab, patch.object(panel, "releaseMouse") as release:
                         QApplication.sendEvent(handle, event(QEvent.MouseButtonPress, x, origin.x() + x,
                                                               Qt.LeftButton, Qt.LeftButton))

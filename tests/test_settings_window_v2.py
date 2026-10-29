@@ -565,8 +565,8 @@ class AppliedSettingsTest(WindowTestCase):
         self.assertIs(ui_state.APPLIED_SETTINGS, live)
         panel = detail_panel.DetailPanel.__new__(detail_panel.DetailPanel)     # non construit
         # Relire le disque leve ; un panneau non construit leve AttributeError APRES avoir lu ses reglages.
-        with mock.patch.object(detail_panel, "load_settings", side_effect=AssertionError("disque relu")), \
-                mock.patch.object(detail_panel, "_sync_dynamic_M") as sync_m:
+        with mock.patch("detail_panel_parts.info_table.load_settings", side_effect=AssertionError("disque relu")), \
+                mock.patch("detail_panel_parts.info_table._sync_dynamic_M") as sync_m:
             with self.assertRaises(AttributeError):
                 detail_panel.DetailPanel._apply_preview_table_style(panel)
         sync_m.assert_called_once_with(live.get("colors") or {})

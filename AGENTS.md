@@ -37,7 +37,7 @@ Application (ordre de dépendance) :
 - `config.py` : constantes (extensions, listes d'omission `GLOBAL_OMIT_*`) ; `ui_state.py` : réglages d'interface **réassignés à l'exécution** (`WINDOW_RADIUS`, `HEADER_HEIGHT`, `STEP_BADGE_STYLE`…). Ils se lisent toujours via `ui_state.X` (jamais `from ui_state import X`, qui figerait la valeur).
 - `previews.py` : décodeurs d'aperçus, caches mémoire/disque, rendus Blender/Maya, ordonnanceur de fond, journal de rendu.
 - `browser_core.py` : scan disque, config projet/layout/raccourcis, helpers de peinture/redimensionnement.
-- `row_delegates.py` (`RowDelegate`, `ProjectTileDelegate`), `column_config.py` (dialogue de configuration des colonnes), `capture_widgets.py` (capture, `_PreviewBlock`, `_ColumnCard`…), `column.py` (`Column`), `preview_column.py` (`PreviewColumn`, export PureRef), `detail_panel.py` (`DetailPanel`, inspecteur).
+- `row_delegates.py` (`RowDelegate`, `ProjectTileDelegate`), `column_config.py` (dialogue de configuration des colonnes), `capture_widgets.py` (capture, `_PreviewBlock`, `_ColumnCard`…), `column.py` (`Column`), `preview_column.py` (`PreviewColumn`, export PureRef), `detail_panel.py` (`DetailPanel`, inspecteur ; méthodes dans `detail_panel_parts/`, carte `docs/agents/inspecteur.md`).
 - `software_launch.py` : ouvrir un logiciel (Blender, Houdini) dans le dossier d'une colonne (détail : `docs/agents/colonnes.md`).
 - `fm_markdown/preview.py` (ex `markdown_preview.py`, importé `as markdown_preview`) : rendu Markdown -> HTML partagé par le module Markdown et l'inspecteur (détail : `docs/agents/fm_markdown.md`).
 - `fm_visionneuse/` (ex `focus.py`, `file_attributes.py`, `file_filters.py`) : visionneuse, pellicule, planche, attributs, filtres (détail : `docs/agents/fm_visionneuse.md`).
@@ -61,6 +61,7 @@ Enregistrer UNE clé d'état temps réel : `settings_store.save_live_state(clé,
 Le détail de chaque module (choix de l'utilisateur, pièges, mesures, tests) est dans `docs/agents/`, lu seulement quand on travaille dessus. Avant de modifier un sujet : lire son fichier. Après une demande de l'utilisateur ou un piège trouvé : l'y noter (jamais ici, sauf règle valable pour toute l'appli).
 
 - `docs/agents/pieges-generaux.md` : pièges de fluidité déjà rencontrés, isolation des tests.
+- `docs/agents/inspecteur.md` : inspecteur découpé (`detail_panel.py` + `detail_panel_parts/`) : quel fichier porte quelle responsabilité.
 - `docs/agents/fm_browser.md` : fenêtre principale découpée (`pipeline_browser.py` + `main_window/`) : quel fichier porte quelle responsabilité, où patcher dans les tests.
 - `docs/agents/colonnes.md` : colonnes (configuration `.pipeline_*.json`, animations, navigation réactive, réseau, dessin), boutons de mode de la barre, lancement des logiciels, opérations sur les fichiers (confirmations, corbeille, glisser-déposer).
 - `docs/agents/apercus.md` : pipeline d'aperçus, caches, rendus Blender / Maya / Houdini, rendu automatique SUSPENDU, Lightroom.

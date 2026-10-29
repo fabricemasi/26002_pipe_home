@@ -123,7 +123,9 @@ Points relevés (2026-10-28) :
 
 FAIT (un commit par étape, branche `nettoyage-code`) : tests rapides par module (`tests/run.py`, `@lent`) ; `fm_video/` ; `fm_markdown/` (+ `preview.py`, ex `markdown_preview.py`) ; `fm_visionneuse/` (`focus.py` = façade de 11 sous-modules) ; `fm_board/` + `fm_miro/` + `fm_cad/` (cycle gardé) ; `pipeline_browser.py` découpé dans `main_window/` (mixins, carte `docs/agents/fm_browser.md`) ; `previews.py` découpé en 23 sous-modules de `preview_services/` (façade de lecture conservée, carte `docs/agents/apercus.md`) ; `column.py` découpé en six mixins de `column_parts/` et un fichier de services partagés (carte `docs/agents/colonnes.md`).
 
-PROCHAINE ÉTAPE : découper `detail_panel.py` (même méthode). Puis « fenêtres de réglages par module » ; seulement ensuite fm_theme.
+FAIT (2026-10-29) : `detail_panel.py` découpé en neuf mixins dans `detail_panel_parts/` (carte `docs/agents/inspecteur.md`).
+
+PROCHAINE ÉTAPE : « fenêtres de réglages par module » (voir plus haut) ; seulement ensuite fm_theme.
 
 ÉTAPE BROWSER_CORE (2026-10-29, faite par Codex, VALIDÉE et commitée par Claude Code) : façade `browser_core.py` (`__getattr__` pour les états réaffectés `_CONFIG_REVISION`, `_default_thumbnail`) + dix services dans `browser_core_parts/` ; carte dans `docs/agents/colonnes.md`. 26 sondes protégées par `tests/_probe_isolate.py`. Validation : pyflakes sans nom indéfini ; aucune copie figée d'un état réaffecté (`from x import ÉTAT`) ; patches des tests vérifiés (ceux qui passent encore par une façade agissent, le code testé lit le nom par la façade à l'appel) ; suite complète : 29 FAIL / ERROR, tous déjà connus.
 - `test_focus_viewer` (6 tests d'animation minutés : `ctrl_wheel`, `ripple`, `bump`, `new_image_resets_zoom`, `slide_starts`, `zoom_keeps_anchor`) : INTERMITTENTS selon la charge de la machine, 5 à 6 échecs par passe le 2026-10-29 sur 297d6bd (avant tout découpage de Codex) comme sur l'état actuel. Ne pas les attribuer à un découpage sans comparaison sur l'ancien commit (`git worktree add`).
