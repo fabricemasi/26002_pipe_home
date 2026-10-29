@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 APP = QApplication.instance() or QApplication(sys.argv)
 
 import browser_core  # noqa: E402
-import column as column_mod  # noqa: E402
+from column_parts import loading as column_mod  # noqa: E402
 from column import Column  # noqa: E402
 
 

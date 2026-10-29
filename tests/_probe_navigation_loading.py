@@ -16,7 +16,7 @@ from unittest.mock import patch
 from PySide6.QtCore import QCoreApplication, QEvent, QTimer
 from PySide6.QtWidgets import QApplication
 from column import Column
-import column as column_module
+from column_parts import loading as column_module
 import column_loading as loading
 
 APP = QApplication.instance() or QApplication([])

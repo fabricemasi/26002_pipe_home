@@ -23,6 +23,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QLabel
 app = QApplication.instance() or QApplication([])
 
 import column as column_module
+from column_parts import context_menu as column_context_menu, file_operations as column_file_operations
 import settings_dialogs
 from browser_core import ROLE_PATH
 from column import Column
@@ -69,7 +70,7 @@ class _Base(unittest.TestCase):
 class DeleteTest(_Base):
     def test_cancel_keeps_the_file(self):
         trash = _FakeTrash()
-        with self.answers(False), mock.patch.object(column_module, "QFile", trash):
+        with self.answers(False), mock.patch.object(column_file_operations, "QFile", trash):
             self.assertFalse(self.column.delete_path(self.root / "fichier.txt"))
         self.assertTrue((self.root / "fichier.txt").exists())
         self.assertEqual(trash.calls, [])
@@ -77,7 +78,7 @@ class DeleteTest(_Base):
 
     def test_confirmed_goes_to_the_trash(self):
         trash = _FakeTrash()
-        with self.answers(True), mock.patch.object(column_module, "QFile", trash):
+        with self.answers(True), mock.patch.object(column_file_operations, "QFile", trash):
             self.assertTrue(self.column.delete_path(self.root / "dossier"))
         self.assertFalse((self.root / "dossier").exists())
         self.assertEqual(trash.calls, [str(self.root / "dossier")])
@@ -87,11 +88,11 @@ class DeleteTest(_Base):
 
     def test_trash_refused_asks_again_before_deleting_for_good(self):
         trash = _FakeTrash(ok=False)
-        with self.answers(True, False), mock.patch.object(column_module, "QFile", trash):
+        with self.answers(True, False), mock.patch.object(column_file_operations, "QFile", trash):
             self.assertFalse(self.column.delete_path(self.root / "fichier.txt"))
         self.assertTrue((self.root / "fichier.txt").exists())
         self.assertIn("DÉFINITIVEMENT", self.asked[1][2])
-        with self.answers(True, True), mock.patch.object(column_module, "QFile", trash):
+        with self.answers(True, True), mock.patch.object(column_file_operations, "QFile", trash):
             self.assertTrue(self.column.delete_path(self.root / "fichier.txt"))
         self.assertFalse((self.root / "fichier.txt").exists())
 
@@ -104,7 +105,7 @@ class DeleteTest(_Base):
                 return None
 
         lst = self.column.list
-        with mock.patch.object(column_module, "Menu", FakeMenu):
+        with mock.patch.object(column_context_menu, "Menu", FakeMenu):
             for i in range(lst.count()):
                 self.column._on_context_menu(lst.visualItemRect(lst.item(i)).center())
         self.assertEqual(len(seen), 2)

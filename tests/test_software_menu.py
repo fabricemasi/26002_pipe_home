@@ -21,6 +21,7 @@ app = QApplication.instance() or QApplication([])
 import app_style
 import browser_core
 import column as column_module
+from column_parts import appearance as column_appearance
 from column import Column
 
 
@@ -64,7 +65,7 @@ class SoftwareMenuTest(unittest.TestCase):
                 seen["maya"] = actions["maya"].isEnabled()
                 return actions["houdini"]
 
-        with mock.patch.object(column_module, "Menu", FakeMenu):
+        with mock.patch.object(column_appearance, "Menu", FakeMenu):
             column._open_software_menu()
         self.assertFalse(seen["maya"])
         self.assertTrue((self.root / "houdini").is_dir())

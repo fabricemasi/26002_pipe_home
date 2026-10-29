@@ -1,6 +1,50 @@
 # Colonnes, navigation, opérations sur les fichiers, lancement des logiciels
 
-Détail lu À LA DEMANDE (sorti d'AGENTS.md le 2026-10-26 pour alléger le contexte de chaque session) : à lire avant de travailler sur ce sujet. Contenu repris tel quel.
+## Carte : fonctionnalité → fichiers
+
+La classe `Column` et son constructeur restent dans `column.py` ; elle compose les
+mixins de `column_parts/`. Les imports historiques de `column.X` restent disponibles.
+Pour modifier une fonctionnalité, ouvrir directement son fichier et cette carte.
+
+| Fonctionnalité | Fichier |
+|---|---|
+| Construction, signaux et façade | `column.py` |
+| Largeur, hauteur, lignes, événements et glisser d’entête | `column_parts/geometry.py` |
+| Chargement, entrées, compteurs et affichage des lignes | `column_parts/loading.py` ; scan asynchrone dans `column_loading.py` |
+| Ordre des lignes, espaces, titres et lignes en bas | `column_parts/rows.py` |
+| Styles, entête, bouton logiciel, punaise et sélection | `column_parts/appearance.py` |
+| Menu contextuel et overrides par ligne | `column_parts/context_menu.py` |
+| Création, raccourcis, vignettes, collage, suppression et renommage | `column_parts/file_operations.py` |
+| Compteurs médias, raccourcis accessibles, ouverture visionneuse | `column_parts/shared.py` |
+| Glisser-déposer et confirmation | `capture_widgets.py` ; `settings_dialogs.py` |
+| Peinture des lignes et tuiles | `row_delegates.py` ; `browser_core.py` |
+
+Les mixins n’importent pas `column.py` à l’exécution : leurs méthodes utilisent
+`self`, et leurs imports viennent des services existants. `super()` des événements
+du mixin de géométrie continue jusqu’à `QWidget`. Pour patcher un nom, viser le
+fichier qui l’appelle : par exemple `column_parts.file_operations.QFile`,
+`column_parts.context_menu.Menu`, `column_parts.appearance.Menu` ou
+`column_parts.loading.entry_is_dir`. Les patches d’une méthode de la classe
+partagée `Menu` et du gestionnaire d’aperçus restent valables sur la façade.
+Les sondes réseau et de navigation visent le module `loading` pour éviter des
+mesures silencieusement fausses.
+
+Référence AVANT découpage (`python tests/run.py colonnes`, hors sandbox) :
+seul FAIL `test_software_launch.SoftwareButtonTest.test_columns_under_blender_get_the_button`
+(`projA absent de Projets`), déjà présent à la suite complète précédente.
+Sonde sur une colonne hors écran de 25 dossiers : médiane de trois séries de
+30 repeintures ≈ 8,44 ms avant / 8,45 ms après ; rafraîchissement médian ≈ 1,18 /
+1,20 ms. `cProfile` a aussi été relevé sur 30 repeintures ; aucun calcul ou scan
+supplémentaire ajouté sur le fil de l’interface.
+
+Validation : pyflakes sans nom indéfini ni alerte nouvelle ; tests colonnes :
+1 échec(s) contre 1 avant ; suite complète : 32 FAIL / ERROR contre
+32 à la référence du commit `499d91c`, aucun nouveau. Tests lents sautés.
+Les 102 méthodes de `Column`, ses signaux et les quatre services déplacés ont été
+comparés par AST ; imports vérifiés dans trois ordres. Fenêtre principale construite
+et fermée hors écran. Le filtre Qt a été testé sur l’entête : sans Ctrl aucun départ,
+avec Ctrl le geste démarre et se termine correctement. Les sondes réseau et navigation
+ont été vérifiées sur des dossiers temporaires.
 
 **Tests du module** : `python tests/run.py colonnes` — rapides seulement ; ajouter `--lent` pour les tests lents (Blender, fenêtre entière…) avant un commit qui touche leur zone.
 
