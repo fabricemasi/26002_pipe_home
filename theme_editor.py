@@ -14,6 +14,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
 import fm_theme.presets as tp
+from fm_theme.preview import WIDTH as PREVIEW_WIDTH, PreviewPanel
 import settings_window_v2 as v2
 from settings_cells import _TextField
 from settings_store import M, _load_window_geometry, _save_window_geometry, load_settings, save_settings, theme_in_use
@@ -151,12 +152,59 @@ class ThemeEditor:
         window.titlebar._title.setText(f"fm_theme : {name}")
         window._tab_subbar.layout().insertWidget(0, PresetBar(self))
         window.settingsChanged.connect(self._broadcast)
+        self.preview = self._add_preview(window)
         if old is not None:
             window.setGeometry(old.geometry())
         window.show()
+        QTimer.singleShot(0, lambda w=window: self._follow_sections(w))
         if old is not None:
             old.hide()
             old.deleteLater()
+
+    def _add_preview(self, window) -> PreviewPanel:
+        """Aperçu à gauche des sections (demande de l'utilisateur) : la pile des pages passe à droite."""
+        stack = window.stack
+        root = stack.parentWidget().layout()
+        index = root.indexOf(stack)
+        root.removeWidget(stack)
+        holder = QWidget()
+        row = QHBoxLayout(holder)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        preview = PreviewPanel(lambda: window.settings)
+        row.addWidget(preview)
+        row.addWidget(stack, 1)
+        root.insertWidget(index, holder, 1)
+        if window.width() < 760 + PREVIEW_WIDTH:
+            window.resize(760 + PREVIEW_WIDTH, window.height())
+        window.settingsChanged.connect(self._refresh_preview)
+        return preview
+
+    def _follow_sections(self, window, tries: int = 20):
+        """L'aperçu suit la section ouverte (sections de 1er niveau de la page, construite à la 1re visite)."""
+        if window is not self.window:
+            return
+        nodes = [n for n in window.stack.findChildren(v2._LazyNode) if n.level == 1]
+        if not nodes:
+            if tries:
+                QTimer.singleShot(50, lambda: self._follow_sections(window, tries - 1))
+            return
+        for node in nodes:
+            node._head.collapsedChanged.connect(lambda collapsed, n=node: self._section_toggled(n, collapsed))
+        opened = [n for n in nodes if not n.is_collapsed()]
+        self.preview.show_section(opened[0].node.title if opened else None)
+
+    def _section_toggled(self, node, collapsed: bool):
+        if not collapsed:
+            self.preview.show_section(node.node.title)
+        elif self.preview.section() == node.node.title:
+            self.preview.show_section(None)
+
+    def _refresh_preview(self, _settings: dict):
+        """Couleurs, polices, échelle : les boutons gardent les couleurs de leur construction, l'aperçu est refait."""
+        keys = getattr(self.window, "live_changed_keys", None) or ()
+        if any(k == "colors" or k.startswith("font_") or k == "ui_scale" for k in keys):
+            self.preview.show_section(self.preview._section, force=True)
 
     def save_pending(self):
         """Modifications non enregistrees du preset ouvert : enregistrees avant d'en changer."""

@@ -87,5 +87,40 @@ class EditorTest(WindowTestCase):
         tp.delete_preset(first)
 
 
+class PreviewTest(WindowTestCase):
+    """Aperçu à gauche : il suit la section ouverte et se restyle en direct avec la fenêtre."""
+
+    def setUp(self):
+        self.name = fresh_preset("Aperçu")
+        self.editor = theme_editor.ThemeEditor(self.name)
+        theme_editor.ThemeEditor._follow_sections(self.editor, self.editor.window)
+
+    def tearDown(self):
+        self.editor.window.hide()
+        tp.delete_preset(self.name)
+
+    def node(self, title):
+        return next(n for n in self.editor.window.stack.findChildren(v2._LazyNode)
+                    if n.level == 1 and n.node.title == title)
+
+    def test_follows_the_open_section(self):
+        from fm_theme.preview import GALLERY
+        self.assertEqual(self.editor.preview.section(), GALLERY)
+        self.node("Toggles")._head.head.clicked.emit()
+        self.assertEqual(self.editor.preview.section(), "Toggles")
+        self.node("Tableaux")._head.head.clicked.emit()        # accordéon : Toggles se replie
+        self.assertEqual(self.editor.preview.section(), "Tableaux")
+        self.node("Tableaux")._head.head.clicked.emit()
+        self.assertEqual(self.editor.preview.section(), GALLERY)
+
+    def test_live_restyle_reaches_the_preview(self):
+        from fm_theme.widgets import _Toggle
+        self.editor.preview.show_section("Toggles")
+        window = self.editor.window
+        merged = dict(window.settings, toggle1_outer_width=57)
+        window._apply_look(merged, {"toggle1_outer_width": 57})
+        self.assertIn(57, {t._outer_w for t in self.editor.preview.findChildren(_Toggle)})   # toggles de style 1
+
+
 if __name__ == "__main__":
     unittest.main()
