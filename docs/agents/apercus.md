@@ -1,6 +1,75 @@
 # Pipeline d'aperçus et Lightroom
 
-Détail lu À LA DEMANDE (sorti d'AGENTS.md le 2026-10-26 pour alléger le contexte de chaque session) : à lire avant de travailler sur ce sujet. Contenu repris tel quel.
+## Carte : fonctionnalité → fichiers (découpage du 2026-10-28)
+
+`previews.py` reste la façade de lecture / d’appel (`previews.X`, imports historiques).
+Le code vit dans `preview_services/`, paquet de services communs de fm_browser.
+Il ne dépend ni de la fenêtre principale ni des modules de réglages métier.
+
+| Fonctionnalité | Fichiers dans `preview_services/` |
+|---|---|
+| Attributs cachés Windows | `filesystem.py` |
+| Dates mémorisées, chemins distants, contexte `memory_only` | `mtime.py` |
+| Recadrage et mise à l’échelle | `pixmaps.py` |
+| Icônes des logiciels et de l’interface | `icons.py` |
+| Caches mémoire, échecs de recherche, indicateur de présence de PNG | `memory.py` |
+| Signatures, index disque, protection, turntables et nettoyage des caches | `cache.py` |
+| Lecture des profils, snapshot et fond du rendu | `profiles.py` |
+| Journal quotidien HTML et tableau des rendus | `render_log.py` |
+| Dépendances optionnelles numpy / rawpy / OpenEXR | `optional.py` |
+| Détection de Blender | `executables.py` |
+| Rendu Blender EEVEE et script embarqué | `blender.py` |
+| Lecture OBJ et rastérisation de secours | `obj.py` |
+| Alembic, Maya, Houdini : décodeurs, détection des outils, scripts | `alembic.py`, `maya.py`, `houdini.py` |
+| PDF et Illustrator | `pdf.py` |
+| Images 2D, PSD, TX, EXR, HDR, RAW, LUT et dispatch des formats statiques | `images.py` |
+| Image extraite d’une vidéo | `video.py` |
+| DWG / DXF, vignette intégrée et conversion ODA | `dwg.py` |
+| Polices, brosses Photoshop | `font.py`, `abr.py` |
+| Lecture des aperçus, workers et files de décodage | `runtime.py` |
+| Scan en fond et ordonnanceur d’inactivité | `scheduler.py` |
+
+### Dépendances et état partagé
+
+- Couches sans cycle : outils de base → décodeurs / profils / journal → cache disque
+  → lecture et workers (`runtime`) → ordonnanceur (`scheduler`).
+- Le dispatch 2D et les LUT restent ensemble dans `images.py` : une LUT utilise elle-même
+  le dispatch pour son image de test. Leurs caches sont dans la couche inférieure `memory.py`.
+- Blender ne dépend pas du rasteriseur OBJ : sa détection est isolée dans `executables.py`.
+  OBJ et Alembic peuvent ainsi utiliser Blender sans créer de cycle.
+- État RÉAFFECTÉ : profils et lot automatique dans `profiles.py` ; sélection LUT dans `images.py` ;
+  `_PREVIEW_CACHE_HAS_PNG` dans `memory.py` ; protection dans `cache.py`.
+  Tous les autres modules lisent / écrivent `module.X`, jamais une copie importée.
+  La façade lit ces états par `__getattr__` pour ne pas figer leur valeur.
+- Les chemins reposant sur `__file__` remontent désormais de DEUX niveaux vers la racine.
+  Les scripts embarqués Blender / Maya / Houdini sont conservés sans changement.
+- Patches des tests : viser le module effectivement appelé (`preview_services.cache`,
+  `runtime`, `video`, etc.). Les appels directs de Lightroom, de la visionneuse et des tâches automatiques
+  à la façade restent patchés dans `previews` ; ne pas déplacer ces patches à l’aveugle.
+
+### Vérifications du découpage
+
+Référence AVANT modification, hors sandbox Windows (`python tests/run.py apercus`) :
+seulement deux FAIL préexistants dans `test_render_log.RenderLogTest` :
+`test_one_row_per_render_and_details` et `test_requested_columns_and_render_metadata`
+(attendent 8 colonnes, le tableau en possède déjà 9). Ne pas les corriger dans ce chantier.
+Le premier lancement sandboxé ajoutait des accès refusés artificiels (Alembic, Lightroom,
+journal et reprise turntable) et immobilisait le board : comparer les suites hors sandbox.
+
+Contrôles structurels : 123 fonctions / classes comparées par AST après normalisation des
+références et chemins ; imports dans trois ordres, y compris sans numpy / rawpy / OpenEXR.
+`test_previews_modules.py` vérifie la propagation des profils rechargés et l’invalidation LUT
+entre fichiers. Sonde du chemin de repeinture en cache (5 × 10 000 appels, `cProfile` séparé) :
+médiane ≈ 48 µs avant, ≈ 49 µs après ; aucun nouveau décodage ou scan ajouté.
+
+Validation finale : `python -m pyflakes` sur tous les fichiers Python touchés,
+sans nouvelle alerte ni nom indéfini (imports inutilisés des tests déjà présents).
+`python tests/run.py apercus` : 16 fichiers, mêmes deux FAIL initiaux ; nouveaux tests OK.
+`python tests/run.py --tout` : 79 fichiers, 32 FAIL / ERROR contre 32 avant,
+aucun nouveau. Un plantage natif de fin de processus (`0xC0000409`, déjà décrit dans la
+passation) après les 7 tests vidéo OK : relance ciblée de `test_video_analysis.py`, 7/7 OK,
+sortie 0. Fenêtre principale construite, affichée puis fermée hors écran avec état utilisateur
+isolé. Tests lents sautés.
 
 **Tests du module** : `python tests/run.py apercus` — rapides seulement ; ajouter `--lent` pour les tests lents (Blender, fenêtre entière…) avant un commit qui touche leur zone.
 

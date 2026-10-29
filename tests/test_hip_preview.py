@@ -23,6 +23,9 @@ app = QApplication.instance() or QApplication([])
 
 import config
 import previews
+from preview_services import (
+    houdini as preview_houdini,
+)
 
 
 class HoudiniDispatchTest(unittest.TestCase):
@@ -34,14 +37,14 @@ class HoudiniDispatchTest(unittest.TestCase):
 
     def test_decode_task_uses_hython(self):
         image = QImage(4, 4, QImage.Format_RGB32)
-        with mock.patch.object(previews, "_render_hip_wireframe", return_value=image) as render:
+        with mock.patch.object(preview_houdini, "_render_hip_wireframe", return_value=image) as render:
             task = previews._PreviewDecodeTask(Path("scene.hipnc"), 0.0, quiet=True, render_mode="high")
             self.assertIs(task._decode(), image)
         self.assertEqual(render.call_args.kwargs["render_mode"], "high")
 
     def test_without_houdini_nothing_is_rendered(self):
         messages = []
-        with mock.patch.object(previews, "_hython_executable", return_value=None):
+        with mock.patch.object(preview_houdini, "_hython_executable", return_value=None):
             result = previews._render_hip_wireframe(Path("scene.hip"), 256, lambda _p, m: messages.append(m))
         self.assertIsNone(result)
         self.assertIn("hython introuvable", messages[-1])

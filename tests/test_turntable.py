@@ -21,6 +21,11 @@ APP = QApplication.instance() or QApplication([])
 import detail_panel as dp
 import time
 import previews as pv
+from preview_services import (
+    cache as preview_cache,
+    profiles as preview_profiles,
+    runtime as preview_runtime,
+)
 
 
 @lent
@@ -78,10 +83,10 @@ class TurntableIntegrationTest(unittest.TestCase):
             def request(path, mtime, **kwargs):
                 requests.append(kwargs["media_type"])
                 manager.active[str(path)] = SimpleNamespace()
-            with patch.object(pv, "FILE_IMAGE_DISK_CACHE_DIR", Path(work) / "cache"), \
-                    patch.object(pv, "_PREVIEW_DECODE_MANAGER", manager), \
+            with patch.object(preview_cache, "FILE_IMAGE_DISK_CACHE_DIR", Path(work) / "cache"), \
+                    patch.object(preview_runtime, "_PREVIEW_DECODE_MANAGER", manager), \
                     patch.object(manager, "request", request), \
-                    patch.object(pv, "_is_preview_protected", return_value=False):
+                    patch.object(preview_cache, "_is_preview_protected", return_value=False):
                 cache = pv._file_image_cache_path(source, mtime, profiles_snapshot=pv._AUTOMATIC_RENDER_PROFILES)
                 cache.parent.mkdir(parents=True)
                 image = QImage(4, 4, QImage.Format_ARGB32)
@@ -115,7 +120,7 @@ class TurntableIntegrationTest(unittest.TestCase):
             source.touch()
             mtime = source.stat().st_mtime
             profiles = {"LOW POLY": {"subdivisions": 0}}
-            with patch.object(pv, "FILE_IMAGE_DISK_CACHE_DIR", root / "cache"):
+            with patch.object(preview_cache, "FILE_IMAGE_DISK_CACHE_DIR", root / "cache"):
                 directory = pv._turntable_cache_path(source, mtime, profiles)
                 directory.mkdir(parents=True)
                 image = QImage(4, 4, QImage.Format_ARGB32)
@@ -149,10 +154,10 @@ class TurntableIntegrationTest(unittest.TestCase):
             def request(path, mtime, **kwargs):
                 requests.append(kwargs["media_type"])
                 manager.active[str(path)] = SimpleNamespace()
-            with patch.object(pv, "FILE_IMAGE_DISK_CACHE_DIR", root / "cache"), \
-                 patch.object(pv, "_PREVIEW_DECODE_MANAGER", manager), \
+            with patch.object(preview_cache, "FILE_IMAGE_DISK_CACHE_DIR", root / "cache"), \
+                 patch.object(preview_runtime, "_PREVIEW_DECODE_MANAGER", manager), \
                  patch.object(manager, "request", request), \
-                 patch.object(pv, "_is_preview_protected", lambda path: False):
+                 patch.object(preview_cache, "_is_preview_protected", lambda path: False):
                 scheduler = pv._IdlePreviewScheduler(browser)
                 scheduler.timer.stop()
                 scheduler.is_idle = True
@@ -173,7 +178,7 @@ class TurntableIntegrationTest(unittest.TestCase):
                 self.assertIn((str(source), mtime), scheduler.done)
                 scheduler.done.clear()
                 scheduler.queue.append((source, mtime))
-                with patch.object(pv, "_is_preview_protected", lambda path: True):
+                with patch.object(preview_cache, "_is_preview_protected", lambda path: True):
                     scheduler._start_next()
                 self.assertEqual(requests, ["image", "turntable"])
             browser.deleteLater()
@@ -194,9 +199,9 @@ class TurntableIntegrationTest(unittest.TestCase):
             profile.update(resolution=(96, 96), lighting_hdri_enabled=False,
                            lighting_hdri="", lighting="", subdivisions=0)
             profiles = {"LOW POLY": profile}
-            with patch.object(pv, "FILE_IMAGE_DISK_CACHE_DIR", root / "cache"), \
-                 patch.object(pv, "_RENDER_PROFILES", profiles), \
-                 patch.object(pv, "_reload_render_profiles", lambda: None):
+            with patch.object(preview_cache, "FILE_IMAGE_DISK_CACHE_DIR", root / "cache"), \
+                 patch.object(preview_profiles, "_RENDER_PROFILES", profiles), \
+                 patch.object(preview_profiles, "_reload_render_profiles", lambda: None):
                 task = pv._PreviewDecodeTask(source, mtime, force_render=True,
                                            profile_override=profile, profiles_snapshot=profiles,
                                            media_type="turntable")

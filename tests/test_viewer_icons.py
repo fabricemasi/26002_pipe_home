@@ -23,6 +23,9 @@ APP = QApplication.instance() or QApplication([])
 from fm_visionneuse import focus
 import preview_column
 import previews
+from preview_services import (
+    icons as preview_icons,
+)
 import settings_window_v2 as v2
 
 
@@ -39,7 +42,7 @@ class ViewerIconsTest(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.dir, True)
-        patcher = mock.patch.object(previews, "CUSTOM_SOFTWARE_ICON_DIR", self.dir)
+        patcher = mock.patch.object(preview_icons, "CUSTOM_SOFTWARE_ICON_DIR", self.dir)
         patcher.start()
         self.addCleanup(patcher.stop)
         previews.forget_mtime()

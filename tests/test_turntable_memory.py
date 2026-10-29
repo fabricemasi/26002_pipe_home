@@ -16,6 +16,10 @@ from PySide6.QtWidgets import QApplication
 
 APP = QApplication.instance() or QApplication([])
 import previews as pv
+from preview_services import (
+    cache as preview_cache,
+    render_log as preview_render_log,
+)
 
 
 class MemoryCounters(ctypes.Structure):
@@ -73,8 +77,8 @@ class TurntableMemoryTest(unittest.TestCase):
             root = Path(work)
             profiles = {"LOW POLY": profile}
             original_log = pv._write_render_log
-            with patch.object(pv, "FILE_IMAGE_DISK_CACHE_DIR", root / "cache"), \
-                    patch.object(pv, "_write_render_log", lambda directory, *args, **kwargs:
+            with patch.object(preview_cache, "FILE_IMAGE_DISK_CACHE_DIR", root / "cache"), \
+                    patch.object(preview_render_log, "_write_render_log", lambda directory, *args, **kwargs:
                                  original_log(root, *args, **kwargs)), \
                     patch.object(subprocess, "Popen", popen):
                 task = pv._PreviewDecodeTask(source, mtime, force_render=True, cancel_event=canceled,

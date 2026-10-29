@@ -16,6 +16,10 @@ from PySide6.QtGui import QImage
 
 APP = QApplication.instance() or QApplication([])
 import previews as pv
+from preview_services import (
+    cache as preview_cache,
+    runtime as preview_runtime,
+)
 
 
 class TurntableResumeTest(unittest.TestCase):
@@ -45,9 +49,9 @@ class TurntableResumeTest(unittest.TestCase):
                 if index == 36 and cancel is canceled:
                     canceled.set()
                 return True
-            with patch.object(pv, "FILE_IMAGE_DISK_CACHE_DIR", root / "cache"), \
+            with patch.object(preview_cache, "FILE_IMAGE_DISK_CACHE_DIR", root / "cache"), \
                     patch.object(pv._PreviewDecodeTask, "_decode", prepare), \
-                    patch.object(pv, "_render_turntable_frame", frame):
+                    patch.object(preview_runtime, "_render_turntable_frame", frame):
                 first = pv._PreviewDecodeTask(source, mtime, media_type="turntable", cancel_event=canceled,
                     profile_override=profile, profiles_snapshot=profiles)
                 self.assertIsNone(first._decode_turntable())
@@ -75,7 +79,7 @@ class TurntableResumeTest(unittest.TestCase):
             source.touch()
             profile = pv._render_profile("low")
             profiles = {"LOW POLY": profile}
-            with patch.object(pv, "FILE_IMAGE_DISK_CACHE_DIR", root / "cache"):
+            with patch.object(preview_cache, "FILE_IMAGE_DISK_CACHE_DIR", root / "cache"):
                 old = pv._turntable_cache_path(source, 1.0, profiles)
                 same = pv._turntable_work_path(old, profile, "low")
                 self.assertEqual(same, pv._turntable_work_path(old, profile, "low"))
@@ -113,9 +117,9 @@ class TurntableResumeTest(unittest.TestCase):
                 image = QImage(48, 48, QImage.Format_ARGB32)
                 image.fill(0xff777777)
                 return image.save(str(target), "PNG")
-            with patch.object(pv, "FILE_IMAGE_DISK_CACHE_DIR", root / "cache"), \
+            with patch.object(preview_cache, "FILE_IMAGE_DISK_CACHE_DIR", root / "cache"), \
                     patch.object(subprocess, "Popen", popen), \
-                    patch.object(pv, "_render_turntable_frame", frame):
+                    patch.object(preview_runtime, "_render_turntable_frame", frame):
                 task = pv._PreviewDecodeTask(source, source.stat().st_mtime, media_type="turntable",
                     profile_override=profile, profiles_snapshot=profiles)
                 result = task._decode_turntable()

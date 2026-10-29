@@ -33,7 +33,7 @@ MODULES = {
     "fm_board": ["test_board.py", "test_cad*.py"],
     "apercus": ["test_abr_preview.py", "test_ai_preview.py", "test_alembic_conversion.py",
                 "test_automatic_tasks.py", "test_cube_lut.py", "test_dwg_thumbnail.py", "test_hip_preview.py",
-                "test_manual_file_preview.py", "test_render_log.py", "test_turntable*.py", "test_lightroom_*.py"],
+                "test_manual_file_preview.py", "test_previews_modules.py", "test_render_log.py", "test_turntable*.py", "test_lightroom_*.py"],
     "reglages": ["test_color_alpha.py", "test_color_drag.py", "test_color_picker.py", "test_context_menu.py",
                  "test_element_style.py", "test_extra_windows.py", "test_free_objects.py",
                  "test_input_tabs_settings.py", "test_interface_edit_scope.py", "test_menu_objects.py",

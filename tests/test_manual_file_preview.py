@@ -11,6 +11,11 @@ from PySide6.QtWidgets import QApplication, QListWidgetItem
 
 APP = QApplication.instance() or QApplication([])
 import previews
+from preview_services import (
+    cache as preview_cache,
+    runtime as preview_runtime,
+    video as preview_video,
+)
 import column
 from browser_core import ROLE_PATH, ROLE_ISDIR
 
@@ -23,12 +28,12 @@ class ManualFilePreviewTest(unittest.TestCase):
         self.path.touch()
 
     def test_mkv_selection_never_decodes_but_keeps_existing_preview(self):
-        with mock.patch.object(previews, "_read_preview_pixmap", return_value=(None, False)), \
-                mock.patch.object(previews, "_decode_video_frame") as decode:
+        with mock.patch.object(preview_runtime, "_read_preview_pixmap", return_value=(None, False)), \
+                mock.patch.object(preview_video, "_decode_video_frame") as decode:
             self.assertIsNone(previews.file_image_pixmap(self.path))
             decode.assert_not_called()
         pix = QPixmap(8, 8)
-        with mock.patch.object(previews, "_read_preview_pixmap", return_value=(pix, False)):
+        with mock.patch.object(preview_runtime, "_read_preview_pixmap", return_value=(pix, False)):
             self.assertIs(previews.file_image_pixmap(self.path), pix)
 
     def test_mkv_background_requests_only_read_cache(self):
@@ -37,8 +42,8 @@ class ManualFilePreviewTest(unittest.TestCase):
             manager.request(self.path, 1, quiet=True)
         task = manager.active[str(self.path)]
         self.assertTrue(task.cache_only)
-        with mock.patch.object(previews, "_decode_video_frame") as decode, \
-                mock.patch.object(previews, "_find_stale_preview_cache", return_value=None):
+        with mock.patch.object(preview_video, "_decode_video_frame") as decode, \
+                mock.patch.object(preview_cache, "_find_stale_preview_cache", return_value=None):
             task.run()
         decode.assert_not_called()
 
@@ -49,7 +54,7 @@ class ManualFilePreviewTest(unittest.TestCase):
         task = manager.active[str(self.path)]
         start.assert_called_once()
         self.assertFalse(task.cache_only)
-        with mock.patch.object(previews, "_decode_video_frame", return_value=None) as decode:
+        with mock.patch.object(preview_video, "_decode_video_frame", return_value=None) as decode:
             task.run()
         decode.assert_called_once()
 

@@ -19,6 +19,10 @@ import pipeline_browser as p
 import detail_panel as dp
 from PySide6.QtWidgets import QMessageBox
 import previews as pv
+from preview_services import (
+    cache as preview_cache,
+    render_log as preview_render_log,
+)
 
 
 class RenderLogTest(unittest.TestCase):
@@ -48,7 +52,7 @@ class RenderLogTest(unittest.TestCase):
             task = pv._PreviewDecodeTask(source, source.stat().st_mtime, force_render=True, render_mode="high")
             image = QImage(4, 4, QImage.Format_ARGB32)
             image.fill(0xff777777)
-            with patch.object(pv, "FILE_IMAGE_DISK_CACHE_DIR", root / "cache"), \
+            with patch.object(preview_cache, "FILE_IMAGE_DISK_CACHE_DIR", root / "cache"), \
                     patch.object(task, "_decode", return_value=image):
                 task._run_preview()
             self.assertTrue(Path(task.output_path).is_file())
@@ -65,7 +69,7 @@ class RenderLogTest(unittest.TestCase):
     def test_choose_day_and_refresh_preserves_selection(self):
         with tempfile.TemporaryDirectory(prefix="render_log_days_") as work:
             root = Path(work)
-            with patch.object(pv, "datetime") as clock:
+            with patch.object(preview_render_log, "datetime") as clock:
                 clock.now.return_value = datetime(2026, 9, 30, 10, 0, 0)
                 previous = pv._write_render_log(root, "> Aperçu en cours : ancien.blend", "ancien.blend")
             today = pv._write_render_log(root, "> Aperçu en cours : actuel.blend", "actuel.blend")
@@ -162,7 +166,7 @@ class RenderLogTest(unittest.TestCase):
     def test_daily_html_preserves_history_and_escapes_details(self):
         with tempfile.TemporaryDirectory(prefix="daily_table_test_") as work:
             root = Path(work)
-            with patch.object(pv, "datetime") as clock:
+            with patch.object(preview_render_log, "datetime") as clock:
                 clock.now.return_value = datetime(2026, 10, 1, 23, 59, 59)
                 first = pv._write_render_log(root, "> Aperçu en cours : model.blend", "model.blend")
                 pv._write_render_log(root, "[ 50%] model.blend — <script>alert(1)</script>", "model.blend")

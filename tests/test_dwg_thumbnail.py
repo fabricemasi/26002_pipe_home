@@ -21,6 +21,9 @@ from PySide6.QtWidgets import QApplication
 app = QApplication.instance() or QApplication([])
 
 import previews
+from preview_services import (
+    dwg as preview_dwg,
+)
 
 
 def _encoded(width: int, height: int, color: str, fmt: str) -> bytes:
@@ -75,7 +78,7 @@ class DwgThumbnailTest(unittest.TestCase):
 
     def test_without_oda_the_thumbnail_is_the_preview(self):
         path = self._write("plan.dwg", _fake_dwg([(6, _encoded(64, 40, "#20a040", "PNG"))]))
-        with mock.patch.object(previews, "_oda_file_converter", return_value=None):
+        with mock.patch.object(preview_dwg, "_oda_file_converter", return_value=None):
             image = previews._decode_2d_image(path, 512)
         self.assertIsNotNone(image)
         self.assertEqual((image.width(), image.height()), (64, 40))
