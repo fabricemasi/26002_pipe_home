@@ -22,7 +22,7 @@ Détail lu À LA DEMANDE (sorti d'AGENTS.md le 2026-10-26 pour alléger le conte
 | Analyse colorimétrique (palette OKLab) | `analysis.py` | — (voir `COLOR_ANALYSIS_PROGRESS.md`) |
 | Matching de couleurs, export .cube | `matching.py`, `matching_ui.py` | — (voir `COLOR_ANALYSIS_PROGRESS.md`) |
 | Aide contextuelle Ctrl+Maj, glossaire | `help_content.py`, `help_ui.py` | — (voir `COLOR_ANALYSIS_PROGRESS.md`) |
-| Réglages (onglet « Module vidéo ») | hors paquet : `settings_store.VIDEO_DEFAULTS`, `settings_window_v2.py` | RÉGLAGES |
+| Réglages (fenêtre « Réglages : Vidéo », bouton engrenage du cadre) | `settings.py` (lignes `CATALOG["Vidéo : …"]`, `VIDEO_TREE`), `settings_defaults.py` (`VIDEO_DEFAULTS`, source unique) ; fenêtre générique : `settings_window_v2.SettingsWindowV2(module="video")` | RÉGLAGES |
 | Fluidité, saccades, mesures | sondes `tests/_probe_video_*.py`, `tests/_probe_real_app_play.py` | SACCADES, MESURES |
 
 Tests : `test_video_module.py` (décodage, navigation, export), `test_video_playback.py` (VLC, affichage, timeline, captures), `test_moodboard_*.py`, `test_video_analysis.py`, `test_video_matching.py`, `test_video_help.py`.

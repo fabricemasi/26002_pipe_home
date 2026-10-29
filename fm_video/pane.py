@@ -411,7 +411,7 @@ _ALL_GRADE = {row[0]: row for row in GRADE_MAIN + GRADE_CHANNELS}
 
 
 def _setting(settings: dict, key: str):
-    from settings_store import VIDEO_DEFAULTS
+    from fm_video.settings_defaults import VIDEO_DEFAULTS
     return settings.get(key, VIDEO_DEFAULTS.get(key))
 
 
