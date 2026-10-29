@@ -87,8 +87,10 @@ def from_settings(values: dict[str, Any], name: str) -> dict[str, Any]:
     return {"format": FORMAT, "nom": name, "general": general, "types": types}
 
 
-def to_settings(preset: dict[str, Any]) -> dict[str, Any]:
-    """Réglages à plat d'un preset fm_theme (inverse exact de `from_settings`)."""
+def to_settings(preset: dict[str, Any], variants: dict | None = None) -> dict[str, Any]:
+    """Réglages à plat d'un preset fm_theme (inverse exact de `from_settings`). `variants` : {type: variante} que
+    l'appli UTILISE à la place de la variante par défaut (sa surcharge, `theme_default_variants` ; alias compris,
+    une variante inconnue retombe sur la variante par défaut)."""
     values: dict[str, Any] = dict(preset.get("general") or {})
     for type_name, entry in (preset.get("types") or {}).items():
         if type_name == "toggle":
@@ -102,8 +104,27 @@ def to_settings(preset: dict[str, Any]) -> dict[str, Any]:
         if prefix is None:                      # type inconnu (preset plus récent) : ignoré, rien ne casse
             continue
         # Une seule variante à plat : celle PAR DÉFAUT du type (les autres attendent qu'un élément les choisisse).
-        values.update({f"{prefix}{field}": value for field, value in variant_fields(entry).items()})
+        values.update({f"{prefix}{field}": value
+                       for field, value in variant_fields(entry, used_variant(entry, (variants or {}).get(type_name))).items()})
     return values
+
+
+def used_variant(entry: dict, wanted: str | None = None) -> str:
+    """Variante réellement utilisée d'un type : `wanted` (ou la variante dont c'est un ancien nom) si elle existe,
+    sinon la variante par défaut. Ordre de résolution du plan : variante nommée par l'élément / surcharge de
+    l'appli -> défaut du preset -> première variante."""
+    variants = entry.get("variantes") or {}
+    if wanted:
+        wanted = wanted if wanted in variants else (entry.get("alias") or {}).get(wanted)
+        if wanted in variants:
+            return wanted
+    return default_variant(entry)
+
+
+def used_variants(preset: dict, wanted: dict | None = None) -> dict[str, str]:
+    """{type: variante utilisée} pour tous les types à variantes du preset."""
+    return {type_name: used_variant(entry, (wanted or {}).get(type_name))
+            for type_name, entry in (preset.get("types") or {}).items() if type_name in TYPE_PREFIXES}
 
 
 def default_variant(entry: dict) -> str:

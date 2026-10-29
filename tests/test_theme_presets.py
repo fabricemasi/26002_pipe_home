@@ -118,6 +118,15 @@ class VariantTest(unittest.TestCase):
         tp.set_default_variant("p", "bouton", compact, folder=self.folder)
         self.assertEqual(tp.to_settings(self.preset())["button_radius"], 9)
 
+    def test_an_app_can_use_another_variant_alias_included(self):
+        compact = tp.add_variant("p", "bouton", "compact", folder=self.folder)
+        tp.update_preset("p", {"button_radius": 9}, folder=self.folder, editing={"bouton": compact})
+        self.assertEqual(tp.to_settings(self.preset(), {"bouton": compact})["button_radius"], 9)
+        self.assertEqual(tp.to_settings(self.preset(), {"bouton": "inconnue"})["button_radius"], 2)   # repli
+        tp.rename_variant("p", "bouton", compact, "serré", folder=self.folder)
+        self.assertEqual(tp.to_settings(self.preset(), {"bouton": compact})["button_radius"], 9)      # alias
+        self.assertEqual(tp.used_variants(self.preset(), {"bouton": compact}), {"bouton": "serré"})
+
     def test_rename_keeps_an_alias_and_delete_never_leaves_none(self):
         compact = tp.add_variant("p", "bouton", "compact", folder=self.folder)
         tp.set_default_variant("p", "bouton", compact, folder=self.folder)

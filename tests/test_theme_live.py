@@ -36,14 +36,16 @@ class ChannelTest(unittest.TestCase):
         self.assertTrue(server.is_listening())
         client = live.LiveClient(name=self.name)
         got = []
-        client.received.connect(lambda preset, values: got.append((preset, values)))
+        client.received.connect(lambda preset, values, variants: got.append((preset, values, variants)))
         self.assertTrue(wait_until(lambda: client.is_connected() and server._clients))
         for radius in (1, 2, 3):                        # trois pas de curseur dans la même image
             server.broadcast("fab", {"button_radius": radius})
         server.broadcast("fab", {"window_radius": 9})
+        server.broadcast("fab", {"button_radius": 7}, {"bouton": "compact"})    # autre variante : à part
         self.assertTrue(wait_until(lambda: got))
         wait_until(lambda: False, 0.1)
-        self.assertEqual(got, [("fab", {"button_radius": 3, "window_radius": 9})])
+        self.assertEqual(sorted(got, key=str), sorted([("fab", {"button_radius": 3, "window_radius": 9}, {}),
+                                                       ("fab", {"button_radius": 7}, {"bouton": "compact"})], key=str))
 
     def test_client_connects_when_the_editor_starts_later(self):
         client = live.LiveClient(name=self.name)

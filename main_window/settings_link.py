@@ -88,13 +88,22 @@ class SettingsLinkMixin:
         except RuntimeError:
             pass
 
-    def _on_theme_live(self, preset: str, values: dict):
+    def _on_theme_live(self, preset: str, values: dict, variants: dict | None = None):
         """Valeurs diffusees PENDANT un geste dans l'editeur (au plus une fois par image) : appliquees tout de
-        suite si elles visent le preset fm_theme a l'ecran, sans lire ni ecrire le disque."""
-        from settings_store import theme_in_use
+        suite si elles visent le preset fm_theme a l'ecran ET la variante que cette appli utilise pour leur type
+        (`variants` : {type: variante editee}), sans lire ni ecrire le disque."""
+        from settings_store import app_variant, theme_in_use
+        import fm_theme.presets as theme_presets
         current = ui_state.APPLIED_SETTINGS or {}
         if not values or not preset or preset != theme_in_use(current):
             return
+        if variants:
+            used = {t: app_variant(current, t) for t in variants}
+            values = {k: v for k, v in values.items()
+                      if theme_presets.theme_key(k)[0] not in variants
+                      or variants[theme_presets.theme_key(k)[0]] == used[theme_presets.theme_key(k)[0]]}
+            if not values:
+                return
         settings = dict(current)
         settings.update(values)
         self._apply_settings(settings, set(values))
@@ -113,7 +122,8 @@ class SettingsLinkMixin:
         except RuntimeError:
             pass
         name = theme_in_use(ui_state.APPLIED_SETTINGS or load_settings()) or theme_editor.initial_preset()
-        self._theme_editor = theme_editor.ThemeEditor(name, listeners=[self._on_theme_live])
+        self._theme_editor = theme_editor.ThemeEditor(name, listeners=[self._on_theme_live],
+                                                      app_listeners=[self._apply_settings])
 
     def _refresh_preset_ui(self, settings: dict | None = None):
         import settings_window_v2

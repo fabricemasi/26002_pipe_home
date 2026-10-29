@@ -1,9 +1,10 @@
 """Temps réel de fm_theme (étape 4, docs/agents/fm_theme.md « Temps réel et fluidité »).
 
 - `LiveServer` (dans l'éditeur fm_theme) : diffuse PENDANT le geste les valeurs d'aspect modifiées,
-  `broadcast(preset, {clé: valeur})`, message JSON d'une ligne, sans toucher au disque.
+  `broadcast(preset, {clé: valeur}, {type: variante éditée})`, message JSON d'une ligne, sans toucher au disque ;
+  chaque appli ne garde que les types dont elle utilise la variante éditée.
 - `LiveClient` (dans chaque appli) : reçoit, fusionne, et rend au plus UNE mise à jour par image (~16 ms) :
-  signal `received(preset, valeurs)`. Se reconnecte seul (l'éditeur peut être lancé après l'appli).
+  signal `received(preset, valeurs, variantes)`. Se reconnecte seul (l'éditeur peut être lancé après l'appli).
 - `PresetWatcher` (dans chaque appli) : surveille le fichier du preset (écrit à la fin du geste, ou par une
   appli lancée sans canal) ; signal `changed()` regroupé (une sauvegarde peut notifier plusieurs fois).
 
@@ -58,10 +59,11 @@ class LiveServer(QObject):
         except RuntimeError:                        # serveur détruit (fermeture de l'éditeur)
             pass
 
-    def broadcast(self, preset: str, values: dict) -> None:
+    def broadcast(self, preset: str, values: dict, variants: dict | None = None) -> None:
         if not values or not self._clients:
             return
-        data = (json.dumps({"preset": preset, "valeurs": values}, ensure_ascii=False) + "\n").encode("utf-8")
+        message = {"preset": preset, "valeurs": values, "variantes": variants or {}}
+        data = (json.dumps(message, ensure_ascii=False) + "\n").encode("utf-8")
         for socket in list(self._clients):
             if socket.state() == QLocalSocket.ConnectedState:
                 socket.write(data)
@@ -71,13 +73,13 @@ class LiveServer(QObject):
 class LiveClient(QObject):
     """Côté appli : reçoit les valeurs diffusées, fusionnées, au plus une fois par image."""
 
-    received = Signal(str, dict)
+    received = Signal(str, dict, dict)
 
     def __init__(self, parent=None, name: str | None = None):
         super().__init__(parent)
         self._name = name or server_name()
         self._buffer = b""
-        self._pending: dict[str, dict] = {}
+        self._pending: dict[tuple, dict] = {}         # (preset, variantes) -> valeurs fusionnees
         self._socket = QLocalSocket(self)
         self._socket.readyRead.connect(self._read)
         self._socket.disconnected.connect(self._retry_later)
@@ -106,16 +108,17 @@ class LiveClient(QObject):
             try:
                 message = json.loads(line)
                 preset, values = str(message["preset"]), dict(message["valeurs"])
+                variants = json.dumps(dict(message.get("variantes") or {}), sort_keys=True)
             except (ValueError, KeyError, TypeError):
                 continue
-            self._pending.setdefault(preset, {}).update(values)
+            self._pending.setdefault((preset, variants), {}).update(values)
         if self._pending and not self._frame.isActive():
             self._frame.start()
 
     def _emit(self):
         pending, self._pending = self._pending, {}
-        for preset, values in pending.items():
-            self.received.emit(preset, values)
+        for (preset, variants), values in pending.items():
+            self.received.emit(preset, values, json.loads(variants))
 
 
 class PresetWatcher(QObject):

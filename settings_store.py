@@ -955,6 +955,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Preset fm_theme (aspect generique : fm_theme/presets/<nom>.json) lie au preset de l'appli : chaque preset
     # de fm_browser retient le sien (choix de l'utilisateur, 2026-10-29). "" = aucun (l'aspect vient du fichier).
     "theme_preset": "",
+    # Variante d'un type d'element (titres, boutons, tableaux...) que fm_browser UTILISE a la place de la variante par
+    # defaut du preset fm_theme : {type: variante} (decide par l'utilisateur, 2026-10-27). Le preset n'est pas modifie.
+    "theme_default_variants": {},
 }
 
 # Section "TITRE" (voir SettingsWindow._section_titre/_TITLE_LEVEL_DEFAULTS,
@@ -1169,7 +1172,7 @@ def load_settings(startup: bool = False) -> dict[str, Any]:
     if startup and not theme_in_use(settings):
         _link_current_theme(settings, name, raw)
     # Aspect generique : le preset fm_theme lie (theme_preset) par-dessus.
-    theme = _load_theme_values(settings.get("theme_preset") or "")
+    theme = _load_theme_values(settings.get("theme_preset") or "", settings.get("theme_default_variants"))
     if theme:
         _merge(theme)
     if name or theme:
@@ -1247,12 +1250,13 @@ def theme_in_use(settings: dict) -> str:
     return name if _theme_presets.find_preset(name) is not None else ""
 
 
-def _load_theme_values(name: str) -> dict:
-    """Valeurs a plat du preset fm_theme `name` ({} : absent ou illisible, repli silencieux)."""
+def _load_theme_values(name: str, variants: dict | None = None) -> dict:
+    """Valeurs a plat du preset fm_theme `name`, variantes choisies par l'appli comprises ({} : absent ou
+    illisible, repli silencieux)."""
     if not name:
         return {}
     try:
-        return _theme_presets.to_settings(_theme_presets.load_preset(_theme_presets.find_preset(name)))
+        return _theme_presets.to_settings(_theme_presets.load_preset(_theme_presets.find_preset(name)), variants)
     except (OSError, ValueError, KeyError, TypeError):
         return {}
 
@@ -1264,14 +1268,45 @@ def update_theme_preset(settings: dict) -> bool:
     if not name:
         return False
     try:
-        current = _theme_presets.to_settings(_theme_presets.load_preset(_theme_presets.find_preset(name)))
+        preset = _theme_presets.load_preset(_theme_presets.find_preset(name))
     except (OSError, ValueError, TypeError):
         return False
+    # Chaque type s'ecrit dans la variante que l'appli UTILISE (jamais dans la variante par defaut a sa place).
+    used = _theme_presets.used_variants(preset, settings.get("theme_default_variants"))
+    current = _theme_presets.to_settings(preset, used)
     theme = {k: v for k, v in json.loads(json.dumps(settings)).items() if _theme_presets.theme_key(k)}
     if theme == current:
         return False
-    _theme_presets.update_preset(name, theme)
+    _theme_presets.update_preset(name, theme, editing=used)
     return True
+
+
+def app_variant(settings: dict, type_name: str) -> str:
+    """Variante d'un type que fm_browser utilise (sa surcharge, sinon la variante par defaut du preset lie)."""
+    try:
+        preset = _theme_presets.load_preset(_theme_presets.find_preset(theme_in_use(settings)))
+    except (OSError, ValueError, TypeError):
+        return ""
+    entry = (preset.get("types") or {}).get(type_name) or {}
+    return _theme_presets.used_variant(entry, (settings.get("theme_default_variants") or {}).get(type_name))
+
+
+def set_app_variant(type_name: str, variant: str) -> dict:
+    """fm_browser utilise `variant` pour ce type (enregistre dans le fichier et le preset a l'ecran). Retourne
+    les reglages relus (la variante y est deja a plat)."""
+    settings = load_settings()
+    chosen = dict(settings.get("theme_default_variants") or {})
+    chosen[type_name] = variant
+    settings["theme_default_variants"] = chosen
+    save_settings(settings)
+    # Seulement ce choix dans le preset a l'ecran : PAS update_active_preset, qui reecrirait dans la variante
+    # nouvellement choisie les valeurs a plat de l'ancienne (encore celles de `settings`).
+    presets = _load_presets()
+    name = preset_in_use(settings)
+    if name in presets:
+        presets[name]["theme_default_variants"] = chosen
+        _save_presets(presets)
+    return load_settings()
 
 
 def _link_current_theme(settings: dict, preset_name: str, raw: dict) -> None:

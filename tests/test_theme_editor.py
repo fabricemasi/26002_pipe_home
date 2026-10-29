@@ -132,11 +132,11 @@ class PreviewTest(WindowTestCase):
 
 
 class EditorVariantTest(WindowTestCase):
-    def test_editing_a_variant_writes_there_and_is_not_broadcast(self):
+    def test_editing_a_variant_writes_there_and_says_which_one(self):
         name = fresh_preset("Variantes")
         editor = theme_editor.ThemeEditor(name)
         sent = []
-        editor.server = type("S", (), {"broadcast": lambda _s, preset, values: sent.append(values)})()
+        editor.server = type("S", (), {"broadcast": lambda _s, preset, values, variants: sent.append(variants)})()
         compact = tp.add_variant(name, "bouton", "compact")
         editor.edit_variant("bouton", compact, save=False)
         self.assertFalse(editor.store.is_default("bouton"))
@@ -157,9 +157,49 @@ class EditorVariantTest(WindowTestCase):
         self.assertFalse(editor.window._dirty)                      # valeurs de référence, pas une modification
         editor.window.live_changed_keys = {"button_radius"}
         editor._broadcast({"button_radius": 13})
-        self.assertEqual(sent, [])                                  # les applis n'utilisent pas cette variante
+        self.assertEqual(sent, [{"bouton": compact}])               # la variante éditée voyage : l'appli filtre
         editor.window.hide()
         tp.delete_preset(name)
+
+
+class AppVariantTest(unittest.TestCase):
+    """Étape 7 : fm_browser choisit la variante qu'il utilise (`theme_default_variants`)."""
+
+    def setUp(self):
+        self.saved = settings_store.load_settings()
+        self.name = fresh_preset("Appli")
+        self.compact = tp.add_variant(self.name, "bouton", "compact")
+        tp.update_preset(self.name, {"button_radius": 21}, editing={"bouton": self.compact})
+        settings = settings_store.load_settings()
+        settings["theme_preset"], settings["active_preset"] = self.name, ""
+        settings_store.save_settings(settings)
+
+    def tearDown(self):
+        settings_store.save_settings(self.saved)
+        tp.delete_preset(self.name)
+
+    def test_the_app_uses_its_variant_and_writes_into_it(self):
+        self.assertNotEqual(settings_store.load_settings()["button_radius"], 21)     # défaut du preset
+        settings = settings_store.set_app_variant("bouton", self.compact)
+        self.assertEqual(settings["button_radius"], 21)                             # la variante choisie
+        self.assertEqual(settings_store.app_variant(settings, "bouton"), self.compact)
+        settings["button_radius"] = 22
+        settings_store.update_theme_preset(settings)                                # écrit dans SA variante
+        preset = tp.load_preset(tp.find_preset(self.name))
+        self.assertEqual(preset["types"]["bouton"]["variantes"][self.compact]["radius"], 22)
+        self.assertNotEqual(preset["types"]["bouton"]["variantes"]["standard"].get("radius"), 22)
+
+    def test_live_values_of_another_variant_are_ignored(self):
+        from main_window.settings_link import SettingsLinkMixin
+        import ui_state
+        applied = []
+        host = type("Host", (), {"_apply_settings": lambda _s, s, keys=None: applied.append(set(keys))})()
+        ui_state.APPLIED_SETTINGS = settings_store.load_settings()                  # utilise « standard »
+        SettingsLinkMixin._on_theme_live(host, self.name, {"button_radius": 30, "window_radius": 4},
+                                         {"bouton": self.compact})
+        self.assertEqual(applied, [{"window_radius"}])                               # le bouton : pas sa variante
+        SettingsLinkMixin._on_theme_live(host, self.name, {"button_radius": 30}, {"bouton": "standard"})
+        self.assertEqual(applied[-1], {"button_radius"})
 
 
 if __name__ == "__main__":

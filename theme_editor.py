@@ -17,6 +17,7 @@ import fm_theme.presets as tp
 from fm_theme.preview import WIDTH as PREVIEW_WIDTH, PreviewPanel
 import settings_window_v2 as v2
 from settings_cells import _TextField
+import settings_store
 from settings_store import M, _load_window_geometry, _save_window_geometry, load_settings, save_settings, theme_in_use
 from settings_widgets import _Btn, _SelectField
 
@@ -39,6 +40,12 @@ class ThemeStore:
         for type_name, variant in self.editing.items():
             values.update(tp.type_flat(preset, type_name, variant))
         return json.loads(json.dumps(values))
+
+    def edited_variants(self, types) -> dict:
+        """{type: variante editee} (types a variantes seulement) : la variante par defaut si aucune n'est choisie."""
+        preset = tp.load_preset(tp.find_preset(self.name))
+        return {t: self.editing.get(t) or tp.default_variant((preset.get("types") or {}).get(t) or {})
+                for t in types if t in tp.TYPE_PREFIXES}
 
     def is_default(self, type_name: str) -> bool:
         """La variante editee de ce type est-elle sa variante par defaut (celle que recoivent les applis) ?"""
@@ -175,7 +182,13 @@ class VariantBar(QWidget):
         self.select = _SelectField(names, self.current, width=150)
         self.select.changed.connect(lambda v: editor.edit_variant(type_name, v))
         top.addWidget(self.select)
-        mark = QLabel("par défaut" if is_default else "")
+        # fm_browser utilise-t-il cette variante (sa surcharge, ou la defaut) ? Seulement si c'est son theme.
+        app = load_settings()
+        self.app_uses = (theme_in_use(app) == editor.name
+                         and settings_store.app_variant(app, type_name) == self.current)
+        self.app_linked = theme_in_use(app) == editor.name
+        tags = (["par défaut"] if is_default else []) + (["utilisée par fm_browser"] if self.app_uses else [])
+        mark = QLabel(" · ".join(tags))
         mark.setStyleSheet(f"color: {M['label_dim']}; background: transparent;")
         top.addWidget(mark)
         top.addStretch(1)
@@ -183,7 +196,8 @@ class VariantBar(QWidget):
         self.name_field = _TextField(self.current, width=150)
         layout.addWidget(self.name_field)
         rows = ((("Nouvelle", self._add), ("Renommer", self._rename)),
-                (("Par défaut", self._set_default), ("Supprimer", self._delete)))
+                (("Par défaut", self._set_default), ("Supprimer", self._delete)),
+                (("Utiliser dans fm_browser", self._use_in_app),))
         for row in rows:
             line = QHBoxLayout()
             line.setSpacing(6)
@@ -196,6 +210,8 @@ class VariantBar(QWidget):
                     button.setEnabled(len(names) > 1)
                 if text == "Par défaut":
                     button.setEnabled(not is_default)
+                if text == "Utiliser dans fm_browser":       # seulement le theme de fm_browser, pas deja utilisee
+                    button.setEnabled(self.app_linked and not self.app_uses)
             line.addStretch(1)
             layout.addLayout(line)
         self._armed = QTimer(self, singleShot=True, interval=DELETE_CONFIRM_MS)
@@ -210,6 +226,14 @@ class VariantBar(QWidget):
     def _rename(self):
         new = tp.rename_variant(self._editor.name, self._type, self.current, self.name_field.text())
         self._editor.edit_variant(self._type, new, save=False)
+
+    def _use_in_app(self):
+        """fm_browser utilise cette variante pour ce type (`theme_default_variants`) ; le preset ne change pas."""
+        self._editor.save_pending()
+        settings = settings_store.set_app_variant(self._type, self.current)
+        for listener in self._editor.app_listeners:
+            listener(settings)
+        self._editor.edit_variant(self._type, self.current, save=False)
 
     def _set_default(self):
         self._editor.save_pending()
@@ -231,9 +255,11 @@ class ThemeEditor:
     """L'editeur : une fenetre v2 « Theme » sur le preset `name`, refaite a chaque changement de preset ;
     pendant un geste, les cles d'aspect modifiees partent vers les applis ouvertes (`server`)."""
 
-    def __init__(self, name: str, server=None, listeners=()):
+    def __init__(self, name: str, server=None, listeners=(), app_listeners=()):
         self.name = name
         self.server = server
+        # Rappels (reglages) quand fm_browser change de variante utilisee : fenetre principale du meme processus.
+        self.app_listeners = list(app_listeners)
         # Rappels (preset, valeurs) dans le meme processus : fenetre principale de fm_browser ouverte avec l'editeur.
         self.listeners = list(listeners)
         self.window = None
@@ -337,14 +363,15 @@ class ThemeEditor:
         if self.server is None and not self.listeners:
             return
         keys = getattr(self.window, "live_changed_keys", None) or ()
-        # Une variante qui n'est pas celle par defaut ne part pas vers les applis : elles ne l'utilisent pas.
-        values = {k: settings[k] for k in keys if k in settings and tp.theme_key(k)
-                  and self.store.is_default(tp.theme_key(k)[0])}
-        if values:
-            if self.server is not None:
-                self.server.broadcast(self.name, values)
-            for listener in self.listeners:
-                listener(self.name, values)
+        values = {k: settings[k] for k in keys if k in settings and tp.theme_key(k)}
+        if not values:
+            return
+        # La variante editee de chaque type voyage avec : chaque appli ne prend que celle qu'elle utilise.
+        variants = self.store.edited_variants({tp.theme_key(k)[0] for k in values})
+        if self.server is not None:
+            self.server.broadcast(self.name, values, variants)
+        for listener in self.listeners:
+            listener(self.name, values, variants)
 
 
 def initial_preset() -> str:

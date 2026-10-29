@@ -6,7 +6,7 @@ Produit par `python tools/inventaire_reglages.py` (ne pas éditer à la main : c
 |---|---|
 | Aspect générique → fm_theme | 420 |
 | Aspect propre à fm_browser → références vers fm_theme | 960 |
-| Fonctionnement → reste dans fm_browser | 238 |
+| Fonctionnement → reste dans fm_browser | 240 |
 
 ## Aspect générique → fm_theme
 
@@ -289,6 +289,11 @@ Produit par `python tools/inventaire_reglages.py` (ne pas éditer à la main : c
 <details><summary><code>table_</code> : 2 clés (comportement (Ctrl + glisser des lignes) ; disposition (largeurs des colonnes des tableaux))</summary>
 
 `table_rows_movable`, `table_dims`
+
+</details>
+<details><summary><code>theme_</code> : 2 clés (fonctionnement)</summary>
+
+`theme_preset`, `theme_default_variants`
 
 </details>
 <details><summary><code>title_</code> : 1 clés (disposition (ordre des titres))</summary>
