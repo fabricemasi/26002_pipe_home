@@ -248,7 +248,7 @@ class GalleryMixin:
     def _open_filter_row_style(self):
         """Style des lignes ou un filtre est applique (fond, bordures) : fenetre « a la volee », valeurs
         appliquees en direct et enregistrees comme les styles des diapositives (_on_filmstrip_style)."""
-        import settings_window_v2 as v2
+        from fm_visionneuse.settings import FILTER_ROW_SPECS
         from settings_quick_style import QuickStyleWindow
         previous = getattr(self, "_filter_row_window", None)
         if previous is not None:
@@ -261,7 +261,7 @@ class GalleryMixin:
         settings = dict(DEFAULT_SETTINGS)
         settings.update(ui_state.APPLIED_SETTINGS or load_settings())
         window = self._filter_row_window = QuickStyleWindow(
-            "Filtres actifs", v2.FILTER_ROW_SPECS, settings, title="Style des filtres activés",
+            "Filtres actifs", FILTER_ROW_SPECS, settings, title="Style des filtres activés",
             settings=settings, parent=self)
         window.styleChanged.connect(self._on_filter_row_style)
         window.destroyed.connect(lambda *_a: setattr(self, "_filter_row_window", None))

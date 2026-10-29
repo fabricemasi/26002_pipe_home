@@ -201,9 +201,9 @@ class WindowTest(unittest.TestCase):
 class RowMarkShapeTest(unittest.TestCase):
     def test_active_rows_have_border_radius_and_margin(self):
         # Style des filtres activés : lignes « Border radius » et « Margin » (retrait dans la ligne).
-        import settings_window_v2 as v2
+        from fm_visionneuse.settings import FILTER_ROW_SPECS
         import ui_state
-        self.assertEqual([sp.label for sp in v2.FILTER_ROW_SPECS][-2:], ["Border radius", "Margin"])
+        self.assertEqual([sp.label for sp in FILTER_ROW_SPECS][-2:], ["Border radius", "Margin"])
         saved = ui_state.APPLIED_SETTINGS
         self.addCleanup(setattr, ui_state, "APPLIED_SETTINGS", saved)
         settings = settings_store.load_settings()

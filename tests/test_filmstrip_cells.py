@@ -25,6 +25,7 @@ app = QApplication.instance() or QApplication([])
 
 from fm_visionneuse import focus, gallery
 import settings_window_v2 as v2
+import fm_visionneuse.settings as viewer_settings
 import ui_state
 from settings_store import DEFAULT_SETTINGS
 
@@ -397,7 +398,7 @@ class FilmSettingsTest(unittest.TestCase):
         self.assertEqual(v2.VIEWER_TREE[0].group, "Visionneuse")
         self.assertEqual([c.title for c in v2.VIEWER_TREE],
                          ["Affichage", "Tableau", "Cellules", "Focus", "Regroupement", "Filtres", "Icônes"])
-        self.assertNotIn("Visionneuse : Cellule texte", [group for _title, group in v2.VIEWER_FILM_GROUPS])
+        self.assertNotIn("Visionneuse : Cellule texte", [group for _title, group in viewer_settings.VIEWER_FILM_GROUPS])
         self.assertEqual([sp.label for sp in v2.CATALOG["Visionneuse : Focus"]],
                          ["Bordures de l'image", "Border radius de l'image", "Ombres de l'image"])
         labels = [sp.label for sp in v2.CATALOG["Visionneuse : Cellule image"]]
@@ -450,7 +451,7 @@ class FilmSettingsTest(unittest.TestCase):
         self.assertEqual(presets["fab"]["viewer_film_image_cell_bg"], "#ff112233")
 
     def test_every_key_has_a_default(self):
-        for _title, group in (*v2.VIEWER_FILM_GROUPS, ("Focus", "Visionneuse : Focus")):
+        for _title, group in (*viewer_settings.VIEWER_FILM_GROUPS, ("Focus", "Visionneuse : Focus")):
             for spec in v2.CATALOG[group]:
                 for key in (spec.key, *spec.extra_keys):
                     self.assertIn(key, DEFAULT_SETTINGS, key)

@@ -26,6 +26,7 @@ vit dans `gallery_paint`, `_SCALE_DEADLINE` dans `film_cache`.
 | Filtres : pastilles, fenêtre, menu | `filter_ui.py` | `FilterChips`, `filter_window` |
 | Attributs des fichiers (stockage par dossier) | `file_attributes.py` | `update`, `KEYWORDS_PATH` |
 | Filtres (critères, évaluation) | `file_filters.py` | |
+| Réglages (fenêtre « Réglages : Visionneuse », bouton engrenage du cadre « Visionneuse ») | `settings.py` (lignes `CATALOG["Visionneuse…"]`, `VIEWER_TREE`, `VIEWER_FILM_GROUPS`, `FILTER_ROW_SPECS`), `settings_defaults.py` (`VIEWER_DEFAULTS` ; les ombres et « lier les 4 » restent générées par `settings_store`) | |
 | Cadre « Visionneuse », ouverture, PureRef | hors paquet : `pipeline_browser.py`, `preview_column.py`, `column.py` | |
 
 Tests : `test_focus_viewer.py`, `test_filmstrip_cells.py`, `test_gallery_attributes.py`, `test_file_attributes.py`, `test_color_mark.py`, `test_pureref_viewer.py`, `test_viewer_*.py`, `test_folder_viewer_menu.py`.

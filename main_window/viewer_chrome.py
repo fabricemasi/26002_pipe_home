@@ -44,7 +44,7 @@ class ViewerChromeMixin:
         """Clic droit sur la pellicule : style du tableau, de la sous-cellule image ou de la sous-cellule
         texte, dans la fenetre « Changement de style a la volee » (pas d'override : une seule visionneuse,
         ce sont les valeurs de Reglages > Visionneuse)."""
-        from settings_window_v2 import VIEWER_FILM_GROUPS
+        from fm_visionneuse.settings import VIEWER_FILM_GROUPS
         menu = Menu(self)
         head = menu.addAction("Changement de style à la volée")
         head.setEnabled(False)
