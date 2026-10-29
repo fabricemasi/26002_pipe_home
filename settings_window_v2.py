@@ -2607,6 +2607,75 @@ def seed_table_look(settings: dict):
     seed_above_text_look(settings)         # textes au-dessus des lignes
 
 
+# Restylages par famille sur une racine quelconque : la fenetre de reglages (ses methodes `_restyle_*`) et la
+# fenetre principale (chemin rapide de l'aspect, main_window/settings_link.py).
+def restyle_sliders_in(root: QWidget, merged: dict):
+    """Curseurs de `root` (la fenetre de reglages, elle, les reprend tous : `_restyle_sliders`)."""
+    _sync_slider_style(merged)
+    for widget in root.findChildren(_MiniSlider):
+        widget.apply_style()
+
+
+def restyle_titles_in(root: QWidget, merged: dict):
+    """Titres (niveaux 1-5) : polices, couleurs, retraits et paragraphes des _Section / _SubSection de `root`."""
+    _sync_title_level_style(merged)
+    for section in root.findChildren(_Section):
+        section._name_label.setFont(_title_font(1))
+        section._name_label.setStyleSheet(f"color: {_title_color(1)}; background: transparent;")
+        section._chevron.setColor(_title_color(1))
+        section._title_indent = _title_indent(1)
+    for sub in root.findChildren(_SubSection):
+        level = sub._level
+        sub._name_label.setFont(_title_font(level))
+        sub._name_label.setStyleSheet(f"color: {_title_color(level)}; background: transparent;")
+        sub._chevron.setColor(_title_color(level))
+        sub._left_margin = _subsection_left_margin(level)
+    # Paragraphes (retrait, paddings, fond) : parents d'abord, l'abscisse d'un enfant en depend.
+    titles = root.findChildren(_Section) + root.findChildren(_SubSection)
+    depth = {t: sum(isinstance(a, (_Section, _SubSection)) for a in _ancestors(t)) for t in titles}
+    for title in sorted(titles, key=depth.get):
+        title.apply_box()
+    _reflow_all(root)
+
+
+def restyle_toggles_in(root: QWidget, merged: dict):
+    """Toggles de `root` (et cartes du choix de style)."""
+    _sync_toggle_style(merged)        # registre : styles supprimes / renommes / ajoutes
+    for toggle in root.findChildren(_Toggle):
+        toggle.apply_style()
+    for picker in root.findChildren(_ToggleStylePicker):
+        picker.refreshPreviews()
+
+
+def restyle_tables_in(root: QWidget, merged: dict):
+    """Tableaux de `root` : habillage commun (filets, entetes, selection, ombre, rayon, bordure, padding)."""
+    colors = merged["colors"]
+    enabled = merged.get("table_border_enabled")
+    border_colors = {k: _resolve_color_value(v, colors) for k, v in (merged.get("table_border") or {}).items()}
+    _set_table_inner_border(*(
+        (merged[f"table_inner_{axis}_enabled"], _resolve_color_value(merged[f"table_inner_{axis}_color"], colors),
+         merged[f"table_inner_{axis}_thickness"]) for axis in ("h", "v")))
+    _TABLE_HEAD["bg"] = _head_hex(colors, merged.get("table_head_color", "tableHead"))
+    _TABLE_HEAD["cell_bg"] = _head_hex(colors, merged.get("table_cell_head_color", "tableHead"))
+    _TABLE_SELECTION["color"] = _resolve_color_value(merged.get("table_selection_color", "#5f9bd0"), colors)
+    _ROWS_MOVABLE["enabled"] = bool(merged.get("table_rows_movable", True))
+    _set_table_shadow(shadow_look(merged, "table_shadow", lambda value: _resolve_color_value(value, colors)))
+    seed_above_text_look(merged)          # textes au-dessus des lignes (Tableaux > Texte au dessus)
+    for head in root.findChildren(_ResizableTableHeader):
+        for i in range(len(head._cells)):
+            head._refresh_cell_style(i)
+    for split in root.findChildren(SplitCell):
+        split.update()
+    for picker in root.findChildren(_ToggleStylePicker):
+        picker.refreshPreviews()          # cartes : cadre des tableaux, couleur de selection
+    _set_flat_tables_style(
+        radius=int(merged.get("table_radius", 0)),
+        border=(enabled, border_colors, int(merged.get("table_border_thickness", 1))),
+        padding=_padding_tuple(merged.get("table_cell_padding") or {}), force=True)
+    for widget in root.findChildren(_TableRow) + root.findChildren(_ResizableTableHeader):
+        widget.update()          # les filets sont peints : un restyle a l'identique ne les repeint pas
+
+
 def seed_window_look(settings: dict):
     """Style commun que les champs et tableaux lisent a leur creation (zones de saisie, palette,
     curseurs, toggles, titres, tableaux) : la fenetre v2, et toute fenetre flottante construite avec
@@ -3397,58 +3466,13 @@ class SettingsWindowV2(QDialog):
                 widget.apply_style()
 
     def _restyle_titles(self, merged: dict):
-        _sync_title_level_style(merged)
-        for section in self.findChildren(_Section):
-            section._name_label.setFont(_title_font(1))
-            section._name_label.setStyleSheet(f"color: {_title_color(1)}; background: transparent;")
-            section._chevron.setColor(_title_color(1))
-            section._title_indent = _title_indent(1)
-        for sub in self.findChildren(_SubSection):
-            level = sub._level
-            sub._name_label.setFont(_title_font(level))
-            sub._name_label.setStyleSheet(f"color: {_title_color(level)}; background: transparent;")
-            sub._chevron.setColor(_title_color(level))
-            sub._left_margin = _subsection_left_margin(level)
-        # Paragraphes (retrait, paddings, fond) : parents d'abord, l'abscisse d'un enfant en depend.
-        titles = self.findChildren(_Section) + self.findChildren(_SubSection)
-        depth = {t: sum(isinstance(a, (_Section, _SubSection)) for a in _ancestors(t)) for t in titles}
-        for title in sorted(titles, key=depth.get):
-            title.apply_box()
-        _reflow_all(self)
+        restyle_titles_in(self, merged)
 
     def _restyle_toggles(self, merged: dict):
-        _sync_toggle_style(merged)        # registre : styles supprimes / renommes / ajoutes
-        for toggle in self.findChildren(_Toggle):
-            toggle.apply_style()
-        for picker in self.findChildren(_ToggleStylePicker):
-            picker.refreshPreviews()
+        restyle_toggles_in(self, merged)
 
     def _restyle_tables(self, merged: dict):
-        colors = merged["colors"]
-        enabled = merged.get("table_border_enabled")
-        border_colors = {k: _resolve_color_value(v, colors) for k, v in (merged.get("table_border") or {}).items()}
-        _set_table_inner_border(*(
-            (merged[f"table_inner_{axis}_enabled"], _resolve_color_value(merged[f"table_inner_{axis}_color"], colors),
-             merged[f"table_inner_{axis}_thickness"]) for axis in ("h", "v")))
-        _TABLE_HEAD["bg"] = _head_hex(colors, merged.get("table_head_color", "tableHead"))
-        _TABLE_HEAD["cell_bg"] = _head_hex(colors, merged.get("table_cell_head_color", "tableHead"))
-        _TABLE_SELECTION["color"] = _resolve_color_value(merged.get("table_selection_color", "#5f9bd0"), colors)
-        _ROWS_MOVABLE["enabled"] = bool(merged.get("table_rows_movable", True))
-        _set_table_shadow(shadow_look(merged, "table_shadow", lambda value: _resolve_color_value(value, colors)))
-        seed_above_text_look(merged)          # textes au-dessus des lignes (Tableaux > Texte au dessus)
-        for head in self.findChildren(_ResizableTableHeader):
-            for i in range(len(head._cells)):
-                head._refresh_cell_style(i)
-        for split in self.findChildren(SplitCell):
-            split.update()
-        for picker in self.findChildren(_ToggleStylePicker):
-            picker.refreshPreviews()          # cartes : cadre des tableaux, couleur de selection
-        _set_flat_tables_style(
-            radius=int(merged.get("table_radius", 0)),
-            border=(enabled, border_colors, int(merged.get("table_border_thickness", 1))),
-            padding=_padding_tuple(merged.get("table_cell_padding") or {}), force=True)
-        for widget in self.findChildren(_TableRow) + self.findChildren(_ResizableTableHeader):
-            widget.update()          # les filets sont peints : un restyle a l'identique ne les repeint pas
+        restyle_tables_in(self, merged)
         self._apply_resizable(bool(merged.get("columns_resizable", True)))
         self._relayout()
 

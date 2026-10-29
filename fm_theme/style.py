@@ -295,6 +295,13 @@ ITEM_FONT_ROLE_LABELS = {
 _ITEM_FONT_LABEL_TO_ROLE = {label: role for role, label in ITEM_FONT_ROLE_LABELS.items()}
 
 
+def set_qss(widget, qss: str) -> None:
+    """setStyleSheet seulement si la feuille change : Qt repolit le widget ET tous ses descendants meme pour un
+    texte identique, et les restylages sont rejoues a chaque cran de curseur (budget : une image)."""
+    if widget.styleSheet() != qss:
+        widget.setStyleSheet(qss)
+
+
 def _resolve_font_family(label: str, size: int, weight: int = 400, fallback_role: str = "folders") -> str:
     """Resout un libelle de police stocke (voir ITEM_FONT_ROLE_LABELS) vers un nom de police REEL : police
     d'un role de l'appli (voir Polices principales) ou nom de police systeme litteral (vide : police du

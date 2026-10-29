@@ -20,6 +20,10 @@ import ui_state
 from .helpers import _AppInputWatch
 
 
+# Aspect des briques (fm_theme) : chemin rapide de _apply_settings, seuls ces widgets sont refaits.
+_BRICK_PREFIXES = ("slider_", "title_level", "table_", "toggle", "ctx_", "extra_window_")
+
+
 def settings_window_v2_preload_enabled() -> bool:
     """Prechargement de la fenetre de reglages au lancement (coupe par PIPELINE_NO_PREBUILD : tests)."""
     return not os.environ.get("PIPELINE_NO_PREBUILD")
@@ -424,6 +428,9 @@ class SettingsLinkMixin:
             if getattr(self, "_board", None) is not None:
                 self._board.apply_settings(ui_state.APPLIED_SETTINGS or settings)
             return
+        if changed and all(k.startswith(_BRICK_PREFIXES) for k in changed):
+            self._restyle_bricks(settings, changed)
+            return
         if getattr(self, "_board", None) is not None:
             self._board.apply_settings(settings)
         if getattr(self, "_video", None) is not None:
@@ -511,6 +518,34 @@ class SettingsLinkMixin:
         self._apply_viewer_settings()
         import settings_element_style            # styles propres des elements : pas effaces par le restylage
         settings_element_style.reapply_soon(self, ui_state.APPLIED_SETTINGS)
+
+    def _restyle_bricks(self, settings: dict, changed: set):
+        """Chemin rapide de l'ASPECT DES BRIQUES (curseurs, titres, tableaux, toggles, menus contextuels, fenetres
+        additionnelles : un pas de curseur dans fm_theme ou dans les reglages) : seuls les widgets de ces
+        familles sont refaits, dans la fenetre principale et les fenetres ouvertes construites avec les briques ;
+        ni colonnes, ni couleurs, ni tailles (budget : une image, docs/agents/fm_theme.md)."""
+        import settings_window_v2 as v2
+        if isinstance(ui_state.APPLIED_SETTINGS, dict):
+            ui_state.APPLIED_SETTINGS.update({k: settings.get(k) for k in changed})
+        merged = ui_state.APPLIED_SETTINGS if isinstance(ui_state.APPLIED_SETTINGS, dict) else settings
+        # Fenetres de reglages : elles se restylent elles-memes (leur apercu, ou leurs valeurs relues a la fin).
+        roots = [self] + [w for w in QApplication.topLevelWidgets()
+                          if w is not self and w.isVisible() and not isinstance(w, v2.SettingsWindowV2)]
+        families = (("slider_", v2.restyle_sliders_in), ("title_level", v2.restyle_titles_in),
+                    ("table_", v2.restyle_tables_in), ("toggle", v2.restyle_toggles_in))
+        for prefix, restyle in families:
+            if any(k.startswith(prefix) for k in changed):
+                for root in roots:
+                    restyle(root, merged)
+        if any(k.startswith("extra_window_") for k in changed):
+            v2.seed_extra_window_look(merged)        # fenetres additionnelles ouvertes : reprises aussitot
+        if any(k.startswith("table_") for k in changed):
+            style_key = self._style_key(merged)      # rayon des tableaux : lu aussi par la feuille de style
+            if style_key != self._last_style_key:
+                self._last_style_key = style_key
+                self._pending_stylesheet_rebuild = True
+                self._stylesheet_rebuild_timer.start()
+        # Menus contextuels (ctx_) : relus a chaque ouverture, rien a refaire.
 
     @staticmethod
     def _style_key(settings: dict) -> tuple:

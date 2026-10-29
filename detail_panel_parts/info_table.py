@@ -5,7 +5,7 @@ import json
 
 from PySide6.QtCore import Qt
 
-from app_style import C, INSPECTOR_TITLE, role_color, role_font, scaled, column_frame_style, column_header_qss
+from app_style import C, INSPECTOR_TITLE, role_color, role_font, scaled, column_frame_style, column_header_qss, set_qss
 from settings_store import M, _sync_dynamic_M, load_settings
 from settings_theme import _set_text_role
 from settings_widgets import _sync_toggle_style
@@ -25,7 +25,8 @@ class InfoTableMixin:
         corrige, voir sa remarque) — cette methode-ci ne touche plus qu'au
         NOM du fichier/dossier selectionne et aux champs de detail."""
         self.name.setFont(role_font("folders" if is_dir else "files", 12, 600, tracking=0.12))
-        self.name.setStyleSheet(
+        set_qss(
+            self.name,
             f"color: {role_color('folders' if is_dir else 'files', C['text'])}; background: transparent;"
         )
         self.open_render_log_button.setFont(role_font("buttons", 10, 500))
@@ -40,7 +41,7 @@ class InfoTableMixin:
         fois (voir la remarque de l'utilisateur, "je veux exactement le
         meme style, parametres par parametres") : fond/bordure/rayon du
         cadre suivent desormais Colonnes > Colonnes, comme toute colonne."""
-        self.header_fill.setStyleSheet(column_header_qss("DetailHeader", INSPECTOR_TITLE))
+        set_qss(self.header_fill, column_header_qss("DetailHeader", INSPECTOR_TITLE))
         frame = column_frame_style(INSPECTOR_TITLE, self._suppress_left())
         # scaled() ICI, sur le MEME dict que celui repasse tel quel au
         # masque (voir _update_card_mask/Column.refresh_colors, MEME raison).
@@ -48,9 +49,10 @@ class InfoTableMixin:
         self.card.setFrameStyle(
             frame["bg"], scaled_radius, frame["enabled"], frame["colors"], scaled(frame["thickness"], 0))
         self._update_card_mask()
-        self.well.setStyleSheet(self._well_qss())
+        set_qss(self.well, self._well_qss())
         self._apply_preview_table_style()
-        self.open_render_log_button.setStyleSheet(
+        set_qss(
+            self.open_render_log_button,
             f"QPushButton {{ background: {C['btn']}; color: {C['text']}; border: 1px solid {C['btn_border']}; "
             f"border-radius: 3px; padding: 0 7px; font-size: 10px; }}"
             f"QPushButton:hover {{ background: {C['btn_hover']}; border-color: {C['btn_hover_bd']}; }}"

@@ -80,8 +80,12 @@ def _set_text_role(label: QWidget, role: str, color: str | None = None) -> QWidg
         font = text_look_font(font, look)
         if color is None and look.get("color"):
             text_color = look["color"]
-    label.setFont(font)
-    label.setStyleSheet(f"color: {text_color}; background: transparent;")
+    # Rien si identique : Qt repolit / remet en page meme pour une valeur egale (rejoue a chaque cran de curseur).
+    if label.font() != font:
+        label.setFont(font)
+    css = f"color: {text_color}; background: transparent;"
+    if label.styleSheet() != css:
+        label.setStyleSheet(css)
     label.setProperty("textRole", role)
     return label
 

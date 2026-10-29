@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from fm_theme.style import (
+    set_qss,
     SEMANTIC_COLOR_SLOTS,
     _hex_to_alpha,
     _hex_to_rgb,
@@ -331,7 +332,8 @@ class _Btn(QPushButton):
 
     def _refresh_style(self):
         border_rule = f"border: 1px solid {self._border};" if self._border else "border: none;"
-        self.setStyleSheet(
+        set_qss(
+            self,
             f"QPushButton {{ background: {self._bg}; {border_rule} border-radius: {self._radius}px; "
             f"color: {self._fg}; padding: {self._padding}; }}"
             f"QPushButton:hover {{ background: {self._hover}; }}"
@@ -977,7 +979,8 @@ class _SelectField(QPushButton):
         self._sync_text()
 
     def _refresh_style(self):
-        self.setStyleSheet(
+        set_qss(
+            self,
             f"QPushButton {{ background: {input_bg()}; {input_border_decl()} "
             f"border-radius: {self._radius}px; "
             f"color: {M['value_fg']}; text-align: left; padding: 0 8px; }}"

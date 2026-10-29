@@ -4,7 +4,7 @@ from pathlib import Path
 from PySide6.QtCore import QRect, QSize, Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QMessageBox, QPushButton
-from app_style import font, scaled, resolve_color_ref, column_frame_style, column_header_qss, column_padding_for, column_style_for
+from app_style import font, scaled, resolve_color_ref, column_frame_style, column_header_qss, column_padding_for, column_style_for, set_qss
 import ui_state
 from previews import software_icon_key
 from settings_widgets import Menu, _radius_dict, _radius_shrink
@@ -48,7 +48,7 @@ class ColumnAppearanceMixin:
         # voir la remarque de l'utilisateur, "je veux que tu en fasse de
         # meme pour toute les colonnes de l'appli. les settings doivent
         # refletter a 100% ce qui se passe dans l'appli".
-        self.header_fill.setStyleSheet(column_header_qss("ColumnHeader", self.style_title))
+        set_qss(self.header_fill, column_header_qss("ColumnHeader", self.style_title))
         frame = column_frame_style(self.style_title, self._suppress_left())
         # scaled() ICI, sur le MEME dict que celui repasse tel quel au
         # masque (voir _update_card_mask, qui relit self.card._radius

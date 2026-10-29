@@ -1,7 +1,9 @@
 """Petits outils de la fenêtre principale : filtres d'événements (bouton « précédent » de la souris, activité), QSS.
 
 Découpé de pipeline_browser.py (2026-10-28) ; carte : docs/agents/fm_browser.md."""
-from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtCore import QEvent, QObject, QRectF, Qt
+from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtWidgets import QWidget
 
 import shiboken6
 
@@ -24,12 +26,23 @@ def _anim_running(overlay) -> bool:
 # sombre que le reste de l'appli plutot que le chrome blanc/bleu de Windows.
 # ==========================================================================
 
-def _set_qss(widget, qss: str) -> None:
-    """setStyleSheet seulement si la feuille change : sur un conteneur qui
-    porte toute la fenetre, Qt repolit tous les descendants meme pour un
-    texte identique (~7 ms par appel, rejoue a chaque cran de slider)."""
-    if widget.styleSheet() != qss:
-        widget.setStyleSheet(qss)
+from app_style import set_qss as _set_qss  # noqa: E402,F401  (setStyleSheet seulement si la feuille change)
+
+
+class CentralFrame(QWidget):
+    """Cadre central de la fenetre principale : fond `C['window']`, filet 1 px `C['border']`, coins
+    `ui_state.WINDOW_RADIUS`, PEINTS ici. En QSS (#CentralFrame), changer le rayon ou une de ces couleurs
+    repolissait TOUTE la fenetre (~35 ms par cran de curseur) ; ici : un simple `update()`."""
+
+    def paintEvent(self, event):
+        from app_style import C
+        import ui_state
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        radius = max(0.0, float(ui_state.WINDOW_RADIUS) - 0.5)
+        painter.setPen(QPen(QColor(C["border"]), 1))
+        painter.setBrush(QColor(C["window"]))
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
 
 
 class _MouseBackFilter(QObject):

@@ -174,7 +174,7 @@ from previews import (
 # Découpage (2026-10-28) : classes de tête et méthodes par responsabilité dans main_window/ (carte :
 # docs/agents/fm_browser.md). Réexportées ici : `pipeline_browser.X` reste valable en LECTURE ; pour PATCHER
 # un nom, viser le module de main_window/ qui l'utilise.
-from main_window.helpers import _AppInputWatch, _MouseBackFilter, _anim_running, _set_qss  # noqa: F401
+from main_window.helpers import CentralFrame, _AppInputWatch, _MouseBackFilter, _anim_running, _set_qss  # noqa: F401
 from main_window.title_bar import (
     TitleBar, _CRUMB_LOOK_CACHE, _CrumbChip, _ViewerGroup, _build_crumb_look, _crumb_look, _crumb_state,
 )
@@ -694,21 +694,9 @@ class PipelineBrowser(
         # rendait pas de facon fiable dans tous les cas (coins carres
         # compris), ce filet QSS garantit un contour visible tout autour de
         # la fenetre quel que soit le reglage de coins.
-        central = QWidget()
+        central = CentralFrame()           # fond, filet et coins PEINTS (main_window/helpers.py), plus en QSS
         self.central = central
         central.setObjectName("CentralFrame")
-        # Indispensable pour que le "border"/"border-radius" ci-dessous soit
-        # reellement peint : sur un QWidget nu, Qt applique le fond du QSS
-        # via un chemin rapide qui ignore ce flag, mais PAS la bordure — sans
-        # lui, la bordure etait silencieusement ignorée (verifie pixel par
-        # pixel : le bord de la fenetre restait exactement la couleur de
-        # fond, jamais {C['border']}). Meme remarque que pour TitleBar/
-        # Column plus bas, mais leur cas ne concernait jusque-la que le fond.
-        central.setAttribute(Qt.WA_StyledBackground, True)
-        central.setStyleSheet(
-            f"#CentralFrame {{ background: {C['window']}; border: 1px solid {C['border']}; "
-            f"border-radius: {ui_state.WINDOW_RADIUS}px; }}"
-        )
         layout = QVBoxLayout(central)
         # Marge de 1px (= l'epaisseur du filet ci-dessus), PAS 0 : a marge
         # nulle, les enfants (titlebar, colonnes...) sont peints PAR-DESSUS

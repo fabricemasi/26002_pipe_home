@@ -14,6 +14,8 @@ from preview_column import IconButton
 import ui_state
 import previews as _previews
 
+from .helpers import _set_qss
+
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pipeline_browser import PipelineBrowser      # annotations seulement (pipeline_browser importe ce module)
@@ -665,8 +667,9 @@ class TitleBar(QWidget):
             toolbar_colors = settings.get("md_toolbar_border") or {}
             toolbar_color = (toolbar_colors.get("top") if isinstance(toolbar_colors, dict) else toolbar_colors)
             color = resolve_color_ref(toolbar_color, C["border"])
-        self.setStyleSheet(f"#TitleBar {{ background: {C['app_bg']}; "
-                           f"border-bottom: {width}px solid {color}; }}")
+        # _set_qss : rien si la feuille est identique (la barre porte tout le cheminement : repolir tous ses
+        # descendants coutait ~6 ms, et refresh_look est rejouee plusieurs fois par cran de curseur).
+        _set_qss(self, f"#TitleBar {{ background: {C['app_bg']}; border-bottom: {width}px solid {color}; }}")
         size = max(6, int(settings.get("navbar_title_font_size", 11)))
         family = settings.get("navbar_title_font_family") or ""
         if family:
@@ -678,13 +681,14 @@ class TitleBar(QWidget):
                                    tracking=0.01)
             title_font.setItalic(bool(settings.get("navbar_title_font_italic", False)))
         self.title_label.setFont(title_font)
-        self.title_label.setStyleSheet(
+        _set_qss(
+            self.title_label,
             f"color: {resolve_color_ref(settings.get('navbar_title_font_color'), role_color('titles', C['label']))}; "
             "background: transparent;")
         custom_logo = custom_ui_icon_pixmap(UI_ICON_APP_LOGO, self._icon.width())
         self._icon.setPixmap(custom_logo or QPixmap())
-        self._icon.setStyleSheet("background: transparent;" if custom_logo is not None else
-                                 f"border: 1px solid {C['mark_dir_bd']}; background: transparent;")
+        _set_qss(self._icon, "background: transparent;" if custom_logo is not None else
+                 f"border: 1px solid {C['mark_dir_bd']}; background: transparent;")
         for btn in (self.btn_min, self.btn_max, self.btn_close):
             btn.update()
         self.refresh_crumbs()

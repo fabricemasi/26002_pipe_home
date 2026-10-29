@@ -180,10 +180,7 @@ class ChromeMixin:
         rafraichissement."""
         if rebuild_stylesheet:
             self._apply_global_stylesheet()
-        _set_qss(self.central,
-            f"#CentralFrame {{ background: {C['window']}; border: 1px solid {C['border']}; "
-            f"border-radius: {ui_state.WINDOW_RADIUS}px; }}"
-        )
+        self.central.update()          # cadre central peint (CentralFrame) : fond, filet et coins relus
         _set_qss(self.columns_host, f"#ColumnsHost {{ background: {C['window']}; }}")
         self.titlebar.refresh_look()
         for btn in (self.titlebar.btn_min, self.titlebar.btn_max, self.titlebar.btn_close):
