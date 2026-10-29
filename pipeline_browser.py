@@ -1130,6 +1130,7 @@ def main():
     window = PipelineBrowser(root)
     window.show()
     window._start_settings_idle_watch()     # reglages prepares apres 1 min sans activite sur l'appli (rien au lancement)
+    window._start_theme_link()              # aspect : preset fm_theme lie, suivi en direct (fm_theme/live.py)
     QTimer.singleShot(6000, window._preload_md_editor)       # module Markdown / code prepare en fond
     QTimer.singleShot(4500, window._preload_video)            # module video : bibliotheques chargees en fond
     QTimer.singleShot(1500, window._start_css_sync)          # feuille CSS partagee avec Obsidian

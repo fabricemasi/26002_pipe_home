@@ -50,6 +50,51 @@ class SettingsLinkMixin:
             pass
         self._refresh_preset_ui(settings)
 
+    # -- Preset fm_theme lie (theme_preset) : fichier surveille, canal temps reel de l'editeur (fm_theme/live.py) --
+
+    def _start_theme_link(self):
+        """Au lancement (main) : l'aspect suit le preset fm_theme lie, modifie ailleurs (fm_theme.bat, autre appli)
+        pendant le geste par le canal, a la fin du geste par son fichier."""
+        from fm_theme import live
+        self._theme_watcher = live.PresetWatcher(self)
+        self._theme_watcher.changed.connect(self._on_theme_file_changed)
+        self._theme_live = live.LiveClient(self)
+        self._theme_live.received.connect(self._on_theme_live)
+        self._sync_theme_watch(ui_state.APPLIED_SETTINGS or load_settings())
+
+    def _sync_theme_watch(self, settings: dict):
+        """Surveille le fichier du preset fm_theme lie (change avec le preset choisi). Rien si inchange."""
+        watcher = getattr(self, "_theme_watcher", None)
+        name = settings.get("theme_preset") or ""
+        if watcher is None or name == getattr(self, "_theme_watch_name", None):
+            return
+        from settings_store import theme_in_use
+        import fm_theme.presets as theme_presets
+        self._theme_watch_name = name
+        watcher.watch(theme_presets.preset_path(name) if theme_in_use(settings) else None)
+
+    def _on_theme_file_changed(self):
+        """Preset fm_theme enregistre ailleurs : relu et applique (seul ce qui a change est refait)."""
+        settings = load_settings()
+        self._apply_settings(settings)
+        dialog = getattr(self, "_settings_dialog_v2", None)
+        try:
+            if dialog is not None and dialog.isVisible():
+                dialog.external_values(settings)        # ses champs ouverts suivent
+        except RuntimeError:
+            pass
+
+    def _on_theme_live(self, preset: str, values: dict):
+        """Valeurs diffusees PENDANT un geste dans l'editeur (au plus une fois par image) : appliquees tout de
+        suite si elles visent le preset fm_theme a l'ecran, sans lire ni ecrire le disque."""
+        from settings_store import theme_in_use
+        current = ui_state.APPLIED_SETTINGS or {}
+        if not values or not preset or preset != theme_in_use(current):
+            return
+        settings = dict(current)
+        settings.update(values)
+        self._apply_settings(settings, set(values))
+
     def _refresh_preset_ui(self, settings: dict | None = None):
         import settings_window_v2
         settings = settings or ui_state.APPLIED_SETTINGS or load_settings()
@@ -316,6 +361,7 @@ class SettingsLinkMixin:
         # d'AUCUNE ligne, quelle que soit la colonne — voir la remarque de
         # l'utilisateur, "il y a des ralentissements dans les animations,
         # optimise un maximum".
+        self._sync_theme_watch(settings)
         if changed_keys and all(k.startswith("auto_") for k in changed_keys):
             if isinstance(ui_state.APPLIED_SETTINGS, dict):
                 ui_state.APPLIED_SETTINGS.update({k: settings.get(k) for k in changed_keys})
