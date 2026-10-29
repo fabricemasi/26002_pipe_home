@@ -55,7 +55,7 @@ class ViewerIconsTest(unittest.TestCase):
         previews.forget_mtime()
 
     def test_settings_has_an_icons_subsection_with_every_viewer_icon(self):
-        titles = [n.title for node in v2.GENERAL_TREE if node.title == "Visionneuse" for n in node.children]
+        titles = [n.title for n in v2.VIEWER_TREE]
         self.assertIn("Icônes", titles)
         rows = {s.params["ui_key"] for s in v2.CATALOG["Visionneuse : Icones"]}
         self.assertEqual(rows, {k[len("ui_"):] for k in previews.VIEWER_ICON_KEYS})
@@ -91,8 +91,7 @@ class ViewerIconsTest(unittest.TestCase):
         self.assertNotEqual(before, focus._film_look_signature())
 
     def test_cells_have_separate_image_and_attribute_icon_paddings(self):
-        node = next(n for n in v2.GENERAL_TREE if n.title == "Visionneuse")
-        self.assertIn("Cellules", [c.title for c in node.children])
+        self.assertIn("Cellules", [n.title for n in v2.VIEWER_TREE])
         labels = [s.label for s in v2.CATALOG["Visionneuse : Cellule image"]]
         self.assertIn("Padding de l'image", labels)
         self.assertIn("Padding des icônes d'attribut", labels)

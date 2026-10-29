@@ -4,7 +4,8 @@ Découpé de pipeline_browser.py (2026-10-28) ; carte : docs/agents/fm_browser.m
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt
 from PySide6.QtWidgets import QApplication, QWidget
 
-from app_style import C, scaled
+from app_style import C, role_color, scaled
+from preview_column import IconButton, style_focus_button
 from settings_store import save_live_state
 import ui_state
 import shiboken6
@@ -108,7 +109,7 @@ class ViewerButtonsMixin:
 
     # -- Rangee des boutons de la visionneuse / planche : ordre choisi a la main (Ctrl + glisser) --
 
-    _BUTTON_DEFAULT_ORDER = ("hide", "gallery", "zoom100", "lightroom", "filter", "recursive", "pur")
+    _BUTTON_DEFAULT_ORDER = ("hide", "gallery", "zoom100", "lightroom", "filter", "recursive", "pur", "settings")
 
     def _viewer_row_items(self) -> list:
         """(identifiant, bouton) des boutons deplacables de la rangee, dans l'ordre retenu
@@ -127,6 +128,7 @@ class ViewerButtonsMixin:
             if button is not None and not button.isHidden():
                 items.append((key, button))
         items.extend((f"pur:{b._pur_path.name}", b) for b in self._pur_buttons if not b.isHidden())
+        items.append(("settings", self._viewer_settings_button()))
         order = list((ui_state.APPLIED_SETTINGS or {}).get("viewer_button_order") or [])
         defaults = self._BUTTON_DEFAULT_ORDER
 
@@ -136,6 +138,19 @@ class ViewerButtonsMixin:
                 return (0, order.index(key), index)
             return (1, defaults.index(key.split(":", 1)[0]), index)
         return [item for _i, item in sorted(enumerate(items), key=rank)]
+
+    def _viewer_settings_button(self):
+        """Bouton « Réglages de la visionneuse », ne de son cadre (il n'a pas d'autre place que la rangee)."""
+        button = getattr(self, "_viewer_settings_btn", None)
+        if button is None or not shiboken6.isValid(button):
+            button = self._viewer_settings_btn = IconButton(
+                "gear", role_color("buttons", "#c4cacf"), C["text"], parent=self.titlebar.viewer_group())
+            button.setCursor(Qt.ArrowCursor)
+            button.setFlat(True)
+            button.setToolTip("Réglages de la visionneuse")
+            button.clicked.connect(lambda: self.open_module_settings("viewer"))
+            style_focus_button(button)
+        return button
 
     def _layout_viewer_buttons(self):
         """Pose la rangee dans l'ordre retenu DANS le cadre « Visionneuse » de la barre de navigation (demande de

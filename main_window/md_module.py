@@ -210,6 +210,7 @@ class MdModuleMixin:
                     ("save", "Enregistrer (Ctrl+S)", lambda: current() and current().flush()),
                     ("external", "Ouvrir dans l'application Obsidian",
                      lambda: current() and current().open_in_obsidian()),
+                    ("gear", "Réglages du module Markdown", lambda: self.open_module_settings("markdown")),
                     ("close", "Fermer l'éditeur (Échap)", self._close_md_editor)):
                 button = IconButton(kind, role_color("buttons", "#c4cacf"), C["text"], parent=group)
                 button.setCursor(Qt.ArrowCursor)

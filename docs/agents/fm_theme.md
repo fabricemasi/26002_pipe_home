@@ -125,7 +125,9 @@ FAIT (un commit par étape, branche `nettoyage-code`) : tests rapides par module
 
 FAIT (2026-10-29) : `detail_panel.py` découpé en neuf mixins dans `detail_panel_parts/` (carte `docs/agents/inspecteur.md`).
 
-PROCHAINE ÉTAPE : « fenêtres de réglages par module » (voir plus haut) ; seulement ensuite fm_theme.
+FAIT (2026-10-29) : fenêtres de réglages par module, partie FENÊTRE (`SettingsWindowV2(module=…)`, `MODULE_SCOPES`, boutons des cadres et de la fenêtre générale ; détail : `docs/agents/reglages.md`).
+
+PROCHAINE ÉTAPE : partie DÉFINITIONS (arbre, catalogue, défauts de chaque module rangés dans son paquet, ex. `fm_video/settings.py` ; un commit par module), puis fm_theme.
 
 ÉTAPE BROWSER_CORE (2026-10-29, faite par Codex, VALIDÉE et commitée par Claude Code) : façade `browser_core.py` (`__getattr__` pour les états réaffectés `_CONFIG_REVISION`, `_default_thumbnail`) + dix services dans `browser_core_parts/` ; carte dans `docs/agents/colonnes.md`. 26 sondes protégées par `tests/_probe_isolate.py`. Validation : pyflakes sans nom indéfini ; aucune copie figée d'un état réaffecté (`from x import ÉTAT`) ; patches des tests vérifiés (ceux qui passent encore par une façade agissent, le code testé lit le nom par la façade à l'appel) ; suite complète : 29 FAIL / ERROR, tous déjà connus.
 - `test_focus_viewer` (6 tests d'animation minutés : `ctrl_wheel`, `ripple`, `bump`, `new_image_resets_zoom`, `slide_starts`, `zoom_keeps_anchor`) : INTERMITTENTS selon la charge de la machine, 5 à 6 échecs par passe le 2026-10-29 sur 297d6bd (avant tout découpage de Codex) comme sur l'état actuel. Ne pas les attribuer à un découpage sans comparaison sur l'ancien commit (`git worktree add`).
@@ -170,7 +172,8 @@ Ordre : ce chantier est INDÉPENDANT de fm_theme et passe EN PREMIER (il allège
 ### Une fenêtre de réglages par module (demande de l'utilisateur, 2026-10-28)
 
 - Une fenêtre de réglages GÉNÉRALE pour fm_browser (allégée), et UNE fenêtre de réglages PAR MODULE (vidéo, Markdown, visionneuse, board / MRO, CAD), construites avec les mêmes briques (v2).
-- Ouverture : un bouton dans le CADRE du module dans la barre de navigation (choix de l'utilisateur).
+- Ouverture : un bouton dans le CADRE du module dans la barre de navigation (choix de l'utilisateur), ET une rangée de boutons (Vidéo / Markdown / Board / Visionneuse) dans la fenêtre générale, qui ouvre la même fenêtre de module (des réglages servent avant d'ouvrir le module ; choix du 2026-10-29).
+- Board : UNE fenêtre à deux onglets, « MRO » et « CAD » (choix du 2026-10-29). Visionneuse : la section « Visionneuse » de l'onglet Général part dans sa propre fenêtre (choix du 2026-10-29).
 - CONTENU propre à chaque module (100 % de ses réglages spécifiques), FONCTIONNEMENT commun : UNE seule classe de fenêtre générique (bordure rouge, Appliquer / Enregistrer / Annuler, aperçu en direct, géométrie, presets) à qui chaque module ne donne que ses définitions. JAMAIS une fenêtre codée par module (cinq copies qui divergent). La fenêtre générale garde les réglages généraux seulement.
 - La définition des réglages d'un module (arbre, catalogue, valeurs par défaut) VIT DANS SON PAQUET (ex. `fm_video/settings.py`) : une requête sur les réglages vidéo ne lit que `fm_video/`. Les onglets correspondants quittent `settings_window_v2.py` ; les défauts quittent `settings_store.py` (qui les rassemble au chargement).
 - Les CLÉS ne changent pas (`video_*`, `md_*`, `viewer_*`, `board_*`) : réglages et presets de l'utilisateur intacts.

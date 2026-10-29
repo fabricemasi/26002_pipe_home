@@ -32,11 +32,11 @@ def main():
     wanted = sys.argv[2] if len(sys.argv) > 2 else "Titres H1-H6"
     settings = copy.deepcopy(settings_store.DEFAULT_SETTINGS)
     with mock.patch.object(v2, "load_settings", lambda: copy.deepcopy(settings)), mock.patch.object(v2, "AUTOSAVE", False):
-        window = v2.SettingsWindowV2()
+        window = v2.SettingsWindowV2(module="markdown")
     window.resize(1500, 1100)
     window.move(-3000, 0)
     window.show()
-    index = [label for label, _t in v2.SCOPES].index(v2.MARKDOWN_TAB)
+    index = 0
     window.tabs.changed.emit(index)
     t0 = time.perf_counter()
     window._show_page(index)

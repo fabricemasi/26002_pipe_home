@@ -620,7 +620,7 @@ class SettingsTabTest(unittest.TestCase):
         from settings_store import DEFAULT_SETTINGS
         values = dict(DEFAULT_SETTINGS)
         scope = v2.ScopeValues(values, None, v2.VIDEO_TAB)
-        self.assertIn((v2.VIDEO_TAB, None), v2.SCOPES)
+        self.assertIn((v2.VIDEO_TAB, None), v2.MODULE_SCOPES["video"])
         for node in v2.VIDEO_TREE:
             for spec in v2.CATALOG[node.group]:
                 self.assertIn(spec.key, DEFAULT_SETTINGS, spec.key)

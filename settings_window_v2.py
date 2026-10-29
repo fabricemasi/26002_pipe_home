@@ -1699,11 +1699,6 @@ GENERAL_TREE = (
                                                                for n in range(1, 6))))),
     Node("Application", "Application", children=(
         Node("Chargement et génération automatique", "Chargement et génération automatique"),)),
-    Node("Visionneuse", "Visionneuse", children=(*(Node(t, g) for t, g in VIEWER_FILM_GROUPS),
-                                                 Node("Focus", "Visionneuse : Focus"),
-                                                 Node("Regroupement", "Visionneuse : Regroupement"),
-                                                 Node("Filtres", "Visionneuse : Filtres"),
-                                                 Node("Icônes", "Visionneuse : Icones"))),
     Node("Menu contextuel", children=(Node("Menu", "Menu contextuel : Menu"), Node("Lignes", "Menu contextuel : Lignes"),
                                       Node("Survol", "Menu contextuel : Survol"),
                                       Node("Libellés", "Menu contextuel : Libelles"),
@@ -1726,6 +1721,17 @@ GENERAL_TREE = (
         _toggle_style_node(p, label) for p, label in (("toggle1", "Toggle 1"), ("toggle2", "Toggle 2")))),
     Node("Sliders", children=(Node("Rail", "Slider : Rail"), Node("Selecteur", "Slider : Selecteur"))),
     Node("ICONES", children=(Node("General", "Icones : General"), Node("Logiciels", "Icones : Logiciels"))),
+)
+
+# Fenetre « Visionneuse » (avant : section Visionneuse de l'onglet General, choix de l'utilisateur 2026-10-29).
+VIEWER_TAB = "Visionneuse"
+VIEWER_TREE = (
+    Node("Affichage", "Visionneuse"),
+    *(Node(t, g) for t, g in VIEWER_FILM_GROUPS),
+    Node("Focus", "Visionneuse : Focus"),
+    Node("Regroupement", "Visionneuse : Regroupement"),
+    Node("Filtres", "Visionneuse : Filtres"),
+    Node("Icônes", "Visionneuse : Icones"),
 )
 
 # Onglet « Module vidéo » (voir CATALOG["Vidéo : …"]).
@@ -1798,7 +1804,8 @@ MARKDOWN_TREE = (
 )
 
 # Onglets de reglages generaux a part (pas une colonne) : leur arbre.
-STANDALONE_TABS = {MARKDOWN_TAB: MARKDOWN_TREE, VIDEO_TAB: VIDEO_TREE, MRO_TAB: MRO_TREE, CAD_TAB: CAD_TREE}
+STANDALONE_TABS = {MARKDOWN_TAB: MARKDOWN_TREE, VIDEO_TAB: VIDEO_TREE, MRO_TAB: MRO_TREE, CAD_TAB: CAD_TREE,
+                   VIEWER_TAB: VIEWER_TREE}
 
 # Groupes repris de la v1 : leurs tableaux ont une cle de dimensions a eux (voir build_group).
 PORTED_GROUPS = frozenset(("Application", "Omettre", "LUT", "Polices principales", "Couleurs",
@@ -1810,17 +1817,19 @@ PORTED_GROUPS = frozenset(("Application", "Omettre", "LUT", "Polices principales
 # jour du preset actif).
 
 
-# Onglets : (libelle d'onglet, None). Tous sont des reglages GENERAUX (un onglet par theme, pas par colonne).
-SCOPES: list[tuple[str, str | None]] = [
-    ("General", None),
-    # Onglets de reglages GENERAUX a part : valeurs dans les cles generales (`md_*`, `video_*`).
-    (MARKDOWN_TAB, None),
-    (VIDEO_TAB, None),
-    (MRO_TAB, None),
-    (CAD_TAB, None),
-]
+# Onglets de la fenetre GENERALE : (libelle d'onglet, None).
+SCOPES: list[tuple[str, str | None]] = [("General", None)]
+# Une fenetre PAR MODULE (demande de l'utilisateur, 2026-10-28) : MEME classe, seuls ses onglets changent. Valeurs
+# dans les cles generales (`md_*`, `video_*`, `board_*`, `viewer_*`). Ordre = rangee de boutons de la fenetre generale.
+MODULE_SCOPES: dict[str, list[tuple[str, str | None]]] = {
+    "video": [(VIDEO_TAB, None)],
+    "markdown": [(MARKDOWN_TAB, None)],
+    "board": [(MRO_TAB, None), (CAD_TAB, None)],
+    "viewer": [(VIEWER_TAB, None)],
+}
+MODULE_TITLES = {"video": "Vidéo", "markdown": "Markdown", "board": "Board", "viewer": "Visionneuse"}
 # Libelle AFFICHE d'un onglet quand il differe de son identifiant (cles retenues, tests).
-TAB_LABELS = {MARKDOWN_TAB: "Module Markdown"}
+TAB_LABELS = {MARKDOWN_TAB: "Module Markdown", MRO_TAB: "MRO", CAD_TAB: "CAD"}
 
 
 # ==========================================================================
@@ -3784,12 +3793,16 @@ class SettingsWindowV2(QDialog):
 
     settingsChanged = Signal(dict)     # apercu en direct (rien n'est ecrit sur le disque)
     settingsSaved = Signal(dict)       # apres Enregistrer
+    moduleSettingsRequested = Signal(str)   # fenetre generale : bouton d'un module (cle de MODULE_SCOPES)
 
     _RESIZE_BORDER = 6
 
-    def __init__(self, parent=None, eager: bool = False):
+    def __init__(self, parent=None, eager: bool = False, module: str | None = None):
         super().__init__(parent)
         t0 = time.perf_counter()
+        # module=None : fenetre generale ; sinon fenetre du module (cle de MODULE_SCOPES), meme fonctionnement.
+        self.module = module
+        self.scopes = MODULE_SCOPES[module] if module else SCOPES
         self.eager = eager   # eager=True : construit TOUT d'un coup (pour mesurer l'apport du differe)
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -3840,7 +3853,8 @@ class SettingsWindowV2(QDialog):
         root = QVBoxLayout(panel)
         root.setContentsMargins(1, 1, 1, 1)
         root.setSpacing(0)
-        self.titlebar = _SettingsTitleBar(self, title="Reglages v2 (General branche)")
+        title = f"Réglages : {MODULE_TITLES[module]}" if module else "Réglages"
+        self.titlebar = _SettingsTitleBar(self, title=title)
         self.titlebar.closeClicked.connect(self.reject)
         self.titlebar.saveClicked.connect(self._on_apply)      # clic sur « modifications non enregistrees »
         root.addWidget(self.titlebar)
@@ -3859,13 +3873,14 @@ class SettingsWindowV2(QDialog):
         self.titlebar.installEventFilter(self._tab_gap_watch)
         sl = QHBoxLayout(subbar)
         sl.setContentsMargins(20, 0, 20, 0)
-        self.tabs = _TabStrip([TAB_LABELS.get(label, label) for label, _t in SCOPES])
+        self.tabs = _TabStrip([TAB_LABELS.get(label, label) for label, _t in self.scopes])
+        self.tabs.setVisible(len(self.scopes) > 1)          # un seul onglet : rien a choisir
         sl.addWidget(self.tabs)
         root.addWidget(subbar)
 
         self.stack = QStackedWidget(panel)
         root.addWidget(self.stack, 1)
-        for _label, _title in SCOPES:
+        for _label, _title in self.scopes:
             self.stack.addWidget(QWidget())      # emplacement, remplace a la premiere visite
         self.tabs.changed.connect(self._show_page)
 
@@ -3877,7 +3892,7 @@ class SettingsWindowV2(QDialog):
         install_extra_window(self, panel, outer, root, self.titlebar, buttons)   # Fenetres additionnelles
 
         if eager:
-            for i in range(len(SCOPES)):
+            for i in range(len(self.scopes)):
                 self._ensure_page(i)
         else:
             self._ensure_page(0)
@@ -3887,8 +3902,11 @@ class SettingsWindowV2(QDialog):
 
     # -- enregistrement en temps reel --
 
+    def _geometry_key(self) -> str:
+        return f"{GEOMETRY_KEY}:{self.module}" if self.module else GEOMETRY_KEY
+
     def _restore_geometry(self):
-        geometry = _load_window_geometry(GEOMETRY_KEY) if AUTOSAVE else None
+        geometry = _load_window_geometry(self._geometry_key()) if AUTOSAVE else None
         if geometry:
             try:
                 self.restoreGeometry(QByteArray.fromBase64(geometry.encode("ascii")))
@@ -3935,7 +3953,7 @@ class SettingsWindowV2(QDialog):
         if not AUTOSAVE:
             return
         if self.isVisible():
-            _save_window_geometry(bytes(self.saveGeometry().toBase64()).decode("ascii"), GEOMETRY_KEY)
+            _save_window_geometry(bytes(self.saveGeometry().toBase64()).decode("ascii"), self._geometry_key())
         dims = dict(self.settings.get("table_dims") or {})
         dirty, self._dims_dirty = getattr(self, "_dims_dirty", set()), set()
         for frame in dirty:
@@ -4192,6 +4210,13 @@ class SettingsWindowV2(QDialog):
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(14, 0, 14, 0)
         lay.setSpacing(8)
+        if self.module is None:
+            # Reglages des modules, ouvrables aussi module ferme (choix de l'utilisateur, 2026-10-29).
+            for module, label in MODULE_TITLES.items():
+                button = _Btn(label, M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"],
+                              height=27, padding="0 13px")
+                button.clicked.connect(lambda _c=False, m=module: self.moduleSettingsRequested.emit(m))
+                lay.addWidget(button)
         lay.addStretch(1)
         cancel = _Btn("Annuler", M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"],
                       height=27, padding="0 13px")
@@ -4766,7 +4791,7 @@ class SettingsWindowV2(QDialog):
                 self._report_prebuild()
                 self._schedule_prebuild(started)
                 return
-            missing = [i for i in range(len(SCOPES)) if i not in self._built]
+            missing = [i for i in range(len(self.scopes)) if i not in self._built]
             if missing:
                 self._ensure_page(missing[0])
                 self._prebuild_queue = None                   # nouvelle page : liste des sections a refaire
@@ -4830,12 +4855,12 @@ class SettingsWindowV2(QDialog):
             def count(nodes):
                 return sum(1 + count(getattr(n, "children", None) or ()) for n in nodes)
             sections = 0
-            for label, title in SCOPES:
+            for label, title in self.scopes:
                 try:
                     sections += count(STANDALONE_TABS.get(label) or general_tree(self.settings))
                 except Exception:                              # noqa: BLE001 - estimation seulement
                     pass
-            total = self._prebuild_units_total = len(SCOPES) + 2 * sections
+            total = self._prebuild_units_total = len(self.scopes) + 2 * sections
         done = len(self._built) + getattr(self, "_prebuild_units", 0)
         return min(0.99, done / total) if total else 0.0
 
@@ -4910,7 +4935,7 @@ class SettingsWindowV2(QDialog):
             return
         self._built.add(index)
         t = time.perf_counter()
-        label, title = SCOPES[index]
+        label, title = self.scopes[index]
         page = self._build_page(label, title)
         old = self.stack.widget(index)
         self.stack.removeWidget(old)

@@ -43,7 +43,7 @@ class PrebuildTest(unittest.TestCase):
         self.assertTrue(all(n._built for n in nodes))
         self.assertTrue(all(n.is_collapsed() for n in nodes))        # construites sans etre ouvertes
         self.assertFalse(win._dirty)                                 # et sans rien modifier
-        node = next(n for n in nodes if n.node.title == "Visionneuse")
+        node = next(n for n in nodes if n.node.title == "Application")
         start = time.perf_counter()
         node.set_collapsed(False)                                    # un clic : deja construite
         self.assertLess(time.perf_counter() - start, 0.5)

@@ -105,21 +105,50 @@ class SettingsLinkMixin:
         # SANS parent (lien « transitoire » de fenetre seulement : elle reste au-dessus de celle-ci) : la feuille de
         # style de la fenetre principale ne se propage pas a ses ~20 000 widgets (voir _apply_global_stylesheet).
         dialog = settings_window_v2.SettingsWindowV2(None)
-        dialog.prebuild_hold = self._settings_prebuild_hold
         dialog.prebuild_unattended = self._settings_unattended
         dialog.prebuild_progress = self._on_settings_prebuild_progress
+        self._wire_settings_dialog(dialog)
+        dialog.moduleSettingsRequested.connect(self.open_module_settings)
+        self._settings_dialog_v2 = dialog
+        return dialog
+
+    def _wire_settings_dialog(self, dialog):
+        """Commun a la fenetre generale et a celles des modules : au-dessus de la fenetre principale, apercu en
+        direct et enregistrement par les memes rappels."""
+        dialog.prebuild_hold = self._settings_prebuild_hold
         dialog.create()
         handle, owner = dialog.windowHandle(), self.windowHandle()
         if handle is not None and owner is not None:
             handle.setTransientParent(owner)
-        # Sections branchees (settings_window_v2.WIRED_SECTIONS) : apercu en
-        # direct et enregistrement passent par les memes rappels que la
-        # fenetre reelle.
         dialog.settingsChanged.connect(
             lambda settings, d=dialog: self._apply_settings(settings, getattr(d, "live_changed_keys", None)))
         dialog.settingsSaved.connect(self._apply_settings)
-        self._settings_dialog_v2 = dialog
-        return dialog
+
+    def open_module_settings(self, module: str):
+        """Fenetre de reglages d'un module (cle de settings_window_v2.MODULE_SCOPES : video, markdown, board, viewer),
+        ouverte par le bouton du cadre du module ou par la rangee de la fenetre generale. MEME classe que la
+        generale (seuls ses onglets changent), construite a la premiere ouverture puis gardee comme elle."""
+        import settings_window_v2
+        windows = getattr(self, "_module_settings", None)
+        if windows is None:
+            windows = self._module_settings = {}
+        existing = windows.get(module)
+        try:
+            if existing is not None and existing.isVisible():
+                existing.raise_()
+                existing.activateWindow()
+                return
+            if existing is not None and not existing.discard_on_reopen():
+                existing.reopen()
+                return
+            if existing is not None:
+                existing.deleteLater()
+        except RuntimeError:
+            pass
+        dialog = settings_window_v2.SettingsWindowV2(None, module=module)
+        self._wire_settings_dialog(dialog)
+        windows[module] = dialog
+        dialog.show()
 
     def _heavy_foreground_work(self) -> bool:
         """Vrai quand l'appli a besoin de toute la boucle d'interface : lecture video en cours. Les preparations

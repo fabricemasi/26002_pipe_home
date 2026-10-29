@@ -142,6 +142,7 @@ class BoardModuleMixin:
                     ("redo", "Rétablir (Ctrl+Y)", lambda: self._board and self._board.redo()),
                     ("fit", "Tout voir (Maj+1)", lambda: self._board and self._board.view.fit_all()),
                     ("export", "Exporter (PNG, SVG, PDF)…", lambda: self._board and self._board.export_dialog()),
+                    ("gear", "Réglages du board (MRO, CAD)", lambda: self.open_module_settings("board")),
                     ("close", "Fermer le board (Échap)", self._close_board)):
                 button = IconButton(kind, role_color("buttons", "#c4cacf"), C["text"], parent=group)
                 button.setCursor(Qt.ArrowCursor)

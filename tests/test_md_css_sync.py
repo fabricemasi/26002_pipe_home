@@ -294,10 +294,9 @@ class SettingsWindowFollowsTest(_Case):
         settings = copy.deepcopy(BASE)
         with mock.patch.object(v2, "load_settings", lambda: copy.deepcopy(settings)), \
                 mock.patch.object(v2, "AUTOSAVE", False):
-            window = v2.SettingsWindowV2()
+            window = v2.SettingsWindowV2(module="markdown")
         self.addCleanup(window.deleteLater)
-        index = [label for label, _t in v2.SCOPES].index(v2.MARKDOWN_TAB)
-        window._show_page(index)
+        window._show_page(0)
         heads = next(n for n in window.findChildren(v2._LazyNode)
                      if n._values.name == v2.MARKDOWN_TAB and n.node.title == "Titres H1-H6")
         window.reset_to_defaults(heads)                      # sections construites (champs a l'ancienne valeur)

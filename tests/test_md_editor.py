@@ -117,10 +117,9 @@ class MarkdownTabTest(unittest.TestCase):
         settings["table_dims"] = {}
         with mock.patch.object(v2, "load_settings", lambda: copy.deepcopy(settings)), \
                 mock.patch.object(v2, "AUTOSAVE", False):
-            window = v2.SettingsWindowV2()
+            window = v2.SettingsWindowV2(module="markdown")
         self.addCleanup(window.deleteLater)
-        index = [label for label, _t in v2.SCOPES].index(v2.MARKDOWN_TAB)
-        window._show_page(index)
+        window._show_page(0)
         heads = next(n for n in window.findChildren(v2._LazyNode) if n.node.title == "Titres H1-H6")
         heads._build()
         children = list(heads._child_nodes)
@@ -150,10 +149,9 @@ class MarkdownTabTest(unittest.TestCase):
         settings["md_h2_weight"] = 800
         with mock.patch.object(v2, "load_settings", lambda: copy.deepcopy(settings)), \
                 mock.patch.object(v2, "AUTOSAVE", False):
-            window = v2.SettingsWindowV2()
+            window = v2.SettingsWindowV2(module="markdown")
         self.addCleanup(window.deleteLater)
-        index = [label for label, _t in v2.SCOPES].index(v2.MARKDOWN_TAB)
-        window._show_page(index)
+        window._show_page(0)
         titles = [n for n in window.findChildren(v2._LazyNode) if n._values.name == v2.MARKDOWN_TAB]
         self.assertEqual([n.node.title for n in titles if n.level == 1], [n.title for n in v2.MARKDOWN_TREE])
         heads = next(n for n in titles if n.node.title == "Titres H1-H6")

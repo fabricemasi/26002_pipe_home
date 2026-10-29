@@ -74,6 +74,31 @@ class EquivalenceTest(WindowTestCase):
         self.assertEqual(unknown, [])
 
 
+class ModuleWindowTest(WindowTestCase):
+    """Une fenetre de reglages PAR MODULE : meme classe que la generale, seuls ses onglets changent."""
+
+    def test_module_window_has_its_tabs_title_and_geometry(self):
+        with mock.patch.object(v2, "AUTOSAVE", False):
+            board = v2.SettingsWindowV2(module="board")
+            viewer = v2.SettingsWindowV2(module="viewer")
+        self.assertEqual(board.scopes, v2.MODULE_SCOPES["board"])
+        self.assertFalse(board.tabs.isHidden())                   # MRO et CAD : deux onglets
+        self.assertTrue(viewer.tabs.isHidden())                   # un seul onglet : pas de barre
+        self.assertEqual(viewer._geometry_key(), f"{v2.GEOMETRY_KEY}:viewer")
+        titles = [n.node.title for n in viewer.findChildren(v2._LazyNode) if n.level == 1]
+        self.assertEqual(titles, [n.title for n in v2.VIEWER_TREE])
+
+    def test_general_window_buttons_ask_for_module_windows(self):
+        with mock.patch.object(v2, "AUTOSAVE", False):
+            win = v2.SettingsWindowV2()
+        asked = []
+        win.moduleSettingsRequested.connect(asked.append)
+        labels = {b.text(): b for b in win.findChildren(v2._Btn)}
+        for title in v2.MODULE_TITLES.values():
+            labels[title].click()
+        self.assertEqual(asked, list(v2.MODULE_TITLES))
+
+
 class SaveTest(WindowTestCase):
     def setUp(self):
         self.win = build(("Sliders",))
@@ -181,12 +206,15 @@ class WiringTest(WindowTestCase):
             self.assertFalse(by_title[title]._head._body.isEnabled(), title)
 
     def test_tabs_are_general_ones_only(self):
-        """Plus d'onglet de surcharge par colonne (Type, Projets, Focus, Inspecteur...) : General et les
-        modules ; le libelle affiche de Markdown est « Module Markdown » (l'identifiant ne change pas)."""
-        self.assertEqual([label for label, _t in v2.SCOPES], ["General", v2.MARKDOWN_TAB, v2.VIDEO_TAB, v2.MRO_TAB, v2.CAD_TAB])
-        self.assertEqual(v2.TAB_LABELS[v2.MARKDOWN_TAB], "Module Markdown")
+        """Fenetre generale : le seul onglet General ; chaque module a SA fenetre (meme classe, ses onglets).
+        Les identifiants d'onglets ne changent pas (cles retenues : ordre des titres, espaces)."""
+        self.assertEqual([label for label, _t in v2.SCOPES], ["General"])
+        self.assertEqual({m: [label for label, _t in s] for m, s in v2.MODULE_SCOPES.items()},
+                         {"video": [v2.VIDEO_TAB], "markdown": [v2.MARKDOWN_TAB], "board": [v2.MRO_TAB, v2.CAD_TAB],
+                          "viewer": [v2.VIEWER_TAB]})
         self.assertEqual(v2.MARKDOWN_TAB, "Markdown")
         self.assertEqual(v2.MRO_TAB, "Module MRO")
+        self.assertNotIn("Visionneuse", [n.title for n in v2.GENERAL_TREE])
 
     def test_mro_dimensions_follow_the_move_to_its_tab(self):
         dims = v2._renamed_dims({"MRO#0": {"width": 1}, "MRO/Barres d'outils#0": {"width": 2},
@@ -575,7 +603,7 @@ class AppliedSettingsTest(WindowTestCase):
 class CadTabAndIconTablesTest(WindowTestCase):
     def test_cad_tab_groups_keys_and_defaults(self):
         from fm_board.model import CAD_ICON_ROWS
-        self.assertIn((v2.CAD_TAB, None), v2.SCOPES)
+        self.assertIn((v2.CAD_TAB, None), v2.MODULE_SCOPES["board"])
         leaves = [child.group for node in v2.CAD_TREE for child in (node.children or (node,))]
         self.assertEqual(leaves,
                          ["CAD : Unités", "CAD : Types de ligne", "CAD : Accrochages", "CAD : Suivi et saisie",

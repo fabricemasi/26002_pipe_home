@@ -394,10 +394,9 @@ class FocusFrameTest(unittest.TestCase):
 
 class FilmSettingsTest(unittest.TestCase):
     def test_visionneuse_hides_text_cell_settings(self):
-        node = next(n for n in v2.GENERAL_TREE if n.title == "Visionneuse")
-        self.assertEqual(node.group, "Visionneuse")
-        self.assertEqual([c.title for c in node.children],
-                         ["Tableau", "Cellules", "Focus", "Filtres", "Icônes"])
+        self.assertEqual(v2.VIEWER_TREE[0].group, "Visionneuse")
+        self.assertEqual([c.title for c in v2.VIEWER_TREE],
+                         ["Affichage", "Tableau", "Cellules", "Focus", "Regroupement", "Filtres", "Icônes"])
         self.assertNotIn("Visionneuse : Cellule texte", [group for _title, group in v2.VIEWER_FILM_GROUPS])
         self.assertEqual([sp.label for sp in v2.CATALOG["Visionneuse : Focus"]],
                          ["Bordures de l'image", "Border radius de l'image", "Ombres de l'image"])
@@ -459,10 +458,10 @@ class FilmSettingsTest(unittest.TestCase):
     def test_open_window_takes_values_changed_elsewhere(self):
         settings = copy.deepcopy(DEFAULT_SETTINGS)
         with mock.patch.object(v2, "load_settings", lambda: copy.deepcopy(settings)):
-            win = v2.SettingsWindowV2()
+            win = v2.SettingsWindowV2(module="viewer")
         self.addCleanup(win.deleteLater)
         page = win.stack.currentWidget()
-        for title in ("Visionneuse", "Cellules"):     # les enfants naissent au depliage du parent
+        for title in ("Cellules",):
             for node in page.findChildren(v2._LazyNode):
                 if node.node.title == title:
                     node.set_collapsed(False)

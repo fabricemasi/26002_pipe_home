@@ -921,7 +921,7 @@ class MroIconsTest(_PaneCase):
         self.assertIn("ui_board_select", keys)
         self.assertIn("ui_board_lock", keys)
         self.assertIn(("Icônes", "MRO : Icones"), [(n.title, n.group) for n in v2.MRO_TREE])
-        self.assertIn((v2.MRO_TAB, None), v2.SCOPES)
+        self.assertIn((v2.MRO_TAB, None), v2.MODULE_SCOPES["board"])
         self.assertNotIn("MRO", [n.title for n in v2.GENERAL_TREE])
         import fm_board.ui as board_ui_module
         asked = []

@@ -187,6 +187,7 @@ class VideoModuleMixin:
                     ("info", "Informations en surimpression (I)", lambda: self._video and self._video.toggle_info()),
                     ("fullscreen", "Plein écran (F, Échap pour sortir)",
                      lambda: self._video and self._video.toggle_fullscreen()),
+                    ("gear", "Réglages du module vidéo", lambda: self.open_module_settings("video")),
                     ("close", "Fermer le module vidéo (Échap)", self._close_video)):
                 button = IconButton(kind, role_color("buttons", "#c4cacf"), C["text"], parent=group)
                 button.setCursor(Qt.ArrowCursor)
