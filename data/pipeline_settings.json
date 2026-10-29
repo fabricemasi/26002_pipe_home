@@ -434,7 +434,7 @@
   "board_snap_resize": true,
   "board_snap_distance": 10,
   "board_pen_presets": {},
-  "board_cad_osnap": true,
+  "board_cad_osnap": false,
   "board_cad_osnap_end": true,
   "board_cad_osnap_mid": true,
   "board_cad_osnap_cen": true,
@@ -3422,6 +3422,5 @@
   "toggle3_icon_on": "",
   "toggle3_icon_off": "",
   "toggle3_icon_frames": [],
-  "toggle3_anim_ms": 600,
-  "interface_move_positions": {}
+  "toggle3_anim_ms": 600
 }
