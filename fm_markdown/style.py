@@ -1,5 +1,5 @@
 """Apparence des notes : reglages `md_*` (onglet « Markdown » des reglages, defauts dans
-`settings_store.MARKDOWN_DEFAULTS`) -> variables CSS.
+`fm_markdown/settings_defaults.MARKDOWN_DEFAULTS`) -> variables CSS.
 
 SOURCE UNIQUE : les regles (web/base.css) ne contiennent aucune valeur d'apparence, seulement des `var(--md-…)` ;
 ce module donne leurs valeurs. La meme feuille habille le mode lecture, le mode edition (CodeMirror), les fichiers
@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from settings_store import MARKDOWN_DEFAULTS
+from fm_markdown.settings_defaults import MARKDOWN_DEFAULTS
 
 
 # (libelle, taille, graisse) -> nom de famille reel ; pose par l'appli (browser_core._resolve_font_family).

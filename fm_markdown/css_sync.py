@@ -36,7 +36,7 @@ from PySide6.QtCore import QFileSystemWatcher, QObject, QTimer, Qt, Signal
 from PySide6.QtWidgets import QApplication
 
 from fm_markdown import preview as markdown_preview
-from settings_store import MARKDOWN_DEFAULTS
+from fm_markdown.settings_defaults import MARKDOWN_DEFAULTS
 from fm_markdown import style
 
 BEGIN = "/* pipeline-browser:sync:begin"
