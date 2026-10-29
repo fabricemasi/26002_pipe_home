@@ -3953,27 +3953,11 @@ class _TableFrame(QWidget):
                 resizer.resized.connect(lambda *_a: self.dimsChanged.emit())
 
     def _refresh_style(self):
-        t = self._border_thickness
-
-        def edge(side: str) -> str:
-            # "0px solid transparent", PAS "none" — meme raison que
-            # column_frame_qss/header_qss : "none" ferait deborder le fond
-            # carre au coin arrondi, la ou une bordure a epaisseur nulle
-            # (mais toujours "solid") reste correctement decoupee par le
-            # border-radius du meme cote.
-            # Tableau coupe (« Split au-dessus ») : la bordure est peinte partie par partie (paintEvent).
-            # Les espaceurs, pas _split_gaps() : juste apres la coupe, leur geometrie est encore nulle (mise
-            # en page pas faite) et la bordure QSS restait, visible a gauche / a droite dans l'espace (signale).
-            if t <= 0 or not self._border_enabled.get(side, True) or self._split_spacers:
-                return "0px solid transparent"
-            return f"{t}px solid {self._border_colors.get(side, M['panel_border'])}"
-
-        _apply_stylesheet_cached(
-            self,
-            f"#TableFrame {{ border-top: {edge('top')}; border-right: {edge('right')}; "
-            f"border-bottom: {edge('bottom')}; border-left: {edge('left')}; "
-            f"border-radius: {self._radius}px; }}"
-        )
+        # Bordure et coins PEINTS (paintEvent), plus en QSS : un QSS qui change (rayon, couleur, epaisseur, a
+        # chaque cran de curseur) repolissait le tableau ET tout son contenu (~14 ms pour le tableau de
+        # l'inspecteur). La feuille reste fixe : rien a repolir, un simple update().
+        _apply_stylesheet_cached(self, "#TableFrame { border: 0px solid transparent; }")
+        self.update()
 
     def setRadius(self, radius: int):
         self._radius = max(0, int(radius))
@@ -3993,11 +3977,10 @@ class _TableFrame(QWidget):
 
     def paintEvent(self, event):
         super().paintEvent(event)
+        # Une partie par morceau (« Split au-dessus » : sa bordure complete et ses 4 coins arrondis, la bordure
+        # deborde d'un pixel dans l'espace, le contenu est en retrait de 1 px, voir _table_frame) ; sans coupe,
+        # une seule partie : tout le cadre.
         gaps = self._split_gaps()
-        if not gaps:
-            return
-        # Une partie par morceau : sa bordure complete et ses 4 coins arrondis ; la bordure deborde
-        # d'un pixel dans l'espace (le contenu est en retrait de 1 px, voir _table_frame).
         t = self._border_thickness
         on = {k: bool(self._border_enabled.get(k, True)) and t > 0 for k in ("top", "right", "bottom", "left")}
         corners = {c: self._radius for c in ("top_left", "top_right", "bottom_right", "bottom_left")}
