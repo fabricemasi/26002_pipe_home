@@ -129,7 +129,7 @@ FAIT (2026-10-29) : fenêtres de réglages par module, partie FENÊTRE (`Setting
 
 FAIT (2026-10-29) : définitions des réglages de `fm_video`, `fm_markdown`, `fm_board`, `fm_cad` et `fm_visionneuse` dans leur paquet (`fm_video/settings.py`, `fm_video/settings_defaults.py`, briques sans Qt dans `settings_catalog.py`).
 
-L'étape « fenêtres de réglages par module » est TERMINÉE (2026-10-29). PROCHAINE ÉTAPE : fm_theme, étape 1 « Inventaire » (voir « Ordre de migration »). Presets : un seul jeu global, confirmé le 2026-10-29.
+L'étape « fenêtres de réglages par module » est TERMINÉE (2026-10-29). Presets : un seul jeu global, confirmé le 2026-10-29. fm_theme, étape 1 « Inventaire » : liste PRODUITE le 2026-10-29 (`tools/inventaire_reglages.py` → `fm_theme_inventaire.md` : 530 clés d'aspect générique, 853 d'aspect propre à fm_browser, 235 de fonctionnement), EN ATTENTE de validation par l'utilisateur. Corrections : dans le script (`EXCEPTIONS`, familles), puis relancer.
 
 ÉTAPE BROWSER_CORE (2026-10-29, faite par Codex, VALIDÉE et commitée par Claude Code) : façade `browser_core.py` (`__getattr__` pour les états réaffectés `_CONFIG_REVISION`, `_default_thumbnail`) + dix services dans `browser_core_parts/` ; carte dans `docs/agents/colonnes.md`. 26 sondes protégées par `tests/_probe_isolate.py`. Validation : pyflakes sans nom indéfini ; aucune copie figée d'un état réaffecté (`from x import ÉTAT`) ; patches des tests vérifiés (ceux qui passent encore par une façade agissent, le code testé lit le nom par la façade à l'appel) ; suite complète : 29 FAIL / ERROR, tous déjà connus.
 - `test_focus_viewer` (6 tests d'animation minutés : `ctrl_wheel`, `ripple`, `bump`, `new_image_resets_zoom`, `slide_starts`, `zoom_keeps_anchor`) : INTERMITTENTS selon la charge de la machine, 5 à 6 échecs par passe le 2026-10-29 sur 297d6bd (avant tout découpage de Codex) comme sur l'état actuel. Ne pas les attribuer à un découpage sans comparaison sur l'ancien commit (`git worktree add`).
@@ -191,7 +191,7 @@ Ordre : ce chantier est INDÉPENDANT de fm_theme et passe EN PREMIER (il allège
 
 ## Ordre de migration (chaque étape laisse l'appli fonctionnelle, tests verts)
 
-1. **Inventaire** : classer chaque clé de `DEFAULT_SETTINGS` en aspect (fm_theme) / fonctionnement (fm_browser) / aspect propre à fm_browser (à convertir en références) ; script qui produit la liste, validée par l'utilisateur.
+1. **Inventaire** : classer chaque clé de `DEFAULT_SETTINGS` en aspect (fm_theme) / fonctionnement (fm_browser) / aspect propre à fm_browser (à convertir en références) ; script qui produit la liste, validée par l'utilisateur. Script : `tools/inventaire_reglages.py` ; liste : `fm_theme_inventaire.md` (générée, ne pas lire en entier : chercher la clé voulue).
 2. **Paquet `fm_theme/`** : déplacer les briques sans changer leur comportement, modules d'origine gardés comme simples réexportations le temps de la transition. Vérifier qu'aucun import ne va de fm_theme vers fm_browser.
 3. **Format de preset fm_theme** : types d'éléments + variantes ; convertisseur depuis `pipeline_settings.presets.json` (les presets actuels deviennent des presets fm_theme, rien n'est perdu).
 4. **fm_browser charge son preset** (`theme_preset`), canal temps réel + surveillance du fichier, restylage ciblé fusionné par image. Mesure de fluidité (budget < 16 ms par pas, voir « Temps réel et fluidité »).
