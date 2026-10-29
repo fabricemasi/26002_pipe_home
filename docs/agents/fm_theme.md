@@ -119,6 +119,21 @@ Points relevés (2026-10-28) :
 - Les tests patchent des noms par module (`fm_board.ui.X`…) : à renommer avec les paquets.
 - **Avant de commencer** : commiter (ou mettre de côté) le travail CAD en cours (`fm_cad/cad*.py`, `tests/test_cad.py`, `docs/agents/cad.md`, `settings_store.py`, `settings_window_v2.py`), sinon le renommage se mélange à ces modifications.
 
+### PASSATION (2026-10-28) : état exact et prochaine étape
+
+FAIT (un commit par étape, branche `nettoyage-code`) : tests rapides par module (`tests/run.py`, `@lent`) ; `fm_video/` ; `fm_markdown/` (+ `preview.py`, ex `markdown_preview.py`) ; `fm_visionneuse/` (`focus.py` = façade de 11 sous-modules) ; `fm_board/` + `fm_miro/` + `fm_cad/` (cycle gardé) ; `pipeline_browser.py` découpé dans `main_window/` (mixins, carte `docs/agents/fm_browser.md`).
+
+PROCHAINE ÉTAPE : découper `previews.py` (~5 300 lignes), même méthode que `focus.py` et `pipeline_browser.py` : analyser les dépendances entre blocs (AST), couches sans cycle, façade qui réexporte (`previews.X` en lecture), doc avec carte (`docs/agents/apercus.md`), tests `python tests/run.py apercus` puis `--tout` avant le commit. Ensuite `column.py`, `browser_core.py`, `detail_panel.py` ; puis « fenêtres de réglages par module » ; seulement ensuite fm_theme.
+
+PIÈGES déjà rencontrés pendant ces découpages :
+- Variable de module RÉAFFECTÉE (`global X`, ou `module.X = …` ailleurs) : la laisser dans le module qui la LIT, les autres écrivent `module.X = …` (jamais `from m import X` puis réaffectation : copie figée).
+- Patch de test : viser le module qui APPELLE le nom (`main_window.viewer_chrome.save_settings`), jamais l'ancien module ni la façade — sinon le patch n'agit plus SANS faire échouer le test.
+- Imports placés au milieu d'un fichier : les remonter dans l'en-tête AVANT de découper.
+- Vérifier avec `python -m pyflakes <fichiers>` (aucun « undefined name ») et charger les paquets dans plusieurs ordres.
+- `git add` d'un chemin qui n'existe plus échoue en silence : vérifier `git show --stat HEAD` après chaque commit.
+- Échecs DÉJÀ présents avant ce chantier (~15, dont des tests d'animation minutés intermittents : `test_focus_viewer`, `test_viewer_filter`, `test_settings_preload`, `test_table_split`, `test_shadows`, `test_render_log`…) : comparer la liste des FAIL / ERROR avant / après, ne pas les « corriger » à l'aveugle. Plantage intermittent à la SORTIE de Python (code 0xC0000409, tests OK) : `run.py` l'affiche « PLANTÉ après les tests », sans lien avec les découpages.
+- Ne jamais commiter `data/pipeline_settings.json` (réglages réels de l'utilisateur).
+
 ### Découpage des gros fichiers de fm_browser (ajouté le 2026-10-28, accord de l'utilisateur)
 
 - **FAIT 2026-10-28** (19 fichiers dans `main_window/`, mixins ; carte `docs/agents/fm_browser.md`). **`pipeline_browser.py` (~9 800 lignes)** : le couper par responsabilité, sans changer le comportement (ex. barre de titre / `IconButton`, gestion des colonnes et de la navigation, raccourcis, branchement des modules et leurs `HOOKS`, application des réglages `apply_all_settings` / `_apply_settings`, `main()`). Découpage exact à établir en début d'étape d'après les classes et méthodes ; `PipelineBrowser` peut rester une classe composée de mixins par fichier. Gain : toute requête sur la fenêtre principale ne lit plus que le fichier de sa responsabilité.
