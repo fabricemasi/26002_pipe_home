@@ -198,7 +198,7 @@ Ordre : ce chantier est INDÉPENDANT de fm_theme et passe EN PREMIER (il allège
 2. **Paquet `fm_theme/`** : déplacer les briques sans changer leur comportement, modules d'origine gardés comme simples réexportations le temps de la transition. Vérifier qu'aucun import ne va de fm_theme vers fm_browser.
 3. **Format de preset fm_theme** : types d'éléments + variantes ; convertisseur depuis `pipeline_settings.presets.json` (les presets actuels deviennent des presets fm_theme, rien n'est perdu).
 4. **fm_browser charge son preset** (`theme_preset`), canal temps réel + surveillance du fichier, restylage ciblé fusionné par image. Mesure de fluidité (budget < 16 ms par pas, voir « Temps réel et fluidité »).
-5. **Appli fm_theme** : la fenêtre de réglages v2 réduite à l'aspect, gestion des presets et des variantes.
+5. **Appli fm_theme** : la fenêtre de réglages v2 réduite à l'aspect, gestion des presets et des variantes. APERÇU À GAUCHE (demande de l'utilisateur, 2026-10-29) : un panneau à gauche de la fenêtre montre l'ÉLÉMENT EN COURS DE MODIFICATION, et suit la section ouverte à droite (section Toggle : des toggles allumés / éteints ; Tableau : un petit tableau ; Couleurs ou Polices : tous les éléments) ; il change tout seul au passage à une autre section et se restyle en direct à chaque pas d'un curseur (même budget < 16 ms). Construit avec les briques de fm_theme (jamais un style inventé).
 6. **Réglages de fm_browser** réduits au fonctionnement.
 7. Généraliser les variantes aux types qui n'en ont pas encore (tableaux, colonnes…), au fil des demandes.
 
