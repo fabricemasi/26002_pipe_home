@@ -6,13 +6,17 @@ EXACTE de ce fil à ce moment-là.
     QT_QPA_PLATFORM=windows python tests/_probe_real_app_play.py <vidéo> [secondes_de_lecture] [attente_avant]
     STALL=40 (ms)   LOG=<fichier de piles>
 """
+
+from _probe_isolate import isolate as _isolate_probe, protected_modules as _probe_modules
+_isolate_probe()
 import faulthandler, os, statistics, sys, threading, time
 from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "windows")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import settings_store, browser_core
 import pipeline_browser as pb
-for module in (settings_store, pb, browser_core):
+from browser_core_parts import project_config as _core_project_config, settings as _core_settings
+for module in (settings_store, pb, browser_core, _core_project_config, _core_settings, *_probe_modules()):
     for name in ("save_settings", "_save_window_geometry", "save_layout_settings", "_update_layout_setting",
                  "save_live_state", "save_window_state"):
         if hasattr(module, name):

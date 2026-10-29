@@ -5,6 +5,9 @@ fenêtres de corrections et d'export, rendu GPU = rendu CPU. Dossier temporaire,
 
     QT_QPA_PLATFORM=windows python tests/_probe_video_module.py
 """
+
+from _probe_isolate import isolate as _isolate_probe, protected_modules as _probe_modules
+_isolate_probe()
 import copy, os, subprocess, sys, tempfile, time
 from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "windows")
@@ -15,7 +18,8 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 import settings_store, browser_core
 import pipeline_browser as pb
-for module in (settings_store, pb, browser_core):
+from browser_core_parts import project_config as _core_project_config, settings as _core_settings
+for module in (settings_store, pb, browser_core, _core_project_config, _core_settings, *_probe_modules()):
     for name in ("save_settings", "_save_window_geometry", "save_layout_settings", "_update_layout_setting",
                  "save_live_state"):
         if hasattr(module, name):
@@ -157,7 +161,7 @@ if os.environ.get("CALLERS"):
     pstats.Stats(main_prof).sort_stats("cumulative").print_callers(os.environ["CALLERS"])
     pstats.Stats(main_prof).sort_stats("cumulative").print_stats(18)
 if os.environ.get("PROFILE_PLAY"):
-    pstats.Stats(main_prof).sort_stats("cumulative").print_stats(r"(previews|pipeline_browser|detail_panel|column|browser_core).py", 25)
+    pstats.Stats(main_prof).sort_stats("cumulative").print_stats(r"(previews|pipeline_browser|detail_panel|column|browser_core)\.py|(?:browser_core_parts|column_parts|preview_services|main_window)[/\\]", 25)
 gaps = [b[0] - a[0] for a, b in zip(shown, shown[1:])]
 _fps = float(pane.source.fps)
 print(f"lecture {PLAY:g} s à {_fps:g} fps : {len({i for _t, i in shown})} images montrées (attendu ~{PLAY * _fps:.0f}), "

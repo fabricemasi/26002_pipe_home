@@ -4,6 +4,9 @@ au repos, clavier (fleches, Fin, rebond, Echap), zoom Ctrl+molette, zoom « sema
 planche, taille des vignettes, choix d'une vignette, retour aux colonnes (inspecteur et colonne sur
 la derniere image vue). Usage :
     python tests/_probe_viewer.py "F:\\PIPELINE\\un\\dossier\\d'images" [rang de depart]"""
+
+from _probe_isolate import isolate as _isolate_probe, protected_modules as _probe_modules
+_isolate_probe()
 import os
 import sys
 import time
@@ -21,7 +24,8 @@ import settings_store
 import browser_core
 import pipeline_browser as pb
 
-for module in (settings_store, pb, browser_core):
+from browser_core_parts import project_config as _core_project_config, settings as _core_settings
+for module in (settings_store, pb, browser_core, _core_project_config, _core_settings, *_probe_modules()):
     for name in ("save_settings", "_save_window_geometry", "save_layout_settings", "_update_layout_setting"):
         if hasattr(module, name):
             setattr(module, name, lambda *a, **k: None)

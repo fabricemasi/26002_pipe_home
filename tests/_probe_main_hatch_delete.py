@@ -1,5 +1,8 @@
 """Suppression de lignes d'un board DANS la vraie fenetre principale, avec les VRAIS reglages de l'utilisateur
 (lus seulement : aucune ecriture), sur une copie du board.   QT_QPA_PLATFORM=windows python tests/_probe_main_delete.py <board.mro>"""
+
+from _probe_isolate import isolate as _isolate_probe, protected_modules as _probe_modules
+_isolate_probe()
 import os, random, shutil, sys, tempfile, time
 from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "windows")
@@ -9,7 +12,8 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 import settings_store, browser_core
 import pipeline_browser as pb
-for module in (settings_store, pb, browser_core):
+from browser_core_parts import project_config as _core_project_config, settings as _core_settings
+for module in (settings_store, pb, browser_core, _core_project_config, _core_settings, *_probe_modules()):
     for name in ("save_settings", "_save_window_geometry", "save_layout_settings", "_update_layout_setting", "save_live_state"):
         if hasattr(module, name):
             setattr(module, name, lambda *a, **k: None)

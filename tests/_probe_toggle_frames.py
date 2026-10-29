@@ -2,6 +2,9 @@
 comme dans l'appli) : instants des images REELLEMENT peintes pendant la bascule, ecarts entre images,
 et ce qui bloque le fil de l'interface pendant ce temps (apercu en direct). Affichage natif conseille :
 QT_QPA_PLATFORM=windows python tests/_probe_toggle_frames.py. Jamais les reglages reels sur le disque."""
+
+from _probe_isolate import isolate as _isolate_probe, protected_modules as _probe_modules
+_isolate_probe()
 import copy, os, sys, tempfile, time
 from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -13,7 +16,8 @@ import settings_store, browser_core
 import pipeline_browser as pb
 import settings_window_v2 as v2
 import settings_widgets as sw
-for module in (settings_store, pb, browser_core, v2):
+from browser_core_parts import project_config as _core_project_config, settings as _core_settings
+for module in (settings_store, pb, browser_core, _core_project_config, _core_settings, *_probe_modules(), v2):
     for name in ("save_settings", "_save_window_geometry", "save_layout_settings", "_update_layout_setting"):
         if hasattr(module, name):
             setattr(module, name, lambda *a, **k: None)

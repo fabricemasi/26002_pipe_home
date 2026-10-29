@@ -12,6 +12,7 @@ from unittest.mock import patch
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 import browser_core as core
+from browser_core_parts import scan as core_scan
 from column import Column
 import column_loading as loading
 
@@ -246,10 +247,19 @@ class ColumnLoadingTest(unittest.TestCase):
             wait_for(lambda: not col.loading)
             self.assertEqual(ready, [2])
 
+    def test_config_invalidation_changes_loader_key(self):
+        # Le chargeur doit lire la révision actuelle, même réaffectée dans le service de scan.
+        service = loading.ColumnLoader()
+        previous_revision = core._CONFIG_REVISION
+        before = service.key([self.root], None)
+        core.forget_config(self.root / ".pipeline_layout.json")
+        self.assertEqual(core._CONFIG_REVISION, previous_revision + 1)
+        self.assertNotEqual(service.key([self.root], None), before)
+
     def test_remote_core_helpers_never_scan_on_gui(self):
         remote = Path(r"\\server\share\offline")
-        with patch.object(core, "_remote_gui", return_value=True), \
-             patch.object(core, "_request_directory") as request, \
+        with patch.object(core_scan, "_remote_gui", return_value=True), \
+             patch.object(core_scan, "_request_directory") as request, \
              patch.object(core.os, "scandir", side_effect=AssertionError("scan GUI")), \
              patch.object(core.os, "stat", side_effect=AssertionError("stat GUI")):
             self.assertIsNone(core.config_state(remote / ".pipeline_layout.json"))
@@ -262,8 +272,8 @@ class ColumnLoadingTest(unittest.TestCase):
         import lightroom_bridge
         lightroom_bridge._managed_directory.cache_clear()
         remote = Path(r"\\server\share\photos\test.jpg")
-        with patch.object(core, "_remote_gui", return_value=True), \
-             patch.object(core, "_request_directory"), \
+        with patch.object(core_scan, "_remote_gui", return_value=True), \
+             patch.object(core_scan, "_request_directory"), \
              patch.object(Path, "is_file", side_effect=AssertionError("stat GUI")), \
              patch.object(Path, "resolve", side_effect=AssertionError("resolve GUI")):
             self.assertFalse(lightroom_bridge.is_managed(remote))

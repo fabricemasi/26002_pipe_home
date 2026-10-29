@@ -440,12 +440,12 @@ class FilmSettingsTest(unittest.TestCase):
     def test_quick_style_values_also_go_to_the_default_preset(self):
         # Le preset par defaut est rejoue PAR-DESSUS le fichier a chaque lancement : sans lui, les valeurs
         # a la volee (sous-cellules image / texte...) etaient perdues.
-        import browser_core
+        from browser_core_parts import settings as core_settings
         import pipeline_browser as pb
         saved, presets = {}, {"fab": {"viewer_film_image_cell_bg": "#00000000"}}
         fake = type("W", (), {})()
         fake._film_style_pending = {"viewer_film_image_cell_bg": "#ff112233"}
-        with mock.patch("main_window.viewer_chrome.load_settings", lambda: {"default_preset": "fab"}),                 mock.patch("main_window.viewer_chrome.save_settings", saved.update),                 mock.patch.object(browser_core, "_load_presets", lambda: presets),                 mock.patch.object(browser_core, "_save_presets", lambda p: None):
+        with mock.patch("main_window.viewer_chrome.load_settings", lambda: {"default_preset": "fab"}),                 mock.patch("main_window.viewer_chrome.save_settings", saved.update),                 mock.patch.object(core_settings, "_load_presets", lambda: presets),                 mock.patch.object(core_settings, "_save_presets", lambda p: None):
             pb.PipelineBrowser._flush_filmstrip_style(fake)
         self.assertEqual(saved["viewer_film_image_cell_bg"], "#ff112233")
         self.assertEqual(presets["fab"]["viewer_film_image_cell_bg"], "#ff112233")

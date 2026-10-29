@@ -2,6 +2,9 @@
 dans la fenetre v2 OUVERTE -> la pellicule et la planche changent ; clic droit (vrai clic systeme, en mode
 natif) -> menu Tableau / Cellule image / Cellule texte -> tableau a la volee qui change aussi. Dossier
 temporaire, jamais les reglages reels. Lancer : QT_QPA_PLATFORM=windows python tests/_probe_film_cells.py"""
+
+from _probe_isolate import isolate as _isolate_probe, protected_modules as _probe_modules
+_isolate_probe()
 import copy, ctypes, os, sys, tempfile, time
 from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -15,7 +18,8 @@ import pipeline_browser as pb
 import settings_window_v2 as v2
 import settings_quick_style as qs
 import ui_state
-for module in (settings_store, pb, browser_core, v2, qs):
+from browser_core_parts import project_config as _core_project_config, settings as _core_settings
+for module in (settings_store, pb, browser_core, _core_project_config, _core_settings, *_probe_modules(), v2, qs):
     for name in ("save_settings", "_save_window_geometry", "save_layout_settings", "_update_layout_setting"):
         if hasattr(module, name):
             setattr(module, name, lambda *a, **k: None)

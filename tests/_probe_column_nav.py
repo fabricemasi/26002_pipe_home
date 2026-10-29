@@ -6,6 +6,9 @@ plusieurs dossiers frères, retour vers un dossier déjà vu, saut direct vers u
 
     QT_QPA_PLATFORM=windows python tests/_probe_column_nav.py [local|net|both] [PROFILE=1]
 """
+
+from _probe_isolate import isolate as _isolate_probe, protected_modules as _probe_modules
+_isolate_probe()
 import copy, os, shutil, statistics, sys, tempfile, time
 from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "windows")
@@ -16,7 +19,8 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 import settings_store, browser_core
 import pipeline_browser as pb
-for module in (settings_store, pb, browser_core):
+from browser_core_parts import project_config as _core_project_config, settings as _core_settings
+for module in (settings_store, pb, browser_core, _core_project_config, _core_settings, *_probe_modules()):
     for name in ("save_settings", "_save_window_geometry", "save_layout_settings", "_update_layout_setting",
                  "save_live_state"):
         if hasattr(module, name):
@@ -257,12 +261,14 @@ def count_fs():
     app_files = ("pipeline_browser", "column", "browser_core", "previews", "detail_panel", "row_delegates",
                  "capture_widgets", "preview_column", "lightroom_bridge", "focus", "file_attributes")
 
+    app_packages = {"browser_core_parts", "column_parts", "preview_services", "main_window", "fm_visionneuse"}
+
     def record(kind, path):
         if threading.current_thread() is not main_thread or not str(path).startswith("\\\\"):
             return
         for frame in reversed(traceback.extract_stack(limit=14)[:-2]):
             name = os.path.splitext(os.path.basename(frame.filename))[0]
-            if name in app_files:
+            if name in app_files or Path(frame.filename).parent.name in app_packages:
                 key = f"{kind:<8} {name}.{frame.name}:{frame.lineno}"
                 FS[key] = FS.get(key, 0) + 1
                 return
@@ -307,7 +313,7 @@ def main():
         if profile is not None:
             pstats.Stats(profile).sort_stats("cumulative").print_stats(
                 r"(pipeline_browser|column|browser_core|previews|detail_panel|row_delegates|capture_widgets|"
-                r"preview_column|focus)\.py", 40)
+                r"preview_column|focus)\.py|(?:browser_core_parts|column_parts|preview_services|main_window|fm_visionneuse)[/\\]", 40)
     finally:
         shutil.rmtree(local, ignore_errors=True)
     if FS:

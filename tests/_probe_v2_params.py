@@ -8,6 +8,9 @@ puis on verifie :
      du controle modifie (TITRE, Tableaux, Toggles, Sliders) ;
   3. qu'aucune exception n'est levee, et que le retour a la valeur d'origine restaure tout.
 `filtre` : prefixes de cles separes par des virgules (ex. "table_,slider_") ; sans filtre, tout (long)."""
+
+from _probe_isolate import isolate as _isolate_probe, protected_modules as _probe_modules
+_isolate_probe()
 import os, sys, traceback
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # Sans polices, la plateforme offscreen dessine des carres : police/gras/italique seraient invisibles.
@@ -34,7 +37,8 @@ from settings_sections import _CompactAppOrCustomColorField
 
 # Rien ne touche le disque.
 NOOP = lambda *a, **k: None
-for mod in (settings_store, browser_core, p, v2):
+from browser_core_parts import project_config as _core_project_config, settings as _core_settings
+for mod in (settings_store, browser_core, _core_project_config, _core_settings, *_probe_modules(), p, v2):
     for name in ("save_settings", "_save_presets", "_save_window_geometry"):
         if hasattr(mod, name):
             setattr(mod, name, NOOP)

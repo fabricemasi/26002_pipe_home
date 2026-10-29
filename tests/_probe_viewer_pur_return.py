@@ -1,6 +1,9 @@
 """Visionneuse sur un dossier avec une planche PureRef (3 images) : on regarde sa 3e image puis on
 revient aux colonnes : la colonne selectionne la planche et l'INSPECTEUR montre cette 3e image (pas la
 premiere). Dossier et cache temporaires, jamais les reglages reels."""
+
+from _probe_isolate import isolate as _isolate_probe, protected_modules as _probe_modules
+_isolate_probe()
 import copy, os, sys, tempfile, time
 from pathlib import Path
 from unittest import mock
@@ -13,7 +16,8 @@ from PySide6.QtWidgets import QApplication
 import settings_store, browser_core
 import pipeline_browser as pb
 import preview_column as pc
-for module in (settings_store, pb, browser_core):
+from browser_core_parts import project_config as _core_project_config, settings as _core_settings
+for module in (settings_store, pb, browser_core, _core_project_config, _core_settings, *_probe_modules()):
     for name in ("save_settings", "_save_window_geometry", "save_layout_settings", "_update_layout_setting"):
         if hasattr(module, name):
             setattr(module, name, lambda *a, **k: None)

@@ -17,7 +17,49 @@ Pour modifier une fonctionnalité, ouvrir directement son fichier et cette carte
 | Création, raccourcis, vignettes, collage, suppression et renommage | `column_parts/file_operations.py` |
 | Compteurs médias, raccourcis accessibles, ouverture visionneuse | `column_parts/shared.py` |
 | Glisser-déposer et confirmation | `capture_widgets.py` ; `settings_dialogs.py` |
-| Peinture des lignes et tuiles | `row_delegates.py` ; `browser_core.py` |
+| Peinture des lignes et tuiles | `row_delegates.py` ; `browser_core_parts/row_paint.py` |
+
+### Services du navigateur (`browser_core.py`)
+
+`browser_core.py` est la façade historique ; les services sont dans
+`browser_core_parts/` et ne dépendent pas de la fenêtre principale.
+
+| Fonctionnalité | Fichier dans `browser_core_parts/` |
+|---|---|
+| Scan, chemins réseau, métadonnées et cache des configurations | `scan.py` |
+| Dimensions et configuration des styles de colonnes | `dimensions.py` |
+| État des dossiers IN / OVER / OUT et dénombrements | `status.py` |
+| Configuration des projets, dispositions, punaises et raccourcis | `project_config.py` |
+| Icônes logiciels, punaises et vignettes de dossiers | `icons.py` |
+| Rôles de ligne, badges et peinture des images / titres | `row_paint.py` |
+| Application des réglages, indicateurs, tailles et presets | `settings.py` |
+| Instantanés, capture d’écran et fantôme de déplacement | `capture.py` |
+| Explorateur et dialogues des vignettes de dossier | `system_ui.py` |
+| Fondus, glissements, survol et minuterie haute résolution | `animation.py` |
+
+Les couches n’ont pas de cycle d’import : `scan` est une base, puis les services
+qui l’utilisent ; `row_paint` et `dimensions` précèdent `settings`, tandis que
+`capture` et `icons` précèdent `system_ui`. Les caches dictionnaires sont partagés
+par référence. Les valeurs réaffectées `_CONFIG_REVISION` (`scan`) et
+`_default_thumbnail` (`icons`) sont lues dynamiquement par la façade : le chargeur
+`column_loading` voit immédiatement toute invalidation. Patcher le module qui
+appelle : `browser_core_parts.scan` pour les fonctions réseau, `settings` pour
+les lectures / écritures de presets ; les appels extérieurs directs à la façade
+gardent leurs patches sur `browser_core`. Les sondes neutralisent aussi les
+écritures dans `project_config` et `settings` ; `tests/_probe_isolate.py` dirige
+les réglages et presets vers des copies sans modifier leur préchargement ; la
+synchronisation CSS Obsidian est désactivée comme dans les tests. Les fonctions
+déjà importées par les colonnes et la fenêtre sont aussi neutralisées.
+La sonde de navigation compte et profile également les fichiers des nouveaux
+paquets, pour ne pas masquer leurs accès réseau ou leur temps de peinture.
+
+Référence AVANT modification (`python tests/run.py colonnes`, hors sandbox) :
+un seul FAIL déjà présent, `test_software_launch.SoftwareButtonTest.`
+`test_columns_under_blender_get_the_button` (`projA absent de Projets`).
+Sonde d’une colonne de 25 dossiers : médiane de trois séries de 30 repeintures
+≈ 8,51 ms avant / 8,60 ms après ; rafraîchissement ≈ 1,16 / 1,17 ms. Lecture du
+cache des types de fichiers : ≈ 0,17 / 0,18 µs par appel. `cProfile` relevé sur
+30 repeintures ; aucun nouveau scan ou calcul de peinture introduit.
 
 Les mixins n’importent pas `column.py` à l’exécution : leurs méthodes utilisent
 `self`, et leurs imports viennent des services existants. `super()` des événements
