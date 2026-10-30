@@ -165,7 +165,7 @@ def build_elements(ctl, parent):
     grid.setSpacing(4)
     kinds = [k for k in dm.SHAPE_KINDS if k != "line"]
     for n, kind in enumerate(kinds):
-        button = _GlyphButton(f"shape:{kind}", kind, widget, 52)
+        button = _GlyphButton(f"design_shape:{kind}", kind, widget, 52)
         button.clicked.connect(lambda _c=False, k=kind: ctl.add_shape(k))
         grid.addWidget(button, n // 5, n % 5)
     layout.addLayout(grid)

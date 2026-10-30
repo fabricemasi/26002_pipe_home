@@ -515,7 +515,7 @@ class InterfaceTest(DesignTestCase):
         layers.deleteLater()
 
     def test_parse_size(self):
-        from fm_design.ui import parse_size
+        from fm_design.menus import parse_size
         self.assertEqual(parse_size("1200 x 628"), (1200.0, 628.0))
         self.assertEqual(parse_size("210×297 mm"), (round(210 * dm.MM, 2), round(297 * dm.MM, 2)))
         self.assertIsNone(parse_size("abc"))
@@ -610,6 +610,32 @@ class StyleAndPresentTest(DesignTestCase):
         finally:
             window.close()
             settle()
+
+
+class EffectsTest(DesignTestCase):
+    def test_image_mask_text_outline_and_new_shapes(self):
+        page = self.page(200, 200)
+        source = self.tmp / "red.png"
+        image = QImage(100, 100, QImage.Format_RGB32)
+        image.fill(QColor("#ff0000"))
+        image.save(str(source))
+        self.ctl.add_image_files([source])
+        item = self.ctl.selection()[0]
+        doc.change(self.scene, [item], lambda i: i.data.update(x=0.0, y=0.0, w=200.0, h=200.0, mask="ellipse"),
+                   "Masque")
+        out = render.render_image(page)
+        self.assertEqual(out.pixelColor(100, 100).name(), "#ff0000")
+        self.assertEqual(out.pixelColor(3, 3).name(), "#ffffff")        # coin hors du cercle : fond de page
+        text = self.ctl.add_text("body", {"text": "Contour"}, edit=False)
+        doc.change(self.scene, [text], lambda i: i.data.update(text_stroke="#00ff00", text_stroke_width=3.0),
+                   "Contour")
+        fmt = text.text_item.document().begin().begin().fragment().charFormat()
+        self.assertEqual(fmt.textOutline().widthF(), 3.0)
+        heart = self.ctl.add_shape("heart")
+        self.assertFalse(heart.outline().isEmpty())
+        self.assertFalse(heart.shape().contains(heart.content_rect().topLeft() + QPointF(1, 1)))
+        ring = self.ctl.add_shape("ring")
+        self.assertFalse(ring.shape().contains(ring.content_rect().center()))   # le trou ne se clique pas
 
 
 if __name__ == "__main__":

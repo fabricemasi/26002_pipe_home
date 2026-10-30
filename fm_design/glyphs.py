@@ -28,6 +28,15 @@ def paint_design_glyph(painter: QPainter, kind: str, rect: QRectF, color):
         painter.setFont(font)
         painter.drawText(rect, Qt.AlignCenter, text)
         return
+    if kind.startswith("design_shape:"):       # forme du module (dont cœur, anneau)
+        from .items import design_shape_path
+        shape = kind.split(":", 1)[1]
+        box = QRectF(cx - s * 1.5, cy - s * 1.1, s * 3.0, s * 2.2)
+        if shape == "line":
+            painter.drawLine(QPointF(box.left(), cy), QPointF(box.right(), cy))
+        else:
+            painter.drawPath(design_shape_path(shape or "rect", box, s * 0.5))
+        return
     if kind == "design":                      # module : palette (pastilles dans un cadre arrondi)
         painter.drawRoundedRect(QRectF(cx - s * 1.5, cy - s * 1.5, s * 3, s * 3), s * 0.7, s * 0.7)
         painter.setBrush(color)
@@ -58,6 +67,14 @@ def paint_design_glyph(painter: QPainter, kind: str, rect: QRectF, color):
                                         QPointF(cx + s * 0.7, cy - s * 0.2)]))
         painter.drawPolyline(QPolygonF([QPointF(cx - s * 1.4, cy + s * 0.6), QPointF(cx - s * 1.4, cy + s * 1.4),
                                         QPointF(cx + s * 1.4, cy + s * 1.4), QPointF(cx + s * 1.4, cy + s * 0.6)]))
+    elif kind == "design_effects":
+        font = QFont()
+        font.setPixelSize(max(6, int(s * 3.2)))
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(rect.translated(1.2, 1.2), Qt.AlignCenter, "A")
+        painter.setPen(QPen(color, 0.8))
+        painter.drawText(rect, Qt.AlignCenter, "A")
     elif kind == "design_present":
         painter.drawRoundedRect(QRectF(cx - s * 1.5, cy - s * 1.2, s * 3, s * 2.1), 2, 2)
         painter.drawLine(QPointF(cx, cy + s * 0.9), QPointF(cx, cy + s * 1.5))

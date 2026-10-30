@@ -40,10 +40,13 @@ DEFAULTS: dict[str, dict] = {
     # (comme Canva), `line_height` = facteur de la hauteur de ligne.
     TEXT: {"w": 520.0, "h": 60.0, "text": "", "font_family": "", "font_size": 48.0, "color": INK, "bold": False,
            "italic": False, "underline": False, "strike": False, "uppercase": False, "align": "left",
-           "line_height": 1.2, "letter_spacing": 0.0, "text_bg": "", **STYLE_COMMON},
+           "line_height": 1.2, "letter_spacing": 0.0, "text_bg": "", "text_stroke": INK, "text_stroke_width": 0.0,
+           **STYLE_COMMON},
     # Image : `crop` = [x0, y0, x1, y1] partie VISIBLE de l'image source (fractions, non destructif) ; réglages
     # -100..100 ; `radius` arrondi des angles ; contour.
-    IMAGE: {"w": 400.0, "h": 300.0, "asset": "", "crop": [0.0, 0.0, 1.0, 1.0], "brightness": 0.0, "contrast": 0.0,
+    # `mask` = forme du cadre (masque, « » = rectangle) : un nom de SHAPE_KINDS.
+    IMAGE: {"w": 400.0, "h": 300.0, "asset": "", "mask": "", "crop": [0.0, 0.0, 1.0, 1.0], "brightness": 0.0,
+            "contrast": 0.0,
             "saturation": 0.0, "blur": 0.0, "grayscale": False, "radius": 0.0, "stroke": INK, "stroke_width": 0.0,
             **STYLE_COMMON},
 }
@@ -70,7 +73,9 @@ PALETTE = ["#000000", "#545454", "#737373", "#a6a6a6", "#d9d9d9", "#ffffff", "#f
            "#cb6ce6", "#8c52ff", "#5e17eb", "#0097b2", "#0cc0df", "#5ce1e6", "#38b6ff", "#5170ff", "#004aad",
            "#00bf63", "#7ed957", "#c1ff72", "#ffde59", "#ffbd59", "#ff914d"]
 SHAPE_KINDS = ("rect", "round", "ellipse", "triangle", "diamond", "pentagon", "hexagon", "octagon", "star", "cross",
-               "right_arrow", "left_right_arrow", "callout", "cloud", "parallelogram", "trapezoid", "line")
+               "right_arrow", "left_right_arrow", "callout", "cloud", "parallelogram", "trapezoid", "heart", "ring",
+               "line")
+MASK_KINDS = ("", "round", "ellipse", "triangle", "diamond", "hexagon", "star", "heart", "cloud")
 RADIUS_SHAPES = ("rect", "round", "callout")
 CAP_KINDS = ("none", "arrow", "filled", "circle")
 

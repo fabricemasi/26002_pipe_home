@@ -15,9 +15,13 @@ Troisième module du board (après Miro et CAD), créé le 2026-10-29 à la dema
 | Géométrie pure (magnétisme, alignement, répartition, recadrage) | `geometry.py` | testable sans Qt |
 | Éléments de la scène : page, forme, texte, image ; peinture (dégradés, ombres, retouches d'image) | `items.py` | `DesignPageItem`, `DesignShapeItem`, `DesignTextItem`, `DesignImageItem` |
 | Opérations du document (1 étape d'annulation chacune) : pages, éléments, groupes, alignement, ordre, modèles | `document.py` | `add_page`, `duplicate_page`, `delete_page`, `move_page`, `resize_page`, `insert_elements`, `restack`, `apply_template`… |
-| Souris, clavier, sélection, gestes (Ctrl + glisser, poignées, rotation, recadrage), presse-papiers | `controller.py` | `DesignController` |
+| Activation, souris, clavier, sélection, poignées (lecture) | `controller.py` | `DesignController` (mélange les deux suivants) |
+| Gestes : cadre de sélection, Ctrl + glisser, poignées, rotation, recadrage, magnétisme | `gestures.py` | `GestureMixin` |
+| Commandes : ajouter page / forme / texte / image, dépôt, dupliquer, verrou, presse-papiers, style, présenter | `commands.py` | `CommandMixin` |
 | Dessin temporaire (titres de page, survol, poignées, guides, cadre de sélection, recadrage, bulle) | `overlay.py` | `DesignOverlay` (un seul QGraphicsItem, hors fichier) |
-| Barres : rail, barre contextuelle, barre des pages ; menus de propriétés ; export | `ui.py` | `DesignChrome`, `build_context_bar`, `*_menu`, `export_menu` |
+| Barres : rail, barre contextuelle, barre des pages (miniatures) | `ui.py` | `DesignChrome`, `build_context_bar`, `PageThumb` |
+| Menus : couleurs (dont couleurs du document), fond / dégradé, contour, ombre, position, masque, effets du texte, police, réglages / filtres d'image, redimensionner, export, clic droit | `menus.py` | `*_menu`, `open_context_menu`, `export_menu`, `parse_size` |
+| Présentation plein écran | `present.py` | `PresentationWindow` |
 | Panneau latéral (modèles et formats, éléments, texte, images, position et calques) | `panels.py` | `build_<onglet>`, `LayerList`, `PositionPanel` |
 | Modèles de conception (originaux) | `templates.py` | `TEMPLATES` |
 | Rendu hors écran : miniatures, export PNG / JPEG / PDF / SVG | `render.py` | `paint_page`, `export_pages` |
@@ -126,16 +130,19 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 | Audit, référence des tests (34 FAIL / ERROR connus, dont `test_board.BoardModeTest.test_create_mro_then_open_and_close_it`, présent sur HEAD propre) | Terminée | — |
 | Étude Canva, note de conception | Terminée | — |
 | Tranche 1 : pages, rectangle, sélection, poignées, Ctrl + glisser, sauvegarde, réouverture | Terminée | — |
-| Formes (17), lignes / flèches, dégradés, contours, arrondis, ombres, opacité, miroir | Terminée | Tranche 1 |
-| Texte (édition, polices, styles, interligne, espacement, surlignage, ombre) | Terminée | Tranche 1 |
-| Images (import, dépôt, coller, recadrage non destructif, retouches, arrondi, contour, arrière-plan de page) | Terminée | Tranche 1 |
+| Formes (19, dont cœur et anneau), lignes / flèches, dégradés, contours, arrondis, ombres, opacité, miroir | Terminée | Tranche 1 |
+| Texte (édition, polices, styles, interligne, espacement, surlignage, ombre, contour / creux) | Terminée | Tranche 1 |
+| Images (import, dépôt, coller, recadrage non destructif, retouches, filtres, arrondi, contour, masque en forme, arrière-plan de page) | Terminée | Tranche 1 |
+| Copier / coller le style (Ctrl+Alt+C / V), couleurs du document dans les menus | Terminée | — |
+| Présentation plein écran (Ctrl+Alt+P, bouton du rail) | Terminée | Rendu |
+| Découpage : contrôleur (gestes, commandes) et interface (menus) en fichiers de moins de 650 lignes | Terminée | — |
 | Groupes, alignement, répartition, ordre, verrou, calques, position numérique | Terminée | Tranche 1 |
 | Pages : ajouter, dupliquer, supprimer, réordonner, renommer, redimensionner (avec le contenu) | Terminée | Tranche 1 |
 | Modèles locaux (8), formats (12), combinaisons de polices, bibliothèque d'images locale | Terminée | Pages |
 | Export PNG / JPEG / PDF multipage / SVG, échelle, qualité, fond transparent | Terminée | Rendu |
 | Validation graphique en vraie fenêtre Windows (pas seulement hors écran) | À faire | — |
 | Texte multistyle (par caractère), listes à puces | À faire | Texte |
-| Cadres-masques (image dans une forme), grilles de photos | À faire | Images |
+| Grilles de photos (plusieurs images dans une mise en page) | À faire | Images |
 | Règles / repères de page fixes, marges d'impression, fond perdu | À faire | Pages |
 | Styles de marque (palette du document, styles de texte réutilisables) | À faire | Texte, Styles |
 | Icônes réglables : lignes `design*` ajoutées à `ICON_ROWS` (fenêtre de réglages : vérifier l'affichage) | Partielle | — |

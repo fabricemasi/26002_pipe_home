@@ -245,6 +245,28 @@ class DesignPageItem(DesignItem):
                 painter.drawPixmap(rect, pixmap, _cover(QRectF(pixmap.rect()), rect))
 
 
+def design_shape_path(kind: str, rect: QRectF, radius: float = 0.0) -> QPainterPath:
+    """Contour d'une forme : celles de Miro (`shape_path`) + cœur et anneau, propres au module."""
+    x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
+    if kind == "heart":
+        path = QPainterPath()
+        path.moveTo(x + w / 2, y + h * 0.28)
+        path.cubicTo(x + w * 0.5, y, x, y, x, y + h * 0.32)
+        path.cubicTo(x, y + h * 0.62, x + w * 0.38, y + h * 0.78, x + w / 2, y + h)
+        path.cubicTo(x + w * 0.62, y + h * 0.78, x + w, y + h * 0.62, x + w, y + h * 0.32)
+        path.cubicTo(x + w, y, x + w * 0.5, y, x + w / 2, y + h * 0.28)
+        path.closeSubpath()
+        return path
+    if kind == "ring":
+        path = QPainterPath()
+        path.addEllipse(rect)
+        t = min(w, h) * 0.22
+        path.addEllipse(rect.adjusted(t, t, -t, -t))
+        path.setFillRule(Qt.OddEvenFill)
+        return path
+    return shape_path(kind or "rect", rect, radius)
+
+
 def _notify_cad_layer(scene):
     """Lignes CAD peintes par lots : un élément qui arrive peut couper un lot (ce que fait `BoardItem.itemChange`)."""
     layer = getattr(scene, "cad_layer", None)
@@ -333,7 +355,7 @@ class DesignShapeItem(DesignElement):
             path.moveTo(rect.left(), y)
             path.lineTo(rect.right(), y)
             return path
-        return shape_path(self.data.get("shape", "rect"), rect, float(self.data.get("radius", 0.0)))
+        return design_shape_path(self.data.get("shape", "rect"), rect, float(self.data.get("radius", 0.0)))
 
     def shape(self) -> QPainterPath:
         path = self.outline()
@@ -427,7 +449,8 @@ class DesignTextItem(DesignElement):
         document = item.document()
         document.setDefaultTextOption(option)
         item.setTextWidth(max(8.0, float(data.get("w", 100.0))))
-        key = (float(data.get("line_height", 1.2)), data.get("text_bg") or "", item.toPlainText())
+        stroke = (data.get("text_stroke") or dm.INK, float(data.get("text_stroke_width", 0.0) or 0.0))
+        key = (float(data.get("line_height", 1.2)), data.get("text_bg") or "", item.toPlainText(), stroke)
         if getattr(self, "_format_key", None) != key:
             self._format_key = key
             cursor = QTextCursor(document)
@@ -439,6 +462,8 @@ class DesignTextItem(DesignElement):
             cursor.mergeBlockFormat(block)
             fmt = QTextCharFormat()
             fmt.setBackground(QColor(key[1]) if key[1] else QBrush(Qt.NoBrush))
+            # Contour des lettres (effet « contour » / « creux » de Canva : épaisseur en px, couleur)
+            fmt.setTextOutline(QPen(QColor(stroke[0]), stroke[1]) if stroke[1] > 0 else QPen(Qt.NoPen))
             cursor.mergeCharFormat(fmt)
         item.setPos(0, 0)
         height = max(size * 0.8, document.size().height())
@@ -583,6 +608,9 @@ def apply_adjustments(image: QImage, brightness: float, contrast: float, saturat
 class DesignImageItem(DesignElement):
     def outline(self) -> QPainterPath:
         rect = self.content_rect()
+        mask = self.data.get("mask") or ""
+        if mask:
+            return design_shape_path(mask, rect, float(self.data.get("radius", 0.0)))
         path = QPainterPath()
         r = min(float(self.data.get("radius", 0.0)), rect.width() / 2, rect.height() / 2)
         if r > 0:
