@@ -504,6 +504,17 @@ class LayerList(QWidget):
             y = self._drag_to * self.ROW - 1
             p.setPen(QPen(QColor(dm.ACCENT), 2))
             p.drawLine(0, y, self.width(), y)
+            # Fantôme de la ligne tirée (règle de l'appli : opacité DRAG_GHOST_OPACITY), sous le pointeur.
+            from settings_widgets import DRAG_GHOST_OPACITY
+            n, _pos, _ctrl = self._press
+            ghost = QRectF(0, self._ghost_y - self.ROW / 2, self.width(), self.ROW - 2)
+            p.setOpacity(DRAG_GHOST_OPACITY)
+            fill = QColor(dm.ACCENT)
+            fill.setAlpha(140)
+            p.fillRect(ghost, fill)
+            p.setPen(QColor(C["text"]))
+            p.drawText(ghost.adjusted(8, 0, -30, 0), Qt.AlignVCenter | Qt.AlignLeft, self.label(self.items[n]))
+            p.setOpacity(1.0)
         p.end()
 
     def _row_at(self, y) -> int:
@@ -532,6 +543,7 @@ class LayerList(QWidget):
         if press is None or not press[2] or (event.position() - press[1]).manhattanLength() < 4:
             return
         self._drag_to = max(0, min(len(self.items), int(round(event.position().y() / self.ROW))))
+        self._ghost_y = event.position().y()
         self.update()
 
     def mouseReleaseEvent(self, event):

@@ -122,12 +122,28 @@ Sonde : `probe_perf.py N` (hors dépôt : événement souris envoyé au viewport
 | Zoom (un cran) | 104 → 47-55 ms | 137-174 ms |
 | Pan (bouton du milieu) | 23 → 9 ms | 7 ms |
 | Curseur en direct (opacité de 20 éléments) | 24 → 14 ms | 14 ms |
+VRAIE FENÊTRE Windows (même sonde, `QT_QPA_PLATFORM=windows`, 300 éléments, 2 400 × 1 300) : Ctrl + glisser
+20 ms / image (p95 36), redimensionner / pivoter 19 ms, changer de sélection 31 ms, zoom 55 ms / cran, pan 13 ms,
+curseur en direct 19 ms, changer de page 32 ms (dont ~10 ms d'envoi de la fenêtre à Windows, comme le board).
+Après le texte multistyle (hors écran, 300 éléments) : inchangé (déplacer 15,5 ms, sélection 19 ms, zoom 44 ms).
 Corrections : (1) `boundingRect` GARDÉ par élément (Qt le demande ~3 fois par élément et par image ; 108 000 appels
 Python pour 60 images) ; (2) contenu du panneau latéral OPAQUE (Qt retire les voisins opaques de la zone à
 peindre : les miniatures des modèles étaient repeintes à chaque image du board, ~5 ms) ; (3) miniatures des pages
 refaites seulement pour les pages touchées par les commandes d'annulation (une empreinte JSON de tout coûtait
 ~60 ms à 1 000 éléments). Reste : zoom à 1 000 éléments (peinture réelle de chaque élément, cache coupé pendant le
 zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (sonde hors écran).
+
+## Limites connues (2026-10-29)
+
+- Validation à la main en vraie fenêtre NON faite (session autonome) : gestes vérifiés par tests automatiques hors
+  écran (événements souris / clavier envoyés au viewport) et captures hors écran ; mesures en vraie fenêtre faites.
+- Zoom avec ~1 000 éléments sur une page : 137-174 ms / cran (peinture réelle de chaque élément, le cache des
+  éléments est coupé pendant le zoom par la coque, comme pour Miro).
+- Retouches d'image (luminosité, contraste, saturation) : seulement avec numpy (présent dans l'environnement) ;
+  sans numpy, noir et blanc et flou seulement.
+- Un élément Design ne peut pas être déplacé en mode Miro (pas de `ItemIsMovable`) : on passe en mode Design.
+- Page sans rotation ; pas d'animation, de vidéo, de tableaux ni de graphiques ; pas de kit de marque partagé entre
+  boards (couleurs et styles de texte du DOCUMENT seulement).
 
 ## PLAN DE TRAVAIL (persistant, mis à jour à chaque étape)
 
