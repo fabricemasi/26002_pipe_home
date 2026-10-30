@@ -529,7 +529,8 @@ class DesignController(GestureMixin, CommandMixin, QObject):
                    Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_Return, Qt.Key_Enter):
             return True
         if ctrl and key in (Qt.Key_C, Qt.Key_X, Qt.Key_V, Qt.Key_D, Qt.Key_G, Qt.Key_A, Qt.Key_B, Qt.Key_I,
-                            Qt.Key_U, Qt.Key_K, Qt.Key_L, Qt.Key_E, Qt.Key_R, Qt.Key_J, Qt.Key_P, Qt.Key_BracketLeft,
+                            Qt.Key_U, Qt.Key_K, Qt.Key_L, Qt.Key_E, Qt.Key_R, Qt.Key_J, Qt.Key_P, Qt.Key_F,
+                            Qt.Key_BracketLeft,
                             Qt.Key_BracketRight):
             return True
         return not ctrl and Qt.Key_A <= key <= Qt.Key_Z
@@ -571,6 +572,13 @@ class DesignController(GestureMixin, CommandMixin, QObject):
             return True
         if ctrl and alt and key == Qt.Key_P:
             self.present()
+            return True
+        if ctrl and not alt and key == Qt.Key_F:
+            self.ui.set_tab("find")                       # rechercher et remplacer (find_replace.py)
+            field = getattr(self.ui.panel_content, "find_field", None)
+            if field is not None:
+                field.setFocus(Qt.ShortcutFocusReason)
+                field.selectAll()
             return True
         if event.matches(QKeySequence.Copy):
             self.copy()

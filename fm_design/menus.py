@@ -439,7 +439,7 @@ SHORTCUTS = [
     ("Ctrl+B / I / U", "gras, italique, souligné"), ("Ctrl+Maj+K", "majuscules"),
     ("Ctrl+Maj+L / E / R / J", "aligner le texte : gauche, centre, droite, justifié"),
     ("Ctrl+Maj+> / <", "taille du texte"), ("Maj+R", "règles (tirer un repère depuis une règle)"),
-    ("Ctrl+Alt+P", "présenter en plein écran"), ("Ctrl+Z / Ctrl+Y", "annuler / rétablir"),
+    ("Ctrl+Alt+P", "présenter en plein écran"), ("Ctrl+F", "rechercher et remplacer"), ("Ctrl+Z / Ctrl+Y", "annuler / rétablir"),
     ("Molette, bouton du milieu, Espace", "zoomer, se déplacer dans le board"),
 ]
 

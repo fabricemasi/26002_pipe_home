@@ -190,6 +190,54 @@ def scale_spans(spans: list, k: float) -> list:
     return [dict(span, size=round(span["size"] * k, 2)) if "size" in span else dict(span) for span in spans or []]
 
 
+def find_spans(text: str, needle: str, case: bool) -> list[tuple[int, int]]:
+    """Occurrences (début, fin) de `needle` dans `text`, sans chevauchement ; `case` False = casse ignorée."""
+    if not needle:
+        return []
+    hay, pin = (text, needle) if case else (text.casefold(), needle.casefold())
+    if len(hay) != len(text):                     # casefold a changé la longueur (ß -> ss…) : recherche exacte
+        hay, pin = text, needle
+    out, start = [], 0
+    while True:
+        at = hay.find(pin, start)
+        if at < 0:
+            return out
+        out.append((at, at + len(needle)))
+        start = at + len(needle)
+
+
+def replace_text(text: str, spans, needle: str, replacement: str, case: bool) -> tuple[str, list, int]:
+    """Remplace toutes les occurrences ; les parties stylées (`spans`) suivent (décalées ; une partie qui couvrait
+    une occurrence couvre le remplacement). -> (texte, parties, nombre)."""
+    found = find_spans(text, needle, case)
+    if not found:
+        return text, [dict(sp) for sp in spans or []], 0
+    pieces, last = [], 0
+    for a, b in found:
+        pieces.append(text[last:a])
+        pieces.append(replacement)
+        last = b
+    pieces.append(text[last:])
+    delta = len(replacement) - len(needle)
+
+    def moved(pos: int) -> int:
+        shift = 0
+        for a, b in found:
+            if pos >= b:
+                shift += delta
+            elif pos > a:                         # dans une occurrence : borné au remplacement
+                return pos + shift - (pos - a) + min(pos - a, len(replacement))
+            else:
+                break
+        return pos + shift
+    out = []
+    for span in spans or []:
+        start, end = moved(int(span["start"])), moved(int(span["end"]))
+        if end > start:
+            out.append(dict(span, start=start, end=end))
+    return "".join(pieces), out, len(found)
+
+
 def valid_guides(value) -> list[dict]:
     out = []
     for guide in value if isinstance(value, list) else []:

@@ -44,6 +44,9 @@ def _wide_button(text, tip, slot, parent):
 
 
 def build(name, ctl, parent) -> QWidget:
+    if name == "find":
+        from .find_replace import build_find               # Ctrl+F, hors du rail
+        return build_find(ctl, parent)
     return {"templates": build_templates, "elements": build_elements, "text": build_text,
             "images": build_images, "layers": build_layers}[name](ctl, parent)
 

@@ -1190,6 +1190,52 @@ class ZoomSnapshotTest(DesignTestCase):
         self.assertAlmostEqual(moving.pos().x(), item.pos().x() + 30, delta=0.01)
 
 
+class FindReplaceTest(DesignTestCase):
+    def test_replace_text_keeps_styled_parts(self):
+        self.assertEqual(dm.find_spans("Abc abc", "abc", False), [(0, 3), (4, 7)])
+        self.assertEqual(dm.find_spans("Abc abc", "abc", True), [(4, 7)])
+        text, spans, n = dm.replace_text("Bonjour le monde, bonjour", [{"start": 0, "end": 7, "bold": True},
+                                                                       {"start": 8, "end": 10, "italic": True}],
+                                         "bonjour", "Salut", False)
+        self.assertEqual((text, n), ("Salut le monde, Salut", 2))
+        self.assertEqual(spans, [{"start": 0, "end": 5, "bold": True}, {"start": 6, "end": 8, "italic": True}])
+
+    def test_panel_find_next_replace_and_replace_all(self):
+        from fm_design import find_replace
+        first = self.page(600, 400)
+        a = self.ctl.add_text("body", {"text": "Rapport 2025", "spans": [{"start": 0, "end": 7, "bold": True}]},
+                              edit=False)
+        table = self.ctl.add_table(2, 2)
+        doc.change(self.scene, [table], lambda i: i.data.update(cells=[["2025", "x"], ["y", "Total 2025"]]),
+                   "Cellules")
+        second = doc.add_page(self.scene, 600, 400, after=first)
+        self.ctl.set_current_page(second)
+        locked = self.ctl.add_text("body", {"text": "Bilan 2025"}, edit=False)
+        doc.change(self.scene, [locked], lambda i: i.data.update(locked=True), "Verrou")
+        self.ctl._select([])
+        self.key(Qt.Key_F, Qt.ControlModifier)
+        self.assertEqual(self.ctl.ui.tab, "find")
+        panel = self.ctl.ui.panel_content
+        panel.find_field.setText("2025")
+        self.assertEqual(panel.status.text(), "4 résultats dans 3 éléments")
+        panel.next_one()
+        self.assertEqual(self.ctl.selection(), [a])
+        self.assertIs(self.ctl.current_page(), first)
+        panel.replace_field.setText("2026")
+        panel.replace_one()                                        # a remplacé, puis le tableau choisi
+        self.assertEqual(a.data["text"], "Rapport 2026")
+        self.assertEqual(a.data["spans"], [{"start": 0, "end": 7, "bold": True}])
+        self.assertEqual(self.ctl.selection(), [table])
+        undo_before = self.scene.undo.count()
+        panel.replace_all()
+        self.assertEqual(self.scene.undo.count(), undo_before + 1)    # une seule étape
+        self.assertEqual(dm.table_grid(table.data), [["2026", "x"], ["y", "Total 2026"]])
+        self.assertEqual(locked.data["text"], "Bilan 2025")            # verrouillé : laissé
+        self.assertIn("1 verrouillé laissé", panel.status.text())
+        self.scene.undo.undo()
+        self.assertEqual(dm.table_grid(self.scene._items[table.item_id].data)[0][0], "2025")
+        self.assertEqual(find_replace.matches(self.ctl, "rapport", True), [])
+
 class PartialRepaintTest(DesignTestCase):
     """Fluidité : en Design, un clic ne repeint que les zones qui changent (pas tout le viewport)."""
 

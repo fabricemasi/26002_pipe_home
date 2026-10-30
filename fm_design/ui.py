@@ -27,6 +27,7 @@ from .items import DesignImageItem, DesignShapeItem, DesignTextItem
 TABS = [("templates", "design_templates", "Modèles et formats"), ("elements", "design_elements", "Éléments"),
         ("text", "design_text", "Texte"), ("images", "design_images", "Images"),
         ("layers", "design_layers", "Position et calques")]
+EXTRA_TABS = [("find", "", "Rechercher et remplacer")]       # panneaux sans bouton du rail (Ctrl+F)
 PANEL_W = 300
 THUMB_H = 54
 
@@ -220,7 +221,7 @@ class DesignChrome(QObject):
             self.pane.view.setFocus()
             return
         from . import panels
-        self.panel_title.setText(dict((n, t) for n, _g, t in TABS)[name])
+        self.panel_title.setText(dict((n, t) for n, _g, t in TABS + EXTRA_TABS)[name])
         old = self.scroll.takeWidget()
         if old is not None:
             old.deleteLater()
