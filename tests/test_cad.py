@@ -1323,32 +1323,64 @@ class IdleMagnetTest(CadBoardCase):
         self.move((203, 3))
         self.assertIsNone(self.ctl.hover_snap)                                  # ligne non selectionnee : rien
 
-    def test_only_the_handles_of_lines_attract_the_cursor_outside_commands(self):
+    def test_handles_of_every_selected_entity_attract_the_cursor_outside_commands(self):
+        # Demande de l'utilisateur : l'aimant vaut pour TOUTES les poignees (polylignes, cercles, hachures…).
         circle = self.ctl.create_entity("cad_circle", {"center": [0.0, 0.0], "radius": 50.0})
         arc = self.ctl.create_entity("cad_arc", {"center": [300.0, 0.0], "radius": 40.0, "start": 0.0, "end": 90.0})
-        self.ctl.commit_created([circle, arc], "test")
-        wire = self.line((500, 0), (600, 0))
+        pline = self.ctl.create_entity("cad_pline", {"vertices": [[0, 150, 0], [100, 150, 0], [100, 250, 0]],
+                                                      "closed": False})
+        loop = [[500.0, 100.0], [600.0, 100.0], [600.0, 200.0], [500.0, 200.0]]
+        hatch = self.ctl.create_entity("cad_hatch", {"loops": [loop], "hatch_spacing": 10.0,
+                                                     "hatch_origin": [0.0, 0.0], "hatch_angle": 0.0,
+                                                     "hatch_pattern": "lines"})
+        self.ctl.commit_created([circle, arc, pline, hatch], "test")
+        cases = ((circle, (53, 3), (50.0, 0.0), "qua"), (circle, (3, 3), (0.0, 0.0), "cen"),
+                 (arc, (343, 3), (340.0, 0.0), "end"), (arc, (303, 3), (300.0, 0.0), "cen"),
+                 (pline, (103, 153), (100.0, 150.0), "end"), (pline, (53, 153), (50.0, 150.0), "mid"),
+                 (hatch, (553, 153), (550.0, 150.0), "gcen"))
         self.pane.scene.clearSelection()
-        for spot in ((53, 3), (3, 3), (-47, 3), (343, 3), (303, 3), (603, 3), (553, 3)):   # quadrants, centre, arcs ; ligne non selectionnee
+        for _item, spot, _grip, _mode in cases:                                    # rien de selectionne : pas d'aimant
+            self.move((200, 200))
             self.move(spot)
             self.assertIsNone(self.ctl.hover_snap, spot)
-        wire.setSelected(True)
-        self.move((100, 60))
-        self.move((603, 3))                                                      # l'extrémité d'une LIGNE : aimant
-        self.assertIsNotNone(self.ctl.hover_snap)
-        self.assertEqual(self.ctl.hover_snap.point, (600.0, 0.0))
-        self.move((553, 3))                                                      # son milieu aussi
-        self.assertEqual(self.ctl.hover_snap.point, (550.0, 0.0))
-        self.pane.scene.clearSelection()
-        circle.setSelected(True)                                                 # poignées d'un cercle sélectionné : non
-        for spot in ((53, 0), (2, 0)):
+        for item, spot, grip, mode in cases:
+            self.pane.scene.clearSelection()
+            item.setSelected(True)
+            self.move((200, 200))
             self.move(spot)
-            self.assertIsNone(self.ctl.hover_snap, spot)
+            self.assertIsNotNone(self.ctl.hover_snap, (item.kind, spot))
+            self.assertEqual(self.ctl.hover_snap.point, grip)
+            self.assertEqual(self.ctl.hover_snap.candidate.mode, mode)
         self.pane.scene.clearSelection()
         self.type("L")                                                           # en commande, tous les accrochages restent
         self.move((53, 3))
         self.assertIsNotNone(self.ctl.res.candidate)
         self.type("")
+
+    def test_magnet_radius_and_tooltip_follow_the_crosshair_settings(self):
+        item = self.line((0, 0), (200, 0))
+        item.setSelected(True)
+        self.ctl.apply_settings(dict(self.ctl.settings, board_cad_magnet_radius=20))
+        self.move((100, 60))
+        self.move((215, 0))                                                     # 15 px : dans le rayon de 20
+        self.assertEqual(self.ctl.hover_snap.point, (200.0, 0.0))
+        self.ctl.apply_settings(dict(self.ctl.settings, board_cad_magnet_radius=5))
+        self.move((100, 60))
+        self.move((208, 0))                                                     # 8 px : hors du rayon de 5
+        self.assertIsNone(self.ctl.hover_snap)
+        self.ctl.apply_settings(dict(self.ctl.settings, board_cad_magnet_radius=10, board_cad_osnap=False))
+        self.move((100, 60))
+        self.move((207, 0))
+        self.assertEqual(self.ctl.overlay_state()["tooltip"], self.ctl.hover_snap.label)   # infobulle de l'aimant
+        self.ctl.apply_settings(dict(self.ctl.settings, board_cad_magnet_tooltip=False))
+        self.move((100, 60))
+        self.move((207, 0))
+        self.assertIsNotNone(self.ctl.hover_snap)
+        self.assertFalse(self.ctl.overlay_state().get("tooltip"))               # coupee : plus d'infobulle
+        self.ctl.apply_settings(dict(self.ctl.settings, board_cad_osnap=True))
+        self.move((100, 60))
+        self.move((207, 0))
+        self.assertEqual(self.ctl.overlay_state()["tooltip"], self.ctl.hover_snap.label)   # accrochage objet : oui
 
     def test_cursor_stays_on_a_grip_while_it_can_be_grabbed(self):
         item = self.line((0, 0), (200, 0))
@@ -1362,6 +1394,22 @@ class IdleMagnetTest(CadBoardCase):
         self.assertIsNotNone(self.ctl.hover_grip)                               # la poignee reste saisissable
         self.move((101, 1))
         self.assertEqual(self.ctl.hover_snap.point, (100.0, 0.0))               # poignee du milieu
+
+    def test_magnet_follows_a_selected_entity_after_it_is_moved(self):
+        # Les poignees de la selection sont indexees une fois (fluidite) : un objet deplace doit aimanter a sa
+        # nouvelle place, plus a l'ancienne.
+        item = self.line((0, 0), (200, 0))
+        item.setSelected(True)
+        self.move((203, 3))
+        self.assertEqual(self.ctl.hover_snap.point, (200.0, 0.0))
+        self.type("M", "0,0", "0,100")
+        APP.processEvents()
+        item.setSelected(True)
+        self.move((100, 60))
+        self.move((203, 3))
+        self.assertIsNone(self.ctl.hover_snap)                                  # ancienne place : rien
+        self.move((203, 103))
+        self.assertEqual(self.ctl.hover_snap.point, (200.0, 100.0))
 
 
 class CadExportTest(CadBoardCase):

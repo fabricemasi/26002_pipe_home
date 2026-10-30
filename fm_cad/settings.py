@@ -66,6 +66,10 @@ def _cad_groups() -> dict:
         Spec("board_cad_pickbox", "Carré central : demi-côté (pixels d'écran, = boîte de sélection)", "slider", 5,
              {"min": 1, "max": 20}),
         Spec("board_cad_magnet", "Aimant : le réticule saute sur le point accroché (objets)", "bool", True),
+        Spec("board_cad_magnet_radius", "Aimant : rayon d'action sur les poignées (pixels d'écran)", "slider", 10,
+             {"min": 2, "max": 50, "active_when": ("board_cad_magnet", True)}),
+        Spec("board_cad_magnet_tooltip", "Aimant : infobulle du point (même sans accrochage objet)", "bool", True,
+             {"active_when": ("board_cad_magnet", True)}),
         Spec("board_cad_crosshair_memory", "Indicateur « propriétés en mémoire » (pipette) sur le réticule", "bool", True),
     ]
     selection = [

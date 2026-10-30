@@ -68,6 +68,7 @@ EXCEPTIONS: dict[str, tuple[str, str]] = {
         "video_lut_position", "board_grid_origin_x", "board_grid_origin_y")},
     **{k: (FONC, "unités du dessin CAD (contenu, pas aspect)") for k in (
         "board_cad_dim_text", "board_cad_text_height")},
+    "board_cad_magnet_radius": (FONC, "comportement (portée de l'aimant du réticule)"),
     # Sans mot d'aspect dans le nom, mais dessinent la grille du board :
     **{k: (PROPRE, "board / CAD") for k in (
         "board_grid_fade_start", "board_grid_fade_full", "board_grid_levels", "board_grid_axes")},

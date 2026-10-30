@@ -57,7 +57,6 @@ TOGGLES = {  # nom -> (cle de reglage, libelle, touche) ; « grid » : la grille
 }
 FKEYS = {Qt.Key_F3: "osnap", Qt.Key_F7: "grid", Qt.Key_F8: "ortho", Qt.Key_F9: "grid_snap",
          Qt.Key_F10: "polar", Qt.Key_F11: "otrack", Qt.Key_F12: "dyn"}
-GRIP_MODES = {"end", "mid"}          # points des poignees d'une ligne : l'aimant hors commande (sans OSNAP)
 DEFAULTS = {"board_cad_osnap": True, "board_cad_ortho": False,
             "board_cad_grid_snap": False, "board_cad_polar": False, "board_cad_otrack": False,
             "board_cad_dyn": True}
@@ -88,6 +87,8 @@ class CadController(QObject):
         self._index = geo.GridIndex()               # recherche localisee (voir _source)
         self._index_epoch = 0
         self._index_built = None
+        self._grip_list = None                      # poignees de la selection (voir _grips_near)
+        self._grips = None                          # ... rangees en grille pour le zoom courant
         self.command = None
         self.last_command = None
         self.last_point = None
@@ -159,6 +160,8 @@ class CadController(QObject):
             "marker_width": max(1, min(3, int(g("board_cad_marker_thickness") or 2))),
             "show_markers": bool(g("board_cad_markers", True)), "tooltips": bool(g("board_cad_tooltips", True)),
             "magnet": bool(g("board_cad_magnet", True)),
+            "magnet_px": max(2, int(g("board_cad_magnet_radius") or 10)),
+            "magnet_tooltip": bool(g("board_cad_magnet_tooltip", True)),
             "grip_px": max(4, int(g("board_cad_grip_size") or 8)),
             "pickbox_px": max(2, int(g("board_cad_pickbox") or 5)),
             "crosshair": bool(g("board_cad_crosshair", True)),
@@ -512,17 +515,7 @@ class CadController(QObject):
         ses cellules contiennent tout — mesure, 3 000 lignes : 3,5 ms par requete, chaque emprise relue). Tenu a
         jour LIGNE PAR LIGNE (journal `CadLayer.changed`) : le reconstruire a chaque ligne tracee figeait le
         premier mouvement qui suivait (~200 ms a 10 000 lignes)."""
-        layer = CadLayer.of(self.scene)
-        if self._index_built != self._index_epoch or self._index.needs_rebuild():
-            layer.take_changes()
-            self._index.build([(item, self._index_box(item)) for item in self.cad_items()])
-            self._index_built = self._index_epoch
-        else:
-            for item in layer.take_changes():
-                if self._alive(item):
-                    self._index.insert(item, self._index_box(item))
-                else:
-                    self._index.remove(item)
+        self._sync_index()
         found = []
         for item in self._index.query(rect):
             if self._alive(item):
@@ -530,6 +523,60 @@ class CadController(QObject):
                     found.append(item)
             else:
                 self._index.remove(item)                    # supprimee (objet C++ detruit) : jamais plus proposee
+        return found
+
+    def _sync_index(self):
+        """Journal `CadLayer.changed` releve pour l'index des accrochages ; une entite changee (ou l'index refait)
+        oblige aussi a relire les poignees de la selection (`_grips_near`)."""
+        layer = CadLayer.of(self.scene)
+        if self._index_built != self._index_epoch or self._index.needs_rebuild():
+            layer.take_changes()
+            self._index.build([(item, self._index_box(item)) for item in self.cad_items()])
+            self._index_built = self._index_epoch
+            self._drop_grips()
+            return
+        changes = layer.take_changes()
+        if changes:
+            self._drop_grips()
+        for item in changes:
+            if self._alive(item):
+                self._index.insert(item, self._index_box(item))
+            else:
+                self._index.remove(item)
+
+    def _drop_grips(self, *_args):
+        self._grip_list = None
+        self._grips = None
+
+    def _grips_near(self, doc, reach: float) -> list:
+        """[(distance, entite, nom, point)] des poignees des entites SELECTIONNEES (visibles, non verrouillees) a
+        moins de `reach` (document) de `doc`, de la plus proche a la plus eloignee. Les poignees ne sont relues que
+        quand la selection ou le dessin change, et rangees en grille pour le zoom courant (refaite quand le zoom ne lui
+        va plus) : relire celles de toute la selection a chaque mouvement coutait ~20 ms par mouvement pour 500 objets
+        selectionnes, ~130 ms pour 3 000 (mesure)."""
+        self._sync_index()
+        if self._grip_list is None:
+            self._grip_list = [(float(point[0]), float(point[1]), item, name, point)
+                               for item in self.selection() for name, point in item.grips()]
+            self._grips = None
+        if self._grips is None or not (reach <= self._grips[0] <= 16.0 * reach):
+            cell = max(1e-9, 4.0 * reach)
+            buckets: dict = {}
+            floor = math.floor
+            for entry in self._grip_list:
+                buckets.setdefault((floor(entry[0] / cell), floor(entry[1] / cell)), []).append(entry)
+            self._grips = (cell, buckets)
+        cell, buckets = self._grips
+        x, y = doc
+        floor = math.floor
+        found = []
+        for gx in range(floor((x - reach) / cell), floor((x + reach) / cell) + 1):
+            for gy in range(floor((y - reach) / cell), floor((y + reach) / cell) + 1):
+                for px, py, item, name, point in buckets.get((gx, gy), ()):
+                    d = math.hypot(px - x, py - y)
+                    if d <= reach and self._alive(item) and item.isVisible() and not item.locked():
+                        found.append((d, item, name, point))
+        found.sort(key=lambda entry: entry[0])
         return found
 
     def _alive(self, item) -> bool:
@@ -1227,32 +1274,51 @@ class CadController(QObject):
         self.res = None
         if self.window is None and self.command is None:
             self.hover_grip = self.grip_at(self.cursor_view)
-            if self.hover_grip is not None and self.hover_grip[0].kind == "cad_line":   # l'aimant : poignees de LIGNES seulement
+            if self.hover_grip is not None:
                 # Tant que la poignee est saisissable, le reticule reste aimante sur elle (demande de l'utilisateur :
                 # sinon il se decrochait en entrant dans la poignee d'une ligne selectionnee, qui passe avant l'aimant).
                 item, name, point = self.hover_grip
-                point = tuple(point)
                 spot = self.doc_to_view(point)
                 gap = math.hypot(spot.x() - self.cursor_view.x(), spot.y() - self.cursor_view.y())
-                mode = {"mid": "mid", "center": "cen"}.get(name, "qua" if name.startswith("q") else "end")
-                candidate = cad_snap.Candidate(mode, point, gap, item)
-                self.hover_snap = cad_snap.Resolution(point, "osnap", candidate, [candidate], label=candidate.label)
+                self.hover_snap = self._grip_snap(item, name, point, gap)
         if self.hover_grip is None and self.window is None:
             self.hover_item = self.pick(self.cursor_view)
             if self.command is None:
-                # Hors commande aussi, le reticule s'aimante au point caracteristique approche (demande de
-                # l'utilisateur) : marqueur + aimant seulement ; le clic garde la selection a la place de la souris.
-                # Comme dans AutoCAD, l'aimant des POIGNEES ne depend ni d'OSNAP (F3) ni des modes coches (demande de
-                # l'utilisateur : « quand aucun accrochage objet n'est selectionne, le curseur s'aimante quand meme
-                # sur les handles »).
-                # Le 1er candidat AIMANTE (pas le 1er tout court) : a une extremite commune, le point de la ligne
-                # non selectionnee passait devant (doublon retire) et l'aimant ne prenait plus que dans la zone de la
-                # poignee (6 px au lieu de 10 : signale « la distance de detection est fausse sur un des 3 points »).
-                found = self.engine.candidates(self.cursor_doc, self.scale(), None, GRIP_MODES, keep=self._magnetic)
-                candidate = next((c for c in found if self._magnetic(c)), None)
-                if candidate is not None:
-                    self.hover_snap = cad_snap.Resolution(candidate.point, "osnap", candidate, [candidate],
-                                                          list(candidate.guides), candidate.label)
+                # Hors commande aussi, le reticule s'aimante sur la poignee approchee (demande de l'utilisateur) ; le
+                # clic garde la selection a la place de la souris. Comme dans AutoCAD, cet aimant ne depend ni d'OSNAP
+                # (F3) ni des modes coches (« quand aucun accrochage objet n'est selectionne, le curseur s'aimante
+                # quand meme sur les handles »), et vaut pour les poignees de TOUTES les entites selectionnees.
+                near = self.grip_magnet(self.cursor_doc)
+                if near is not None:
+                    self.hover_snap = self._grip_snap(*near)
+
+    @staticmethod
+    def _grip_snap(item, name: str, point, gap: float) -> cad_snap.Resolution:
+        """Point accroche par l'aimant des poignees ; son type (marqueur, infobulle) d'apres le nom de la poignee."""
+        if name == "center":
+            mode = "gcen" if item.kind == "cad_hatch" else "cen"
+        elif name == "mid" or (name[:1] == "m" and name[1:].isdigit()):
+            mode = "mid"
+        elif name[:1] == "q":
+            mode = "qua"
+        elif name == "pos":
+            mode = "ins"
+        else:
+            mode = "end"
+        point = (float(point[0]), float(point[1]))
+        candidate = cad_snap.Candidate(mode, point, gap, item)
+        return cad_snap.Resolution(point, "osnap", candidate, [candidate], label=candidate.label)
+
+    def grip_magnet(self, doc):
+        """(entite, nom, point, distance en pixels) de la poignee SELECTIONNEE la plus proche de `doc` dans le rayon de
+        l'aimant (Reglages > Module CAD > Reticule, pixels d'ECRAN : meme effet a tout zoom), sinon None. Une entite
+        non selectionnee n'attire rien (sa poignee n'est pas visible : demande de l'utilisateur) ; verrouillee non plus."""
+        scale = self.scale()
+        found = self._grips_near(doc, self.look.get("magnet_px", 10) / scale)
+        if not found:
+            return None
+        d, item, name, point = found[0]
+        return item, name, point, d * scale
 
     def _acquire_tick(self):
         if self.res is not None and self.res.candidate is not None and self.engine.note_hover(self.res.candidate):
@@ -1280,6 +1346,7 @@ class CadController(QObject):
         self.overlay.invalidate()
 
     def _on_selection(self):
+        self._drop_grips()
         self.overlay.invalidate()
         self.selectionChanged.emit()
 
@@ -1321,25 +1388,17 @@ class CadController(QObject):
                 return item
         return found[0]
 
-    @staticmethod
-    def _magnetic(candidate) -> bool:
-        """Hors commande, le reticule ne s'aimante que sur les POIGNEES des lignes (extremites, milieu) : ni cercle, ni arc,
-        ni polyligne, ni cotation, et seulement ceux d'une ligne SELECTIONNEE (sa poignee est visible : demande de l'utilisateur) ; pendant une commande, tous les accrochages restent."""
-        entity = candidate.entity
-        return (getattr(entity, "kind", None) == "cad_line" and candidate.mode in ("end", "mid")
-                and entity.isSelected())                       # l'aimant vise la POIGNEE : visible seulement si la ligne est selectionnee
-
     def grip_at(self, view_pos):
+        """(entite, nom, point) de la poignee saisissable sous `view_pos` (carre de la poignee + 2 pixels), la plus
+        proche d'abord, sinon None."""
         if view_pos is None:
             return None
         half = self.look.get("grip_px", 8) / 2.0 + 2
-        for item in self.selection():
-            if item.locked():
-                continue
-            for name, point in item.grips():
-                c = self.doc_to_view(point)
-                if abs(c.x() - view_pos.x()) <= half and abs(c.y() - view_pos.y()) <= half:
-                    return item, name, point
+        scale = self.scale()
+        x, y = self.view_to_doc(view_pos)
+        for _d, item, name, point in self._grips_near((x, y), half * 1.5 / scale):
+            if abs(point[0] - x) * scale <= half and abs(point[1] - y) * scale <= half:
+                return item, name, point
         return None
 
     def _select(self, items, mods, window: bool = False):
@@ -1742,8 +1801,9 @@ class CadController(QObject):
                 state["marker"] = (snap.candidate.mode, snap.candidate.point)
             if look["magnet"] and self.cursor_view:
                 state["cursor"] = self.doc_to_view(snap.point)      # reticule aimante, hors commande aussi
-            if look["tooltips"] and snap.label and not self.buffer:
-                state["tooltip"] = snap.label
+            osnap = snaps.osnap and snap.candidate.mode in snaps.modes
+            if look["tooltips"] and snap.label and not self.buffer and (osnap or look["magnet_tooltip"]):
+                state["tooltip"] = snap.label                       # infobulle de l'aimant seul : reglage du reticule
         grips = []
         if self.hover_grip is not None:
             grips.append((self.hover_grip[2], "#18a058"))

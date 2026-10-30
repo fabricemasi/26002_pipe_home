@@ -68,7 +68,8 @@ def unit_scale(value) -> float:
 # Reticule (Reglages > Module CAD > Reticule) : tout ce qui le regle peut aussi etre remplace par dessin.
 CROSSHAIR_KEYS = ("board_cad_crosshair", "board_cad_crosshair_size", "board_cad_crosshair_full",
                   "board_cad_crosshair_auto_color", "board_cad_crosshair_color", "board_cad_pickbox",
-                  "board_cad_magnet", "board_cad_crosshair_memory")
+                  "board_cad_magnet", "board_cad_magnet_radius", "board_cad_magnet_tooltip",
+                  "board_cad_crosshair_memory")
 OVERRIDABLE = ("board_cad_unit", "board_cad_precision") + CROSSHAIR_KEYS
 OVERRIDABLE_PREFIXES = ("board_grid_",)
 
