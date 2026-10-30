@@ -24,6 +24,7 @@ from PySide6.QtGui import QKeySequence, QPolygonF
 from . import document as doc
 from .commands import CommandMixin
 from .gestures import GestureMixin
+from .datavis import DesignChartItem, DesignTableItem
 from .items import DesignElement, DesignImageItem, DesignPageItem, DesignShapeItem, DesignTextItem
 from .overlay import HIT_PX, ROTATE_PX, DesignOverlay, angle_of, mid
 
@@ -264,7 +265,7 @@ class DesignController(GestureMixin, CommandMixin, QObject):
             out += [("tl", tl, angle), ("tr", tr, angle), ("br", br, angle), ("bl", bl, angle)]
         if single is not None:
             sides = ["l", "r"]
-            if isinstance(single, (DesignShapeItem, DesignImageItem)) and not line:
+            if isinstance(single, (DesignShapeItem, DesignImageItem, DesignTableItem, DesignChartItem)) and not line:
                 sides += ["t", "b"]
             points = {"l": mid(tl, bl), "r": mid(tr, br), "t": mid(tl, tr), "b": mid(bl, br)}
             # Élément petit à l'écran : poignées de côté retirées là où elles chevaucheraient les coins.
@@ -317,6 +318,8 @@ class DesignController(GestureMixin, CommandMixin, QObject):
         if self.text_editing():
             focus = self.scene.focusItem()
             owner = getattr(focus, "owner", None)
+            if isinstance(owner, DesignTableItem) and owner.mapRectToScene(owner.content_rect()).contains(scene_pos):
+                return owner.edit_at(scene_pos)  # autre cellule : elle passe en édition ; la même : curseur
             if owner is not None and owner.mapRectToScene(owner.content_rect()).contains(scene_pos):
                 return False                     # clic dans le texte édité : curseur, sélection du texte
             self.view.finish_text_edit()
@@ -451,6 +454,14 @@ class DesignController(GestureMixin, CommandMixin, QObject):
             return True
         if isinstance(target, DesignImageItem) and not target.locked():
             self.start_crop(target)
+            return True
+        if isinstance(target, DesignTableItem) and not target.locked():
+            self._select([target])
+            target.edit_at(self.view.mapToScene(event.position().toPoint()))
+            return True
+        if isinstance(target, DesignChartItem) and not target.locked():
+            from .menus_data import edit_chart_data
+            edit_chart_data(self, target)
             return True
         return target is not None
 

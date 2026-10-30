@@ -756,7 +756,7 @@ class MenusTest(DesignTestCase):
         return len(actions)
 
     def test_all_menus(self):
-        from fm_design import menus
+        from fm_design import menus, menus_data, menus_text
         page = self.page()
         doc.apply_template(self.scene, templates.by_key("slide"), page=page)
         source = self.tmp / "m.png"
@@ -777,13 +777,15 @@ class MenusTest(DesignTestCase):
                 lambda: menus.position_menu(self.ctl, anchor, everything),
                 lambda: menus.shape_kind_menu(self.ctl, anchor, shapes),
                 lambda: menus.mask_menu(self.ctl, anchor, [image]),
-                lambda: menus.text_effects_menu(self.ctl, anchor, texts),
-                lambda: menus.size_menu(self.ctl, anchor, texts),
-                lambda: menus.align_menu(self.ctl, anchor, texts),
+                lambda: menus_text.text_effects_menu(self.ctl, anchor, texts),
+                lambda: menus_text.size_menu(self.ctl, anchor, texts),
+                lambda: menus_text.align_menu(self.ctl, anchor, texts),
                 lambda: menus.adjust_menu(self.ctl, anchor, [image]),
                 lambda: menus.flip_menu(self.ctl, anchor, everything),
                 lambda: menus.resize_menu(self.ctl, anchor, page),
-                lambda: menus.export_menu(self.ctl, anchor)):
+                lambda: __import__("fm_design.menus_export", fromlist=["x"]).export_menu(self.ctl, anchor),
+                lambda: menus_data.table_menu(self.ctl, anchor, [self.ctl.add_table(2, 2)]),
+                lambda: menus_data.chart_menu(self.ctl, anchor, [self.ctl.add_chart("pie")])):
             count += self.run_menu(opener)
         self.ctl._select([image])
         count += self.run_menu(lambda: menus.open_context_menu(self.ctl, anchor.mapToGlobal(anchor.rect().center())))
@@ -1008,6 +1010,59 @@ class ZoomSnapshotTest(DesignTestCase):
         self.assertFalse(moving.live)
         self.assertTrue(item.isVisible())
         self.assertAlmostEqual(moving.pos().x(), item.pos().x() + 30, delta=0.01)
+
+
+class DataVisTest(DesignTestCase):
+    def test_table_cells_edited_in_place_and_saved(self):
+        from fm_design.datavis import DesignTableItem
+        from fm_design.design_model import resize_grid, table_grid
+        page = self.page()
+        table = self.ctl.add_table(3, 2)
+        self.assertIsInstance(table, DesignTableItem)
+        self.assertEqual(table_grid(table.data)[0], ["Titre 1", "Titre 2"])
+        cell = table.cell_rects()[1][1]
+        pos = QPointF(self.view.mapFromScene(table.mapToScene(cell.center())))
+        index = self.scene.undo.index()
+        QApplication.sendEvent(self.view.viewport(), QMouseEvent(QEvent.MouseButtonDblClick, pos, pos, Qt.LeftButton,
+                                                                 Qt.LeftButton, Qt.NoModifier))
+        self.assertTrue(self.ctl.text_editing())
+        table.editor.setPlainText("42")
+        QApplication.sendEvent(self.view, QKeyEvent(QEvent.KeyPress, Qt.Key_Tab, Qt.NoModifier))   # cellule suivante
+        self.assertEqual(table_grid(table.data)[1][1], "42")
+        self.assertEqual((table.editor.row, table.editor.col), (2, 0))
+        self.view.finish_text_edit()
+        settle()
+        self.assertIsNone(table.editor)
+        self.assertEqual(self.scene.undo.index(), index + 1)          # une étape (cellule vide inchangée : rien)
+        doc.change(self.scene, [table], lambda i: resize_grid(i.data, 4, 3), "Ligne")
+        self.assertEqual(table.data["rows"], 4)
+        self.assertEqual(table_grid(table.data)[1][1], "42")
+        self.assertTrue(self.pane.save())
+        other = board_ui.BoardPane(self.host)
+        _PANES.append(other)
+        self.assertTrue(other.open(self.path))
+        self.assertEqual(other.scene.item(table.item_id).to_dict(), table.to_dict())
+        self.assertTrue(render.render_image(page, 0.3).width() > 0)
+
+    def test_charts_render_and_parse(self):
+        from fm_design.design_model import parse_series, series_text
+        self.assertEqual(parse_series("Lun ; 3\nMar: 4,5\n7"), (["Lun", "Mar", ""], [3.0, 4.5, 7.0]))
+        self.assertIsNone(parse_series("Lun ; x"))
+        self.assertEqual(series_text(["a"], [2.0]), "a ; 2")
+        page = self.page(800, 600)
+        for kind in ("bar", "line", "pie", "donut"):
+            chart = self.ctl.add_chart(kind)
+            doc.change(self.scene, [chart], lambda i: i.data.update(x=0.0, y=0.0, w=800.0, h=600.0,
+                                                                    values=[1.0, -2.0, 3.0] if kind in ("bar", "line")
+                                                                    else [1.0, 2.0, 3.0],
+                                                                    labels=["a", "b", "c"]), "Données")
+            image = render.render_image(page, 0.5)
+            colours = {image.pixelColor(x, y).name() for x in range(0, 400, 7) for y in range(0, 300, 7)}
+            self.assertIn("#8b3dff", colours, kind)                    # 1re couleur de la palette dessinée
+            self.scene.delete_items([chart])
+        bad = model.normalize_item({"id": "c", "type": "design_chart", "chart": "x", "values": [1, "a", 2],
+                                    "labels": ["u"]})
+        self.assertEqual((bad["chart"], bad["values"], bad["labels"]), ("bar", [1.0, 2.0], ["u", ""]))
 
 
 if __name__ == "__main__":

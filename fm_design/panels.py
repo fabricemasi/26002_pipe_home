@@ -198,6 +198,18 @@ def build_elements(ctl, parent):
         button.clicked.connect(lambda _c=False, m=mask: ctl.add_frame(m))
         frames.addWidget(button)
     layout.addLayout(frames)
+    layout.addWidget(_label("Tableaux et graphiques (double-clic : modifier)"))
+    data_row = QHBoxLayout()
+    data_row.setSpacing(2)
+    for glyph, tip, slot in (("design_table", "Tableau 3 × 3", lambda: ctl.add_table(3, 3)),
+                             ("design_chart_bar", "Graphique en barres", lambda: ctl.add_chart("bar")),
+                             ("design_chart_line", "Courbe", lambda: ctl.add_chart("line")),
+                             ("design_chart_pie", "Secteurs", lambda: ctl.add_chart("pie")),
+                             ("design_chart_donut", "Anneau", lambda: ctl.add_chart("donut"))):
+        button = _GlyphButton(glyph, tip, widget, 44)
+        button.clicked.connect(lambda _c=False, f=slot: f())
+        data_row.addWidget(button)
+    layout.addLayout(data_row)
     layout.addWidget(_label("Dégradés"))
     grid2 = QGridLayout()
     grid2.setSpacing(4)

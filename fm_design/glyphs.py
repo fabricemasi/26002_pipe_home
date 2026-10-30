@@ -75,6 +75,28 @@ def paint_design_glyph(painter: QPainter, kind: str, rect: QRectF, color):
         painter.drawText(rect.translated(1.2, 1.2), Qt.AlignCenter, "A")
         painter.setPen(QPen(color, 0.8))
         painter.drawText(rect, Qt.AlignCenter, "A")
+    elif kind == "design_table":
+        painter.drawRect(QRectF(cx - s * 1.5, cy - s * 1.2, s * 3, s * 2.4))
+        painter.drawLine(QPointF(cx - s * 1.5, cy - s * 0.4), QPointF(cx + s * 1.5, cy - s * 0.4))
+        painter.drawLine(QPointF(cx - s * 1.5, cy + s * 0.4), QPointF(cx + s * 1.5, cy + s * 0.4))
+        painter.drawLine(QPointF(cx - s * 0.5, cy - s * 1.2), QPointF(cx - s * 0.5, cy + s * 1.2))
+        painter.drawLine(QPointF(cx + s * 0.5, cy - s * 1.2), QPointF(cx + s * 0.5, cy + s * 1.2))
+    elif kind == "design_chart_bar":
+        painter.setBrush(color)
+        for n, h in enumerate((1.2, 2.2, 1.6)):
+            painter.drawRect(QRectF(cx - s * 1.3 + n * s * 0.95, cy + s * 1.3 - h * s, s * 0.6, h * s))
+    elif kind == "design_chart_line":
+        painter.drawPolyline(QPolygonF([QPointF(cx - s * 1.5, cy + s * 0.9), QPointF(cx - s * 0.5, cy - s * 0.2),
+                                        QPointF(cx + s * 0.4, cy + s * 0.4), QPointF(cx + s * 1.5, cy - s * 1.1)]))
+        painter.drawLine(QPointF(cx - s * 1.5, cy + s * 1.4), QPointF(cx + s * 1.5, cy + s * 1.4))
+    elif kind in ("design_chart_pie", "design_chart_donut"):
+        box = QRectF(cx - s * 1.4, cy - s * 1.4, s * 2.8, s * 2.8)
+        painter.drawEllipse(box)
+        painter.setBrush(color)
+        painter.drawPie(box, 90 * 16, -110 * 16)
+        if kind == "design_chart_donut":
+            painter.setBrush(Qt.NoBrush)
+            painter.drawEllipse(box.adjusted(s * 0.8, s * 0.8, -s * 0.8, -s * 0.8))
     elif kind == "design_present":
         painter.drawRoundedRect(QRectF(cx - s * 1.5, cy - s * 1.2, s * 3, s * 2.1), 2, 2)
         painter.drawLine(QPointF(cx, cy + s * 0.9), QPointF(cx, cy + s * 1.5))

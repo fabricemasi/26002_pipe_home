@@ -14,9 +14,13 @@ from PySide6.QtWidgets import QAbstractButton, QApplication, QHBoxLayout, QInput
 
 from fm_board.ui import _bar, _GlyphButton, _menu, _panel, _TextButton
 from . import design_model as dm, document as doc
-from .menus import (_popup, _reset_crop, adjust_menu, align_menu, color_menu, export_menu, fill_menu,
-                    flip_menu, font_menu, mask_menu, position_menu, resize_menu, shadow_menu, shape_kind_menu,
-                    size_menu, slider_menu, stroke_menu, text_effects_menu, toggle_text_style)
+from .menus import (_popup, _reset_crop, adjust_menu, color_menu, fill_menu, flip_menu, mask_menu,
+                    position_menu, resize_menu, shadow_menu, shape_kind_menu, slider_menu, stroke_menu,
+                    toggle_text_style)
+from .menus_data import chart_menu, table_menu
+from .menus_export import export_menu
+from .menus_text import align_menu, font_menu, size_menu, text_effects_menu
+from .datavis import DesignChartItem, DesignTableItem
 from .items import DesignImageItem, DesignShapeItem, DesignTextItem
 
 TABS = [("templates", "design_templates", "Modèles et formats"), ("elements", "design_elements", "Éléments"),
@@ -507,6 +511,24 @@ def build_context_bar(chrome, ctl):
             glyph("highlight", "Surlignage du texte", lambda b: color_menu(ctl, b, texts, "text_bg", "Surlignage",
                                                                          allow_none=True))
             glyph("design_effects", "Effets : contour des lettres", lambda b: text_effects_menu(ctl, b, texts))
+        datavis = [i for i in sel if isinstance(i, (DesignTableItem, DesignChartItem))]
+        if datavis:
+            tables = [i for i in datavis if isinstance(i, DesignTableItem)]
+            charts = [i for i in datavis if isinstance(i, DesignChartItem)]
+            if tables:
+                glyph("design_table", "Tableau : lignes, colonnes, en-tête, couleurs (double-clic : modifier une "
+                      "cellule)", lambda b: table_menu(ctl, b, tables))
+            if charts:
+                glyph(f"design_chart_{charts[0].data.get('chart', 'bar')}", "Graphique : type, données, couleurs",
+                      lambda b: chart_menu(ctl, b, charts))
+            if not texts:
+                from fm_miro.items import resolve_family
+                family = datavis[0].data.get("font_family") or resolve_family("")
+                text_button(family[:16], "Police", lambda b: font_menu(ctl, b, datavis), 130)
+                text_button(f"{datavis[0].data.get('font_size', 20):g}", "Taille du texte",
+                            lambda b: size_menu(ctl, b, datavis), 54)
+                swatch(datavis[0].data.get("color"), "Couleur du texte",
+                       lambda b: color_menu(ctl, b, datavis, "color", "Couleur du texte"))
         if images:
             glyph("design_crop", "Recadrer (double-clic)", lambda _b: ctl.start_crop(images[0]))
             glyph(f"design_shape:{images[0].data.get('mask') or 'rect'}", "Forme du cadre (masque)",

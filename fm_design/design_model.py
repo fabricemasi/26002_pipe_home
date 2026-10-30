@@ -13,7 +13,9 @@ PAGE = "design_page"
 SHAPE = "design_shape"
 TEXT = "design_text"
 IMAGE = "design_image"
-ELEMENT_TYPES = (SHAPE, TEXT, IMAGE)
+TABLE = "design_table"
+CHART = "design_chart"
+ELEMENT_TYPES = (SHAPE, TEXT, IMAGE, TABLE, CHART)
 DESIGN_TYPES = (PAGE,) + ELEMENT_TYPES
 
 INK = "#1a1a1a"
@@ -54,6 +56,15 @@ DEFAULTS: dict[str, dict] = {
             "contrast": 0.0,
             "saturation": 0.0, "blur": 0.0, "grayscale": False, "radius": 0.0, "stroke": INK, "stroke_width": 0.0,
             **STYLE_COMMON},
+    # Tableau (fm_design/datavis.py) : cellules rows x cols, largeurs de colonnes en fractions (vide = égales).
+    TABLE: {"w": 600.0, "h": 240.0, "rows": 3, "cols": 3, "cells": [], "col_widths": [], "header": True,
+            "font_family": "", "font_size": 22.0, "color": INK, "bold": False, "align": "left",
+            "header_fill": "#8b3dff", "header_color": "#ffffff", "fill": "#ffffff", "alt_fill": "#f3effc",
+            "stroke": "#d0c6e8", "stroke_width": 1.5, **STYLE_COMMON},
+    # Graphique : « bar », « line », « pie », « donut » ; une série ; couleurs vides = palette du module.
+    CHART: {"w": 600.0, "h": 400.0, "chart": "bar", "labels": ["A", "B", "C", "D"], "values": [4.0, 7.0, 3.0, 6.0],
+            "colors": [], "font_family": "", "font_size": 18.0, "color": INK, "show_values": True,
+            "show_grid": True, "hole": "#ffffff", **STYLE_COMMON},
 }
 
 # Formats de page (largeur, hauteur en unités du board = px à 96 ppp ; papier : mm convertis). Noms génériques.
@@ -132,6 +143,8 @@ def normalize_entity(item: dict) -> dict:
             item["list"] = ""
     if kind == PAGE:
         item["guides"] = valid_guides(item.get("guides"))
+    if kind in (TABLE, CHART):
+        normalize_datavis(item)
     if kind == SHAPE and item["fill_type"] not in FILL_TYPES:
         item["fill_type"] = "solid"
     return item
@@ -212,3 +225,83 @@ def layout_positions(sizes: list[tuple[float, float]], origin: tuple[float, floa
         out.append((round(axis - w / 2, 2), round(y, 2)))
         y += h + gap
     return out
+
+
+# ---------------------------------------------------------------- tableaux et graphiques
+def table_grid(data: dict) -> list[list[str]]:
+    """Cellules rows × cols (complétées / tronquées)."""
+    rows, cols = int(data.get("rows", 1)), int(data.get("cols", 1))
+    cells = data.get("cells") if isinstance(data.get("cells"), list) else []
+    out = []
+    for r in range(rows):
+        row = cells[r] if r < len(cells) and isinstance(cells[r], list) else []
+        out.append([str(row[c]) if c < len(row) and row[c] is not None else "" for c in range(cols)])
+    return out
+
+
+def column_fractions(data: dict) -> list[float]:
+    cols = int(data.get("cols", 1))
+    widths = data.get("col_widths") if isinstance(data.get("col_widths"), list) else []
+    if len(widths) != cols or any(not isinstance(w, (int, float)) or w <= 0 for w in widths):
+        return [1.0 / cols] * cols
+    total = float(sum(widths))
+    return [w / total for w in widths]
+
+
+def resize_grid(data: dict, rows: int, cols: int):
+    """Nouvelles dimensions du tableau (cellules gardées là où elles existent) ; hauteur proportionnelle."""
+    rows, cols = max(1, min(50, rows)), max(1, min(20, cols))
+    grid = table_grid(data)
+    old_rows = len(grid) or 1
+    data["cells"] = [[grid[r][c] if r < len(grid) and c < len(grid[r]) else "" for c in range(cols)]
+                     for r in range(rows)]
+    fractions = column_fractions(data)
+    if cols != len(fractions):
+        fractions = (fractions + [1.0 / cols] * cols)[:cols]
+    data["col_widths"] = [round(f, 4) for f in fractions] if data.get("col_widths") else []
+    data["h"] = round(float(data["h"]) * rows / old_rows, 2)
+    data["rows"], data["cols"] = rows, cols
+
+
+def parse_series(text: str) -> tuple[list[str], list[float]] | None:
+    """« Libellé ; valeur » par ligne (séparateur ; ou tabulation ou :) -> (libellés, valeurs) ; None si illisible."""
+    labels, values = [], []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        for sep in (";", "\t", ":"):
+            if sep in line:
+                label, _sep, value = line.rpartition(sep)
+                break
+        else:
+            label, value = "", line
+        try:
+            number = float(value.strip().replace(",", ".").replace(" ", ""))
+        except ValueError:
+            return None
+        labels.append(label.strip())
+        values.append(number)
+    return (labels, values) if values else None
+
+
+def series_text(labels, values) -> str:
+    return "\n".join(f"{label} ; {value:g}" for label, value in zip(labels, values))
+
+
+def normalize_datavis(item: dict) -> dict:
+    """Tableau / graphique lu : bornes et structures réparées (appelé par normalize_entity)."""
+    if item.get("type") == TABLE:
+        item["rows"] = max(1, min(50, int(item.get("rows", 1))))
+        item["cols"] = max(1, min(20, int(item.get("cols", 1))))
+        item["cells"] = table_grid(item)
+        if item.get("col_widths") and len(item["col_widths"]) != item["cols"]:
+            item["col_widths"] = []
+    elif item.get("type") == CHART:
+        if item.get("chart") not in ("bar", "line", "pie", "donut"):
+            item["chart"] = "bar"
+        labels = [str(v) for v in item.get("labels") or []]
+        values = [float(v) for v in item.get("values") or [] if isinstance(v, (int, float)) and not isinstance(v, bool)]
+        item["values"] = values
+        item["labels"] = (labels + [""] * len(values))[:len(values)]
+    return item

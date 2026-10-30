@@ -13,14 +13,19 @@ Troisième module du board (après Miro et CAD), créé le 2026-10-29 à la dema
 |---|---|---|
 | Types du `.mro`, défauts, formats de page, palette, normalisation (SANS Qt) | `design_model.py` | `DEFAULTS`, `PAGE_FORMATS`, `normalize_entity`, `layout_positions` |
 | Géométrie pure (magnétisme, alignement, répartition, recadrage) | `geometry.py` | testable sans Qt |
-| Éléments de la scène : page, forme, texte, image ; peinture (dégradés, ombres, retouches d'image) | `items.py` | `DesignPageItem`, `DesignShapeItem`, `DesignTextItem`, `DesignImageItem` |
+| Éléments de la scène : page, forme, image ; peinture (dégradés, ombres, retouches d'image), image de page (zoom, gestes) | `items.py` | `DesignPageItem`, `DesignShapeItem`, `DesignImageItem` |
+| Textes : boîte, parties stylées (`spans`), listes, contour, ombre, éditeur sur place | `text_items.py` | `DesignTextItem`, `_DesignText`, `spans_of`, `apply_spans` |
+| Tableaux (édition des cellules sur place, Tab) et graphiques (barres, courbe, secteurs, anneau) | `datavis.py` | `DesignTableItem`, `_CellEditor`, `DesignChartItem` |
 | Opérations du document (1 étape d'annulation chacune) : pages, éléments, groupes, alignement, ordre, modèles | `document.py` | `add_page`, `duplicate_page`, `delete_page`, `move_page`, `resize_page`, `insert_elements`, `restack`, `apply_template`… |
 | Activation, souris, clavier, sélection, poignées (lecture) | `controller.py` | `DesignController` (mélange les deux suivants) |
 | Gestes : cadre de sélection, Ctrl + glisser, poignées, rotation, recadrage, magnétisme | `gestures.py` | `GestureMixin` |
 | Commandes : ajouter page / forme / texte / image, dépôt, dupliquer, verrou, presse-papiers, style, présenter | `commands.py` | `CommandMixin` |
 | Dessin temporaire (titres de page, survol, poignées, guides, cadre de sélection, recadrage, bulle) | `overlay.py` | `DesignOverlay` (un seul QGraphicsItem, hors fichier) |
 | Barres : rail, barre contextuelle, barre des pages (miniatures) | `ui.py` | `DesignChrome`, `build_context_bar`, `PageThumb` |
-| Menus : couleurs (dont couleurs du document), fond / dégradé, contour, ombre, position, masque, effets du texte, police, réglages / filtres d'image, redimensionner, export, clic droit | `menus.py` | `*_menu`, `open_context_menu`, `export_menu`, `parse_size` |
+| Menus : couleurs (document, marque), fond / dégradé, contour, ombre, position, masque, réglages / filtres d'image, redimensionner, clic droit, repères | `menus.py` | `*_menu`, `open_context_menu`, `parse_size` |
+| Menus du texte (effets, police, taille, alignement, listes) | `menus_text.py` | — |
+| Menus des tableaux / graphiques, données d'un graphique | `menus_data.py` | `table_menu`, `chart_menu`, `edit_chart_data` |
+| Menu Exporter | `menus_export.py` | `export_menu`, `run_export` |
 | Présentation plein écran | `present.py` | `PresentationWindow` |
 | Règles graduées (haut, gauche) | `rulers.py` | `Rulers`, `Ruler`, `tick_step` |
 | Panneau latéral (modèles et formats, éléments, texte, images, position et calques) | `panels.py` | `build_<onglet>`, `LayerList`, `PositionPanel` |
@@ -63,6 +68,11 @@ Points de branchement dans la coque (modifications MINIMALES, Miro et CAD inchan
 - **Images** : copiées dans `<board>_assets/` (cycle de vie du board, nettoyage sûr) ; recadrage NON destructif
   (`crop` = partie visible, fractions) ; retouches calculées une fois par réglage (numpy si présent, sinon noir et
   blanc et flou seulement) sur une image de travail de 1 600 px au plus.
+
+### Piège Qt : Tab dans un élément de scène (rencontré, contourné)
+`QGraphicsView.event` envoie Tab à la scène, et `QGraphicsItem.sceneEvent` le donne à la chaîne de focus de la scène
+avant `keyPressEvent` : l'éditeur de cellule perdait le focus. `_CellEditor.sceneEvent` traite Tab lui-même ; la vue
+du board n'est pas modifiée.
 
 ### Piège PySide6 (rencontré, contourné)
 `setParentItem` sur un élément dont la classe surcharge `itemChange` en Python : PySide6 ne sait pas rendre un
@@ -149,7 +159,7 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 - Retouches d'image (luminosité, contraste, saturation) : seulement avec numpy (présent dans l'environnement) ;
   sans numpy, noir et blanc et flou seulement.
 - Un élément Design ne peut pas être déplacé en mode Miro (pas de `ItemIsMovable`) : on passe en mode Design.
-- Page sans rotation ; pas d'animation, de vidéo, de tableaux ni de graphiques ; pas de kit de marque partagé entre
+- Page sans rotation ; pas d'animation ni de vidéo ; graphiques à une seule série ; pas de kit de marque partagé entre
   boards limité aux couleurs et polices (pas de logos ni de styles de texte complets).
 
 ## PLAN DE TRAVAIL (persistant, mis à jour à chaque étape)
@@ -169,6 +179,8 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 | Pages : ajouter, dupliquer, supprimer, réordonner, renommer, redimensionner (avec le contenu) | Terminée | Tranche 1 |
 | Modèles locaux (8), formats (12), combinaisons de polices, bibliothèque d'images locale | Terminée | Pages |
 | Export PNG / JPEG / PDF multipage / SVG, échelle, qualité, fond transparent | Terminée | Rendu |
+| Tableaux (lignes / colonnes, en-tête, couleurs, cellules modifiées sur place, Tab) et graphiques (barres, courbe, secteurs, anneau ; données « Libellé ; valeur ») | Terminée | Éléments |
+| Image de page pendant le zoom et les gestes (pages de 60 éléments et plus) | Terminée | Fluidité |
 | Validation graphique en vraie fenêtre Windows (pas seulement hors écran) | À faire | — |
 | Texte multistyle : gras / italique / souligné / taille / couleur / police sur une PARTIE du texte (pendant l'édition : raccourcis, ou barre contextuelle : boutons sans focus, menus qui gardent l'édition — `_DesignText.focusOutEvent` ignore `PopupFocusReason`), enregistré en `spans`, mis à l'échelle avec la boîte | Terminée | Texte |
 | Listes à puces / numérotées (toute la boîte, menu Alignement) | Terminée | Texte |

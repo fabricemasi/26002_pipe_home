@@ -307,3 +307,21 @@ class CommandMixin:
                 ui_state.APPLIED_SETTINGS["board_design_brand"] = brand
         except Exception:                            # noqa: BLE001 - hors de l'appli : gardé pour la session
             pass
+
+    # ------------------------------------------------------------------ tableaux, graphiques
+    def add_table(self, rows: int = 3, cols: int = 3):
+        page = self.ensure_page()
+        w = round(min(page.size()[0] * 0.8, 200.0 * cols), 2)
+        cells = [[f"Titre {c + 1}" for c in range(cols)]] + [["" for _c in range(cols)] for _r in range(rows - 1)]
+        item = doc.add_element(self.scene, page, dm.TABLE, {"rows": rows, "cols": cols, "cells": cells, "w": w,
+                                                            "h": round(60.0 * rows, 2)}, "Ajouter un tableau")
+        self._select([item])
+        return item
+
+    def add_chart(self, kind: str = "bar"):
+        page = self.ensure_page()
+        w = round(min(page.size()[0] * 0.7, 700.0), 2)
+        item = doc.add_element(self.scene, page, dm.CHART, {"chart": kind, "w": w, "h": round(w * 0.62, 2)},
+                               "Ajouter un graphique")
+        self._select([item])
+        return item
