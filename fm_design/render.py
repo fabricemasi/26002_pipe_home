@@ -16,15 +16,16 @@ from .items import DesignPageItem
 FORMATS = {"png": "PNG", "jpg": "JPEG", "jpeg": "JPEG", "pdf": "PDF", "svg": "SVG"}
 
 
-def paint_page(painter: QPainter, page: DesignPageItem, transparent: bool = False):
-    """Peint `page` (fond + éléments visibles, ordre d'empilement) dans `painter`, en coordonnées de la page."""
+def paint_page(painter: QPainter, page: DesignPageItem, transparent: bool = False, bleed: float = 0.0):
+    """Peint `page` (fond + éléments visibles, ordre d'empilement) dans `painter`, en coordonnées de la page ;
+    `bleed` (unités) = fond perdu : fond et éléments débordants gardés jusqu'à cette distance des bords."""
     option = QStyleOptionGraphicsItem()
     painter.save()
     painter.setRenderHint(QPainter.Antialiasing, True)
     painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
     painter.setRenderHint(QPainter.TextAntialiasing, True)
-    page.paint_background(painter, transparent=transparent)
-    painter.setClipRect(page.content_rect())
+    page.paint_background(painter, transparent=transparent, bleed=bleed)
+    painter.setClipRect(page.content_rect().adjusted(-bleed, -bleed, bleed, bleed))
     page_inverse, _ok = page.sceneTransform().inverted()
     base = painter.transform()
     for element in page.elements():
@@ -68,7 +69,7 @@ def _replace(tmp: Path, target: Path):
 
 
 def export_pages(pages: list, path, fmt: str = "png", scale: float = 1.0, quality: int = 92,
-                 transparent: bool = False) -> list[Path]:
+                 transparent: bool = False, bleed_mm: float = 0.0, crop_marks: bool = False) -> list[Path]:
     """Exporte `pages` : PDF = un fichier multipage ; PNG / JPEG / SVG = un fichier par page (« nom_p2.png » à
     partir de la 2e, ou toutes numérotées s'il y en a plusieurs). Écriture par fichier temporaire puis
     remplacement (un export interrompu ne laisse pas de fichier tronqué). Retourne les fichiers écrits."""
@@ -79,7 +80,7 @@ def export_pages(pages: list, path, fmt: str = "png", scale: float = 1.0, qualit
     if not pages:
         return []
     if fmt == "pdf":
-        return [_export_pdf(pages, path)]
+        return [_export_pdf(pages, path, bleed_mm, crop_marks)]
     out = []
     numbered = len(pages) > 1
     for number, page in enumerate(pages, 1):
@@ -99,8 +100,16 @@ def export_pages(pages: list, path, fmt: str = "png", scale: float = 1.0, qualit
     return out
 
 
-def _export_pdf(pages, path: Path) -> Path:
+MARKS_MM = 5.0          # traits de coupe : marge en plus du fond perdu, traits de 4 mm
+
+
+def _export_pdf(pages, path: Path, bleed_mm: float = 0.0, crop_marks: bool = False) -> Path:
+    """PDF multipage, une page PDF par page du design, à sa taille exacte (1 unité = 1/96 de pouce) ; avec un fond
+    perdu, la page PDF est agrandie de `bleed_mm` de chaque côté (fond et éléments prolongés) ; avec les traits de
+    coupe, d'une marge de plus où ils sont tracés dans le prolongement des bords."""
     from PySide6.QtGui import QPdfWriter
+    bleed = max(0.0, float(bleed_mm)) * dm.MM
+    margin = bleed + (MARKS_MM * dm.MM if crop_marks else 0.0)
     tmp = path.with_name(path.name + ".part")
     writer = QPdfWriter(str(tmp))
     writer.setResolution(300)
@@ -108,7 +117,8 @@ def _export_pdf(pages, path: Path) -> Path:
 
     def layout(page):
         w, h = page.size()
-        size = QPageSize(QSizeF(w / dm.MM, h / dm.MM), QPageSize.Millimeter, "", QPageSize.ExactMatch)
+        size = QPageSize(QSizeF((w + 2 * margin) / dm.MM, (h + 2 * margin) / dm.MM), QPageSize.Millimeter, "",
+                         QPageSize.ExactMatch)
         return QPageLayout(size, QPageLayout.Portrait, QMarginsF(0, 0, 0, 0))
 
     writer.setPageLayout(layout(pages[0]))
@@ -119,12 +129,31 @@ def _export_pdf(pages, path: Path) -> Path:
             writer.newPage()
         w, h = page.size()
         painter.save()
-        painter.scale(writer.width() / w, writer.height() / h)
-        paint_page(painter, page)
+        painter.scale(writer.width() / (w + 2 * margin), writer.height() / (h + 2 * margin))
+        painter.translate(margin, margin)
+        paint_page(painter, page, bleed=bleed)
+        if crop_marks:
+            _paint_crop_marks(painter, w, h, bleed, margin)
         painter.restore()
     painter.end()
     _replace(tmp, path)
     return path
+
+
+def _paint_crop_marks(painter, w, h, bleed, margin):
+    """Traits de coupe : dans le prolongement des bords de la page, hors du fond perdu."""
+    from PySide6.QtCore import QLineF
+    from PySide6.QtGui import QPen
+    pen = QPen(QColor("#000000"), 0.25 * dm.MM)
+    painter.setPen(pen)
+    gap = bleed + 1.0 * dm.MM
+    end = margin
+    for x in (0.0, w):
+        for y, sign in ((0.0, -1), (h, 1)):
+            painter.drawLine(QLineF(x, y + sign * gap, x, y + sign * end))
+    for y in (0.0, h):
+        for x, sign in ((0.0, -1), (w, 1)):
+            painter.drawLine(QLineF(x + sign * gap, y, x + sign * end, y))
 
 
 def _export_svg(page, tmp: Path):

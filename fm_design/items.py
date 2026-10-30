@@ -229,9 +229,10 @@ class DesignPageItem(DesignItem):
         paint_shadow(painter, page_shadow, path, ("page", rect.width(), rect.height()))
         self.paint_background(painter)
 
-    def paint_background(self, painter, transparent: bool = False):
-        """Fond de la page (uni, dégradé, image de fond) ; `transparent` = export sans fond blanc sous-jacent."""
-        rect = self.content_rect()
+    def paint_background(self, painter, transparent: bool = False, bleed: float = 0.0):
+        """Fond de la page (uni, dégradé, image de fond) ; `transparent` = export sans fond blanc sous-jacent ;
+        `bleed` = fond prolongé au-delà des bords (fond perdu de l'impression)."""
+        rect = self.content_rect().adjusted(-bleed, -bleed, bleed, bleed)
         painter.setPen(Qt.NoPen)
         if not transparent:
             painter.fillRect(rect, QColor("#ffffff"))

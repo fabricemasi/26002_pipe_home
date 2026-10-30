@@ -150,7 +150,7 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 | Grilles de photos (6 mises en page), cadres vides en forme, dépôt / bibliothèque = remplir le cadre (cadrage couvrant), « Remplacer l'image… » | Terminée | Images |
 | Repères de page (clic droit sur la page : ajouter ; Ctrl + glisser : déplacer ; clic droit dessus : retirer ; aimantants), marges affichées (5 % du petit côté) | Terminée | Pages |
 | Règles graduées (Maj+R, unités de la page courante ; tirer depuis une règle = nouveau repère), aide des raccourcis (? ou clic droit) | Terminée | Pages |
-| Fond perdu à l'export PDF (impression) | À faire | Export |
+| Fond perdu (3 mm) et traits de coupe à l'export PDF (impression) | Terminée | Export |
 | Styles du document : couleurs utilisées (menus de couleur), styles de texte utilisés (onglet Texte : appliquer / nouveau texte) | Terminée | Texte, Styles |
 | Kit de marque enregistré hors d'un design (polices / couleurs partagées entre boards) | À faire | Réglages |
 | Espacement égal entre deux voisins pendant Ctrl + glisser (segments tracés), renommer un calque, export d'une plage de pages (« 1-3, 5 ») | Terminée | Gestes, Export |

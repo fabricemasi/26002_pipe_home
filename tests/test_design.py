@@ -820,5 +820,24 @@ class RulerTest(DesignTestCase):
         self.assertFalse(self.ctl.rulers.left.isVisible())
 
 
+class PrintTest(DesignTestCase):
+    def test_pdf_bleed_enlarges_page(self):
+        import re
+        page = self.page(dm.FORMAT_SIZES["a4"][0], dm.FORMAT_SIZES["a4"][1])
+        self.ctl.add_shape("rect", {"x": -50.0, "y": 0.0, "w": 200.0, "h": 200.0})      # déborde à gauche
+        plain = render.export_pages([page], self.tmp / "a.pdf", "pdf")[0].read_bytes()
+        bled = render.export_pages([page], self.tmp / "b.pdf", "pdf", bleed_mm=3.0, crop_marks=True)[0].read_bytes()
+
+        def box(data):
+            numbers = re.search(rb"/MediaBox \[([^\]]+)\]", data).group(1).split()
+            return float(numbers[2]) - float(numbers[0]), float(numbers[3]) - float(numbers[1])
+        w0, h0 = box(plain)
+        w1, h1 = box(bled)
+        self.assertAlmostEqual(w0, 595.3, delta=1.0)                   # A4 en points
+        extra = (3.0 + render.MARKS_MM) * 2 * 72 / 25.4
+        self.assertAlmostEqual(w1 - w0, extra, delta=1.0)
+        self.assertAlmostEqual(h1 - h0, extra, delta=1.0)
+
+
 if __name__ == "__main__":
     unittest.main()

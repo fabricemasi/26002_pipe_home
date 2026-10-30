@@ -629,7 +629,7 @@ def export_menu(ctl, anchor):
     from settings_menu import menu_row
     menu = _menu(ctl.pane, "design_export")
     state = ctl.__dict__.setdefault("_export", {"fmt": "png", "scope": "all", "scale": 100, "quality": 92,
-                                                "transparent": False})
+                                                "transparent": False, "bleed": False, "marks": False})
     for fmt, text in (("png", "PNG (image)"), ("jpg", "JPEG (image, plus léger)"), ("pdf", "PDF (multipage)"),
                       ("svg", "SVG (vectoriel)")):
         action = menu.addAction(text)
@@ -652,6 +652,12 @@ def export_menu(ctl, anchor):
         quality = _slider(10, 100, state["quality"], "%")
         quality.valueChanged.connect(lambda v: state.update(quality=v))
         menu_row(menu, "Qualité", quality)
+    if state["fmt"] == "pdf":
+        for key, text in (("bleed", "Fond perdu (3 mm, impression)"), ("marks", "Traits de coupe")):
+            action = menu.addAction(text)
+            action.setCheckable(True)
+            action.setChecked(bool(state.get(key)))
+            action.triggered.connect(lambda on, k=key: state.update({k: bool(on)}))
     if state["fmt"] == "png":
         transparent = menu.addAction("Fond transparent")
         transparent.setCheckable(True)
@@ -689,7 +695,8 @@ def run_export(ctl, state):
         return
     try:
         written = render.export_pages(pages, path, state["fmt"], state["scale"] / 100.0, state["quality"],
-                                      state["transparent"])
+                                      state["transparent"], 3.0 if state.get("bleed") else 0.0,
+                                      bool(state.get("marks")))
     except (OSError, ValueError) as error:
         from PySide6.QtWidgets import QMessageBox
         QMessageBox.warning(ctl.pane, "Exporter", f"Export impossible : {error}")
