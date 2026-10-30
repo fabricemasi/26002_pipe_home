@@ -129,7 +129,12 @@ class GestureMixin:
             return []
         w, h = page.size()
         lines = []
-        for axis, value in guides:
+        for guide in guides:
+            if guide[0] == "seg":                               # espacement égal : le segment entre deux éléments
+                _kind, x1, y1, x2, y2 = guide
+                lines.append(QLineF(page.mapToScene(QPointF(x1, y1)), page.mapToScene(QPointF(x2, y2))))
+                continue
+            axis, value = guide
             a, b = (QPointF(value, 0), QPointF(value, h)) if axis == "v" else (QPointF(0, value), QPointF(w, value))
             lines.append(QLineF(page.mapToScene(a), page.mapToScene(b)))
         return lines

@@ -39,7 +39,65 @@ def snap_move(rect, targets: list, page_size, threshold: float, extra=((), ())):
         guides.append(("v", gx))
     if gy is not None:
         guides.append(("h", gy))
+    # Espacement ÉGAL entre deux voisins (comme les repères d'espacement de Canva), si aucun bord ne s'est aimanté.
+    for axis in ("x", "y"):
+        if (axis == "x" and gx is not None) or (axis == "y" and gy is not None):
+            continue
+        moved = (rect[0] + (dx or 0.0), rect[1] + (dy or 0.0), rect[2], rect[3])
+        found = equal_gap(moved, targets, axis, threshold)
+        if found is not None:
+            shift, segments = found
+            if axis == "x":
+                dx = (dx or 0.0) + shift
+            else:
+                dy = (dy or 0.0) + shift
+            guides += [("seg",) + seg for seg in segments]
     return dx or 0.0, dy or 0.0, guides
+
+
+def equal_gap(rect, targets: list, axis: str, threshold: float):
+    """Place `rect` à égale distance de ses plus proches voisins de part et d'autre (sur `axis`), s'ils se
+    recouvrent avec lui sur l'autre axe et si le décalage nécessaire est sous le seuil : (décalage, segments à
+    tracer (x1, y1, x2, y2)) ou None."""
+    i, size, j, other = (0, 2, 1, 3) if axis == "x" else (1, 3, 0, 2)
+    lo, hi = rect[j], rect[j] + rect[other]
+    start, end = rect[i], rect[i] + rect[size]
+    before = [t for t in targets if t[i] + t[size] <= start + threshold and t[j] < hi and t[j] + t[other] > lo]
+    after = [t for t in targets if t[i] >= end - threshold and t[j] < hi and t[j] + t[other] > lo]
+    if not before or not after:
+        return None
+    a = max(before, key=lambda t: t[i] + t[size])
+    b = min(after, key=lambda t: t[i])
+    target = (a[i] + a[size] + b[i] - rect[size]) / 2
+    shift = target - start
+    if abs(shift) > threshold or target - (a[i] + a[size]) <= 0:
+        return None
+    mid = max(lo, a[j], b[j]) + (min(hi, a[j] + a[other], b[j] + b[other]) - max(lo, a[j], b[j])) / 2
+    first = (a[i] + a[size], target)
+    second = (target + rect[size], b[i])
+    if axis == "x":
+        return shift, [(first[0], mid, first[1], mid), (second[0], mid, second[1], mid)]
+    return shift, [(mid, first[0], mid, first[1]), (mid, second[0], mid, second[1])]
+
+
+def parse_pages(text: str, count: int) -> list[int]:
+    """« 1-3, 5 » -> [0, 1, 2, 4] (index), bornés à `count` ; vide ou illisible -> []."""
+    out = []
+    for part in (text or "").replace(";", ",").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            if "-" in part:
+                a, b = (int(v) for v in part.split("-", 1))
+            else:
+                a = b = int(part)
+        except ValueError:
+            return []
+        for n in range(min(a, b), max(a, b) + 1):
+            if 1 <= n <= count and n - 1 not in out:
+                out.append(n - 1)
+    return out
 
 
 def snap_value(value: float, targets: list[float], threshold: float):

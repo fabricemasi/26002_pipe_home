@@ -289,6 +289,9 @@ def open_context_menu(ctl, global_pos):
                 menu.addAction("Grouper (Ctrl+G)").triggered.connect(lambda: doc.set_group(ctl.scene, items, True))
         locked = all(i.locked() for i in items)
         menu.addAction("Déverrouiller" if locked else "Verrouiller (Alt+Maj+L)").triggered.connect(ctl.toggle_lock)
+        if len(items) == 1:
+            menu.addAction("Renommer le calque…").triggered.connect(
+                lambda: QTimer.singleShot(0, lambda: rename_layer(ctl, items[0])))
         order = menu.addMenu("Ordre")
         for how, text in (("front", "Premier plan"), ("forward", "Avancer"), ("backward", "Reculer"),
                           ("back", "Arrière-plan")):
@@ -325,6 +328,13 @@ def open_context_menu(ctl, global_pos):
                 lambda: doc.change(ctl.scene, [page], lambda i: i.data.update(bg_asset=""), "Arrière-plan"))
     menu.aboutToHide.connect(ctl.scene.commit_live)
     menu.popup(global_pos)
+
+
+def rename_layer(ctl, item):
+    name, ok = QInputDialog.getText(ctl.pane, "Renommer le calque", "Nom (vide = nom automatique) :",
+                                    text=item.data.get("name", ""))
+    if ok:
+        doc.change(ctl.scene, [item], lambda i: i.data.update(name=name.strip()), "Renommer le calque")
 
 
 def add_guide(ctl, page, axis, pos):
@@ -598,7 +608,7 @@ def export_menu(ctl, anchor):
         action.triggered.connect(lambda _c=False, f=fmt: (state.update(fmt=f), QTimer.singleShot(
             0, lambda: export_menu(ctl, anchor))))
     menu.addSeparator()
-    for scope, text in (("all", "Toutes les pages"), ("current", "Page courante")):
+    for scope, text in (("all", "Toutes les pages"), ("current", "Page courante"), ("range", "Pages choisies…")):
         action = menu.addAction(text)
         action.setCheckable(True)
         action.setChecked(state["scope"] == scope)
@@ -626,10 +636,18 @@ def export_menu(ctl, anchor):
 def run_export(ctl, state):
     from pathlib import Path
     from . import render
+    from . import geometry
     pages = ctl.pages()
     if state["scope"] == "current":
         current = ctl.current_page()
         pages = [current] if current is not None else []
+    elif state["scope"] == "range":
+        text, ok = QInputDialog.getText(ctl.pane, "Exporter", f"Pages (ex. « 1-3, 5 » ; {len(pages)} pages) :",
+                                        text=state.get("range", "1"))
+        if not ok:
+            return
+        state["range"] = text
+        pages = [pages[n] for n in geometry.parse_pages(text, len(pages))]
     if not pages:
         return
     base = ctl.scene.board_path

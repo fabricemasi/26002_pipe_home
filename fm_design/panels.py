@@ -271,6 +271,19 @@ def build_text(ctl, parent):
         button.setStyleSheet(f"font-size: {int(font.pointSizeF())}pt; font-weight: {700 if preset != 'body' else 400};")
         button.setMinimumHeight({"heading": 44, "subheading": 36, "body": 30}[preset])
         layout.addWidget(button)
+    styles = document_text_styles(ctl)
+    if styles:
+        layout.addSpacing(6)
+        layout.addWidget(_label("Styles du document (clic : appliquer à la sélection, sinon nouveau texte)"))
+        for style in styles:
+            label = f"{style['font_family'] or 'Police par défaut'} · {style['font_size']:g} px" + (
+                " · gras" if style.get("bold") else "")
+            button = _wide_button(label, "Style de texte déjà utilisé dans ce design",
+                                  lambda _c=False, st=style: apply_text_style(ctl, st), widget)
+            button.setStyleSheet(f"color: {style['color']}; font-family: '{style['font_family']}';"
+                                 if QColor(style["color"]).lightness() > 60 else
+                                 f"font-family: '{style['font_family']}';")
+            layout.addWidget(button)
     layout.addSpacing(6)
     layout.addWidget(_label("Combinaisons de polices"))
     for title_font, body_font, name in FONT_PAIRS:
@@ -280,6 +293,31 @@ def build_text(ctl, parent):
         layout.addWidget(button)
     layout.addStretch(1)
     return widget
+
+
+TEXT_STYLE_KEYS = ("font_family", "font_size", "color", "bold", "italic", "underline", "uppercase", "letter_spacing",
+                   "line_height")
+
+
+def document_text_styles(ctl) -> list[dict]:
+    """Styles de texte DISTINCTS du design (les plus grands d'abord, 8 au plus) : styles réutilisables."""
+    seen, out = set(), []
+    for item in doc.elements(ctl.scene):
+        if isinstance(item, DesignTextItem):
+            style = {k: item.data.get(k) for k in TEXT_STYLE_KEYS}
+            key = tuple(style.values())
+            if key not in seen:
+                seen.add(key)
+                out.append(style)
+    return sorted(out, key=lambda st: -float(st["font_size"] or 0))[:8]
+
+
+def apply_text_style(ctl, style):
+    texts = [i for i in ctl.selection() if isinstance(i, DesignTextItem)]
+    if texts:
+        doc.change(ctl.scene, texts, lambda i: i.data.update(style), "Style de texte")
+    else:
+        ctl.add_text("body", {**style, "text": "Votre texte"})
 
 
 def add_pair(ctl, title_font, body_font):

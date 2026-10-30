@@ -695,5 +695,34 @@ class GuidesTest(DesignTestCase):
         self.assertEqual(saved["guides"], [{"axis": "v", "pos": 300.0}])
 
 
+class MoreTest(DesignTestCase):
+    def test_equal_gap_and_page_ranges(self):
+        found = geometry.equal_gap((48, 0, 10, 10), [(0, 0, 10, 10), (100, 0, 10, 10)], "x", 5)
+        self.assertIsNotNone(found)
+        self.assertAlmostEqual(found[0], 2.0)                    # 10 .. 50 .. 60 .. 100 : écarts de 40
+        self.assertIsNone(geometry.equal_gap((30, 0, 10, 10), [(0, 0, 10, 10), (100, 0, 10, 10)], "x", 5))
+        self.assertIsNone(geometry.equal_gap((48, 50, 10, 10), [(0, 0, 10, 10), (100, 0, 10, 10)], "x", 5))
+        dx, _dy, guides = geometry.snap_move((247, 300, 100, 50), [(0, 300, 100, 50), (500, 300, 100, 50)],
+                                             (2000, 2000), 5)
+        self.assertAlmostEqual(dx, 3.0)
+        self.assertEqual(sum(1 for g in guides if g[0] == "seg"), 2)
+        self.assertEqual(geometry.parse_pages("1-3, 5, 9", 6), [0, 1, 2, 4])
+        self.assertEqual(geometry.parse_pages("a", 6), [])
+
+    def test_document_text_styles_reused(self):
+        from fm_design.panels import apply_text_style, document_text_styles
+        self.page()
+        a = self.ctl.add_text("heading", {"text": "Titre", "font_family": "Georgia", "color": "#ff0000"}, edit=False)
+        b = self.ctl.add_text("body", {"text": "Corps"}, edit=False)
+        styles = document_text_styles(self.ctl)
+        self.assertEqual(len(styles), 2)
+        self.assertEqual(styles[0]["font_family"], "Georgia")      # le plus grand d'abord
+        self.ctl._select([b])
+        apply_text_style(self.ctl, styles[0])
+        self.assertEqual(b.data["font_family"], "Georgia")
+        self.assertEqual(b.data["text"], "Corps")                   # le texte reste
+        del a
+
+
 if __name__ == "__main__":
     unittest.main()
