@@ -158,13 +158,14 @@ class DesignItem(BoardItem):
     def boundingRect(self) -> QRectF:
         # Gardée : Qt la demande ~3 fois par élément et par image (index, peinture) ; la calculer en Python à
         # chaque fois coûtait ~10 ms par image avec 300 éléments. Refaite au changement de géométrie ou de zoom.
-        zoom = self._zoom()
-        kept = getattr(self, "_bounds", None)
-        if kept is not None and kept[0] == zoom:
+        scene = self.scene()
+        key = getattr(scene, "zoom", None) if scene is not None else None     # (sans _zoom : appelée ~800 fois
+        kept = getattr(self, "_bounds", None)                                  # par peinture à 1 000 éléments)
+        if kept is not None and kept[0] == key:
             return kept[1]
-        m = 2.0 / zoom
+        m = 2.0 / self._zoom()
         rect = self.paint_margin().united(self.content_rect()).adjusted(-m, -m, m, m)
-        self._bounds = (zoom, rect)
+        self._bounds = (key, rect)
         return rect
 
     def prepareGeometryChange(self):
@@ -221,11 +222,17 @@ class DesignPageItem(DesignItem):
     def added_to_scene(self, scene):
         """Adopte ses éléments déjà présents (lecture d'un fichier : ordre quelconque ; annulation)."""
         _notify_cad_layer(scene)
+        known = getattr(scene, "design_pages", None)        # liste des pages gardée (document.pages)
+        if known is not None:
+            known.add(self)
         for item in scene.board_items():
             if isinstance(item, DesignElement) and item.parentItem() is None and item.data.get("page") == self.item_id:
                 item.setParentItem(self)
 
     def removing_from_scene(self, scene):
+        known = getattr(scene, "design_pages", None)
+        if known is not None:
+            known.discard(self)
         for child in list(self.childItems()):
             if isinstance(child, DesignElement):
                 child.setParentItem(None)

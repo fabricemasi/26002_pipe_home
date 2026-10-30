@@ -20,6 +20,7 @@ import math
 
 from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QPolygonF
+from PySide6.QtWidgets import QGraphicsView
 
 from . import document as doc
 from .commands import CommandMixin
@@ -76,6 +77,11 @@ class DesignController(GestureMixin, CommandMixin, QObject):
         if self.active:
             return
         self.active = True
+        # Fluidité : la vue du board repeint TOUT le viewport à chaque changement (FullViewportUpdate, choisi pour
+        # le pan, voir docs/agents/fm_board.md) ; en Design, une sélection ou un survol ne touche qu'une petite zone
+        # (overlay `touch`) : seule cette zone est repeinte (~35 ms -> voir docs/agents/fm_design.md à 1 000 éléments).
+        self._update_mode = self.view.viewportUpdateMode()
+        self.view.setViewportUpdateMode(QGraphicsView.MinimalViewportUpdate)
         self.view.finish_text_edit()
         self.view.set_tool("select")
         for item in self.scene.selectedItems():
@@ -93,6 +99,7 @@ class DesignController(GestureMixin, CommandMixin, QObject):
         self._end_gesture(cancel=True)
         self.end_crop()
         self.active = False
+        self.view.setViewportUpdateMode(getattr(self, "_update_mode", QGraphicsView.FullViewportUpdate))
         self.hover = None
         self.ui.hide()
         self.rulers.place()
@@ -161,8 +168,12 @@ class DesignController(GestureMixin, CommandMixin, QObject):
             page = sel[0].page_item()
             if page is not None:
                 self._page_id = page.item_id
-        self.refresh()
+        # Tout de suite (pas au passage suivant de la boucle) : sélection, overlay et barre contextuelle changent
+        # dans la MÊME peinture du viewport (sinon 2 à 3 peintures par clic).
+        self._refresh_timer.stop()
+        self._refresh()
         self.stateChanged.emit()
+        self.ui.sync_now()
 
     # ------------------------------------------------------------------ lecture
     def pages(self) -> list[DesignPageItem]:
@@ -309,7 +320,7 @@ class DesignController(GestureMixin, CommandMixin, QObject):
                 viewport.unsetCursor()
         if hover is not self.hover:
             self.hover = hover
-            self.overlay.update()
+            self.overlay.touch()                # zone du survol seulement (pas toutes les pages)
 
     def mouse_press(self, event) -> bool:
         pos = event.position()

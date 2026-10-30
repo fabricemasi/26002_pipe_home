@@ -13,8 +13,14 @@ from .items import DesignElement, DesignPageItem
 
 # ---------------------------------------------------------------- lecture
 def pages(scene) -> list[DesignPageItem]:
-    return sorted((i for i in scene.board_items() if isinstance(i, DesignPageItem)),
-                  key=lambda p: (int(p.data.get("index", 0)), p.y()))
+    """Pages, dans l'ordre. Fluidité : l'ensemble des pages de la scène est gardé (`scene.design_pages`, tenu par
+    `DesignPageItem.added_to_scene` / `removing_from_scene`) ; parcourir tous les éléments coûtait ~0,3 ms à
+    1 000 éléments, appelé une dizaine de fois par clic."""
+    known = getattr(scene, "design_pages", None)
+    if known is None:
+        known = {i for i in scene.board_items() if isinstance(i, DesignPageItem)}
+        scene.design_pages = known
+    return sorted((p for p in known if p.scene() is scene), key=lambda p: (int(p.data.get("index", 0)), p.y()))
 
 
 def elements(scene, page=None) -> list[DesignElement]:

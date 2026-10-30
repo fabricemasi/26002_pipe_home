@@ -243,6 +243,11 @@ class DesignChrome(QObject):
         if self.ctl.active:
             self._sync_timer.start()
 
+    def sync_now(self):
+        if self._sync_timer.isActive():
+            self._sync_timer.stop()
+            self.sync()
+
     def _mark_from_undo(self, index):
         """Pages touchées par la commande faite / défaite (et ses sous-commandes d'une macro)."""
         try:

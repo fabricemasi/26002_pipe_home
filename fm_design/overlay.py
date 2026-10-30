@@ -27,8 +27,13 @@ class DesignOverlay(QGraphicsItem):
         self.setAcceptHoverEvents(False)
         self.setFlag(QGraphicsItem.ItemHasNoContents, False)
         self._bounds = QRectF()
+        self._static = None             # empreinte de ce qui est peint sur les pages entières (titres, repères…)
+        self._dynamic: list[QRectF] = []  # zones peintes de la sélection, du survol, des guides… (dernière peinture)
 
     # -- zone : tout le contenu Design (titres compris) ; refaite à chaque changement --
+    # Fluidité : l'overlay couvre TOUTES les pages ; un update() entier faisait repeindre chaque élément dessous
+    # (~35 ms par changement de sélection ou de survol à 1 000 éléments). Seule la zone dynamique (ancienne + nouvelle)
+    # est invalidée, sauf si ce qui couvre les pages entières a changé (empreinte `_static_key`).
     def refresh(self):
         scene = self.scene()
         if scene is None:
@@ -44,10 +49,74 @@ class DesignOverlay(QGraphicsItem):
         zoom = self._zoom()
         pad = (ROTATE_PX + 60) / zoom
         rect = rect.adjusted(-pad, -pad - 40 / zoom, pad, pad)
-        if rect != self._bounds:
-            self.prepareGeometryChange()
-            self._bounds = rect
-        self.update()
+        static = self._static_key()
+        if rect != self._bounds or static != self._static:
+            if rect != self._bounds:
+                self.prepareGeometryChange()
+                self._bounds = rect
+            self._static = static
+            self._dynamic = self.dynamic_rects()
+            self.update()
+            return
+        self.touch()
+
+    def touch(self):
+        """Repeint seulement les zones dynamiques : anciennes (à effacer) + nouvelles, chacune à part (deux éléments
+        éloignés : pas tout ce qui est entre eux)."""
+        new = self.dynamic_rects()
+        for rect in self._dynamic + new:
+            self.update(rect)
+        self._dynamic = new
+
+    def _static_key(self):
+        c = self.controller
+        current = c.current_page()
+        key = [bool(c.active), id(current), round(self._zoom(), 6)]
+        for page in c.pages():
+            r = page.sceneBoundingRect()
+            key.append((id(page), page.isVisible(), r.x(), r.y(), r.width(), r.height(), page.data.get("name"),
+                        page.data.get("index"), repr(page.data.get("guides")), bool(page.data.get("margins"))))
+        return tuple(key)
+
+    def dynamic_rects(self) -> list[QRectF]:
+        """Zones (scène) de tout ce qui suit la souris ou la sélection : survol, sélection et poignées, recadrage,
+        repère en aperçu, guides du magnétisme, cadre de sélection, bulle."""
+        c = self.controller
+        scene = self.scene()
+        zoom = self._zoom()
+        rects = []
+        try:
+            hover = c.hover
+            if hover is not None and hover.scene() is scene:
+                rects.append(c.item_polygon(hover).boundingRect())
+            selected = c.selection()
+            if len(selected) > 1:
+                rects.extend(c.item_polygon(item).boundingRect() for item in selected)
+            poly = c.selection_polygon()
+            if poly is not None:
+                rects.append(poly.boundingRect())
+            if c.crop_item is not None and c.crop_item.scene() is scene:
+                full = c.crop_full_polygon()
+                if full is not None:
+                    rects.append(full.boundingRect())
+        except RuntimeError:                          # élément détruit entre-temps
+            return [QRectF(self._bounds)]
+        current = c.current_page()
+        if c.preview_guide is not None and current is not None:
+            rects.append(current.sceneBoundingRect())
+        rects.extend(QRectF(line.p1(), line.p2()).normalized() for line in c.guides)
+        if c.marquee is not None:
+            rects.append(QRectF(c.marquee))
+        if c.tip is not None:
+            point, text = c.tip
+            rects.append(QRectF(point.x(), point.y(), (len(text) * 7 + 40) / zoom, 40 / zoom))
+        pad = (ROTATE_PX + 30) / zoom
+        if len(rects) > 24:                           # beaucoup d'éléments choisis : une seule zone
+            whole = QRectF()
+            for rect in rects:
+                whole = whole.united(rect)
+            rects = [whole]
+        return [r.adjusted(-pad, -pad, pad, pad) for r in rects]
 
     def boundingRect(self) -> QRectF:
         return self._bounds

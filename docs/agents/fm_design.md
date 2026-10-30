@@ -145,7 +145,17 @@ dichotomique (`geometry.best_snap`, ~4 ms par mouvement à 1 000 éléments avan
 300 éléments : déplacer 20 → 11 ms, pivoter 19 → 10 ms, zoom 55 → 17 ms / cran ; 1 000 éléments : déplacer
 ~45 → 14 ms, pivoter → 10 ms, zoom ~150 → 32 ms. Contrepartie : pendant le geste, l'élément manipulé passe
 au-dessus des autres (sa place dans l'ordre revient au relâché) ; l'image est prise au 1er mouvement / cran.
-Reste : changer de sélection à 1 000 éléments ~38 ms (repeinture entière de la vue, `FullViewportUpdate` de la coque).
+PEINTURE PARTIELLE (2026-10-30) : la vue du board est en `FullViewportUpdate` (choix de la coque pour le pan,
+docs/agents/fm_board.md) et l'overlay couvre toutes les pages : chaque clic ou survol repeignait les 1 000
+éléments. En Design (`activate`), la vue passe en `MinimalViewportUpdate` (réglage du board rendu à `deactivate`) ;
+l'overlay n'invalide que ses zones dynamiques, anciennes + nouvelles, chacune à part (`DesignOverlay.touch`,
+`dynamic_rects`), sauf si titres / repères / pages changent (`_static_key`) ; sélection, overlay et barre
+contextuelle refaits dans la MÊME peinture (`_selection_changed` : `_refresh` + `ui.sync_now`, 2 à 3 peintures
+avant) ; liste des pages gardée (`scene.design_pages`, tenue par les crochets de `DesignPageItem`). Vraie fenêtre,
+1 000 éléments, avant → après : changer de sélection ~35 → 14 ms (p95 25), sélectionner / désélectionner ~32 →
+8 ms, déplacer 14 → 7 ms, zoom 32 → 26 ms / cran. Vérifié à l'écran (sonde `probe_trails.py`, capture de la
+fenêtre réelle puis peinture complète) : aucune trace laissée. Reste par clic : la barre contextuelle (boutons
+translucides, ~12 recréés, la vue repeinte sous eux) et l'envoi de la fenêtre à Windows.
 Corrections : (1) `boundingRect` GARDÉ par élément (Qt le demande ~3 fois par élément et par image ; 108 000 appels
 Python pour 60 images) ; (2) contenu du panneau latéral OPAQUE (Qt retire les voisins opaques de la zone à
 peindre : les miniatures des modèles étaient repeintes à chaque image du board, ~5 ms) ; (3) miniatures des pages
@@ -183,6 +193,7 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 | Export PNG / JPEG / PDF multipage / SVG, échelle, qualité, fond transparent | Terminée | Rendu |
 | Tableaux (lignes / colonnes, en-tête, couleurs, cellules modifiées sur place, Tab) et graphiques (barres, courbe, secteurs, anneau ; données « Libellé ; valeur ») | Terminée | Éléments |
 | Image de page pendant le zoom et les gestes (pages de 60 éléments et plus) | Terminée | Fluidité |
+| Peinture partielle en Design (sélection, survol : seules les zones changées ; 35 → 14 ms à 1 000 éléments) | Terminée | Fluidité |
 | Graphiques à plusieurs séries (jusqu'à 8) : données « Libellé ; valeur ; valeur… », 1re ligne facultative = noms (légende) ; barres groupées, une courbe par série ; enregistrés en `values` (1re série, format d'origine) + `more_series` + `series_names` | Terminée | Tableaux et graphiques |
 | Validation graphique en vraie fenêtre Windows (pas seulement hors écran) | À faire | — |
 | Texte multistyle : gras / italique / souligné / taille / couleur / police sur une PARTIE du texte (pendant l'édition : raccourcis, ou barre contextuelle : boutons sans focus, menus qui gardent l'édition — `_DesignText.focusOutEvent` ignore `PopupFocusReason`), enregistré en `spans`, mis à l'échelle avec la boîte | Terminée | Texte |

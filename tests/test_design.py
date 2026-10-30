@@ -1129,6 +1129,32 @@ class ZoomSnapshotTest(DesignTestCase):
         self.assertAlmostEqual(moving.pos().x(), item.pos().x() + 30, delta=0.01)
 
 
+class PartialRepaintTest(DesignTestCase):
+    """Fluidité : en Design, un clic ne repeint que les zones qui changent (pas tout le viewport)."""
+
+    def test_selection_repaints_only_what_changes(self):
+        from PySide6.QtWidgets import QGraphicsView
+        page = self.page(1000, 800)
+        a = self.ctl.add_shape("rect", {"x": 0.0, "y": 0.0, "w": 50.0, "h": 50.0})
+        b = self.ctl.add_shape("rect", {"x": 900.0, "y": 700.0, "w": 50.0, "h": 50.0})
+        self.assertEqual(self.view.viewportUpdateMode(), QGraphicsView.MinimalViewportUpdate)
+        self.ctl._select([a])
+        settle()
+        self.ctl._select([b])
+        rects = self.ctl.overlay._dynamic
+        self.assertTrue(rects)
+        self.assertTrue(all(r.width() < 300 and r.height() < 300 for r in rects))   # pas de toute la page
+        self.assertEqual(len(doc.pages(self.scene)), 1)
+        other = doc.add_page(self.scene, 300, 300, after=page)
+        self.assertEqual(doc.pages(self.scene), [page, other])                  # liste des pages tenue à jour
+        doc.delete_page(self.scene, other)
+        self.assertEqual(doc.pages(self.scene), [page])
+        self.scene.undo.undo()
+        self.assertEqual(len(doc.pages(self.scene)), 2)
+        self.ctl.deactivate()
+        self.assertEqual(self.view.viewportUpdateMode(), QGraphicsView.FullViewportUpdate)   # réglage du board rendu
+        self.ctl.activate()
+
 class DataVisTest(DesignTestCase):
     def test_table_cells_edited_in_place_and_saved(self):
         from fm_design.datavis import DesignTableItem
