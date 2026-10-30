@@ -27,7 +27,8 @@ MIN_SIZE = 4.0
 SHADOW = {"enabled": False, "color": "#59000000", "dx": 0.0, "dy": 8.0, "blur": 18.0}
 
 STYLE_COMMON = {"page": "", "group": "", "opacity": 1.0, "flip_h": False, "flip_v": False, "name": "",
-                "shadow": SHADOW}
+                "shadow": SHADOW,
+                "animation": ""}      # présentation : "" = celle de la page, sinon une de ANIMATIONS (dont "none")
 FILL_TYPES = ("solid", "linear", "radial", "none")
 
 DEFAULTS: dict[str, dict] = {
@@ -138,6 +139,8 @@ def normalize_entity(item: dict) -> dict:
     item["h"] = max(MIN_SIZE if kind != SHAPE or item.get("shape") != "line" else 1.0, item["h"])
     if kind != PAGE:
         item["opacity"] = min(1.0, max(0.0, item["opacity"]))
+        if item["animation"] and item["animation"] not in dict(ANIMATIONS):
+            item["animation"] = ""
     if kind == IMAGE:
         item["crop"] = valid_crop(item.get("crop"))
         for key in ("brightness", "contrast", "saturation"):

@@ -19,7 +19,7 @@ from .menus import (_popup, _reset_crop, adjust_menu, color_menu, fill_menu, fli
                     toggle_text_style)
 from .menus_data import chart_menu, table_menu
 from .menus_export import export_menu
-from .menus_present import animate_menu
+from .menus_present import animate_menu, element_animate_menu
 from .menus_text import align_menu, font_menu, size_menu, text_effects_menu
 from .datavis import DesignChartItem, DesignTableItem
 from .items import DesignImageItem, DesignShapeItem, DesignTextItem
@@ -577,6 +577,9 @@ def build_context_bar(chrome, ctl):
         glyph("design_shadow", "Ombre portée", lambda b: shadow_menu(ctl, b, sel))
         glyph("design_flip", "Retourner", lambda b: flip_menu(ctl, b, sel))
         glyph("design_position", "Position : ordre, alignement, répartition", lambda b: position_menu(ctl, b, sel))
+        own = sel[0].data.get("animation", "")
+        text_button("Animer ●" if own else "Animer", "Animation de l'élément en présentation",
+                    lambda b: element_animate_menu(ctl, b, sel))
         grouped = len(sel) > 1 and len({i.data.get("group") for i in sel}) == 1 and bool(sel[0].data.get("group"))
         if len(sel) > 1:
             glyph("design_ungroup" if grouped else "design_group",

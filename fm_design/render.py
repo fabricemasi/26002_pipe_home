@@ -96,7 +96,8 @@ def animation_units(page: DesignPageItem) -> list[list]:
 
 
 def render_units(page: DesignPageItem, scale: float, units) -> list[tuple[QRectF, QImage]]:
-    """Chaque unité peinte seule dans une image à sa taille : (rectangle dans la page, image)."""
+    """Chaque unité peinte seule dans une image à sa taille : (rectangle dans la page, image) ; (None, None) pour
+    une unité hors de la page."""
     w, h = page.size()
     bounds = QRectF(0, 0, w, h)
     out = []
@@ -106,6 +107,7 @@ def render_units(page: DesignPageItem, scale: float, units) -> list[tuple[QRectF
             rect = rect.united(page.mapRectFromScene(element.sceneBoundingRect()))
         rect = rect.intersected(bounds)
         if rect.isEmpty():
+            out.append((None, None))                   # hors de la page : place gardée (une unité = une entrée)
             continue
         image = QImage(max(1, math.ceil(rect.width() * scale)), max(1, math.ceil(rect.height() * scale)),
                        QImage.Format_ARGB32_Premultiplied)

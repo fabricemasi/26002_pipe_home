@@ -736,6 +736,47 @@ class AnimationTest(DesignTestCase):
             window.close()
             settle()
 
+    def test_element_own_animation(self):
+        from fm_design import present
+        from fm_design.menus_present import element_animate_menu
+        page = self.page(400, 300)
+        still = self.ctl.add_shape("rect", {"x": 0.0, "y": 0.0, "w": 100.0, "h": 100.0, "fill": "#ff0000"})
+        moving = self.ctl.add_shape("rect", {"x": 300.0, "y": 0.0, "w": 100.0, "h": 100.0, "fill": "#0000ff"})
+        element_animate_menu(self.ctl, self.ctl.ui.context, [moving])
+        settle(0.02)
+        menu = QApplication.activePopupWidget()
+        [a for a in menu.actions() if a.text() == "Apparition"][0].trigger()
+        menu.close()
+        settle(0.02)
+        self.assertEqual(moving.data["animation"], "pop")
+        self.assertEqual(still.data["animation"], "")                      # comme la page (aucune)
+        window = self.ctl.present(start_page=page)
+        try:
+            settle()
+            plan, end = window.plan(0)
+            self.assertEqual([k for k, _s, _l in plan], ["none", "pop"])
+            self.assertEqual(window.durations(0)[2], present.ANIMATION_MS)
+            W, H = window.width(), window.height()
+            k = min(W / 400, H / 300)
+            left, top = (W - 400 * k) / 2, (H - 300 * k) / 2
+
+            def frame(ms):
+                image = QImage(W, H, QImage.Format_ARGB32)
+                image.fill(QColor("#000000"))
+                painter = QPainter(image)
+                window._paint_page(painter, ms)
+                painter.end()
+                return lambda x, y: image.pixelColor(int(left + x * k), int(top + y * k))
+            first = frame(1.0)
+            self.assertEqual(first(50, 50).name(), "#ff0000")              # sans animation : là tout de suite
+            self.assertGreater(first(350, 50).green(), 200)                 # l'autre : pas encore là (fond blanc)
+            self.assertEqual(frame(None)(350, 50).name(), "#0000ff")
+        finally:
+            window.close()
+            settle()
+        self.assertEqual(model.normalize_item({"id": "e", "type": "design_shape", "animation": "x"})["animation"],
+                         "")
+
     def test_animate_menu(self):
         from fm_design.menus_present import animate_menu
         first, second = self.two_pages()

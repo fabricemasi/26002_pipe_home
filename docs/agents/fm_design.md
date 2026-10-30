@@ -173,8 +173,7 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 - Retouches d'image (luminosité, contraste, saturation) : seulement avec numpy (présent dans l'environnement) ;
   sans numpy, noir et blanc et flou seulement.
 - Un élément Design ne peut pas être déplacé en mode Miro (pas de `ItemIsMovable`) : on passe en mode Design.
-- Page sans rotation ; animations seulement en présentation (pas dans l'export), réglées par page (pas d'animation
-  propre à un élément choisi) ; pas de vidéo ; texte courbé : sur une ligne, ombre sans flou, sans surlignage ; secteurs et anneau n'utilisent que la 1re série ; kit de marque
+- Page sans rotation ; animations seulement en présentation (pas dans l'export), réglées par page ou par élément ; pas de vidéo ; texte courbé : sur une ligne, ombre sans flou, sans surlignage ; secteurs et anneau n'utilisent que la 1re série ; kit de marque
   partagé entre boards : couleurs, polices, logos et styles de texte (un logo est un chemin de fichier : déplacé, il est
   compté « introuvable »).
 
@@ -203,6 +202,7 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 | Masquer une page (clic droit sur sa miniature : voilée et barrée ; sautée en présentation et à l'export « toutes les pages », gardée à l'export de la page courante ou d'une plage) ; « Copier le style » emporte la courbe | Terminée | Pages |
 | Notes du présentateur (clic droit sur la miniature : « Notes du présentateur… » ; N en présentation = bandeau en bas ; jamais exportées) | Terminée | Présentation |
 | Styles de texte dans le kit de marque (onglet Texte : clic droit sur un style du document = l'ajouter, nommé « Style N » ; clic = appliquer ; renommer, retirer ; `panel_brand.py`) | Terminée | Réglages, Texte |
+| Animation propre à un élément (barre contextuelle « Animer » : comme la page, aucune, ou une autre ; `present.plan` : une petite image par élément, chacun avec SON animation) | Terminée | Présentation |
 | Graphiques à plusieurs séries (jusqu'à 8) : données « Libellé ; valeur ; valeur… », 1re ligne facultative = noms (légende) ; barres groupées, une courbe par série ; enregistrés en `values` (1re série, format d'origine) + `more_series` + `series_names` | Terminée | Tableaux et graphiques |
 | Validation graphique en vraie fenêtre Windows (pas seulement hors écran) | À faire | — |
 | Texte multistyle : gras / italique / souligné / taille / couleur / police sur une PARTIE du texte (pendant l'édition : raccourcis, ou barre contextuelle : boutons sans focus, menus qui gardent l'édition — `_DesignText.focusOutEvent` ignore `PopupFocusReason`), enregistré en `spans`, mis à l'échelle avec la boîte | Terminée | Texte |

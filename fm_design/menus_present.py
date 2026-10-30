@@ -7,6 +7,23 @@ from . import design_model as dm, document as doc
 from .menus import _popup
 
 
+def element_animate_menu(ctl, anchor, items):
+    """Animation propre aux éléments choisis : « Comme la page », « Aucune » (là dès l'arrivée) ou une autre."""
+    menu = _menu(ctl.pane, "design_element_animate")
+    current = items[0].data.get("animation", "")
+    for value, text in (("", "Comme la page"),) + tuple(dm.ANIMATIONS):
+        action = menu.addAction(text if value != "none" else "Aucune (là dès l'arrivée de la page)")
+        action.setCheckable(True)
+        action.setChecked(current == value)
+        action.triggered.connect(lambda _c=False, v=value: doc.change(
+            ctl.scene, items, lambda i: i.data.update(animation=v), "Animer l'élément"))
+    page = items[0].page_item()
+    if page is not None:
+        menu.addSeparator()
+        menu.addAction("Aperçu (présenter depuis cette page)").triggered.connect(lambda: ctl.present(page))
+    _popup(ctl, menu, anchor)
+
+
 def animate_menu(ctl, anchor, page):
     menu = _menu(ctl.pane, "design_animate")
     for title, key, choices in (("Transition de la page", "transition", dm.TRANSITIONS),
