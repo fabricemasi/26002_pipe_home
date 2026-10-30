@@ -466,6 +466,11 @@ class _DesignText(_Text):
         super().keyPressEvent(event)
 
 
+def _list_style(kind: str):
+    from PySide6.QtGui import QTextListFormat
+    return QTextListFormat.ListDecimal if kind == "number" else QTextListFormat.ListDisc
+
+
 def spans_of(document) -> list[dict]:
     """Parties stylées d'un document (gras, italique, souligné, taille posés sur une partie), fusionnées."""
     out = []
@@ -591,7 +596,8 @@ class DesignTextItem(DesignElement):
         document.setDefaultTextOption(option)
         item.setTextWidth(max(8.0, float(data.get("w", 100.0))))
         stroke = (data.get("text_stroke") or dm.INK, float(data.get("text_stroke_width", 0.0) or 0.0))
-        key = (float(data.get("line_height", 1.2)), data.get("text_bg") or "", item.toPlainText(), stroke)
+        key = (float(data.get("line_height", 1.2)), data.get("text_bg") or "", item.toPlainText(), stroke,
+               data.get("list") or "")
         if getattr(self, "_format_key", None) != key:
             self._format_key = key
             cursor = QTextCursor(document)
@@ -606,12 +612,36 @@ class DesignTextItem(DesignElement):
             # Contour des lettres (effet « contour » / « creux » de Canva : épaisseur en px, couleur)
             fmt.setTextOutline(QPen(QColor(stroke[0]), stroke[1]) if stroke[1] > 0 else QPen(Qt.NoPen))
             cursor.mergeCharFormat(fmt)
+            self._apply_list(document, key[4])
         item.setPos(0, 0)
         height = max(size * 0.8, document.size().height())
         if abs(height - float(data.get("h", 0.0))) > 0.01:
             self.prepareGeometryChange()
             data["h"] = round(height, 2)
             self.setTransformOriginPoint(float(data.get("w", 0.0)) / 2, height / 2)
+
+    @staticmethod
+    def _apply_list(document, kind: str):
+        """Liste à puces / numérotée sur TOUS les paragraphes de la boîte (« » = aucune)."""
+        block = document.begin()
+        while block.isValid():
+            current = block.textList()
+            if current is not None and (not kind or current.format().style() != _list_style(kind)):
+                current.remove(block)
+                cursor = QTextCursor(block)
+                fmt = block.blockFormat()
+                fmt.setIndent(0)
+                cursor.setBlockFormat(fmt)
+            block = block.next()
+        if kind:
+            cursor = QTextCursor(document)
+            cursor.select(QTextCursor.Document)
+            if document.begin().textList() is None:
+                from PySide6.QtGui import QTextListFormat
+                fmt = QTextListFormat()
+                fmt.setStyle(_list_style(kind))
+                fmt.setIndent(1)
+                cursor.createList(fmt)
 
     def paint_margin(self) -> QRectF:
         return self.content_rect().adjusted(*([-shadow_extent(self.data)] * 2 + [shadow_extent(self.data)] * 2))

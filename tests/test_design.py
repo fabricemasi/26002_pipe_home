@@ -912,5 +912,21 @@ class RichTextMenuTest(DesignTestCase):
         self.assertEqual(text.data["color"], dm.INK)               # la boîte garde sa couleur
 
 
+class ListTest(DesignTestCase):
+    def test_bullet_and_numbered_lists(self):
+        self.page()
+        text = self.ctl.add_text("body", {"text": "Un\nDeux\nTrois"}, edit=False)
+        doc.change(self.scene, [text], lambda i: i.data.update(list="bullet"), "Liste")
+        document = text.text_item.document()
+        self.assertTrue(all(document.findBlockByNumber(n).textList() is not None for n in range(3)))
+        doc.change(self.scene, [text], lambda i: i.data.update(list="number"), "Liste")
+        from PySide6.QtGui import QTextListFormat
+        self.assertEqual(document.begin().textList().format().style(), QTextListFormat.ListDecimal)
+        self.scene.undo.undo()
+        self.scene.undo.undo()
+        self.assertIsNone(document.begin().textList())
+        self.assertEqual(text.to_dict()["text"], "Un\nDeux\nTrois")
+
+
 if __name__ == "__main__":
     unittest.main()

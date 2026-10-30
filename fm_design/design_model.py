@@ -46,7 +46,7 @@ DEFAULTS: dict[str, dict] = {
            # [{"start", "end" (caractères), "bold"?, "italic"?, "underline"?, "size"? (px), "color"?, "family"?}]
            # par-dessus le style de
            # la boîte.
-           "spans": [], **STYLE_COMMON},
+           "spans": [], "list": "", **STYLE_COMMON},          # list : « » / « bullet » (puces) / « number »
     # Image : `crop` = [x0, y0, x1, y1] partie VISIBLE de l'image source (fractions, non destructif) ; réglages
     # -100..100 ; `radius` arrondi des angles ; contour.
     # `mask` = forme du cadre (masque, « » = rectangle) : un nom de SHAPE_KINDS.
@@ -128,6 +128,8 @@ def normalize_entity(item: dict) -> dict:
         item["line_height"] = min(5.0, max(0.5, item["line_height"]))
         if item["align"] not in ("left", "center", "right", "justify"):
             item["align"] = "left"
+        if item["list"] not in ("", "bullet", "number"):
+            item["list"] = ""
     if kind == PAGE:
         item["guides"] = valid_guides(item.get("guides"))
     if kind == SHAPE and item["fill_type"] not in FILL_TYPES:

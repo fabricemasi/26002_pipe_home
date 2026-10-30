@@ -587,6 +587,14 @@ def align_menu(ctl, anchor, texts):
         action.setChecked(current == value)
         action.triggered.connect(lambda _c=False, v=value: doc.change(
             ctl.scene, texts, lambda i: i.data.update(align=v), "Alignement du texte"))
+    menu.addSeparator()
+    kind = texts[0].data.get("list", "")
+    for value, text in (("", "Sans liste"), ("bullet", "Liste à puces"), ("number", "Liste numérotée")):
+        action = menu.addAction(text)
+        action.setCheckable(True)
+        action.setChecked(kind == value)
+        action.triggered.connect(lambda _c=False, v=value: doc.change(
+            ctl.scene, texts, lambda i: i.data.update(list=v), "Liste"))
     _popup(ctl, menu, anchor)
 
 

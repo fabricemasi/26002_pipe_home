@@ -499,7 +499,7 @@ def build_context_bar(chrome, ctl):
                                      ("uppercase", "design_upper", "Majuscules (Ctrl+Maj+K)")):
                 on = all(i.data.get(field) for i in texts)
                 glyph(kind, tip, lambda _b, f=field, o=on: toggle_text_style(ctl, texts, f, o), on)
-            glyph("align", "Alignement du texte", lambda b: align_menu(ctl, b, texts))
+            glyph("align", "Alignement du texte, listes à puces / numérotées", lambda b: align_menu(ctl, b, texts))
             glyph("design_spacing", "Espacement des lettres, interligne", lambda b: _popup(ctl, slider_menu(
                 ctl, b, texts, [("letter_spacing", "Lettres", -200, 800, 1.0, ""),
                                 ("line_height", "Interligne", 50, 300, 100.0, "%")], "design_spacing",
