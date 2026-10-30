@@ -45,6 +45,15 @@ def tearDownModule():
     v2.load_settings = _real_load_settings
 
 
+def without_row_templates(test, frame):
+    """Tableau dont les lignes ne suivent plus le gabarit de leur type (fm_theme.cells, ROW_TEMPLATES_KEY) le
+    temps du test : on y verifie la restauration des dimensions PROPRES au tableau, que le gabarit remplace
+    sinon (tests/test_row_templates.py)."""
+    state = frame._extra_dims
+    kinds, state.row_kinds = state.row_kinds, {}
+    test.addCleanup(setattr, state, "row_kinds", kinds)
+
+
 def build(module: str | None = None):
     win = v2.SettingsWindowV2(module=module)
     v2.expand_all(win.stack.currentWidget())
@@ -146,6 +155,7 @@ class CellsBehaviourTest(WindowTestCase):
         cls.win.close()
 
     def test_alignment_is_kept_in_the_table_dims_and_restored(self):
+        without_row_templates(self, self.frame)
         cell = self.frame._extra_dims.cells["r1c1"]
         self.assertEqual(cell.align(), ("right", "center"))
         cell.setAlign("left", "top")
@@ -327,6 +337,7 @@ class RowHeightTest(WindowTestCase):
         cls.win.close()
 
     def test_dragging_the_bottom_border_of_a_row_sets_its_height(self):
+        without_row_templates(self, self.frame)
         heights = self.frame._extra_dims.heights
         row = heights.rows[1]
         before = row.height()
@@ -1286,6 +1297,7 @@ class SelectionEqualWidthAndSnapTest(WindowTestCase):
                                  for k, c in f._extra_dims.cells.items()
                                  if cells.split_of(c.content()) and len(cells.split_of(c.content())._cells) >= 3
                                  and cells.split_of(c.content()).isVisible())
+        without_row_templates(self, frame)
         split.snap_provider = None
         spans = split._column_spans()
         press = QPoint((spans[0][0] + spans[0][1]) // 2, 8)
@@ -1325,6 +1337,7 @@ class SelectionEqualWidthAndSnapTest(WindowTestCase):
     def test_split_cell_captions_are_justified_and_kept(self):
         frame, key, split = next((f, k, cells.split_of(c.content())) for f in self.frames
                                  for k, c in f._extra_dims.cells.items() if cells.split_of(c.content()))
+        without_row_templates(self, frame)
         split.setCapAlign(0, "left")
         dims = frame.collectDims()
         self.assertEqual(dims["split_head_align"][key][0], "left")
@@ -1355,6 +1368,7 @@ class SelectionEqualWidthAndSnapTest(WindowTestCase):
     def test_split_cell_captions_are_renamed_and_kept(self):
         frame, key, split = next((f, k, cells.split_of(c.content())) for f in self.frames
                                  for k, c in f._extra_dims.cells.items() if cells.split_of(c.content()))
+        without_row_templates(self, frame)
         original = split.capTexts()[0]
         menu = QMenu()
         split.populate_caption_menu(menu, 0)

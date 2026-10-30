@@ -40,10 +40,11 @@ from PySide6.QtWidgets import (
     QMessageBox, QScrollArea, QStackedWidget, QVBoxLayout, QWidget,
 )
 
+import settings_cells
 from settings_cells import (
     seed_above_text_look,
     _Cell, _ROWS_MOVABLE, SplitCell, _TextField, apply_saved_range, attach_range_menu, build_cells_table, natural_label_width,
-    normalize_toggles, slider_fields, wrap_split,
+    normalize_toggles, set_row_kinds, slider_fields, wrap_split, ROW_TEMPLATES_KEY,
 )
 
 from app_style import apply_dwm_frame, resize_hit_test
@@ -1929,6 +1930,7 @@ def tag_toggles(roots, scope: str, key: str):
 
 def make_field(spec: Spec, values: ScopeValues, colors: dict, on_range: Callable | None = None) -> QWidget:
     widget = FIELD_FACTORIES[spec.kind](spec, values, colors)
+    widget._row_kind = spec.kind            # gabarit de ligne commun a toutes les lignes de ce type (fm_theme.cells)
     if spec.key.startswith(('video_', 'vg_', 'vc_')):
         from fm_video.help_content import key_for_setting
         help_key = key_for_setting(spec.key)
@@ -2046,6 +2048,7 @@ def _flat_cells_table(rows: list) -> QWidget:
         head_align[2] = Qt.AlignCenter
     frame, head, _cells = build_cells_table(columns, table_rows, head_align=head_align)
     frame._v2_head = head
+    set_row_kinds(frame, {r: getattr(field, "_row_kind", None) for r, (_l, field, _t, _s) in enumerate(rows)})
     return frame
 
 
@@ -3158,6 +3161,8 @@ class SettingsWindowV2(QDialog):
                     dims[frame.dimsKey()] = frame.collectDims()
             except RuntimeError:             # tableau detruit depuis
                 pass
+        if _TABLE_DIMS.get(ROW_TEMPLATES_KEY):     # gabarits des types de ligne (fm_theme.cells)
+            dims[ROW_TEMPLATES_KEY] = copy.deepcopy(_TABLE_DIMS[ROW_TEMPLATES_KEY])
         if dims != (self.settings.get("table_dims") or {}):
             _set_table_dims(dims)
             self._autosave({"table_dims": dims})
@@ -3775,7 +3780,9 @@ class SettingsWindowV2(QDialog):
             frame.dimsChanged.connect(lambda f=frame: self._sync_linked(f))
 
     def _sync_linked(self, source: _TableFrame):
-        if self._syncing_dims or not source._dims_applied:
+        # Recopie d'un gabarit de ligne en cours : elle atteint deja les lignes des tableaux lies (refaire tout
+        # leur tableau coutait ~15 ms par pas de glissement).
+        if self._syncing_dims or not source._dims_applied or settings_cells._SPREADING:
             return
         dims = source.collectDims()
         _TABLE_DIMS[source.dimsKey()] = dims        # un tableau du groupe construit plus tard la reprend

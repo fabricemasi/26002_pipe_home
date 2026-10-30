@@ -37,7 +37,7 @@ MODULES = {
     "reglages": ["test_color_alpha.py", "test_color_drag.py", "test_color_picker.py", "test_context_menu.py",
                  "test_element_style.py", "test_extra_windows.py", "test_free_objects.py",
                  "test_input_tabs_settings.py", "test_interface_edit_scope.py", "test_menu_objects.py",
-                 "test_presets.py", "test_settings_*.py", "test_shadows.py", "test_table_*.py",
+                 "test_presets.py", "test_row_templates.py", "test_settings_*.py", "test_shadows.py", "test_table_*.py",
                  "test_title_reorder.py", "test_navigation_bar.py", "test_space_below.py", "test_ext_color.py"],
     "colonnes": ["test_bottom_pin.py", "test_column_loading.py", "test_file_operations.py",
                  "test_navigation_loading.py", "test_pin_per_preset.py", "test_project_config_defaults.py",

@@ -3934,7 +3934,9 @@ class _TableFrame(QWidget):
             self._dims_applied = True
             dims = _TABLE_DIMS.get(self.dimsKey())
             if dims:
-                self.applyDims(dims)
+                self.applyDims(dims)        # gabarits de lignes compris (fm_theme.cells)
+            elif getattr(getattr(self, "_extra_dims", None), "row_kinds", None):
+                self._extra_dims.apply_row_templates()
             look = ELEMENT_LOOKS.get(f"table:{self.dimsKey()}")
             if look:
                 from fm_theme.layout import set_table_look

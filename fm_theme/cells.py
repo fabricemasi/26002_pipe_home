@@ -16,6 +16,8 @@ settings_widgets, a copier tel quel dans une nouvelle appli).
 """
 from __future__ import annotations
 
+import time
+import weakref
 from typing import Callable
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer, Signal
@@ -37,7 +39,7 @@ from fm_theme.tokens import M, input_bg, input_border_decl, input_height
 from fm_theme.theme import _input_radius, _register_input, _set_text_role
 from fm_theme.widgets import (
     Menu, menu_row,
-    DRAG_GHOST_OPACITY, _TABLE_INNER_BORDER, _SliderField, _Toggle, _hide_width_badges, _selection_color, _table_frame, _width_badges,
+    DRAG_GHOST_OPACITY, _TABLE_DIMS, _TABLE_INNER_BORDER, _SliderField, _Toggle, _hide_width_badges, _selection_color, _table_frame, _width_badges,
     add_context_extras,
 )
 
@@ -1904,6 +1906,105 @@ class _CellsState:
         self.head_hidden = False                   # clic droit > « Supprimer l'entete »
         self.above_texts: dict[int, str] = {}      # ligne LOGIQUE -> texte pose au-dessus
         self._above_labels: dict = {}
+        # Gabarits de lignes (voir ROW_TEMPLATES_KEY) : ligne LOGIQUE -> type, et dernier gabarit vu de chaque ligne.
+        self.row_kinds: dict[int, str] = {}
+        self._row_snaps: dict[int, dict] = {}
+        self.fit_split: Callable | None = None     # colonne c recalee sur ses cellules divisees (build_cells_table)
+
+    # -- gabarits de lignes : toutes les lignes d'un meme type ont le meme aspect --
+
+    def _row_cells(self, r: int) -> list:
+        out = []
+        while f"r{r}c{len(out)}" in self.cells:
+            out.append(self.cells[f"r{r}c{len(out)}"])
+        return out
+
+    def _row_split(self, r: int) -> "tuple[int, SplitCell] | tuple[None, None]":
+        for c, cell in enumerate(self._row_cells(r)):
+            if split_of(cell.content()) is not None:
+                return c, split_of(cell.content())
+        return None, None
+
+    def row_template(self, r: int) -> dict:
+        """Aspect de la ligne `r` : justification de ses cellules, largeurs / ordre / justifications / titres
+        renommes de ses sous-cellules, hauteur imposee (0 = naturelle)."""
+        tpl: dict = {"align": [f"{c._h},{c._v}" for c in self._row_cells(r)]}
+        _c, split = self._row_split(r)
+        if split is not None:
+            tpl.update(split=split.widths(), split_order=split.order(),
+                       split_align=[f"{h},{v}" for h, v in split.aligns()], split_head_align=split.capAligns(),
+                       split_titles={str(i): t for i, t in enumerate(split.capTexts()) if t != split._cap_default[i]})
+        if self.heights is not None:
+            self.heights._sync_size()
+            tpl["height"] = self.heights.user[r] if r < len(self.heights.user) else 0
+        return tpl
+
+    def apply_row_template(self, r: int, tpl: dict) -> None:
+        """Pose le gabarit `tpl` sur la ligne `r` (sans rien signaler). Une ligne d'un autre format du meme
+        type (Bordures sans epaisseur) prend ce qui la concerne et garde le reste."""
+        if self.row_template(r) == tpl:
+            self._row_snaps[r] = tpl
+            return
+        for cell, value in zip(self._row_cells(r), tpl.get("align") or ()):
+            h, _sep, v = str(value).partition(",")
+            if h in _H and v in _V:
+                cell.setAlign(h, v, notify=False)
+        c, split = self._row_split(r)
+        resized = False
+        if split is not None:
+            n = len(split._cells)
+            order = tpl.get("split_order")
+            if isinstance(order, list):
+                split.setOrder(order, notify=False)               # autre nombre de sous-cellules : ignore
+            titles = tpl.get("split_titles") or {}
+            for i in range(n):
+                split.setCapText(i, str(titles.get(str(i)) or ""), notify=False)
+            for i, h in enumerate((tpl.get("split_head_align") or [])[:n]):
+                if h in _H:
+                    split.setCapAlign(i, h, notify=False)
+            for i, value in enumerate((tpl.get("split_align") or [])[:n]):
+                h, _sep, v = str(value).partition(",")
+                if h in _H and v in _V:
+                    split.setSubAlign(i, h, v, notify=False)
+            widths = split.widths()
+            saved = [int(w or 0) for w in (tpl.get("split") or [])[:n]]
+            widths[:len(saved)] = saved
+            if widths != split.widths():
+                split.setWidths(widths)
+                resized = True
+        heights = self.heights
+        if heights is not None and "height" in tpl:
+            heights._sync_size()
+            if r < len(heights.user) and heights.user[r] != int(tpl["height"] or 0):
+                heights.user[r] = int(tpl["height"] or 0)
+                heights.apply()
+        self._row_snaps[r] = self.row_template(r)
+        if resized and self.fit_split is not None:
+            self.fit_split(c)              # la colonne se cale sur ses cellules divisees, comme a la souris
+
+    def apply_row_templates(self) -> None:
+        """Gabarit de son type sur chaque ligne qui en a un (apres restauration des dimensions du tableau)."""
+        templates = _TABLE_DIMS.get(ROW_TEMPLATES_KEY) or {}
+        for r, kind in self.row_kinds.items():
+            tpl = templates.get(kind)
+            if isinstance(tpl, dict):
+                self.apply_row_template(r, tpl)
+            else:
+                self._row_snaps[r] = self.row_template(r)
+
+    def sync_row_templates(self, *_args) -> None:
+        """Dimensions du tableau changees : une ligne a gabarit modifiee devient le gabarit de son type,
+        recopie sur les autres lignes de ce type a l'image suivante."""
+        if _SPREADING or self.frame is None or not getattr(self.frame, "_dims_applied", False):
+            return
+        for r, kind in self.row_kinds.items():
+            tpl = self.row_template(r)
+            if r in self._row_snaps and tpl != self._row_snaps[r]:
+                self._row_snaps[r] = tpl
+                _TABLE_DIMS.setdefault(ROW_TEMPLATES_KEY, {})[kind] = tpl
+                _PENDING_SPREAD[kind] = (self, r)
+        if _PENDING_SPREAD:
+            _spread_timer().start()
 
     # -- entete supprime, textes au-dessus des lignes --
 
@@ -2156,6 +2257,97 @@ class _CellsState:
             heights.apply()
         if self.after_apply is not None:
             self.after_apply()
+        self.apply_row_templates()          # le gabarit d'un type de ligne l'emporte sur les dimensions du tableau
+
+
+# ==========================================================================
+# Gabarits de lignes
+# ==========================================================================
+# Toutes les lignes d'un meme TYPE (Bordures, Border radius, Ombres, Padding, police... : le `kind` de leur
+# champ) ont le MEME aspect dans toutes les fenetres de reglages (demande de l'utilisateur, 2026-10-29) : largeurs,
+# ordre, justifications et titres des sous-cellules, justification des cellules, hauteur de ligne. La ligne
+# modifiee devient le gabarit de son type, recopie sur les autres lignes deja affichees a l'image suivante, et sur
+# les autres a leur premier affichage. Un type jamais modifie laisse ses lignes telles quelles. Les gabarits vivent
+# avec les dimensions des tableaux (`table_dims`, sous cette cle).
+ROW_TEMPLATES_KEY = "@lignes"
+ROW_FAMILIES = {"sides_thick": "sides"}         # Bordures avec ou sans epaisseur : un seul gabarit
+_TEMPLATE_STATES: "weakref.WeakSet[_CellsState]" = weakref.WeakSet()
+_PENDING_SPREAD: dict[str, tuple] = {}          # type -> (tableau source, ligne source)
+_PENDING_LATE: list[str] = []                   # types a recopier sur les tableaux hors de l'ecran
+_SPREADING = False
+_SPREAD_TIMER: list = []
+
+
+def set_row_kinds(frame: QWidget, kinds: dict[int, str]) -> None:
+    """Type de chaque ligne d'un tableau a cellules ({ligne logique: kind}) ; seules les lignes a cellule
+    divisee suivent un gabarit."""
+    state = getattr(frame, "_extra_dims", None)
+    if not isinstance(state, _CellsState):
+        return
+    state.row_kinds = {r: ROW_FAMILIES.get(kind, kind) for r, kind in kinds.items()
+                       if kind and state._row_split(r)[1] is not None}
+    if state.row_kinds:
+        _TEMPLATE_STATES.add(state)
+        frame.dimsChanged.connect(state.sync_row_templates)
+
+
+def _spread_timer() -> QTimer:
+    """Une recopie par image au plus (un glissement signale chaque mouvement de souris)."""
+    if not _SPREAD_TIMER:
+        timer = QTimer(singleShot=True, interval=16)
+        timer.timeout.connect(spread_row_templates)
+        _SPREAD_TIMER.append(timer)
+    return _SPREAD_TIMER[0]
+
+
+def _late_timer() -> QTimer:
+    if len(_SPREAD_TIMER) < 2:
+        _spread_timer()
+        timer = QTimer(singleShot=True, interval=250)
+        timer.timeout.connect(lambda: spread_row_templates(hidden=True))
+        _SPREAD_TIMER.append(timer)
+    return _SPREAD_TIMER[1]
+
+
+def spread_row_templates(hidden: bool = False) -> None:
+    """Recopie les gabarits modifies sur les lignes de leur type des tableaux deja affiches : pendant le geste,
+    seulement ceux qui sont A L'ECRAN (une vingtaine de tableaux a remettre en page : ~25 ms le pas, fenetre
+    entierement construite) ; les autres quand le geste marque une pause (`hidden`)."""
+    global _SPREADING
+    if hidden:
+        pending, _PENDING_LATE[:] = {kind: None for kind in _PENDING_LATE}, []
+    else:
+        pending = dict(_PENDING_SPREAD)
+        _PENDING_SPREAD.clear()
+    templates = _TABLE_DIMS.get(ROW_TEMPLATES_KEY) or {}
+    late = set()
+    start = time.perf_counter()
+    _SPREADING = True
+    try:
+        for state in list(_TEMPLATE_STATES):
+            if hidden and time.perf_counter() - start > 0.006:
+                # Rattrapage par morceaux (~6 ms par image ; d'un bloc : ~75 ms pour les Bordures) : la suite a
+                # l'image suivante (les tableaux deja faits sont sautes, gabarit identique).
+                late.update(pending)
+                break
+            try:
+                if state.frame is None or not state.frame._dims_applied:
+                    continue
+                off_screen = not hidden and state.frame.visibleRegion().isEmpty()
+            except RuntimeError:                         # tableau detruit
+                _TEMPLATE_STATES.discard(state)
+                continue
+            for r, kind in state.row_kinds.items():
+                if kind in pending and pending[kind] != (state, r) and isinstance(templates.get(kind), dict):
+                    if off_screen:
+                        late.add(kind)
+                    else:
+                        state.apply_row_template(r, templates[kind])
+    finally:
+        _SPREADING = False
+    if late:
+        _PENDING_LATE[:] = sorted(set(_PENDING_LATE) | late)
+        _late_timer().start(16 if hidden else 250)
 
 
 # ==========================================================================
@@ -2277,6 +2469,8 @@ def build_cells_table(columns: list[tuple[str, int]], rows: list[list], first_co
         need = max(head._FREE_MIN, content_min(c))
         if need != head._widths[c]:
             head._set_width(c, need)
+
+    state.fit_split = grow_for_split
 
     def grow_to_content(c: int):
         """Un contenu s'est agrandi de lui-meme (pas un redimensionnement a la souris) : sa colonne
