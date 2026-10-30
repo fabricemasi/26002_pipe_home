@@ -127,6 +127,40 @@ def rename(book, stack, sheet, table, new_name: str) -> str | None:
     return None
 
 
+def resize_to(book, stack, sheet, table, rect) -> str | None:
+    """Poignée de redimensionnement (Excel) : le coin en haut à gauche reste ; nouvelles colonnes nommées
+    « Colonne<n> » ; la ligne des totaux suit le bas du tableau ; les données sorties du tableau restent dans la
+    feuille. Rend un message si refusé (chevauchement d'un autre tableau ou d'une fusion), sinon None."""
+    r0, c0, r1, c1 = table["ref"]
+    nr0, nc0, nr1, nc1 = rect
+    if (nr0, nc0) != (r0, c0) or nr1 < r0 or nc1 < c0:
+        return "Le coin en haut à gauche d'un tableau ne bouge pas."
+    for other in sheet.tables:
+        if other is not table and not (other["ref"][2] < nr0 or other["ref"][0] > nr1 or other["ref"][3] < nc0
+                                       or other["ref"][1] > nc1):
+            return f"Impossible : le tableau chevaucherait « {other['name']} »."
+    if any(not (m[2] < nr0 or m[0] > nr1 or m[3] < nc0 or m[1] > nc1) for m in sheet.merges):
+        return "Impossible : la plage contient des cellules fusionnées."
+    stack.begin("Redimensionner le tableau")
+    changes = {}
+    if table.get("totals") and nr1 != r1:                 # la ligne des totaux descend / remonte avec le bas
+        for c in range(c0, c1 + 1):
+            changes[(r1, c)] = None
+        for c in range(c0, min(c1, nc1) + 1):
+            cell = sheet.cell(r1, c)
+            if cell is not None:
+                changes[(nr1, c)] = cell
+    if table.get("header", True):
+        for c in range(c1 + 1, nc1 + 1):
+            if sheet.cell(r0, c) is None:
+                changes[(r0, c)] = Cell(f"Colonne{c - c0 + 1}")
+    if changes:
+        stack.push(C.SetCells(sheet, changes, "Redimensionner le tableau"))
+    resize(book, stack, sheet, table, (nr0, nc0, nr1, nc1))
+    stack.end()
+    return None
+
+
 def set_props(book, stack, sheet, table, text="Style du tableau", **props):
     name = table["name"]
 
@@ -134,7 +168,7 @@ def set_props(book, stack, sheet, table, text="Style du tableau", **props):
         for t in s.tables:
             if t["name"] == name:
                 t.update(props)
-    if set(props) <= {"style", "banded"}:
+    if set(props) <= {"style", "banded", "excel_style"}:
         retranslate = "none"                               # aspect seulement : rien à retraduire
     elif set(props) == {"ref"} and table["ref"][:2] == tuple(props["ref"])[:2] \
             and table["ref"][3] == tuple(props["ref"])[3]:

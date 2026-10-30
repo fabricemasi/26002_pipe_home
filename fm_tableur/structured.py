@@ -8,7 +8,8 @@ son graphe de dépendances fonctionne comme pour une plage ordinaire. Un tableau
 les formules qui le citent sont renvoyées au moteur (`CalcEngine.tables_changed`).
 
 Tableau = dictionnaire dans `Sheet.tables` : `name`, `ref` (r0, c0, r1, c1, entête et totaux compris), `header`
-(1re ligne = entêtes), `totals` (dernière ligne = totaux), `style` (STYLES), `banded` (lignes à bandes).
+(1re ligne = entêtes), `totals` (dernière ligne = totaux), `style` (STYLES : Clair / Moyen / Foncé), `banded`
+(lignes à bandes), `excel_style` (style d'un fichier Excel, réécrit tel quel tant que le style n'est pas changé).
 Noms de colonnes = textes de la ligne d'entête (vide : « Colonne<n> », doublon : suffixe « 2 »), comme Excel.
 
 Syntaxe d'Excel prise en charge : `T`, `T[]`, `T[Col]`, `T[[Col]]`, `T[[Col1]:[Col2]]`, `T[#All]`, `T[#Data]`,
@@ -21,10 +22,63 @@ import re
 
 from . import refs as R
 
-STYLES = {"bleu": ("#4472c4", "#d9e1f2", "TableStyleMedium2"), "orange": ("#ed7d31", "#fce4d6", "TableStyleMedium3"),
-          "gris": ("#7f7f7f", "#ededed", "TableStyleMedium4"), "or": ("#ffc000", "#fff2cc", "TableStyleMedium5"),
-          "vert": ("#70ad47", "#e2efda", "TableStyleMedium7"), "aucun": (None, None, "TableStyleLight1")}
-EXCEL_STYLE = {v[2]: k for k, v in STYLES.items()}
+def _medium(head, band, excel):
+    return {"family": "Moyen", "head": head, "head_text": "#ffffff", "band": band, "base": None, "text": None,
+            "line": None, "excel": excel}
+
+
+def _light(line, band, excel):
+    return {"family": "Clair", "head": None, "head_text": None, "band": band, "base": None, "text": None,
+            "line": line, "excel": excel}
+
+
+def _dark(base, band, excel):
+    return {"family": "Foncé", "head": "#000000", "head_text": "#ffffff", "band": band, "base": base,
+            "text": "#ffffff", "line": None, "excel": excel}
+
+
+# Styles de tableau, trois familles comme Excel (clé interne -> aspect + nom du style d'Excel). Les anciennes clés
+# (« bleu »…) sont les styles « Moyen » : rien ne change pour les tableaux déjà créés.
+STYLES = {
+    "clair_noir": _light("#000000", "#d9d9d9", "TableStyleLight1"),
+    "clair_bleu": _light("#4472c4", "#d9e1f2", "TableStyleLight2"),
+    "clair_orange": _light("#ed7d31", "#fce4d6", "TableStyleLight3"),
+    "clair_gris": _light("#a5a5a5", "#ededed", "TableStyleLight4"),
+    "clair_or": _light("#ffc000", "#fff2cc", "TableStyleLight5"),
+    "clair_vert": _light("#70ad47", "#e2efda", "TableStyleLight7"),
+    "bleu": _medium("#4472c4", "#d9e1f2", "TableStyleMedium2"),
+    "orange": _medium("#ed7d31", "#fce4d6", "TableStyleMedium3"),
+    "gris": _medium("#7f7f7f", "#ededed", "TableStyleMedium4"),
+    "or": _medium("#ffc000", "#fff2cc", "TableStyleMedium5"),
+    "vert": _medium("#70ad47", "#e2efda", "TableStyleMedium7"),
+    "fonce_noir": _dark("#737373", "#595959", "TableStyleDark1"),
+    "fonce_bleu": _dark("#4472c4", "#2f5597", "TableStyleDark2"),
+    "fonce_orange": _dark("#ed7d31", "#c55a11", "TableStyleDark3"),
+    "fonce_gris": _dark("#a5a5a5", "#7b7b7b", "TableStyleDark4"),
+    "fonce_or": _dark("#ffc000", "#bf9000", "TableStyleDark5"),
+    "fonce_vert": _dark("#70ad47", "#548235", "TableStyleDark7"),
+    "aucun": {"family": "Clair", "head": None, "head_text": None, "band": None, "base": None, "text": None,
+              "line": None, "excel": "TableStyleLight8"},
+}
+LABELS = {"noir": "Noir", "bleu": "Bleu", "orange": "Orange", "gris": "Gris", "or": "Or", "vert": "Vert"}
+EXCEL_STYLE = {v["excel"]: k for k, v in STYLES.items()}
+
+
+def style_of(table) -> dict:
+    return STYLES.get(table.get("style"), STYLES["bleu"])
+
+
+def style_from_excel(name: str | None) -> str:
+    """Clé interne d'un style d'Excel ; inconnu : le plus proche de sa famille (le nom d'origine est gardé à part
+    dans `table["excel_style"]` et réécrit tel quel à l'export)."""
+    if name in EXCEL_STYLE:
+        return EXCEL_STYLE[name]
+    text = (name or "").lower()
+    if "dark" in text:
+        return "fonce_bleu"
+    if "light" in text:
+        return "clair_bleu"
+    return "bleu"
 _NAME = re.compile(r"^[A-Za-z_\\À-￿][\w.À-￿]*$")
 _SPECIALS = {"#all", "#data", "#headers", "#totals", "#this row"}
 # mots-clés d'Excel en français, acceptés à la saisie (le classeur garde l'anglais du fichier)

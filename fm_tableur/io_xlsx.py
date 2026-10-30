@@ -390,7 +390,7 @@ def _import_style(book, xc, cache) -> int:
 
 def _import_tables(ws, sheet) -> int:
     """Tableaux structurés de la feuille ; rend le nombre de tableaux illisibles."""
-    from .structured import EXCEL_STYLE
+    from .structured import style_from_excel
     bad = 0
     try:
         items = list(ws.tables.values())
@@ -404,7 +404,8 @@ def _import_tables(ws, sheet) -> int:
         info = table.tableStyleInfo
         sheet.tables.append({"name": table.displayName, "ref": parsed[1],
                              "header": table.headerRowCount != 0, "totals": bool(table.totalsRowCount),
-                             "style": EXCEL_STYLE.get(getattr(info, "name", None), "bleu"),
+                             "style": style_from_excel(getattr(info, "name", None)),
+                             "excel_style": getattr(info, "name", None),
                              "banded": bool(getattr(info, "showRowStripes", True)),
                              "filter": table.autoFilter is not None,
                              "filters": {str(k): v for k, v in _criteria_of(table.autoFilter).items()}})
@@ -435,7 +436,7 @@ def _add_criteria(auto_filter, criteria: dict[int, dict]):
 
 def _export_tables(ws, sheet, book, warnings):
     from openpyxl.worksheet.table import Table, TableColumn, TableStyleInfo
-    from .structured import STYLES, columns
+    from .structured import columns, style_of
     for table in sheet.tables:
         names = columns(book, sheet, table)
         r0, c0, r1, c1 = table["ref"]
@@ -450,7 +451,7 @@ def _export_tables(ws, sheet, book, warnings):
             if table.get("totals"):
                 xt.totalsRowCount = 1
             xt.tableColumns = [TableColumn(id=i + 1, name=n) for i, n in enumerate(names)]
-            xt.tableStyleInfo = TableStyleInfo(name=STYLES.get(table.get("style"), STYLES["bleu"])[2],
+            xt.tableStyleInfo = TableStyleInfo(name=table.get("excel_style") or style_of(table)["excel"],
                                                showRowStripes=bool(table.get("banded", True)))
             if table.get("filter", True) and table.get("header", True):
                 from openpyxl.worksheet.filters import AutoFilter

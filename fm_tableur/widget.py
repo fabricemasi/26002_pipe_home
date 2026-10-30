@@ -836,7 +836,7 @@ class SpreadsheetWidget(QWidget):
     def table_menu(self, m):
         """Sous-menu « Tableau » du menu contextuel (cellule dans un tableau)."""
         from . import tables_ops
-        from .structured import STYLES
+        from .structured import LABELS, STYLES
         table = self.current_table()
         if table is None:
             m.addAction("Créer un tableau (Ctrl+T)").triggered.connect(self.create_table)
@@ -844,10 +844,18 @@ class SpreadsheetWidget(QWidget):
         sub = m.addMenu(f"Tableau « {table['name']} »")
         sub.addAction("Renommer…").triggered.connect(lambda: self.rename_table(table))
         styles = sub.addMenu("Style")
-        for key in STYLES:
-            styles.addAction(key.capitalize()).triggered.connect(
-                lambda _c=False, k=key: tables_ops.set_props(self.book, self.stack, self.grid.sheet, table,
-                                                             style=k))
+        for family in ("Clair", "Moyen", "Foncé"):              # trois familles, comme Excel
+            group = styles.addMenu(family)
+            for key, st in STYLES.items():
+                if st["family"] != family or key == "aucun":
+                    continue
+                label = LABELS.get(key.split("_")[-1], key)
+                action = group.addAction(("✓ " if table.get("style") == key else "") + label)
+                action.triggered.connect(lambda _c=False, k=key: tables_ops.set_props(
+                    self.book, self.stack, self.grid.sheet, table, style=k, excel_style=None))
+        styles.addAction(("✓ " if table.get("style") == "aucun" else "") + "Aucun").triggered.connect(
+            lambda: tables_ops.set_props(self.book, self.stack, self.grid.sheet, table, style="aucun",
+                                         excel_style=None))
         sub.addAction("Masquer la ligne des totaux" if table.get("totals") else "Ligne des totaux").triggered\
             .connect(lambda: tables_ops.toggle_totals(self.book, self.stack, self.grid.sheet, table))
         sub.addAction("Sans lignes à bandes" if table.get("banded", True) else "Lignes à bandes").triggered\

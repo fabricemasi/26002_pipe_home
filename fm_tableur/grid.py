@@ -480,6 +480,13 @@ class GridWidget(GridInput, QAbstractScrollArea):
                 painter.drawPolygon([QPointF(rect.right() - s - 1, rect.top() + 1),
                                      QPointF(rect.right() - 1, rect.top() + 1),
                                      QPointF(rect.right() - 1, rect.top() + s + 1)])
+        for table in sheet.tables:                       # poignée de redimensionnement : coin en bas à droite
+            corner = self.range_rect(table["ref"]).bottomRight()
+            if 0 <= corner.x() <= self.viewport().width() + 8 and 0 <= corner.y() <= self.viewport().height() + 8:
+                s = 6 * max(0.75, min(1.5, self.zoom))
+                painter.setPen(QPen(QColor("#404040"), 1.2))
+                painter.drawLine(QPointF(corner.x() - s, corner.y() - 1.5), QPointF(corner.x() - 1.5, corner.y() - 1.5))
+                painter.drawLine(QPointF(corner.x() - 1.5, corner.y() - s), QPointF(corner.x() - 1.5, corner.y() - 1.5))
         drop = self.dropdown_rect()
         if drop is not None and self._editing is None:
             painter.setPen(QPen(QColor("#8a8a8a"), 1))
@@ -603,7 +610,7 @@ class GridWidget(GridInput, QAbstractScrollArea):
             painter.drawRect(self.range_rect(self._copied[1]).adjusted(1, 1, -2, -2))
         if self._editing is not None:
             self._paint_formula_refs(painter)
-        if self._drag and self._drag.get("kind") == "fill" and self._drag.get("target"):
+        if self._drag and self._drag.get("kind") in ("fill", "table") and self._drag.get("target"):
             painter.setPen(QPen(QColor("#707070"), 1.2, Qt.DashLine))
             painter.drawRect(self.range_rect(self._drag["target"]).adjusted(0, 0, -1, -1))
 

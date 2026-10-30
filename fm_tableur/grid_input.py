@@ -186,8 +186,19 @@ class GridInput:
         if len(self.view.ranges) == 1:
             corner = self.range_rect((r0, c0, r1, c1)).bottomRight()
             if abs(x - corner.x()) <= 5 and abs(y - corner.y()) <= 5:
-                return ("fill_handle", None)
+                return ("fill_handle", None)              # la poignée de recopie passe avant celle d'un tableau
+        table = self.table_handle_at(pos)
+        if table is not None:
+            return ("table_resize", table)
         return ("cell", (self.row_at(y), self.col_at(x)))
+
+    def table_handle_at(self, pos):
+        """Tableau dont la poignée de redimensionnement (coin en bas à droite) est sous la souris, ou None."""
+        for table in self.sheet.tables:
+            corner = self.range_rect(table["ref"]).bottomRight()
+            if corner.x() - 7 <= pos.x() <= corner.x() + 2 and corner.y() - 7 <= pos.y() <= corner.y() + 2:
+                return table
+        return None
 
     def mousePressEvent(self, event):
         pos = event.position()
@@ -247,6 +258,8 @@ class GridInput:
             self._drag = {"kind": "rows", "anchor": self.view.anchor[0]}
         elif zone == "fill_handle":
             self._drag = {"kind": "fill", "source": self.selection(), "target": None}
+        elif zone == "table_resize":                       # pas un déplacement : sans Ctrl (comme Excel)
+            self._drag = {"kind": "table", "name": info["name"], "target": None}
         else:
             row, col = info
             if mods & Qt.ShiftModifier:
@@ -310,7 +323,7 @@ class GridInput:
                 else:
                     QToolTip.hideText()
             cursor = {"col_resize": Qt.SplitHCursor, "row_resize": Qt.SplitVCursor,
-                      "fill_handle": Qt.CrossCursor}.get(zone, Qt.ArrowCursor if zone != "cell" else Qt.CrossCursor)
+                      "fill_handle": Qt.CrossCursor, "table_resize": Qt.SizeFDiagCursor}.get(zone, Qt.ArrowCursor if zone != "cell" else Qt.CrossCursor)
             if cursor != self._hover_cursor:
                 self._hover_cursor = cursor
                 self.viewport().setCursor(cursor)
@@ -343,6 +356,15 @@ class GridInput:
             self._select_rows(drag["anchor"], row)
         elif kind == "point":
             self._point_at(row, col, start=False)
+        elif kind == "table":
+            from .structured import find
+            found = find(self.book, drag["name"])
+            if found is not None:
+                r0, c0, _r1, _c1 = found[1]["ref"]
+                min_rows = 1 + (1 if found[1].get("header", True) else 0) + (1 if found[1].get("totals") else 0)
+                target = (r0, c0, max(row, r0 + min_rows - 1), max(col, c0))
+                drag["target"] = None if target == tuple(found[1]["ref"]) else target
+                self.viewport().update()
         elif kind == "fill":
             r0, c0, r1, c1 = drag["source"]
             down = max(0, row - r1)
@@ -401,6 +423,13 @@ class GridInput:
             axis.changed()
             indices = self._resize_targets(axis_name, drag["index"])
             ops.set_sizes(self.book, self.session.stack, self.sheet, axis_name, indices, drag["new"])
+        elif kind == "table" and drag.get("target"):
+            from . import structured, tables_ops
+            found = structured.find(self.book, drag["name"])
+            if found is not None:
+                problem = tables_ops.resize_to(self.book, self.session.stack, self.sheet, found[1], drag["target"])
+                if problem:
+                    self.message.emit(problem)
         elif kind == "fill" and drag.get("target"):
             ops.fill(self.book, self.session.stack, self.sheet, drag["source"], drag["target"],
                      copy_only=bool(event.modifiers() & Qt.ControlModifier))

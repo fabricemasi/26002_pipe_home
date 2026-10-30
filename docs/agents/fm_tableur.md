@@ -127,8 +127,21 @@ imported=…)` + `files_mode.attach`), `_toggle_board` (bouton « board » de la
   effacer le filtre de la colonne, effacer tous les filtres, cases des valeurs affichées. Bandes calculées sur les
   lignes VISIBLES (Excel). Excel : `autoFilter` du tableau et critères « liste de valeurs » (vides compris) lus et
   écrits, aussi pour le filtre de la feuille ; les filtres personnalisés / par couleur / top 10 d'un fichier ne sont
-  pas repris (le masquage des lignes, lui, l'est). Pas encore : poignée de redimensionnement d'un tableau, styles
-  « Clair » / « Foncé » d'Excel (5 styles « Moyen »).
+  pas repris (le masquage des lignes, lui, l'est).
+- **Styles de tableau, trois familles comme Excel** (2026-10-30, demande de l'utilisateur ; `structured.STYLES`,
+  menu « Tableau » > Style > Clair / Moyen / Foncé) : Clair = filets de couleur sous l'entête et en bas, bandes
+  claires, entête en gras (TableStyleLight 1, 2, 3, 4, 5, 7) ; Moyen = entête colorée, texte blanc
+  (TableStyleMedium 2, 3, 4, 5, 7 ; les anciennes clés « bleu »… n'ont pas changé) ; Foncé = entête noire, données
+  sur fond de couleur en texte blanc, totaux noirs (TableStyleDark 1, 2, 3, 4, 5, 7) ; « Aucun ». Un style d'un
+  fichier Excel que le module ne sait pas peindre exactement (ex. TableStyleMedium15) est AFFICHÉ avec le plus
+  proche de sa famille (`style_from_excel`) et RÉÉCRIT TEL QUEL à l'export (`table["excel_style"]`, effacé quand
+  l'utilisateur choisit un autre style).
+- **Poignée de redimensionnement** (coin en bas à droite de chaque tableau, `grid_input.table_handle_at`,
+  `tables_ops.resize_to`) : tirer à la souris, sans Ctrl (ce n'est pas un déplacement), aperçu en pointillés ; le
+  coin en haut à gauche ne bouge pas ; nouvelles colonnes nommées « Colonne<n> » ; la ligne des totaux suit le bas ;
+  les données sorties du tableau restent dans la feuille (Excel) ; chevauchement d'un autre tableau ou d'une
+  fusion refusé (message) ; une étape d'annulation. La poignée de recopie de la sélection passe AVANT celle du
+  tableau quand les deux coins coïncident (choisir une autre cellule pour tirer la poignée du tableau).
 - **Ruban** : rangée de commandes dans une zone qui DÉFILE horizontalement (fenêtre étroite) ; jamais écrasée
   (piège : la mise en page rétrécissait les boutons sous leur taille utile, « G » devenait « : »).
 - **Colonne élargie** quand un NOMBRE saisi n'y tient pas et que sa largeur est celle par défaut (Excel) ; une
@@ -148,7 +161,7 @@ imported=…)` + `files_mode.attach`), `_toggle_board` (bouton « board » de la
   `_xlfn.` / `_xlws.` retirés / remis), styles (police, couleur, fond uni, alignements, retour à la ligne, retrait,
   bordures, format, verrouillage), tailles, masquage, fusions, volets, quadrillage, zoom, noms globaux,
   commentaires, listes déroulantes, filtre automatique (plage), tableaux structurés (nom, plage, entêtes, totaux,
-  style « Moyen » 2 / 3 / 4 / 5 / 7, bandes ; références structurées), mises en forme conditionnelles courantes,
+  styles Clair / Moyen / Foncé, style inconnu gardé tel quel, bandes ; références structurées), mises en forme conditionnelles courantes,
   protection, graphiques du module (vrais graphiques Excel + définitions gardées dans les propriétés
   personnalisées pour la réimport). Excel recalcule tout à l'ouverture (`fullCalcOnLoad`).
 - Graphiques d'un fichier Excel RELUS (`io_xlsx_charts`) : histogrammes / barres, courbes, aires, secteurs
@@ -182,7 +195,8 @@ englobant (une région `QRegion` pour la sélection) ; texte : `QStaticText` + p
 - `tests/test_tableur_ui.py` (17) : clavier / souris de la grille, pointage, poignée, presse-papiers, barre de
   formule, feuilles, peinture < 50 ms, aller-retour Excel (fichier écrit par openpyxl -> modifié -> exporté ->
   relu -> comparé), éléments non repris signalés, archive malformée / bombe refusées, CSV à la française.
-- `tests/test_tableur_tables.py` (14) : filtres des tableaux (critères, ET, effacer, boutons, annulation,
+- `tests/test_tableur_tables.py` (18) : styles Clair / Moyen / Foncé, style d'Excel inconnu conservé, poignée
+  (à la souris, colonnes ajoutées, totaux qui suivent, chevauchement refusé, annulation) ; filtres des tableaux (critères, ET, effacer, boutons, annulation,
   déplacement du tableau, filtre de la feuille, aller-retour Excel, clic sur le bouton dans la grille) ; traduction de toute la syntaxe, mots-clés français, échappements,
   recalcul quand le tableau change, extension, colonne calculée, totaux, renommer (tableau / entête), insertion
   de lignes, convertir en plage, annulation, format natif, aller-retour Excel, Ctrl+T.
@@ -215,5 +229,6 @@ englobant (une région `QRegion` pour la sélection) ; texte : `QStaticText` + p
   calculée, totaux, renommer, convertir, import / export Excel), `tests/test_tableur_tables.py`.
 - Fonctions obligataires : écartées pour l'instant par l'utilisateur (2026-10-30).
 - 2026-10-30 — FAIT : filtres des tableaux (`filters.py`), bandes sur lignes visibles.
-- Prochaine action : poignée de redimensionnement des tableaux ; police par défaut dans les réglages ; vérifier
-  l'ouverture des fichiers exportés dans Microsoft Excel (non disponible ici).
+- 2026-10-30 — FAIT : styles Clair / Foncé des tableaux, poignée de redimensionnement.
+- Prochaine action : police par défaut dans les réglages ; vérifier l'ouverture des fichiers exportés dans
+  Microsoft Excel (non disponible ici).

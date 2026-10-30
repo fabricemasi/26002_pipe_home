@@ -315,3 +315,101 @@ class TableFiltersTest(unittest.TestCase):
         finally:
             w.detach()
             w.deleteLater()
+
+
+class StylesAndHandleTest(unittest.TestCase):
+    def setUp(self):
+        self.s, self.sheet = make()
+        self.table = tables_ops.create(self.s.book, self.s.stack, self.sheet, (0, 0, 3, 2))
+
+    def test_light_and_dark_families(self):
+        from fm_tableur import render
+        from fm_tableur.structured import STYLES, style_from_excel
+        families = {st["family"] for st in STYLES.values()}
+        self.assertEqual(families, {"Clair", "Moyen", "Foncé"})
+        tables_ops.set_props(self.s.book, self.s.stack, self.sheet, self.table, style="fonce_vert")
+        self.assertEqual(render.table_text_style(self.sheet, 0, 0), {"bold": True, "color": "#ffffff"})
+        self.assertEqual(render.table_text_style(self.sheet, 2, 1), {"color": "#ffffff"})   # données en blanc
+        tables_ops.set_props(self.s.book, self.s.stack, self.sheet, self.table, style="clair_bleu")
+        self.assertEqual(render.table_text_style(self.sheet, 0, 0), {"bold": True})
+        self.assertIsNone(render.table_text_style(self.sheet, 2, 1))
+        self.assertEqual((style_from_excel("TableStyleDark2"), style_from_excel("TableStyleLight19"),
+                          style_from_excel("TableStyleMedium15")), ("fonce_bleu", "clair_bleu", "bleu"))
+
+    def test_unknown_excel_style_kept_until_changed(self):
+        import openpyxl
+        from openpyxl.worksheet.table import Table, TableStyleInfo
+        from fm_tableur import io_xlsx
+        tmp = tempfile.mkdtemp()
+        try:
+            src = os.path.join(tmp, "style.xlsx")
+            wb = openpyxl.Workbook()
+            for row in [["A", "B"], [1, 2]]:
+                wb.active.append(row)
+            table = Table(displayName="T", ref="A1:B2")
+            table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium15", showRowStripes=True)
+            wb.active.add_table(table)
+            wb.save(src)
+            book = io_xlsx.read(src)
+            session = Session(book)
+            out = os.path.join(tmp, "out.xlsx")
+            io_xlsx.write(book, out)
+            self.assertEqual(openpyxl.load_workbook(out).active.tables["T"].tableStyleInfo.name,
+                             "TableStyleMedium15")                         # conservé tel quel
+            t = book.sheets[0].tables[0]
+            tables_ops.set_props(book, session.stack, book.sheets[0], t, style="fonce_or", excel_style=None)
+            io_xlsx.write(book, out)
+            self.assertEqual(openpyxl.load_workbook(out).active.tables["T"].tableStyleInfo.name, "TableStyleDark5")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_resize_to(self):
+        s, sh = self.s, self.sheet
+        self.assertIsNone(tables_ops.resize_to(s.book, s.stack, sh, self.table, (0, 0, 5, 3)))
+        table = T.find(s.book, "Tableau1")[1]
+        self.assertEqual(table["ref"], (0, 0, 5, 3))
+        self.assertEqual(sh.cell(0, 3).value, "Colonne4")                 # colonne ajoutée nommée
+        put(s, sh, 8, 0, "=ROWS(Tableau1)")
+        if fz is not None:
+            self.assertEqual(val(s, sh, 8, 0), 5)
+        tables_ops.toggle_totals(s.book, s.stack, sh, table)              # totaux en ligne 6
+        table = T.find(s.book, "Tableau1")[1]
+        self.assertIsNone(tables_ops.resize_to(s.book, s.stack, sh, table, (0, 0, 4, 3)))
+        self.assertEqual(sh.cell(4, 0).value, "Total")                    # la ligne des totaux a suivi le bas
+        self.assertIsNone(sh.cell(6, 0))
+        tables_ops.create(s.book, s.stack, sh, (10, 0, 12, 1))
+        self.assertIsNotNone(tables_ops.resize_to(s.book, s.stack, sh, T.find(s.book, "Tableau1")[1],
+                                                  (0, 0, 11, 3)))         # chevauchement refusé
+        s.stack.undo()                                                    # (création du 2e tableau)
+        s.stack.undo()
+        self.assertEqual(T.find(s.book, "Tableau1")[1]["ref"], (0, 0, 6, 3))
+
+    def test_handle_drag_in_grid(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QMouseEvent
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance() or QApplication([])
+        from fm_tableur.widget import SpreadsheetWidget
+        w = SpreadsheetWidget(self.s)
+        w.resize(900, 500)
+        w.show()
+        app.processEvents()
+        try:
+            g = w.grid
+            g.select(1, 0)
+            corner = g.range_rect(self.table["ref"]).bottomRight()
+            start = corner - type(corner)(3, 3)
+            self.assertIs(g.table_handle_at(start), self.table)
+            vp = g.viewport()
+            target = g.cell_rect(6, 3).center()
+            for kind, pos, buttons in ((QMouseEvent.MouseButtonPress, start, Qt.LeftButton),
+                                       (QMouseEvent.MouseMove, target, Qt.LeftButton),
+                                       (QMouseEvent.MouseButtonRelease, target, Qt.NoButton)):
+                QApplication.sendEvent(vp, QMouseEvent(kind, pos, vp.mapToGlobal(pos.toPoint()), Qt.LeftButton,
+                                                       buttons, Qt.NoModifier))
+            self.assertEqual(T.find(self.s.book, "Tableau1")[1]["ref"], (0, 0, 6, 3))
+            self.assertEqual(g.view.current, (1, 0))                      # la sélection n'a pas bougé
+        finally:
+            w.detach()
+            w.deleteLater()

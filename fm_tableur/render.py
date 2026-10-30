@@ -300,42 +300,61 @@ def paint_cells(painter, book, sheet, rows: Span, cols: Span, zoom: float, cache
 
 
 def _table_fills(table, rows: Span, cols: Span, fills: list, hidden=()):
-    """Style à bandes d'un tableau : entête colorée, une ligne VISIBLE sur deux teintée (comme Excel après un
-    filtre), totaux teintés."""
+    """Style d'un tableau (Clair / Moyen / Foncé) : entête, fond des données, une ligne VISIBLE sur deux teintée
+    (comme Excel après un filtre), totaux, filets des styles clairs."""
     import bisect
-    from .structured import STYLES
-    head, band, _excel = STYLES.get(table.get("style"), STYLES["bleu"])
-    if head is None:
-        return
+    from .structured import style_of
+    st = style_of(table)
     r0, c0, r1, c1 = table["ref"]
     xs = [(x, w) for c, x, w in cols.items if c0 <= c <= c1]
     if not xs:
         return
     left, right = xs[0][0], xs[-1][0] + xs[-1][1]
-    first = r0 + (1 if table.get("header", True) else 0)
+    width = right - left
+    header = table.get("header", True)
+    totals = table.get("totals")
+    first = r0 + (1 if header else 0)
     masked = sorted(h for h in hidden if first <= h <= r1) if hidden else []
+    line = st["line"]
     for r, y, h in rows.items:
         if not r0 <= r <= r1:
             continue
-        if r == r0 and table.get("header", True):
-            fills.append((QRectF(left, y, right - left, h), head))
-        elif r == r1 and table.get("totals"):
-            fills.append((QRectF(left, y, right - left, h), band))
-        elif table.get("banded", True) and (r - first - bisect.bisect_left(masked, r)) % 2 == 0:
-            fills.append((QRectF(left, y, right - left, h), band))
+        if r == r0 and header:
+            if st["head"]:
+                fills.append((QRectF(left, y, width, h), st["head"]))
+            if line:
+                fills.append((QRectF(left, y, width, 1.5), line))
+                fills.append((QRectF(left, y + h - 1.5, width, 1.5), line))
+            continue
+        if r == r1 and totals:
+            color = st["head"] if st["family"] == "Foncé" else st["band"] if st["family"] == "Moyen" else None
+            if color:
+                fills.append((QRectF(left, y, width, h), color))
+            if line:
+                fills.append((QRectF(left, y, width, 1.5), line))
+            continue
+        if st["base"]:
+            fills.append((QRectF(left, y, width, h), st["base"]))
+        if st["band"] and table.get("banded", True) and (r - first - bisect.bisect_left(masked, r)) % 2 == 0:
+            fills.append((QRectF(left, y, width, h), st["band"]))
+        if line and r == r1:
+            fills.append((QRectF(left, y + h - 1.5, width, 1.5), line))
 
 
 def table_text_style(sheet, r, c) -> dict | None:
-    """Texte d'une cellule d'entête (blanc, gras) ou de totaux (gras) d'un tableau, sinon None."""
-    from .structured import STYLES, at
+    """Texte imposé par le style d'un tableau : entête (gras, blanc sur fond), totaux (gras), données des styles
+    foncés (blanc) ; sinon None."""
+    from .structured import at, style_of
     table = at(sheet, r, c) if sheet.tables else None
     if table is None:
         return None
+    st = style_of(table)
     if r == table["ref"][0] and table.get("header", True):
-        head = STYLES.get(table.get("style"), STYLES["bleu"])[0]
-        return {"bold": True, "color": "#ffffff"} if head else {"bold": True}
+        return {"bold": True, "color": st["head_text"]} if st["head_text"] else {"bold": True}
     if r == table["ref"][2] and table.get("totals"):
-        return {"bold": True}
+        return {"bold": True, "color": st["text"]} if st["text"] else {"bold": True}
+    if st["text"]:
+        return {"color": st["text"]}
     return None
 
 
