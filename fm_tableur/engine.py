@@ -24,6 +24,8 @@ except Exception:                                      # noqa: BLE001 - absent o
     fz = None
 
 MAX_EVAL_MS = 20_000                                   # garde-fou : calcul interminable interrompu
+SCRATCH = "__fm_tableur_eval__"                        # feuille du moteur réservée aux formules hors cellule
+_MISSING = object()
 
 
 def engine_version() -> str | None:
@@ -243,6 +245,30 @@ class CalcEngine:
         self.last_ms = (time.perf_counter() - start) * 1000
         self._dirty = False
         return True
+
+    def evaluate(self, sheet, formula: str):
+        """Valeur d'une formule HORS cellule (mise en forme conditionnelle, validation) : posée dans une feuille du
+        moteur réservée, ses références sans feuille rapportées à `sheet`. Gardée tant que rien ne change."""
+        if not self.available:
+            return None
+        memo = getattr(self, "_eval_memo", None)
+        key = (self.book.revision, self.last_ms)
+        if memo is None or memo[0] != key:
+            memo = self._eval_memo = (key, {})
+        found = memo[1].get((sheet.uid, formula), _MISSING)
+        if found is not _MISSING:
+            return found
+        from . import refs as R
+        qualified = R.rewrite(formula, lambda ref: ref.text() if ref.sheet is not None else
+                              R.quote_sheet(sheet.name) + "!" + ref.text())
+        scratch = self._ensure_sheet(SCRATCH)
+        try:
+            scratch.set_formula(1, 1, expand_names(qualified, self.book.names))
+            value = V.from_engine(self._wb.evaluate_cell(SCRATCH, 1, 1))
+        except Exception as exc:                       # noqa: BLE001 - formule refusée : erreur affichable
+            value = V.XLError("#VALUE!", str(exc)[:200])
+        memo[1][(sheet.uid, formula)] = value
+        return value
 
     # -- lecture --
     def raw(self, sheet, row: int, col: int):
