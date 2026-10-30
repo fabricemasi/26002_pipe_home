@@ -59,6 +59,7 @@ class GridWidget(GridInput, QAbstractScrollArea):
     zoomChanged = Signal(float)
     contextMenuWanted = Signal(object, str)   # (position globale, "cells" / "rows" / "cols")
     sheetSwitch = Signal(int)                 # Ctrl+PgUp / PgDn : -1 / +1
+    tableRequested = Signal()                 # Ctrl+T / Ctrl+L : créer un tableau
     filterMenuWanted = Signal(int, object)    # (colonne, position globale) : bouton du filtre automatique
     dropdownWanted = Signal(int, int, object)  # (ligne, colonne, position globale) : liste déroulante
 

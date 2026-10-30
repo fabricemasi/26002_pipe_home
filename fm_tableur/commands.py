@@ -205,6 +205,9 @@ class Lines(Command):
             for key in ("data", "categories"):
                 if chart.get(key):
                     chart[key] = _shift_text(chart[key], name, name, axis, at, count, delete)
+        for table in sheet.tables:
+            table["ref"] = _shift_rect(table["ref"], axis, at, count, delete)
+        sheet.tables = [t for t in sheet.tables if t["ref"] is not None]
         if sheet.autofilter:
             sheet.autofilter = _shift_rect(sheet.autofilter, axis, at, count, delete)
         for nm, text in list(book.names.items()):
@@ -218,6 +221,8 @@ class Lines(Command):
                 _engine_push(book, sheet, old_keys | set(new_cells))
                 for (uid, key) in others:
                     _engine_push(book, book.sheet_by_uid(uid), [key])
+            if any(x.tables for x in book.sheets):
+                book.engine.tables_changed()
 
     def undo(self, book):
         sheet = self.sheet(book)
@@ -237,6 +242,29 @@ class Lines(Command):
                 _engine_push(book, sheet, current | set(cells))
                 for (uid, key) in others:
                     _engine_push(book, book.sheet_by_uid(uid), [key])
+            if any(x.tables for x in book.sheets):
+                book.engine.tables_changed()
+
+
+class TablesState(SheetState):
+    """Tableaux d'une feuille modifiés (créer, redimensionner, renommer, style, totaux) : formules à références
+    structurées retraduites pour le moteur dans les deux sens."""
+
+    def __init__(self, sheet: Sheet, mutate, text: str = "Tableau", retranslate: str = "all"):
+        super().__init__(sheet, mutate, text, kind="structure")
+        self.retranslate = retranslate                 # « all », « size » (taille seule) ou « none » (style)
+
+    def _engine(self, book):
+        if book.engine is not None and self.retranslate != "none":
+            book.engine.tables_changed(size_only=self.retranslate == "size")
+
+    def redo(self, book):
+        super().redo(book)
+        self._engine(book)
+
+    def undo(self, book):
+        super().undo(book)
+        self._engine(book)
 
 
 class SheetsCommand(Command):

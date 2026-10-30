@@ -287,6 +287,7 @@ class Ribbon(QWidget):
         chart = _button("Graphique ▾", "Graphique lié aux données de la sélection", None, page)
         chart.clicked.connect(lambda: self._chart_menu(chart))
         row.addWidget(chart)
+        row.addWidget(_button("Tableau", "Tableau structuré sur la sélection (Ctrl+T)", sw.create_table, page))
         row.addWidget(_button("Commentaire", "Note sur la cellule active", sw.edit_comment, page))
         row.addWidget(_button("Fonction…", "Insérer une fonction", sw.insert_function, page))
         row.addWidget(_button("Feuille", "Nouvelle feuille", sw.add_sheet, page))

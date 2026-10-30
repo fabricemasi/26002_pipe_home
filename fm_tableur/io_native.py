@@ -16,7 +16,7 @@ VERSION = 1
 _BOOK_KEYS = {"format", "version", "styles", "names", "calc_mode", "date_1904", "default_font", "sheets", "extra",
               "active", "source"}
 _SHEET_KEYS = {"name", "cells", "rows", "cols", "merges", "freeze", "show_grid", "zoom", "tab_color", "hidden",
-               "comments", "cond_formats", "validations", "charts", "autofilter", "filters", "protected", "extra"}
+               "comments", "cond_formats", "validations", "charts", "tables", "autofilter", "filters", "protected", "extra"}
 
 
 def _encode_value(value):
@@ -93,7 +93,7 @@ def sheet_to_dict(sheet: Sheet, engine=None) -> dict:
             out[key] = getattr(sheet, key)
     if sheet.comments:
         out["comments"] = [[r, c, t] for (r, c), t in sheet.comments.items()]
-    for key in ("cond_formats", "validations", "charts"):
+    for key in ("cond_formats", "validations", "charts", "tables"):
         if getattr(sheet, key):
             out[key] = _jsonable(getattr(sheet, key))
     if sheet.autofilter:
@@ -141,11 +141,15 @@ def sheet_from_dict(raw: dict) -> Sheet:
     sheet.protected = bool(raw.get("protected", False))
     sheet.comments = {(int(r), int(c)): str(t) for r, c, t in (x for x in raw.get("comments") or []
                                                                if isinstance(x, list) and len(x) == 3)}
-    for key in ("cond_formats", "validations", "charts"):
+    for key in ("cond_formats", "validations", "charts", "tables"):
         items = raw.get(key)
         setattr(sheet, key, [dict(i) for i in items if isinstance(i, dict)] if isinstance(items, list) else [])
     for item in sheet.cond_formats + sheet.validations:
         item["ranges"] = [tuple(r) for r in item.get("ranges", []) if isinstance(r, (list, tuple)) and len(r) == 4]
+    sheet.tables = [t for t in sheet.tables if isinstance(t.get("name"), str)
+                    and isinstance(t.get("ref"), (list, tuple)) and len(t["ref"]) == 4]
+    for table in sheet.tables:
+        table["ref"] = tuple(int(x) for x in table["ref"])
     af = raw.get("autofilter")
     sheet.autofilter = tuple(int(x) for x in af) if isinstance(af, list) and len(af) == 4 else None
     sheet.filters = {int(k): v for k, v in (raw.get("filters") or {}).items() if str(k).isdigit()}

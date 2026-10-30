@@ -8,8 +8,8 @@ quadrillage, zoom, noms définis globaux, commentaires, listes déroulantes, fil
 conditionnelles courantes, protection de feuille, graphiques du module (export).
 
 PERDU (signalé dans `book.source["lost"]`, jamais en silence) : macros VBA (jamais exécutées), images et formes,
-graphiques d'un fichier importé, tableaux croisés, segments, liens externes, sparklines, contrôles, tableaux
-structurés (leurs références), mises en forme conditionnelles non reconnues. Le fichier d'origine n'est jamais
+graphiques d'un fichier importé, tableaux croisés, segments, liens externes, sparklines, contrôles, mises en forme
+conditionnelles non reconnues. Tableaux structurés : repris (nom, plage, entêtes, totaux, style à bandes). Le fichier d'origine n'est jamais
 réécrit par l'import ; l'export écrit un NOUVEAU fichier (atomique : `.part` puis remplacement).
 
 Fonctions récentes : Excel les range sous un préfixe (`_xlfn.XLOOKUP`, `_xlfn._xlws.FILTER`) — retiré à l'import,
@@ -255,6 +255,8 @@ def read(path, progress=None) -> Workbook:
             if parsed:
                 sheet.autofilter = parsed[1]
         sheet.protected = bool(ws.protection.sheet)
+        if not _import_tables(ws, sheet) and "tableaux structurés (mise en forme et références de tableau)" in lost:
+            lost.remove("tableaux structurés (mise en forme et références de tableau)")
         _import_validations(ws, sheet)
         rest = _import_cond_formats(ws, sheet)
         if rest and "mises en forme conditionnelles non reconnues" not in lost:
@@ -385,6 +387,51 @@ def _import_style(book, xc, cache) -> int:
     return index
 
 
+def _import_tables(ws, sheet) -> int:
+    """Tableaux structurés de la feuille ; rend le nombre de tableaux illisibles."""
+    from .structured import EXCEL_STYLE
+    bad = 0
+    try:
+        items = list(ws.tables.values())
+    except Exception:                                      # noqa: BLE001
+        return 1
+    for table in items:
+        parsed = R.parse_range(str(table.ref)) if table.ref else None
+        if parsed is None or not table.displayName:
+            bad += 1
+            continue
+        info = table.tableStyleInfo
+        sheet.tables.append({"name": table.displayName, "ref": parsed[1],
+                             "header": table.headerRowCount != 0, "totals": bool(table.totalsRowCount),
+                             "style": EXCEL_STYLE.get(getattr(info, "name", None), "bleu"),
+                             "banded": bool(getattr(info, "showRowStripes", True))})
+    return bad
+
+
+def _export_tables(ws, sheet, book, warnings):
+    from openpyxl.worksheet.table import Table, TableColumn, TableStyleInfo
+    from .structured import STYLES, columns
+    for table in sheet.tables:
+        names = columns(book, sheet, table)
+        r0, c0, r1, c1 = table["ref"]
+        if table.get("header", True):
+            for i, c in enumerate(range(c0, c1 + 1)):        # Excel exige des entêtes en texte, identiques
+                xc = ws.cell(row=r0 + 1, column=c + 1)
+                if xc.value != names[i]:
+                    xc.value = names[i]
+        try:
+            xt = Table(displayName=table["name"], ref=R.range_name(r0, c0, r1, c1))
+            xt.headerRowCount = 1 if table.get("header", True) else 0
+            if table.get("totals"):
+                xt.totalsRowCount = 1
+            xt.tableColumns = [TableColumn(id=i + 1, name=n) for i, n in enumerate(names)]
+            xt.tableStyleInfo = TableStyleInfo(name=STYLES.get(table.get("style"), STYLES["bleu"])[2],
+                                               showRowStripes=bool(table.get("banded", True)))
+            ws.add_table(xt)
+        except Exception as exc:                           # noqa: BLE001
+            warnings.append(f"tableau non exporté ({table['name']}) : {exc}")
+
+
 def _ranges_of(sqref) -> list[tuple]:
     out = []
     for part in str(sqref).split():
@@ -494,7 +541,11 @@ def write(book: Workbook, path) -> list[str]:
         for (r, c), cell in sheet.cells.items():
             xc = ws.cell(row=r + 1, column=c + 1)
             if cell.formula:
-                xc.value = add_prefixes(cell.formula)
+                text = cell.formula
+                if sheet.tables and "@" in text:
+                    from .structured import to_file_syntax     # [@Col] -> T[[#This Row],[Col]] (fichier)
+                    text = to_file_syntax(text, sheet, r, c)
+                xc.value = add_prefixes(text)
             else:
                 value = cell.value
                 if isinstance(value, V.XLError):
@@ -531,6 +582,7 @@ def write(book: Workbook, path) -> list[str]:
             ws.protection.sheet = True
         _export_validations(ws, sheet)
         _export_cond_formats(ws, sheet, warnings)
+        _export_tables(ws, sheet, book, warnings)
         if sheet.charts:
             from .charts import export_charts
             export_charts(ws, sheet, warnings)

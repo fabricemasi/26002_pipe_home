@@ -147,6 +147,8 @@ class CalcEngine:
         self._wb = None
         self._sheets: dict[str, object] = {}
         self._anchors: dict[int, set] = {}              # feuille -> formules qui peuvent déborder
+        self._table_names: list[str] = []
+        self.hold_tables = False                        # vrai : l'appelant retraduit lui-même (entête renommée)
         self._dirty = True
         book.engine = self
         self.rebuild()
@@ -171,6 +173,8 @@ class CalcEngine:
         extra_functions.register(self._wb, fz)            # MMULT, MINVERSE, DISC… absentes de formualizer 0.13
         self._sheets = {}
         self._anchors = {}
+        from .structured import all_tables
+        self._table_names = [t["name"] for _s, t in all_tables(self.book)]
         for sheet in self.book.sheets:
             self._ensure_sheet(sheet.name)
         for sheet in self.book.sheets:
@@ -190,7 +194,7 @@ class CalcEngine:
         cells = sheet.cells
         if len(keys) < BATCH_MIN:
             for row, col in keys:
-                self._set(engine_sheet, row, col, cells.get((row, col)))
+                self._set(sheet, engine_sheet, row, col, cells.get((row, col)))
             return
         empty = fz.LiteralValue.empty()
         bands: dict[int, list] = {}
@@ -204,7 +208,7 @@ class CalcEngine:
             area = (r1 - r0 + 1) * (c1 - c0 + 1)
             if area > 4 * len(band) + 64:                   # bande trop creuse : cellule par cellule
                 for row, col in band:
-                    self._set(engine_sheet, row, col, cells.get((row, col)))
+                    self._set(sheet, engine_sheet, row, col, cells.get((row, col)))
                 continue
             wanted = set(band)
             formulas = []
@@ -224,10 +228,10 @@ class CalcEngine:
                 engine_sheet.set_values_batch(r0 + 1, c0 + 1, r1 - r0 + 1, c1 - c0 + 1, rows)
             except Exception:                              # noqa: BLE001 - lot refusé : cellule par cellule
                 for row, col in band:
-                    self._set(engine_sheet, row, col, cells.get((row, col)))
+                    self._set(sheet, engine_sheet, row, col, cells.get((row, col)))
                 continue
             for r, c, cell in formulas:
-                self._set(engine_sheet, r, c, cell)
+                self._set(sheet, engine_sheet, r, c, cell)
 
     def _ensure_sheet(self, name: str):
         key = name.lower()
@@ -239,12 +243,16 @@ class CalcEngine:
             self._sheets[key] = found
         return found
 
-    def _set(self, engine_sheet, row: int, col: int, cell: Cell | None):
+    def _set(self, sheet, engine_sheet, row: int, col: int, cell: Cell | None):
         try:
             if cell is None or (cell.value is None and not cell.formula):
                 engine_sheet.set_value(row + 1, col + 1, fz.LiteralValue.empty())
             elif cell.formula:
-                engine_sheet.set_formula(row + 1, col + 1, expand_names(cell.formula, self.book.names))
+                text = expand_names(cell.formula, self.book.names)
+                if "[" in text or self._table_names:
+                    from .structured import resolve            # références structurées -> plages A1
+                    text = resolve(text, self.book, sheet, row, col)
+                engine_sheet.set_formula(row + 1, col + 1, text)
             else:
                 engine_sheet.set_value(row + 1, col + 1, _literal(cell.value))
         except Exception as exc:                       # noqa: BLE001 - formule refusée : #NAME? / #VALUE! en valeur
@@ -273,7 +281,30 @@ class CalcEngine:
             else:
                 anchors.discard(key)
         for row, col in anchors:
-            self._set(engine_sheet, row, col, cells.get((row, col)))
+            self._set(sheet, engine_sheet, row, col, cells.get((row, col)))
+        if sheet.tables and not self.hold_tables and len(keys) < 5000 and any(
+                t.get("header", True) and t["ref"][0] == r and t["ref"][1] <= c <= t["ref"][3]
+                for r, c in keys for t in sheet.tables):
+            self.tables_changed()                          # entête modifiée : noms de colonnes changés
+        self._dirty = True
+
+    def tables_changed(self, size_only: bool = False):
+        """Tableaux créés / redimensionnés / renommés / entêtes changées : les formules à références structurées
+        (ou qui citent un nom de tableau) sont retraduites et renvoyées au moteur. `size_only` (le tableau a
+        seulement grandi / rétréci) : les formules « ligne courante » ([@Col]) ne changent pas, elles sont sautées
+        (tableau de 10 000 lignes : ~0,9 s -> quelques ms)."""
+        if not self.available:
+            return
+        from .structured import all_tables, has_structured, row_only
+        self._table_names = [t["name"] for _s, t in all_tables(self.book)]
+        names = self._table_names
+        for sheet in self.book.sheets:
+            keys = [k for k, cell in sheet.cells.items() if cell.formula and has_structured(cell.formula, self.book)
+                    and not (size_only and row_only(cell.formula, names))]
+            if keys:
+                engine_sheet = self._ensure_sheet(sheet.name)
+                for row, col in keys:
+                    self._set(sheet, engine_sheet, row, col, sheet.cells.get((row, col)))
         self._dirty = True
 
     def add_sheet(self, sheet):

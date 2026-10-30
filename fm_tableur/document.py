@@ -240,6 +240,7 @@ class Sheet:
         self.cond_formats: list[dict] = []      # mises en forme conditionnelles (voir condfmt.py)
         self.validations: list[dict] = []       # validations de données (listes déroulantes…)
         self.charts: list[dict] = []            # graphiques liés aux données (voir charts.py)
+        self.tables: list[dict] = []            # tableaux structurés (voir structured.py)
         self.autofilter: tuple[int, int, int, int] | None = None
         self.filters: dict[int, dict] = {}      # colonne -> critère du filtre automatique
         self.protected = False
@@ -291,7 +292,8 @@ class Sheet:
         return {"rows": self.rows.state(), "cols": self.cols.state(), "merges": list(self.merges),
                 "freeze": self.freeze, "comments": dict(self.comments),
                 "cond_formats": copy.deepcopy(self.cond_formats), "validations": copy.deepcopy(self.validations),
-                "charts": copy.deepcopy(self.charts), "autofilter": self.autofilter,
+                "charts": copy.deepcopy(self.charts), "tables": copy.deepcopy(self.tables),
+                "autofilter": self.autofilter,
                 "filters": copy.deepcopy(self.filters)}
 
     def restore(self, state: dict):
@@ -303,6 +305,7 @@ class Sheet:
         self.cond_formats = copy.deepcopy(state["cond_formats"])
         self.validations = copy.deepcopy(state["validations"])
         self.charts = copy.deepcopy(state["charts"])
+        self.tables = copy.deepcopy(state.get("tables", []))
         self.autofilter = state["autofilter"]
         self.filters = copy.deepcopy(state["filters"])
 

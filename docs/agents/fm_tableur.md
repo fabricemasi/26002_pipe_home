@@ -23,6 +23,8 @@ Cœur SANS Qt (testable seul) :
 | Fonctions absentes de formualizer ajoutées (MMULT, MINVERSE, MDETERM, MUNIT, FVSCHEDULE, DISC, INTRATE) | `extra_functions.py` | `register`, `FUNCTIONS` |
 | Commandes annulables, pile d'annulation du DOCUMENT | `commands.py` | `SetCells`, `SheetState`, `Lines`, `SheetsCommand`, `Names`, `UndoStack` |
 | Opérations (saisie, styles, bordures, copier / coller, recopie, tri, filtre, fusion, feuilles, rechercher, doublons, convertir) | `ops.py` | une fonction = une étape d'annulation |
+| Tableaux structurés : définition, noms de colonnes, traduction des références structurées pour le moteur | `structured.py` | `resolve`, `iter_structured`, `columns`, `at`, `STYLES`, `rename_column_refs` |
+| Opérations sur les tableaux (créer, convertir, renommer, style, totaux, extension auto, colonne calculée) | `tables_ops.py` | `create`, `convert_to_range`, `rename`, `toggle_totals`, `after_input`, `header_renamed` |
 | Format natif (JSON dans l'élément du `.mro`) | `io_native.py` | `to_dict`, `from_dict` |
 | Excel .xlsx / .xlsm (openpyxl) : import, export, préfixes `_xlfn.`, contrôle de l'archive | `io_xlsx.py` | `read`, `write`, `check_archive`, `unsupported_parts` |
 | Graphiques d'un fichier Excel (XML `xl/charts/`, qu'openpyxl ne lit pas) -> graphiques liés | `io_xlsx_charts.py` | `read_charts` |
@@ -101,6 +103,23 @@ imported=…)` + `files_mode.attach`), `_toggle_board` (bouton « board » de la
   mémoire ; « Enregistrer » ne remplace l'original qu'après confirmation, si l'import n'a rien perdu, avec une
   copie `.bak` ; sinon « Enregistrer sous » ; fermeture d'un classeur modifié = enregistrer / garder en .mro /
   fermer sans enregistrer / annuler.
+- **Tableaux structurés** (2026-10-30, demande de l'utilisateur) : Ctrl+T / Ctrl+L, Insertion > Tableau, menu
+  contextuel « Tableau » (renommer, style, ligne des totaux, bandes, sélectionner, convertir en plage). Le module
+  TRADUIT lui-même les références structurées en plages A1 avant le moteur (`structured.resolve`) : formualizer
+  0.13 ne sait ni `T[[#Data],[Col]]` (#N/IMPL), ni `[@Col]`, ni le nom seul, ni redimensionner / supprimer un
+  tableau. Le texte d'Excel reste dans le classeur. Comme Excel : extension automatique (saisie juste sous / à
+  droite), colonne calculée (formule recopiée sur la colonne vide, et sur chaque ligne ajoutée), entête renommée =
+  formules réécrites (`header_renamed`), lignes insérées dans le tableau = tableau agrandi, mots-clés français
+  acceptés (`#En-têtes`, `#Données`, `#Totaux`, `#Tout`, `#Cette ligne`). Noms de colonnes = textes des entêtes
+  (vide : « Colonne<n> », doublon suffixé). Fichier .xlsx : `[@Col]` écrit sous la forme longue
+  `T[[#This Row],[Col]]` (`to_file_syntax`), colonnes du tableau écrites explicitement (sinon Excel « répare »).
+  Fluidité (tableau de 10 000 lignes, colonne calculée) : saisie sous le tableau 932 -> ~45 ms (formules
+  « ligne courante » non retraduites quand seule la taille change, `row_only` ; noms de colonnes gardés par
+  cellules d'entête, `columns`) ; renommer une entête ~0,95 s (10 000 formules réécrites puis renvoyées au moteur).
+  Piège : une mémoire indexée sur `book.revision` rendait les ANCIENS noms au milieu d'une étape d'annulation (la
+  révision ne change qu'à la fin) : indexée sur les objets des cellules d'entête (immuables). Pas encore :
+  boutons de filtre dans les entêtes d'un tableau, poignée de redimensionnement, styles « Clair » / « Foncé »
+  d'Excel (5 styles « Moyen »).
 - **Ruban** : rangée de commandes dans une zone qui DÉFILE horizontalement (fenêtre étroite) ; jamais écrasée
   (piège : la mise en page rétrécissait les boutons sous leur taille utile, « G » devenait « : »).
 - **Colonne élargie** quand un NOMBRE saisi n'y tient pas et que sa largeur est celle par défaut (Excel) ; une
@@ -119,13 +138,14 @@ imported=…)` + `files_mode.attach`), `_toggle_board` (bouton « board » de la
 - Import / export .xlsx : feuilles (ordre, noms, masquées, couleur d'onglet), valeurs typées, formules (préfixes
   `_xlfn.` / `_xlws.` retirés / remis), styles (police, couleur, fond uni, alignements, retour à la ligne, retrait,
   bordures, format, verrouillage), tailles, masquage, fusions, volets, quadrillage, zoom, noms globaux,
-  commentaires, listes déroulantes, filtre automatique (plage), mises en forme conditionnelles courantes,
+  commentaires, listes déroulantes, filtre automatique (plage), tableaux structurés (nom, plage, entêtes, totaux,
+  style « Moyen » 2 / 3 / 4 / 5 / 7, bandes ; références structurées), mises en forme conditionnelles courantes,
   protection, graphiques du module (vrais graphiques Excel + définitions gardées dans les propriétés
   personnalisées pour la réimport). Excel recalcule tout à l'ouverture (`fullCalcOnLoad`).
 - Graphiques d'un fichier Excel RELUS (`io_xlsx_charts`) : histogrammes / barres, courbes, aires, secteurs
   (anneaux en secteurs), nuages, combinés barres + courbes, si leurs séries sont contiguës ; sinon signalés.
 - Perdu, SIGNALÉ : macros, images / formes, graphiques aux séries non contiguës, tableaux croisés, segments,
-  liens externes, tableaux structurés, sparklines, contrôles, mises en forme conditionnelles non reconnues ;
+  liens externes, sparklines, contrôles, mises en forme conditionnelles non reconnues ;
   styles de lignes / colonnes entières (seulement les cellules remplies à l'export). Formules à débordement :
   Excel peut les afficher avec « @ » (openpyxl n'écrit pas les métadonnées des tableaux dynamiques).
 - `.xls` / `.xlsb` : refusés avec un message (enregistrer en .xlsx depuis Excel).
@@ -153,7 +173,10 @@ englobant (une région `QRegion` pour la sélection) ; texte : `QStaticText` + p
 - `tests/test_tableur_ui.py` (17) : clavier / souris de la grille, pointage, poignée, presse-papiers, barre de
   formule, feuilles, peinture < 50 ms, aller-retour Excel (fichier écrit par openpyxl -> modifié -> exporté ->
   relu -> comparé), éléments non repris signalés, archive malformée / bombe refusées, CSV à la française.
-- `tests/test_tableur_board.py` (10) : sélecteur, griser / masquer, Ctrl pour déplacer, édition sur place,
+- `tests/test_tableur_tables.py` (10) : traduction de toute la syntaxe, mots-clés français, échappements,
+  recalcul quand le tableau change, extension, colonne calculée, totaux, renommer (tableau / entête), insertion
+  de lignes, convertir en plage, annulation, format natif, aller-retour Excel, Ctrl+T.
+- `tests/test_tableur_board.py` (11) : sélecteur, griser / masquer, Ctrl pour déplacer, édition sur place,
   clavier gardé par le classeur, enregistrement / réouverture, annulation du Board sans perte, mode Standard sur la
   même session, ancien fichier et champs inconnus gardés, classeur de l'explorateur (original intact, `.bak`).
 
@@ -167,7 +190,7 @@ englobant (une région `QRegion` pour la sélection) ; texte : `QStaticText` + p
    tailles par défaut, mode de calcul par défaut.
 4. EN PARTIE : 7 fonctions ajoutées (`extra_functions.py`, matrice : 385 / 423 présentes) ; restent les
    fonctions obligataires (COUP*, PRICE*, ODD*…), LAMBDA appliquée, BYROW / MAP…, REGEX*, AREAS.
-5. FAIT : graphiques d'un fichier Excel relus. Reste : tableaux structurés (Tableau1[Col]).
+5. FAIT : graphiques d'un fichier Excel relus ; tableaux structurés (voir Décisions).
 6. Insertion de lignes sur très gros classeurs (~1,2 s pour 100 000 cellules) : moteur en tâche de fond ?
 
 ## PASSATION
@@ -178,5 +201,8 @@ englobant (une région `QRegion` pour la sélection) ; texte : `QStaticText` + p
   formules en français.
 - 2026-10-30 — FAIT : réglages « Tableur », 7 fonctions ajoutées, graphiques d'Excel relus, ruban défilant
   (boutons jamais écrasés), colonne élargie pour un nombre saisi (comme Excel).
-- Prochaine action : couleurs / police par défaut dans les réglages ; fonctions obligataires ; tableaux
-  structurés ; vérifier l'ouverture des fichiers exportés dans Microsoft Excel (non disponible ici).
+- 2026-10-30 — FAIT : tableaux structurés (création, références structurées traduites, extension, colonne
+  calculée, totaux, renommer, convertir, import / export Excel), `tests/test_tableur_tables.py`.
+- Fonctions obligataires : écartées pour l'instant par l'utilisateur (2026-10-30).
+- Prochaine action : filtres dans les entêtes des tableaux ; police par défaut dans les réglages ; vérifier
+  l'ouverture des fichiers exportés dans Microsoft Excel (non disponible ici).

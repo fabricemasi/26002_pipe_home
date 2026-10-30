@@ -279,6 +279,7 @@ class SpreadsheetWidget(QWidget):
         self.grid.findRequested.connect(self.show_find)
         self.grid.contextMenuWanted.connect(self._context_menu)
         self.grid.sheetSwitch.connect(self._switch_sheet)
+        self.grid.tableRequested.connect(self.create_table)
         self.grid.validate = self._validate
         self.grid.filterMenuWanted.connect(self._filter_menu)
         self.grid.dropdownWanted.connect(self._dropdown_menu)
@@ -800,6 +801,63 @@ class SpreadsheetWidget(QWidget):
         self.find_bar.needle.setFocus()
         self.find_bar.needle.selectAll()
 
+    # -- tableaux structurés --
+    def current_table(self):
+        from .structured import at
+        return at(self.grid.sheet, *self.grid.view.current)
+
+    def create_table(self):
+        """Ctrl+T : tableau sur la sélection (une cellule : la zone de données autour), entêtes détectées."""
+        from . import tables_ops
+        if self.current_table() is not None:
+            self._message("La cellule fait déjà partie d'un tableau.")
+            return
+        r0, c0, r1, c1 = self.grid.selection()
+        rect = self.grid.current_region() if (r0, c0) == (r1, c1) else (r0, c0, r1, c1)
+        if rect[0] == rect[2] and rect[1] == rect[3] and self.grid.sheet.cell(*rect[:2]) is None:
+            self._message("Choisissez des données (ou une cellule dans des données) pour créer un tableau.")
+            return
+        table = tables_ops.create(self.book, self.stack, self.grid.sheet, rect)
+        if table is None:
+            self._message("Impossible : la plage chevauche un autre tableau ou des cellules fusionnées.")
+            return
+        self.grid.select_range(table["ref"], current=(table["ref"][0], table["ref"][1]))
+        self._message(f"Tableau « {table['name']} » créé : formules =SOMME({table['name']}[Colonne]), "
+                      f"[@Colonne] pour la ligne.")
+
+    def table_menu(self, m):
+        """Sous-menu « Tableau » du menu contextuel (cellule dans un tableau)."""
+        from . import tables_ops
+        from .structured import STYLES
+        table = self.current_table()
+        if table is None:
+            m.addAction("Créer un tableau (Ctrl+T)").triggered.connect(self.create_table)
+            return
+        sub = m.addMenu(f"Tableau « {table['name']} »")
+        sub.addAction("Renommer…").triggered.connect(lambda: self.rename_table(table))
+        styles = sub.addMenu("Style")
+        for key in STYLES:
+            styles.addAction(key.capitalize()).triggered.connect(
+                lambda _c=False, k=key: tables_ops.set_props(self.book, self.stack, self.grid.sheet, table,
+                                                             style=k))
+        sub.addAction("Masquer la ligne des totaux" if table.get("totals") else "Ligne des totaux").triggered\
+            .connect(lambda: tables_ops.toggle_totals(self.book, self.stack, self.grid.sheet, table))
+        sub.addAction("Sans lignes à bandes" if table.get("banded", True) else "Lignes à bandes").triggered\
+            .connect(lambda: tables_ops.set_props(self.book, self.stack, self.grid.sheet, table,
+                                                  banded=not table.get("banded", True)))
+        sub.addAction("Sélectionner le tableau").triggered.connect(
+            lambda: self.grid.select_range(table["ref"], current=self.grid.view.current))
+        sub.addAction("Convertir en plage").triggered.connect(
+            lambda: tables_ops.convert_to_range(self.book, self.stack, self.grid.sheet, table))
+
+    def rename_table(self, table):
+        from . import tables_ops
+        name, ok = QInputDialog.getText(self, "Renommer le tableau", "Nom :", text=table["name"])
+        if ok and name.strip() and name.strip() != table["name"]:
+            problem = tables_ops.rename(self.book, self.stack, self.grid.sheet, table, name.strip())
+            if problem:
+                self._message(problem)
+
     # -- graphiques --
     def insert_chart(self, kind):
         self.charts.insert(kind, self.grid.selection() if self.grid.selection()[0] != self.grid.selection()[2]
@@ -852,6 +910,7 @@ class SpreadsheetWidget(QWidget):
         sort.addAction("Trier A → Z").triggered.connect(lambda: self.sort(True))
         sort.addAction("Trier Z → A").triggered.connect(lambda: self.sort(False))
         m.addAction("Filtrer").triggered.connect(self.toggle_filter)
+        self.table_menu(m)
         m.addSeparator()
         m.addAction("Commentaire…").triggered.connect(self.edit_comment)
         m.addAction("Format de nombre…").triggered.connect(self.ask_number_format)

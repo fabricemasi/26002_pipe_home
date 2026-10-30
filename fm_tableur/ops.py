@@ -75,8 +75,30 @@ def input_cell(book: Workbook, sheet: Sheet, row: int, col: int, text: str, loc=
 def set_input(book, stack, sheet, row, col, text, loc=numfmt.DEFAULT_LOCALE, rect=None, date_order="dmy"):
     """Saisie validée (Entrée) ; `rect` donné (Ctrl+Entrée) : même saisie dans toute la plage, formules recopiées."""
     if rect is None:
-        stack.push(C.SetCells(sheet, {(row, col): input_cell(book, sheet, row, col, text, loc, date_order)},
-                              "Saisir"))
+        stack.begin("Saisir")
+        old_names = None
+        if sheet.tables:
+            from . import structured
+            table = structured.at(sheet, row, col)
+            if table is not None and row == table["ref"][0] and table.get("header", True):
+                old_names = structured.columns(book, sheet, table)
+        engine = book.engine
+        hold = old_names is not None and engine is not None
+        if hold:
+            engine.hold_tables = True                      # entête : UNE retraduction, après réécriture des formules
+        try:
+            stack.push(C.SetCells(sheet, {(row, col): input_cell(book, sheet, row, col, text, loc, date_order)},
+                                  "Saisir"))
+            if sheet.tables:                               # tableaux : entête renommée, extension, colonne calculée
+                from . import tables_ops
+                tables_ops.header_renamed(book, stack, sheet, row, col, old_names)
+        finally:
+            if hold:
+                engine.hold_tables = False
+                engine.tables_changed(size_only=True)      # les formules réécrites ont déjà été renvoyées
+        if sheet.tables:
+            tables_ops.after_input(book, stack, sheet, row, col)
+        stack.end()
         return
     r0, c0, r1, c1 = norm(rect)
     changes = {}

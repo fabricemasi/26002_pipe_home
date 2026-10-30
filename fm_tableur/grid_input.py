@@ -596,7 +596,7 @@ class GridInput:
                      Qt.Key_D, Qt.Key_R, Qt.Key_F, Qt.Key_H, Qt.Key_S, Qt.Key_Semicolon, Qt.Key_Plus,
                      Qt.Key_Minus, Qt.Key_Equal, Qt.Key_Space, Qt.Key_Home, Qt.Key_End, Qt.Key_Up, Qt.Key_Down,
                      Qt.Key_Left, Qt.Key_Right, Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_QuoteLeft,
-                     Qt.Key_Return, Qt.Key_Enter, Qt.Key_1, Qt.Key_5, Qt.Key_9, Qt.Key_0}
+                     Qt.Key_Return, Qt.Key_Enter, Qt.Key_1, Qt.Key_5, Qt.Key_9, Qt.Key_0, Qt.Key_T, Qt.Key_L}
 
     def event(self, event):
         if event.type() == QEvent.ShortcutOverride and not self.is_editing():
@@ -735,6 +735,8 @@ class GridInput:
             else:
                 text = today.strftime("%d/%m/%Y" if self.date_order == "dmy" else "%m/%d/%Y")
             ops.set_input(self.book, stack, self.sheet, *view.current, text, self.loc, date_order=self.date_order)
+        elif ctrl and key in (Qt.Key_T, Qt.Key_L):
+            self.tableRequested.emit()
         elif ctrl and key == Qt.Key_F:
             self.findRequested.emit(False)
         elif ctrl and key == Qt.Key_H:

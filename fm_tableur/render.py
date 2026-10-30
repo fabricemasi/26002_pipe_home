@@ -217,8 +217,10 @@ def paint_cells(painter, book, sheet, rows: Span, cols: Span, zoom: float, cache
                 cx, cw = cols.index[c]
                 visible.append((r, c, cell, cx, ry, cw, rh))
     has_axis_styles = bool(sheet.rows.styles or sheet.cols.styles)
-    # 2. fonds
+    # 2. fonds (tableaux structurés d'abord : le fond propre d'une cellule passe devant, comme Excel)
     fills = []
+    for table in sheet.tables:
+        _table_fills(table, rows, cols, fills)
     if has_axis_styles:
         for r, y, h in rows.items:
             for c, x, w in cols.items:
@@ -297,6 +299,43 @@ def paint_cells(painter, book, sheet, rows: Span, cols: Span, zoom: float, cache
     painter.restore()
 
 
+def _table_fills(table, rows: Span, cols: Span, fills: list):
+    """Style à bandes d'un tableau : entête colorée, une ligne sur deux teintée, totaux teintés."""
+    from .structured import STYLES
+    head, band, _excel = STYLES.get(table.get("style"), STYLES["bleu"])
+    if head is None:
+        return
+    r0, c0, r1, c1 = table["ref"]
+    xs = [(x, w) for c, x, w in cols.items if c0 <= c <= c1]
+    if not xs:
+        return
+    left, right = xs[0][0], xs[-1][0] + xs[-1][1]
+    first = r0 + (1 if table.get("header", True) else 0)
+    for r, y, h in rows.items:
+        if not r0 <= r <= r1:
+            continue
+        if r == r0 and table.get("header", True):
+            fills.append((QRectF(left, y, right - left, h), head))
+        elif r == r1 and table.get("totals"):
+            fills.append((QRectF(left, y, right - left, h), band))
+        elif table.get("banded", True) and (r - first) % 2 == 0:
+            fills.append((QRectF(left, y, right - left, h), band))
+
+
+def table_text_style(sheet, r, c) -> dict | None:
+    """Texte d'une cellule d'entête (blanc, gras) ou de totaux (gras) d'un tableau, sinon None."""
+    from .structured import STYLES, at
+    table = at(sheet, r, c) if sheet.tables else None
+    if table is None:
+        return None
+    if r == table["ref"][0] and table.get("header", True):
+        head = STYLES.get(table.get("style"), STYLES["bleu"])[0]
+        return {"bold": True, "color": "#ffffff"} if head else {"bold": True}
+    if r == table["ref"][2] and table.get("totals"):
+        return {"bold": True}
+    return None
+
+
 def _merge_rect(m, rows: Span, cols: Span, sheet, zoom) -> QRectF | None:
     """Rectangle d'une fusion à l'écran (même si son coin est hors de la zone visible)."""
     if m is None:
@@ -324,6 +363,9 @@ def _plan(book, sheet, r, c, cell, zoom, cache, look, cond):
         return _EMPTY
     style = book.styles.get(cell.style) if cell is not None and cell.style else \
         book.styles.get(sheet.style_index(r, c))
+    extra = table_text_style(sheet, r, c)
+    if extra:
+        style = {**extra, **style}                         # la mise en forme propre de la cellule passe devant
     if cond is not None:
         extra = cond.style(r, c)
         if extra:
