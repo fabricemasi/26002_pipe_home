@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QAbstractButton, QApplication, QFileDialog, QGrid
                                QSizePolicy, QVBoxLayout, QWidget)
 
 from fm_board.ui import _GlyphButton, _TextButton
-from . import design_model as dm, document as doc, templates
+from . import design_model as dm, document as doc, geometry, templates
 from .items import DesignImageItem, DesignShapeItem, DesignTextItem
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
@@ -182,6 +182,22 @@ def build_elements(ctl, parent):
     dashed.addWidget(_wide_button("Pointillés", "Ligne pointillée", lambda: ctl.add_shape(
         "line", {"stroke_style": "dotted"}), widget))
     layout.addLayout(dashed)
+    layout.addWidget(_label("Grilles de photos (déposez une image dans une case)"))
+    grids = QGridLayout()
+    grids.setSpacing(4)
+    for n, name in enumerate(geometry.GRIDS):
+        tile = GridTile(name, widget)
+        tile.clicked.connect(lambda _c=False, k=name: ctl.add_grid(k))
+        grids.addWidget(tile, n // 3, n % 3)
+    layout.addLayout(grids)
+    layout.addWidget(_label("Cadres (image dans une forme)"))
+    frames = QHBoxLayout()
+    frames.setSpacing(2)
+    for mask in ("", "ellipse", "round", "star", "heart", "hexagon"):
+        button = _GlyphButton(f"design_shape:{mask or 'rect'}", "Cadre vide " + (mask or "rectangle"), widget, 40)
+        button.clicked.connect(lambda _c=False, m=mask: ctl.add_frame(m))
+        frames.addWidget(button)
+    layout.addLayout(frames)
     layout.addWidget(_label("Dégradés"))
     grid2 = QGridLayout()
     grid2.setSpacing(4)
@@ -193,6 +209,26 @@ def build_elements(ctl, parent):
     layout.addLayout(grid2)
     layout.addStretch(1)
     return widget
+
+
+class GridTile(QAbstractButton):
+    def __init__(self, name, parent):
+        super().__init__(parent)
+        self.name = name
+        self.setFixedSize(80, 56)
+        self.setToolTip(f"Grille « {name} » : cadres vides sur toute la page")
+        self.setCursor(Qt.PointingHandCursor)
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        r = QRectF(self.rect()).adjusted(3, 3, -3, -3)
+        p.fillRect(r, QColor("#ffffff"))
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#b9b9cc"))
+        for x, y, w, h in geometry.grid_cells(self.name, r.width(), r.height(), 3):
+            p.drawRect(QRectF(r.x() + x, r.y() + y, w, h))
+        p.end()
 
 
 class GradientSwatch(QAbstractButton):

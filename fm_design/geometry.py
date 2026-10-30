@@ -135,3 +135,41 @@ def fit_inside(w: float, h: float, box_w: float, box_h: float, fill: float = 0.6
         return box_w * fill, box_h * fill
     k = min(box_w * fill / w, box_h * fill / h, 1.0 if max(w, h) < min(box_w, box_h) * fill else 1e9)
     return w * k, h * k
+
+
+def cover_crop(frame_w: float, frame_h: float, image_w: float, image_h: float) -> list[float]:
+    """Recadrage centré qui REMPLIT un cadre sans déformer l'image (comme une image déposée dans un cadre)."""
+    if min(frame_w, frame_h, image_w, image_h) <= 0:
+        return [0.0, 0.0, 1.0, 1.0]
+    frame, image = frame_w / frame_h, image_w / image_h
+    if image > frame:
+        f = frame / image
+        return [round((1 - f) / 2, 6), 0.0, round((1 + f) / 2, 6), 1.0]
+    f = image / frame
+    return [0.0, round((1 - f) / 2, 6), 1.0, round((1 + f) / 2, 6)]
+
+
+# Grilles de photos : cases en fractions de la page (x, y, l, h) ; l'écart est ajouté à la pose.
+GRIDS = {
+    "2 colonnes": [(0, 0, .5, 1), (.5, 0, .5, 1)],
+    "2 lignes": [(0, 0, 1, .5), (0, .5, 1, .5)],
+    "3 colonnes": [(0, 0, 1 / 3, 1), (1 / 3, 0, 1 / 3, 1), (2 / 3, 0, 1 / 3, 1)],
+    "2 × 2": [(0, 0, .5, .5), (.5, 0, .5, .5), (0, .5, .5, .5), (.5, .5, .5, .5)],
+    "1 + 2": [(0, 0, .6, 1), (.6, 0, .4, .5), (.6, .5, .4, .5)],
+    "1 + 3": [(0, 0, 1, .6), (0, .6, 1 / 3, .4), (1 / 3, .6, 1 / 3, .4), (2 / 3, .6, 1 / 3, .4)],
+}
+
+
+def grid_cells(name: str, page_w: float, page_h: float, gap: float) -> list[tuple[float, float, float, float]]:
+    """Cases d'une grille (coordonnées de page), séparées de `gap`, avec `gap` de marge au bord."""
+    out = []
+    for fx, fy, fw, fh in GRIDS[name]:
+        x0, y0 = fx * page_w + gap, fy * page_h + gap
+        x1, y1 = (fx + fw) * page_w - (gap if fx + fw >= 0.999 else gap / 2), (fy + fh) * page_h - (
+            gap if fy + fh >= 0.999 else gap / 2)
+        if fx > 0.001:
+            x0 = fx * page_w + gap / 2
+        if fy > 0.001:
+            y0 = fy * page_h + gap / 2
+        out.append((round(x0, 2), round(y0, 2), round(x1 - x0, 2), round(y1 - y0, 2)))
+    return out

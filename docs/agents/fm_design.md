@@ -79,6 +79,8 @@ board est fait à la main (`_notify_cad_layer`, `scene.item_moved` en fin de ges
   côtés = largeur / hauteur ; TEXTE : coins = taille de police, côtés G / D = largeur ; IMAGE : côtés = recadrage
   (l'échelle ne change pas) ; LIGNE : extrémités G / D ; sélection multiple : coins seulement (tout à l'échelle).
   Rotation : poignée sous la sélection, aimantée à 45° (3°), Maj = pas de 15° ; multi-sélection : autour du centre.
+- Déposer un fichier image SUR une image ou un cadre vide le remplace (cadrage couvrant, taille du cadre gardée) ; un
+  clic dans la bibliothèque remplit le cadre vide choisi. Petits éléments à l'écran (< 36 px) : poignées de côté retirées.
 - Double-clic : texte = édition (un texte vidé disparaît), image = recadrage (poignées = bords visibles,
   Ctrl + glisser = image dans son cadre, Entrée / Échap / clic dehors = fin).
 - Clavier (module actif, hors édition de texte) : Suppr, Ctrl+C / X / V / D / A, Ctrl+G / Ctrl+Maj+G, Ctrl+] / [
@@ -142,7 +144,7 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 | Export PNG / JPEG / PDF multipage / SVG, échelle, qualité, fond transparent | Terminée | Rendu |
 | Validation graphique en vraie fenêtre Windows (pas seulement hors écran) | À faire | — |
 | Texte multistyle (par caractère), listes à puces | À faire | Texte |
-| Grilles de photos (plusieurs images dans une mise en page) | À faire | Images |
+| Grilles de photos (6 mises en page), cadres vides en forme, dépôt / bibliothèque = remplir le cadre (cadrage couvrant), « Remplacer l'image… » | Terminée | Images |
 | Règles / repères de page fixes, marges d'impression, fond perdu | À faire | Pages |
 | Styles de marque (palette du document, styles de texte réutilisables) | À faire | Texte, Styles |
 | Icônes réglables : lignes `design*` ajoutées à `ICON_ROWS` (fenêtre de réglages : vérifier l'affichage) | Partielle | — |

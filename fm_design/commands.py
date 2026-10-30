@@ -9,7 +9,7 @@ from PySide6.QtCore import QPointF
 from PySide6.QtWidgets import QApplication
 
 from . import design_model as dm, document as doc, geometry
-from .items import DesignPageItem, DesignTextItem
+from .items import DesignImageItem, DesignPageItem, DesignTextItem
 
 
 class CommandMixin:
@@ -64,6 +64,10 @@ class CommandMixin:
         return item
 
     def add_image_files(self, paths, at: QPointF | None = None) -> bool:
+        sel = self.selection()
+        if (at is None and len(paths) == 1 and len(sel) == 1 and isinstance(sel[0], DesignImageItem)
+                and sel[0].is_empty() and not sel[0].locked()):
+            return self.fill_image(sel[0], paths[0])         # cadre vide choisi : la bibliothèque le remplit
         from PySide6.QtGui import QImageReader
         from fm_board import serialization
         board_path = self.scene.board_path
@@ -86,10 +90,65 @@ class CommandMixin:
         return added
 
     def drop_files(self, paths, at: QPointF) -> bool:
+        """Fichiers déposés : sur une image (ou un cadre vide), la 1re la REMPLACE (cadrage couvrant) ; ailleurs,
+        nouvelles images à l'endroit du dépôt."""
         page = self._page_at(at)
         if page is not None:
             self.set_current_page(page)
+        target = self._element_at(self.view.mapFromScene(at))
+        if isinstance(target, DesignImageItem) and not target.locked() and paths:
+            if self.fill_image(target, paths[0]):
+                return True
         return self.add_image_files(paths, at if page is not None else None)
+
+    def import_image(self, path):
+        """(nom d'asset, largeur, hauteur) d'un fichier image copié dans le dossier du board, ou None."""
+        from PySide6.QtGui import QImageReader
+        from fm_board import serialization
+        if self.scene.board_path is None:
+            return None
+        reader = QImageReader(str(path))
+        reader.setAutoTransform(True)
+        size = reader.size()
+        if not size.isValid():
+            return None
+        try:
+            return serialization.import_asset(self.scene.board_path, path), size.width(), size.height()
+        except OSError:
+            return None
+
+    def fill_image(self, item, path) -> bool:
+        """Remplir / remplacer l'image d'un cadre : taille du cadre gardée, image recadrée pour le couvrir (une
+        étape). Réglages et masque du cadre gardés."""
+        found = self.import_image(path)
+        if found is None:
+            return False
+        name, iw, ih = found
+        w, h = item.size()
+        doc.change(self.scene, [item], lambda i: i.data.update(asset=name, crop=geometry.cover_crop(w, h, iw, ih)),
+                   "Remplacer l'image")
+        self._select([item])
+        return True
+
+    def add_grid(self, name: str):
+        """Grille de photos sur toute la page courante : cadres vides groupés, à remplir par dépôt."""
+        page = self.ensure_page()
+        w, h = page.size()
+        gap = round(min(w, h) * 0.02, 2)
+        dicts = [{"type": dm.IMAGE, "id": f"g{n}", "x": x, "y": y, "w": cw, "h": ch, "asset": "", "group": "grid",
+                  "z": float(n)} for n, (x, y, cw, ch) in enumerate(geometry.grid_cells(name, w, h, gap))]
+        added = doc.insert_elements(self.scene, page, dicts, text="Grille de photos")
+        self._select(added)
+        return added
+
+    def add_frame(self, mask: str = ""):
+        """Cadre vide (emplacement d'image), éventuellement en forme (masque)."""
+        page = self.ensure_page()
+        side = round(min(page.size()) * 0.4, 2)
+        item = doc.add_element(self.scene, page, dm.IMAGE, {"asset": "", "w": side, "h": side, "mask": mask},
+                               "Ajouter un cadre")
+        self._select([item])
+        return item
 
     def duplicate(self):
         sel = self.selection()

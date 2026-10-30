@@ -638,5 +638,39 @@ class EffectsTest(DesignTestCase):
         self.assertFalse(ring.shape().contains(ring.content_rect().center()))   # le trou ne se clique pas
 
 
+class GridTest(DesignTestCase):
+    def test_grid_frames_filled_by_drop_with_cover_crop(self):
+        page = self.page(1000, 500)
+        cells = self.ctl.add_grid("2 colonnes")
+        self.assertEqual(len(cells), 2)
+        self.assertTrue(all(c.is_empty() for c in cells))
+        self.assertEqual(len({c.data["group"] for c in cells}), 1)
+        x, y, w, h = doc.local_box(cells[1])
+        self.assertAlmostEqual(x + w, 1000 - 10, delta=0.01)        # marge = 2 % du petit côté (500)
+        source = self.tmp / "large.png"
+        image = QImage(400, 100, QImage.Format_RGB32)
+        image.fill(QColor("#0000ff"))
+        image.save(str(source))
+        self.assertTrue(self.ctl.drop_files([source], self.center(cells[0])))
+        filled = cells[0]
+        self.assertFalse(filled.is_empty())
+        self.assertEqual(filled.size(), (w, h))                     # le cadre garde sa taille
+        x0, y0, x1, y1 = filled.data["crop"]
+        self.assertAlmostEqual((x1 - x0) * 400 / ((y1 - y0) * 100), w / h, places=3)   # couvrant, sans déformer
+        self.assertEqual(len(doc.elements(self.scene, page)), 2)    # rien d'ajouté
+        self.scene.undo.undo()
+        self.assertTrue(filled.is_empty())
+
+    def test_cover_crop_and_library_fills_selected_frame(self):
+        self.assertEqual(geometry.cover_crop(100, 100, 200, 100), [0.25, 0.0, 0.75, 1.0])
+        self.page()
+        frame = self.ctl.add_frame("ellipse")
+        source = self.tmp / "sq.png"
+        QImage(50, 50, QImage.Format_RGB32).save(str(source))
+        self.assertTrue(self.ctl.add_image_files([source]))         # comme un clic dans la bibliothèque
+        self.assertFalse(frame.is_empty())
+        self.assertEqual(frame.data["mask"], "ellipse")
+
+
 if __name__ == "__main__":
     unittest.main()

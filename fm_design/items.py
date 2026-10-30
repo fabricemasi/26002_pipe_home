@@ -606,6 +606,28 @@ def apply_adjustments(image: QImage, brightness: float, contrast: float, saturat
 
 
 class DesignImageItem(DesignElement):
+    def _paint_placeholder(self, painter, rect, path):
+        """Cadre sans image (grille, emplacement) ou image introuvable : à remplir par un dépôt de fichier."""
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#d9d9e3"))
+        painter.drawPath(path)
+        side = min(rect.width(), rect.height()) * 0.18
+        c = rect.center()
+        pen = QPen(QColor("#8a8aa0"), max(1.0, side * 0.08))
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        box = QRectF(c.x() - side, c.y() - side * 0.75, side * 2, side * 1.5)
+        painter.drawRoundedRect(box, side * 0.12, side * 0.12)
+        painter.drawPolyline(QPolygonF([QPointF(box.left() + side * 0.2, box.bottom() - side * 0.2),
+                                        QPointF(c.x() - side * 0.2, c.y()), QPointF(c.x() + side * 0.3, c.y() + side * 0.4),
+                                        QPointF(box.right() - side * 0.2, box.bottom() - side * 0.5)]))
+        if self.data.get("asset"):
+            painter.drawLine(box.topLeft(), box.bottomRight())       # référence perdue : image introuvable
+
+    def is_empty(self) -> bool:
+        return not self.data.get("asset")
+
     def outline(self) -> QPainterPath:
         rect = self.content_rect()
         mask = self.data.get("mask") or ""
@@ -625,9 +647,7 @@ class DesignImageItem(DesignElement):
         paint_shadow(painter, self.data, path, ("image", rect.width(), rect.height(), self.data.get("radius")))
         pixmap = adjusted_image(getattr(self.scene(), "board_path", None), self.data)
         if pixmap is None:
-            painter.setPen(QPen(QColor(0, 0, 0, 90), 1 / self._zoom(), Qt.DashLine))
-            painter.setBrush(QColor(0, 0, 0, 12))
-            painter.drawPath(path)
+            self._paint_placeholder(painter, rect, path)
             return
         painter.save()
         painter.setClipPath(path, Qt.IntersectClip)

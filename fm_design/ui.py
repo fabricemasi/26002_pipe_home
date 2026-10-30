@@ -154,6 +154,9 @@ class DesignChrome(QObject):
     def show(self):
         for widget in (self.rail, self.context, self.pagebar):
             widget.show()
+        # Au-dessus du board UNE fois (raise_ à chaque mise en place repeignait les barres et le panneau à chaque clic).
+        for widget in (self.rail, self.panel, self.context, self.pagebar):
+            widget.raise_()
         self.panel.setVisible(self.tab is not None)
         if self.tab is None and not self.ctl.pages():
             self.set_tab("templates")                    # aucun design : choisir un format d'abord
@@ -188,8 +191,6 @@ class DesignChrome(QObject):
         self.pagebar.resize(max(80, width), self.pagebar.sizeHint().height())
         self.pagebar.move(max(margin, (pane.width() - self.pagebar.width()) // 2),
                           pane.height() - self.pagebar.height() - margin)
-        for widget in (self.rail, self.panel, self.context, self.pagebar):
-            widget.raise_()
 
     def free_area(self) -> QRect:
         """Partie du board (coordonnées du viewport) que ne couvrent ni le panneau, ni les barres du haut et du bas."""
@@ -220,6 +221,7 @@ class DesignChrome(QObject):
         self.panel_content = panels.build(name, self.ctl, self.scroll)
         self.scroll.setWidget(self.panel_content)
         self.panel.show()
+        self.panel.raise_()
         self.place()
 
     def refresh_panel(self):

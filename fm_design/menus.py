@@ -296,6 +296,8 @@ def open_context_menu(ctl, global_pos):
         images = [i for i in items if isinstance(i, DesignImageItem)]
         if len(images) == 1:
             menu.addAction("Recadrer").triggered.connect(lambda: ctl.start_crop(images[0]))
+            menu.addAction("Remplacer l'image…").triggered.connect(
+                lambda: QTimer.singleShot(0, lambda: replace_image_dialog(ctl, images[0])))
             menu.addAction("Définir comme arrière-plan de la page").triggered.connect(
                 lambda: set_page_background_image(ctl, images[0]))
     page = ctl.current_page()
@@ -309,6 +311,14 @@ def open_context_menu(ctl, global_pos):
                 lambda: doc.change(ctl.scene, [page], lambda i: i.data.update(bg_asset=""), "Arrière-plan"))
     menu.aboutToHide.connect(ctl.scene.commit_live)
     menu.popup(global_pos)
+
+
+def replace_image_dialog(ctl, image):
+    from pathlib import Path
+    path, _f = QFileDialog.getOpenFileName(ctl.pane, "Remplacer l'image", "",
+                                           "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff)")
+    if path:
+        ctl.fill_image(image, Path(path))
 
 
 def set_page_background_image(ctl, image):

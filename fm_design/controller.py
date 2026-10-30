@@ -220,6 +220,13 @@ class DesignController(GestureMixin, CommandMixin, QObject):
             if isinstance(single, (DesignShapeItem, DesignImageItem)) and not line:
                 sides += ["t", "b"]
             points = {"l": mid(tl, bl), "r": mid(tr, br), "t": mid(tl, tr), "b": mid(bl, br)}
+            # Élément petit à l'écran : poignées de côté retirées là où elles chevaucheraient les coins.
+            zoom = max(0.01, self.scene.zoom)
+            w, h = single.size()
+            if h * zoom < 36 and not line:
+                sides = [s for s in sides if s not in ("t", "b")]
+            if w * zoom < 36 and not line:
+                sides = [s for s in sides if s not in ("l", "r")]
             out += [(s, points[s], angle) for s in sides]
         bottom = mid(bl, br)
         zoom = max(0.01, self.scene.zoom)
