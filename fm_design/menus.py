@@ -28,6 +28,23 @@ def _live(ctl, key, items, change, text):
 
 
 # ---------------------------------------------------------------- menus de propriétés
+def brand_rows(ctl, menu, current, pick):
+    """Couleurs de la marque (tous les boards) + ajouter / retirer la couleur actuelle."""
+    from settings_menu import menu_row
+    colors = ctl.brand()["colors"]
+    if colors:
+        grid = _SwatchGrid(colors, current, 6)
+        grid.picked.connect(pick)
+        menu_row(menu, "Marque", grid)
+    if isinstance(current, str) and current.startswith("#") and len(current) in (7, 9):
+        if current in colors:
+            menu.addAction("Retirer cette couleur de la marque").triggered.connect(
+                lambda: ctl.brand_remove("colors", current))
+        else:
+            menu.addAction("Ajouter cette couleur à la marque").triggered.connect(
+                lambda: ctl.brand_add("colors", current))
+
+
 def text_selection(ctl):
     """Texte en cours d'édition dont une partie est choisie (son éditeur), sinon None : les menus du texte
     s'appliquent alors à cette partie."""
@@ -88,6 +105,7 @@ def color_menu(ctl, anchor, items, key, label, allow_none=False, after=None):
         mine = _SwatchGrid(used, current, 6)
         mine.picked.connect(pick)
         menu_row(menu, "Du document", mine)
+    brand_rows(ctl, menu, current, pick)
     if allow_none:
         none = menu.addAction("Aucune")
         none.triggered.connect(lambda: doc.change(ctl.scene, items, lambda i: i.data.update({key: ""}), label))
@@ -146,6 +164,7 @@ def fill_menu(ctl, anchor, items, prefix=("fill", "fill_type", "fill2", "gradien
         mine = _SwatchGrid(used, first.get(color_key), 6)
         mine.picked.connect(set_color(color_key))
         menu_row(menu, "Du document", mine)
+    brand_rows(ctl, menu, first.get(color_key), set_color(color_key))
     for value, text in (("solid", "Uni"), ("linear", "Dégradé linéaire"), ("radial", "Dégradé radial"),
                         ("none", "Aucun (transparent)")):
         action = menu.addAction(text)
@@ -549,6 +568,18 @@ def font_menu(ctl, anchor, texts):
     picker.chosen.connect(chosen)
     menu_row(menu, "", picker)
     menu.aboutToShow.connect(picker.filter.setFocus)
+    fonts = ctl.brand()["fonts"]
+    if fonts:
+        brand = menu.addMenu("Polices de la marque")
+        for family in fonts:
+            brand.addAction(family).triggered.connect(lambda _c=False, f=family: chosen(f))
+    current = texts[0].data.get("font_family") or ""
+    if current and current not in fonts:
+        menu.addAction(f"Ajouter « {current} » à la marque").triggered.connect(
+            lambda: ctl.brand_add("fonts", current))
+    elif current:
+        menu.addAction(f"Retirer « {current} » de la marque").triggered.connect(
+            lambda: ctl.brand_remove("fonts", current))
     _popup(ctl, menu, anchor)
 
 

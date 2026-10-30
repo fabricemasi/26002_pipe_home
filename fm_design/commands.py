@@ -261,3 +261,49 @@ class CommandMixin:
                 if isinstance(value, str) and value.startswith("#") and len(value) == 7:
                     counts[value.lower()] = counts.get(value.lower(), 0) + 1
         return [c for c, _n in sorted(counts.items(), key=lambda kv: -kv[1])][:12]
+
+    # ------------------------------------------------------------------ kit de marque (tous les boards)
+    def brand(self) -> dict:
+        """Couleurs et polices favorites, partagées par tous les boards (réglage d'état `board_design_brand`)."""
+        kept = getattr(self, "_brand", None)
+        if kept is None:
+            raw = self.pane._settings.get("board_design_brand")
+            if not isinstance(raw, dict):
+                try:
+                    import ui_state
+                    raw = (ui_state.APPLIED_SETTINGS or {}).get("board_design_brand")
+                except Exception:                    # noqa: BLE001 - paquet utilisé hors de l'appli
+                    raw = None
+            raw = raw if isinstance(raw, dict) else {}
+            kept = {"colors": [c for c in raw.get("colors", []) if isinstance(c, str) and c.startswith("#")][:24],
+                    "fonts": [f for f in raw.get("fonts", []) if isinstance(f, str) and f][:12]}
+            self._brand = kept
+        return kept
+
+    def brand_add(self, kind: str, value: str):
+        brand = self.brand()
+        values = brand[kind]
+        if value in values:
+            values.remove(value)
+        values.insert(0, value)
+        del values[24 if kind == "colors" else 12:]
+        self._save_brand()
+
+    def brand_remove(self, kind: str, value: str):
+        brand = self.brand()
+        if value in brand[kind]:
+            brand[kind].remove(value)
+            self._save_brand()
+
+    def _save_brand(self):
+        """Enregistré comme les préréglages de stylo du board (`save_live_state`, rien d'autre n'est écrit)."""
+        brand = {"colors": list(self.brand()["colors"]), "fonts": list(self.brand()["fonts"])}
+        self.pane._settings["board_design_brand"] = brand
+        try:
+            from settings_store import save_live_state
+            import ui_state
+            save_live_state("board_design_brand", brand)
+            if isinstance(ui_state.APPLIED_SETTINGS, dict):
+                ui_state.APPLIED_SETTINGS["board_design_brand"] = brand
+        except Exception:                            # noqa: BLE001 - hors de l'appli : gardé pour la session
+            pass

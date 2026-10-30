@@ -928,5 +928,23 @@ class ListTest(DesignTestCase):
         self.assertEqual(text.to_dict()["text"], "Un\nDeux\nTrois")
 
 
+class BrandTest(DesignTestCase):
+    def test_brand_shared_and_saved_as_live_state(self):
+        import settings_store
+        self.page()
+        self.ctl.brand_add("colors", "#123456")
+        self.ctl.brand_add("fonts", "Georgia")
+        self.ctl.brand_add("colors", "#123456")                       # pas de doublon
+        self.assertEqual(self.ctl.brand(), {"colors": ["#123456"], "fonts": ["Georgia"]})
+        saved = settings_store.load_settings()["board_design_brand"]
+        self.assertEqual(saved, {"colors": ["#123456"], "fonts": ["Georgia"]})
+        other = board_ui.BoardPane(self.host, settings_store.load_settings())
+        _PANES.append(other)
+        other.set_module("design")
+        self.assertEqual(other.design.brand()["colors"], ["#123456"])   # un autre board la voit
+        self.ctl.brand_remove("colors", "#123456")
+        self.assertEqual(settings_store.load_settings()["board_design_brand"]["colors"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

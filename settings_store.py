@@ -1084,7 +1084,7 @@ _LIVE_STATE_KEYS = ("md_toolbar_font_color", "md_toolbar_background_color",
                     "element_spaces_below", "ui_spaces_below", "title_order", "element_style_overrides",
                     "viewer_film_text_ratio", "viewer_gallery_text_height", "context_menu_layouts",
                     "viewer_button_order", "viewer_recursive", "md_last_mode", "md_code_font_zoom",
-                    "board_pen_presets", "quick_style_positions", "interface_move_positions",
+                    "board_pen_presets", "board_design_brand", "quick_style_positions", "interface_move_positions",
                     "interface_edit_appearance", "video_grade", "video_grade_presets", "video_export_last",
                     "video_info_enabled", "video_loop", "video_volume", "video_last_zoom",
                     "video_time_display", "video_scopes", "video_timeline_thumb_height")
