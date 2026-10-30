@@ -41,8 +41,11 @@ FADE_MS = 160
 TOOLS = [("select", "Sélection (V)"), ("hand", "Main (H, ou Espace)"), ("sticky", "Post-it (N)"),
          ("text", "Texte (T)"), ("shape", "Formes (S ; R rectangle, O ellipse)"), ("connector", "Connecteur (L)"),
          ("draw", "Dessin à main levée (P)"), ("comment", "Commentaire (C)"), ("frame", "Cadre (F)"),
-         ("image", "Image depuis un fichier…"),
-         ("cad", "Mode CAD — dessin technique 2D (lignes, calques, accrochages, barre de commande)")]
+         ("image", "Image depuis un fichier…")]
+# Selecteur de modules (demande de l'utilisateur) : a l'ouverture, aucune barre d'outils, seulement ces boutons ; la
+# barre d'outils d'un module s'affiche quand il est active. Par module : griser, masquer ses elements.
+MODULES = [("miro", "Miro", "Module Miro : post-it, textes, formes, dessin, commentaires (sa barre d'outils)"),
+           ("cad", "CAD", "Module CAD : dessin technique 2D (lignes, calques, accrochages, barre de commande)")]
 DRAW_BAR = [("pen", "Stylo"), ("highlighter", "Surligneur"), ("smart", "Dessin intelligent (formes reconnues)"),
             ("eraser", "Gomme (traits entiers)"), ("precision_eraser", "Gomme de précision (coupe les traits)"),
             ("lasso", "Lasso (sélection à main levée)")]
@@ -188,6 +191,22 @@ def paint_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
             v = -r + n * 2 * r / 3
             painter.drawLine(QPointF(cx + v, cy - r), QPointF(cx + v, cy + r))
             painter.drawLine(QPointF(cx - r, cy + v), QPointF(cx + r, cy + v))
+    elif kind == "miro":                                    # module Miro : post-it
+        paint_glyph(painter, "sticky", rect, color)
+    elif kind == "fade":                                    # griser : carre plein en transparence
+        faded = QColor(color)
+        faded.setAlpha(90)
+        box = QRectF(cx - s * 1.3, cy - s * 1.3, s * 2.6, s * 2.6)
+        painter.fillRect(box, faded)
+        painter.drawRect(box)
+    elif kind == "hide":                                    # masquer : oeil barre
+        eye = QPainterPath()
+        eye.moveTo(cx - s * 1.6, cy)
+        eye.quadTo(cx, cy - s * 1.7, cx + s * 1.6, cy)
+        eye.quadTo(cx, cy + s * 1.7, cx - s * 1.6, cy)
+        painter.drawPath(eye)
+        painter.drawEllipse(QPointF(cx, cy), s * 0.5, s * 0.5)
+        painter.drawLine(QPointF(cx - s * 1.4, cy + s * 1.4), QPointF(cx + s * 1.4, cy - s * 1.4))
     elif kind == "invert":                                  # negatif : disque a moitie plein
         r = s * 1.2
         painter.drawEllipse(QPointF(cx, cy), r, r)
@@ -1114,6 +1133,7 @@ class BoardPane(QWidget):
         self._preset_index = {"pen": 0, "highlighter": 0, "smart": 0}
         self._draw_tool = "pen"
         self.cad = None                         # module CAD (fm_cad/cad.py), cree au 1er usage
+        self.module = None                      # module actif : "miro", "cad" ou None (aucune barre d'outils)
         self._cad_export_units = "mm"           # unites du dernier export DXF / DWG (session)
         self.view.cad = None
         self._build_chrome()
@@ -1200,7 +1220,7 @@ class BoardPane(QWidget):
 
     def _apply_toolbar_look(self, look: dict):
         self.toolbar_style = look
-        for bar in (self._toolbar, self._drawbar, self._title, self._zoombar, self._contextbar):
+        for bar in (self._toolbar, self._drawbar, self._title, self._zoombar, self._contextbar, self._modulebar):
             bar.set_look(look)
             if bar is self._toolbar:
                 margins = bar.layout().contentsMargins()
@@ -1218,7 +1238,7 @@ class BoardPane(QWidget):
         look = getattr(self, "toolbar_style", None)
         if look is None:
             return
-        for bar in (self._toolbar, self._drawbar, self._title, self._zoombar, self._contextbar):
+        for bar in (self._toolbar, self._drawbar, self._title, self._zoombar, self._contextbar, self._modulebar):
             font = look["font"]
             size = font.pixelSize() if font.pixelSize() > 0 else round(font.pointSizeF() * 4 / 3)
             # Dans la feuille de style (celle de l'appli fixe la police des boutons, setFont seul serait ignore).
@@ -1329,12 +1349,76 @@ class BoardPane(QWidget):
         self._contextbar, self._context_layout = _bar(self, False)
         self._contextbar.hide()
         self._comment_panel = CommentPanel(self)
+
+        self._modulebar, modules = _bar(self, False)
+        self._module_buttons = {}
+        for index, (name, label, tip) in enumerate(MODULES):
+            if index:
+                modules.addSpacing(10)
+            button = _GlyphButton(name, tip, self._modulebar)
+            button.clicked.connect(lambda _c=False, n=name: self.set_module(None if self.module == n else n))
+            fade = _GlyphButton("fade", f"Griser les éléments {label} (visibles, ni sélectionnables ni modifiables)",
+                                self._modulebar, 30)
+            fade.clicked.connect(lambda _c=False, n=name: self.toggle_module_look(n, "fade"))
+            hide = _GlyphButton("hide", f"Masquer les éléments {label}", self._modulebar, 30)
+            hide.clicked.connect(lambda _c=False, n=name: self.toggle_module_look(n, "hide"))
+            for widget in (button, fade, hide):
+                modules.addWidget(widget, 0, Qt.AlignVCenter)
+            self._module_buttons[name] = (button, fade, hide)
         self._sync_tools(self.view.tool)
+        self._sync_modules()
 
     # -- module CAD --
+    def set_module(self, name: str | None):
+        """Selecteur de modules : « miro » (sa barre d'outils), « cad » (mode CAD et ses barres) ou None (aucune barre
+        d'outils : seulement le selecteur, comme a l'ouverture)."""
+        self.module = name
+        if name == "cad":
+            self.toggle_cad(True)
+            return
+        if self.cad_active():
+            self.toggle_cad(False)
+        if name is None and self.view.tool != "hand":
+            self.view.set_tool("select")
+        self._sync_tools(self.view.tool)
+        self._sync_context_bar()
+        self._sync_modules()
+        self.view.setFocus()
+
+    def toggle_module_look(self, module: str, what: str):
+        """Bouton griser (« fade ») ou masquer (« hide ») d'un module."""
+        current = self.scene.module_look[module][what]
+        self.scene.set_module_look(module, **{what: not current})
+        layer = getattr(self.view, "gpu", None)
+        if layer is not None:
+            layer.request()                             # rendu GPU du CAD : nouvelle image
+        if self.cad is not None:
+            self.cad.refresh()
+        self._sync_context_bar()
+        self._sync_modules()
+
+    def _sync_modules(self):
+        for name, (button, fade, hide) in self._module_buttons.items():
+            look = self.scene.module_look[name]
+            button.set_on(self.module == name)
+            fade.set_on(look["fade"])
+            hide.set_on(look["hide"])
+        self._toolbar.setVisible(self.module == "miro")
+        self._drawbar.setVisible(self.module == "miro" and self.view.tool in DRAW_TOOLS)
+        self._place_chrome()
+
+    def title_area(self) -> QRect:
+        """Zone occupee en haut a gauche (nom du board + selecteur de modules) : les barres du CAD se placent a cote."""
+        return self._title.geometry().united(self._modulebar.geometry())
+
     def toggle_cad(self, on: bool | None = None):
-        """Bouton CAD : active / desactive le mode CAD sur ce board (les entites CAD restent visibles)."""
+        """Active / desactive le mode CAD sur ce board (les entites CAD restent visibles) ; module « cad » du
+        selecteur."""
         on = (self.cad is None or not self.cad.active) if on is None else on
+        if on:
+            self.module = "cad"
+        elif self.module == "cad":
+            self.module = None
         if on and self.cad is None:
             from fm_cad.cad import CadController
             self.cad = CadController(self)
@@ -1352,15 +1436,13 @@ class BoardPane(QWidget):
             self.cad.deactivate()
             self._sync_context_bar()
         self._sync_tools(self.view.tool)
+        self._sync_modules()
         self.view.setFocus()
 
     def cad_active(self) -> bool:
         return self.cad is not None and self.cad.active
 
     def _on_tool_button(self, kind: str):
-        if kind == "cad":
-            self.toggle_cad()
-            return
         if self.cad_active():
             self.toggle_cad(False)                  # un outil du board : retour au board
         if kind == "image":
@@ -1380,11 +1462,14 @@ class BoardPane(QWidget):
 
     def _sync_tools(self, tool: str):
         cad = self.cad_active()
+        if not cad and self.module is None and tool not in ("select", "hand"):
+            # Outil du board choisi au clavier sans module actif : le module Miro s'active (sa barre s'affiche).
+            self.module = "miro"
+            self._sync_modules()
         for kind, button in self._tool_buttons.items():
-            button.set_on(cad if kind == "cad" else (not cad and (kind == tool or (kind == "draw"
-                                                                                  and tool in DRAW_TOOLS))))
+            button.set_on(not cad and (kind == tool or (kind == "draw" and tool in DRAW_TOOLS)))
         drawing = tool in DRAW_TOOLS
-        self._drawbar.setVisible(drawing)
+        self._drawbar.setVisible(drawing and self.module == "miro")
         if drawing:
             self._draw_tool = tool
             for kind, button in self._draw_buttons.items():
@@ -1515,7 +1600,7 @@ class BoardPane(QWidget):
         self.scene.commit_live()
         items = [i for i in self._selected() if not isinstance(i, CommentItem)]
         self._clear_context_bar()
-        if not items or self.cad_active():          # mode CAD : ses propres proprietes (panneau, barre)
+        if not items or self.module != "miro":     # mode CAD (ses propres proprietes) ou aucun module : pas de barre
             self._contextbar.hide()
             return
         kinds = {i.kind for i in items}
@@ -2131,19 +2216,21 @@ class BoardPane(QWidget):
 
     def _place_chrome(self):
         margin = 16
-        for panel in (self._toolbar, self._title, self._zoombar, self._contextbar, self._drawbar):
+        for panel in (self._toolbar, self._title, self._zoombar, self._contextbar, self._drawbar, self._modulebar):
             panel.layout().activate()                      # contenu refait (barre contextuelle) : taille juste
             panel.resize(panel.sizeHint())
         self._toolbar.move(margin, max(margin + 50, (self.height() - self._toolbar.height()) // 2))
         self._drawbar.move(self._toolbar.geometry().right() + 8,
                            max(margin + 50, (self.height() - self._drawbar.height()) // 2))
         self._title.move(margin, margin)
+        title = self._title.geometry()
+        self._modulebar.move(title.right() + 8, title.center().y() - self._modulebar.height() // 2)
         self._zoombar.move(self.width() - self._zoombar.width() - margin,
                            self.height() - self._zoombar.height() - margin)
         self._contextbar.move(max(margin, (self.width() - self._contextbar.width()) // 2), margin)
         self._badge.move(self.width() - self._badge.width() - margin, margin)
         self._sync_badge()
-        for panel in (self._toolbar, self._drawbar, self._title, self._zoombar, self._contextbar,
+        for panel in (self._toolbar, self._drawbar, self._title, self._zoombar, self._contextbar, self._modulebar,
                       self._comment_panel, self._badge):
             panel.raise_()
         if self.cad_active():

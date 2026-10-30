@@ -645,7 +645,7 @@ class BoardView(QGraphicsView):
         for item in self.items(view_pos.toPoint() if hasattr(view_pos, "toPoint") else view_pos):
             while item is not None and not isinstance(item, BoardItem):
                 item = item.parentItem()
-            if isinstance(item, BoardItem):
+            if isinstance(item, BoardItem) and self.board.item_active(item):   # grise / masque (module) : ignore
                 return item
         return None
 
@@ -845,7 +845,7 @@ class BoardView(QGraphicsView):
         elif kind == "eraser":
             hit = [i for i in draft["hit"] if i.scene() is self.board]
             for item in hit:
-                item.setOpacity(1.0)
+                item.setOpacity(self.board.item_opacity(item))
             self.board.delete_items(hit)
         elif kind == "precision":
             self._finish_precision(draft)
@@ -964,7 +964,8 @@ class BoardView(QGraphicsView):
         radius = 6
         rect = QRectF(view_pos.x() - radius, view_pos.y() - radius, 2 * radius, 2 * radius).toRect()
         for item in self.items(rect):
-            if isinstance(item, InkItem) and not item.locked() and item not in self._draft["hit"]:
+            if (isinstance(item, InkItem) and not item.locked() and item.isEnabled()
+                    and item not in self._draft["hit"]):
                 self._draft["hit"].append(item)
                 item.setOpacity(0.25)
 
@@ -1009,7 +1010,7 @@ class BoardView(QGraphicsView):
         if draft.get("preview") is not None:
             self.board.removeItem(draft["preview"])
         for item in draft.get("hit", []):
-            item.setOpacity(1.0)
+            item.setOpacity(self.board.item_opacity(item))
         if draft.get("kind") == "precision":
             self._finish_precision(draft)
 

@@ -1440,7 +1440,8 @@ class CommentItem(BoardItem):
     def sync(self):
         scene = self.scene()
         show = (not self.data.get("resolved")) or bool(getattr(scene, "show_resolved", False))
-        self.setVisible(show)
+        hidden = getattr(scene, "module_hidden", None)
+        self.setVisible(show and not (hidden is not None and hidden("miro")))
 
     def paint(self, painter, option, widget=None):
         option.state = option.state & ~QStyle.State_Selected

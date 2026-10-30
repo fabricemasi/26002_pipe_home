@@ -13,7 +13,7 @@ Fichiers du module (chaque couche n'importe que les precedentes) :
 - `cad`          : ce controleur (activation, souris, clavier, selection, invites, reglages, historique) ;
 - `cad_ui`       : barre d'outils CAD (en haut), barre de commande (en bas), proprietes, calques, accrochages.
 
-Activation : bouton CAD de la barre d'outils du board (`BoardPane.toggle_cad`). Mode actif : la vue du board
+Activation : bouton CAD du selecteur de modules du board (`BoardPane.set_module` / `toggle_cad`). Mode actif : la vue du board
 confie la souris (bouton gauche, droit) et le clavier au controleur ; la molette, le bouton du milieu et
 Espace tenu deplacent / zooment toujours la page. Mode inactif : le board est inchange, les entites CAD
 restent visibles (et se deplacent / suppriment comme les autres elements).
@@ -39,7 +39,7 @@ from PySide6.QtWidgets import QApplication
 
 from . import cad_aliases, cad_commands, cad_geometry as geo, cad_input, cad_model, cad_shapes, cad_snap
 from fm_board import model
-from .cad_items import CadLayer, CadLineItem, unit_of
+from .cad_items import CadLayer, CadLineItem, cad_module_look, unit_of
 from .cad_overlay import CadOverlay, native_cursor
 
 DEFAULT_ON = {"board_cad_lineweights"}                # bascules allumees tant qu'aucun reglage n'est enregistre
@@ -516,6 +516,8 @@ class CadController(QObject):
         jour LIGNE PAR LIGNE (journal `CadLayer.changed`) : le reconstruire a chaque ligne tracee figeait le
         premier mouvement qui suivait (~200 ms a 10 000 lignes)."""
         self._sync_index()
+        if cad_module_look(self.scene)[0]:
+            return []                                       # module CAD masque : ni choix ni accrochage
         found = []
         for item in self._index.query(rect):
             if self._alive(item):
@@ -1357,6 +1359,8 @@ class CadController(QObject):
         d'abord. Fiable sur les traits tres fins."""
         if view_pos is None:
             return []
+        if any(cad_module_look(self.scene)):
+            return []                                       # module CAD grise ou masque : rien ne se choisit
         doc = self.view_to_doc(view_pos)
         reach = self.look.get("pickbox_px", 5) / self.scale()
         found = []

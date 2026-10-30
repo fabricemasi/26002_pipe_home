@@ -41,6 +41,7 @@ class BoardPane(board_ui.BoardPane):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         _PANES.append(self)
+        self.set_module("miro")             # les tests du board visent le module Miro (sa barre d'outils)
 
 
 def drop_panes():
@@ -713,6 +714,66 @@ class _PaneCase(unittest.TestCase):
         self.pane.show()
         self.scene, self.view = self.pane.scene, self.pane.view
         settle(0.05)
+
+
+class ModuleSelectorTest(_PaneCase):
+    """Selecteur de modules du board (demande de l'utilisateur) : a l'ouverture aucune barre d'outils, deux boutons
+    Miro / CAD ; la barre d'un module s'affiche quand il est active ; par module, griser ou masquer ses elements."""
+
+    def test_no_toolbar_at_opening_then_the_toolbar_of_the_chosen_module(self):
+        pane = board_ui.BoardPane(self.host)                    # sans le module Miro des autres tests
+        _PANES.append(pane)
+        pane.open(self.path)
+        pane.show()
+        settle(0.05)
+        self.assertIsNone(pane.module)
+        self.assertFalse(pane._toolbar.isVisible())
+        self.assertTrue(pane._modulebar.isVisible())
+        self.assertNotIn("cad", pane._tool_buttons)              # plus d'icone CAD dans la barre de Miro
+        note = pane.scene.add_new(model.new_item("sticky", text="x"))
+        note.setSelected(True)
+        pane._sync_context_bar()
+        self.assertFalse(pane._contextbar.isVisible())           # aucun module : aucune barre
+        miro, cad = pane._module_buttons["miro"][0], pane._module_buttons["cad"][0]
+        miro.click()
+        self.assertEqual(pane.module, "miro")
+        self.assertTrue(pane._toolbar.isVisible())
+        cad.click()
+        self.assertEqual(pane.module, "cad")
+        self.assertTrue(pane.cad_active())
+        self.assertFalse(pane._toolbar.isVisible())
+        self.assertTrue(pane.cad.ui.toolbar.isVisible())
+        cad.click()                                              # re-clic : plus aucun module
+        self.assertIsNone(pane.module)
+        self.assertFalse(pane.cad_active())
+        self.assertFalse(pane._toolbar.isVisible())
+        pane.view.set_tool("sticky")                             # outil choisi au clavier : le module Miro s'active
+        self.assertEqual(pane.module, "miro")
+        self.assertTrue(pane._toolbar.isVisible())
+
+    def test_fade_and_hide_the_elements_of_a_module(self):
+        note = self.scene.add_new(model.new_item("sticky", text="x"))
+        note.setSelected(True)
+        fade, hide = self.pane._module_buttons["miro"][1:]
+        fade.click()
+        self.assertAlmostEqual(note.opacity(), 0.3)
+        self.assertFalse(note.isEnabled())
+        self.assertFalse(note.isSelected())
+        note.setSelected(True)
+        self.assertFalse(note.isSelected())                      # grise : ni selectionnable...
+        spot = self.view.mapFromScene(note.sceneBoundingRect().center())
+        self.assertIsNone(self.view._item_at(spot))              # ... ni attrape a la souris
+        hide.click()
+        self.assertFalse(note.isVisible())
+        later = self.scene.add_new(model.new_item("shape", text="y", x=400))
+        self.assertFalse(later.isVisible())                      # un element neuf suit son module
+        hide.click()
+        fade.click()
+        for item in (note, later):
+            self.assertTrue(item.isVisible())
+            self.assertTrue(item.isEnabled())
+            self.assertAlmostEqual(item.opacity(), 1.0)
+        self.assertIs(self.view._item_at(spot), note)
 
 
 class TextZoomAndEditTest(_PaneCase):

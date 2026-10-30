@@ -556,7 +556,7 @@ class CadChrome:
         margin = 16
         for panel in (self.toolbar, self.command_bar, self.properties):
             panel.layout().activate()
-        title = pane._title.geometry()
+        title = pane.title_area()                   # nom du board + selecteur de modules
         left = title.right() + 12
         room = pane.width() - left - margin
         self._reflow(pane.width() - 2 * margin)
@@ -565,8 +565,7 @@ class CadChrome:
         if self.toolbar.width() <= room:            # a cote du nom du board, centree dans la place restante
             self.toolbar.move(left + max(0, (room - self.toolbar.width()) // 2), margin)
         else:                                       # sous le nom du board
-            self.toolbar.move(max(pane._toolbar.geometry().right() + 10, (pane.width() - self.toolbar.width()) // 2),
-                              title.bottom() + 8)
+            self.toolbar.move(max(margin, (pane.width() - self.toolbar.width()) // 2), title.bottom() + 8)
         zoom_w = pane._zoombar.width() if pane._zoombar.isVisible() else 0
         width = max(360, min(980, pane.width() - 2 * margin - 2 * (zoom_w + 12)))
         self.input.setFixedWidth(max(160, width - self.prompt_label.sizeHint().width() - 200))

@@ -174,6 +174,20 @@ def line_outline(length: float, half: float, end1: dict, end2: dict) -> QPainter
 
 
 # Ce qui change l'aspect d'une ligne (proprietes effectives relues a chaque changement de calque / de reglage).
+FADE_OPACITY = 0.3                    # elements grises d'un module du board (selecteur de modules)
+
+
+def cad_module_look(scene) -> tuple:
+    """(masque, grise) du module CAD sur ce board (selecteur de modules, `BoardScene.module_look`). Etat GLOBAL lu au
+    dessin (rendu GPU, rendu par lots, textes, hachures, export) et a la recherche des entites : rien n'est refait
+    entite par entite (le faire coutait ~0,6 s pour 5 000 entites, mesure)."""
+    look = getattr(scene, "module_look", None)
+    if look is None:
+        return False, False
+    cad = look["cad"]
+    return cad["hide"], cad["fade"] and not cad["hide"]
+
+
 STYLE_KEYS = ("color", "lineweight", "linetype", "pattern", "ltscale", "extra", "distribute", "resize", "end1", "end2",
               "inner", "visible", "locked")
 
@@ -370,6 +384,8 @@ class CadLineItem(BoardItem):
         self.update()
 
     def itemChange(self, change, value):
+        if change == QGraphicsItem.ItemSelectedChange and value and any(cad_module_look(self.scene())):
+            return False                                # module CAD grise ou masque : jamais selectionne
         if change == QGraphicsItem.ItemSceneHasChanged and value is not None and getattr(value, "cad_gpu", False):
             self.setFlag(QGraphicsItem.ItemHasNoContents, True)     # rendu GPU : la scene ne le peint pas
         if change == QGraphicsItem.ItemSceneChange:
@@ -561,6 +577,11 @@ class CadLineItem(BoardItem):
         scene = self.scene()
         if getattr(scene, "cad_gpu", False) and not getattr(scene, "exporting", False):
             return                                   # rendu GPU (cad_gpu) : la scene ne peint pas les entites CAD
+        hidden, faded = cad_module_look(self.scene())
+        if hidden:
+            return                                       # module CAD masque (selecteur de modules du board)
+        if faded:
+            painter.setOpacity(painter.opacity() * FADE_OPACITY)
         painter.setRenderHint(QPainter.Antialiasing, bool(getattr(scene, "cad_antialiasing", True)))
         crisp = bool(getattr(scene, "cad_crisp", True))
         geometry = self.scene_geom(thin, dense)          # repere de la scene : meme dessin que dans un lot
@@ -799,6 +820,11 @@ class _DimText(QGraphicsItem):
         parent = self.parentItem()
         if not self._text or parent is None:
             return
+        hidden, faded = cad_module_look(self.scene())
+        if hidden:
+            return                                       # module CAD masque (selecteur de modules du board)
+        if faded:
+            painter.setOpacity(painter.opacity() * FADE_OPACITY)
         scale = self._height / (self.FONT_PX * self.CAP_RATIO)
         painter.save()
         painter.scale(scale, scale)
@@ -917,6 +943,11 @@ class _TextLabel(QGraphicsItem):
         found = self._found
         if found is None or parent is None or not found["lines"]:
             return
+        hidden, faded = cad_module_look(self.scene())
+        if hidden:
+            return                                       # module CAD masque (selecteur de modules du board)
+        if faded:
+            painter.setOpacity(painter.opacity() * FADE_OPACITY)
         style = found["style"]
         _metrics, cap = text_metrics(style["font"], style["bold"], style["italic"])
         k = found["height"] / cap
@@ -1081,6 +1112,11 @@ class _HatchFill(QGraphicsItem):
         parent = self.parentItem()
         if not self._solid or parent is None or self._path.isEmpty():
             return
+        hidden, faded = cad_module_look(self.scene())
+        if hidden:
+            return                                       # module CAD masque (selecteur de modules du board)
+        if faded:
+            painter.setOpacity(painter.opacity() * FADE_OPACITY)
         color = QColor(parent.props()["color"])
         color.setAlphaF(self._alpha)
         painter.setPen(Qt.NoPen)
@@ -1613,6 +1649,11 @@ class CadBatch(QGraphicsItem):
 
     def paint(self, painter, option, widget=None):
         scene = self.scene()
+        hidden, faded = cad_module_look(self.scene())
+        if hidden:
+            return                                       # module CAD masque (selecteur de modules du board)
+        if faded:
+            painter.setOpacity(painter.opacity() * FADE_OPACITY)
         zoom = max(0.05, float(getattr(scene, "zoom", 1.0))) if scene is not None else 1.0
         painter.setRenderHint(QPainter.Antialiasing, bool(getattr(scene, "cad_antialiasing", True)))
         crisp = bool(getattr(scene, "cad_crisp", True))

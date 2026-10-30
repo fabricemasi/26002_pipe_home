@@ -52,6 +52,7 @@ from PySide6.QtCore import QRect, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QSurfaceFormat
 
 from . import cad_shapes
+from .cad_items import FADE_OPACITY, cad_module_look
 
 EPS = 1e-9
 FILTER_RADIUS = 0.75               # rayon (pixels de sortie) par defaut du filtre en triangle du suréchantillonnage
@@ -632,11 +633,12 @@ COMP_FRAG = """#version 330 core
 in vec2 uv;
 uniform sampler2D tex;
 uniform float mimic;                              // 1 : meme rendu qu'une couche translucide (voir `_draw_via_texture`)
+uniform float fade;                               // module CAD grise (selecteur de modules du board) : < 1
 out vec4 frag;
 void main() {
     vec4 t = texture(tex, uv);                    // premultiplie : pose par (ONE, ONE_MINUS_SRC_ALPHA)
     if (mimic > 0.5) t.rgb *= t.a;
-    frag = t;
+    frag = t * fade;
 }
 """
 
@@ -648,6 +650,7 @@ uniform float radius;                            // rayon du filtre en triangle,
 uniform vec3 background;
 uniform float linear_blend;
 uniform float mimic;                             // 1 : meme rendu qu'une couche translucide (voir `_draw_via_texture`)
+uniform float fade;                              // module CAD grise (selecteur de modules du board) : < 1
 out vec4 frag;
 
 float to_linear(float c) { return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4); }
@@ -681,7 +684,7 @@ void main() {
     float a = cov;
     if (linear_blend > 0.5 && abs(lc - lb) > 0.02)
         a = clamp((to_srgb(yb + cov * (yc - yb)) - lb) / (lc - lb), 0.0, 1.0);
-    frag = vec4(c * a * (mimic > 0.5 ? a : 1.0), a);   // premultiplie : pose par (ONE, ONE_MINUS_SRC_ALPHA)
+    frag = vec4(c * a * (mimic > 0.5 ? a : 1.0), a) * fade;   // premultiplie : pose par (ONE, ONE_MINUS_SRC_ALPHA)
 }
 """
 
@@ -1037,9 +1040,10 @@ def _make_layer_class():
                 self._draw_grid(scene, vt, zoom, ratio, width, height)
             if self.pure and self.under_hook is not None:
                 self._paint_under(GL, fbo, vt, width, height)
-            if any(c.count for c in self.store.chunks):
+            hidden, faded = cad_module_look(scene)
+            if any(c.count for c in self.store.chunks) and not hidden:
                 ss = self._supersampling(scene, width, height)
-                if self.pure or self.tex_mode or ss > 1:
+                if self.pure or self.tex_mode or ss > 1 or faded:     # grise : compose avec une opacite
                     self._draw_via_texture(scene, vt, zoom, ratio, width, height, ss)
                 else:
                     self._draw(scene, vt, zoom, ratio, width, height)
@@ -1183,6 +1187,8 @@ def _make_layer_class():
             # 2e fois : traits un peu plus fins que le rendu du processeur, mesure) ; pendant un deplacement la couche est
             # opaque : meme rendu reproduit ici pour que le trait ne change pas d'epaisseur au debut / a la fin du geste.
             GL.glUniform1f(GL.glGetUniformLocation(program, "mimic"), 1.0 if (self.tex_mode and not self.pure) else 0.0)
+            GL.glUniform1f(GL.glGetUniformLocation(program, "fade"),
+                           FADE_OPACITY if cad_module_look(scene)[1] else 1.0)
             if ss > 1:
                 GL.glUniform1i(GL.glGetUniformLocation(program, "ss"), int(ss))
                 radius = float(getattr(scene, "cad_filter", FILTER_RADIUS * 100.0)) / 100.0

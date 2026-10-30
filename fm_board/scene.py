@@ -24,7 +24,7 @@ from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene
 
 from fm_cad import cad_items, cad_model  # noqa: F401 - cad_items : enregistre le type « cad_line »
 from . import model, serialization
-from fm_cad.cad_items import unit_of
+from fm_cad.cad_items import FADE_OPACITY, unit_of
 from .commands import StateCommand
 from fm_miro.items import BoardItem, CommentItem, ConnectorItem, FrameItem, InkItem, make_item
 
@@ -33,6 +33,9 @@ GRID_FACTOR = 4.0
 FRAME_Z = -100000.0
 INDEX_MIN = 2000.0                      # demi-etendue minimale de l'index de la scene (voir BoardScene.fit_index)
 PAGE = "__page__"
+# Modules du board (selecteur du board, `BoardPane.set_module`) : leurs elements se grisent ou se masquent a part
+# (demande de l'utilisateur). Grise = visible en transparence, ni selectionnable ni modifiable.
+MODULES = ("miro", "cad")
 CLIPBOARD_MIME = "application/x-pipeline-board"
 SNAP_DEFAULTS = {"enabled": True, "objects": True, "grid": False, "guides": True, "resize": True, "distance": 6}
 
@@ -109,6 +112,7 @@ class BoardScene(QGraphicsScene):
         self.page = dict(model.PAGE_DEFAULTS)
         self.background = QColor(model.MIRO_BACKGROUND)
         self.show_resolved = False
+        self.module_look = {module: {"fade": False, "hide": False} for module in MODULES}
         self.snap = dict(SNAP_DEFAULTS)
         self.exporting = False
         self.export_grid = False
@@ -171,6 +175,8 @@ class BoardScene(QGraphicsScene):
         self._items[item.item_id] = item
         self._zoomers = None
         item.sync()
+        if self.module_styled(self.module_of(item)):
+            self.apply_module_look(item)
         self.fit_index(item.scene_rect())
         if isinstance(item, CommentItem):
             item.follow_target()
@@ -372,6 +378,64 @@ class BoardScene(QGraphicsScene):
         self.pageChanged.emit()
         if record:
             self.push(before, {PAGE: dict(self.page)}, text)
+
+    # -- modules (Miro / CAD) : elements grises ou masques --
+    @staticmethod
+    def module_of(item) -> str:
+        return "cad" if getattr(item, "CAD", False) else "miro"
+
+    def module_hidden(self, module: str) -> bool:
+        return self.module_look[module]["hide"]
+
+    def module_faded(self, module: str) -> bool:
+        """Grise (et pas masque : masquer prime)."""
+        look = self.module_look[module]
+        return look["fade"] and not look["hide"]
+
+    def module_styled(self, module: str) -> bool:
+        look = self.module_look[module]
+        return look["fade"] or look["hide"]
+
+    def item_active(self, item) -> bool:
+        """L'element se choisit a la souris (ni grise ni masque par son module)."""
+        return item.isEnabled() and not (self.module_of(item) == "cad" and self.module_styled("cad"))
+
+    def item_opacity(self, item) -> float:
+        """Opacite normale d'un element (la gomme la rend apres l'avoir baissee)."""
+        return FADE_OPACITY if self.module_faded(self.module_of(item)) else 1.0
+
+    def set_module_look(self, module: str, fade: bool | None = None, hide: bool | None = None):
+        """Grise / masque les elements d'un module (affichage seulement : rien dans le fichier ni dans l'annulation)."""
+        look = self.module_look[module]
+        new = {"fade": look["fade"] if fade is None else bool(fade), "hide": look["hide"] if hide is None else bool(hide)}
+        if new == look:
+            return
+        self.module_look[module] = new
+        if module == "cad":
+            # Etat GLOBAL lu au dessin et a la recherche (`cad_items.cad_module_look`) : seule la selection est retiree.
+            if new["fade"] or new["hide"]:
+                for item in self.selectedItems():
+                    if self.module_of(item) == "cad":
+                        item.setSelected(False)
+        else:
+            for item in list(self._items.values()):
+                if self.module_of(item) == module:
+                    self.apply_module_look(item)
+        self.update()
+
+    def apply_module_look(self, item):
+        module = self.module_of(item)
+        if module == "cad":
+            return                                      # module CAD : etat global (`set_module_look`)
+        active = not self.module_styled(module)
+        if not active and item.isSelected():
+            item.setSelected(False)
+        item.setEnabled(active)                         # desactive : ni clic, ni selection (Qt), ni edition
+        item.setOpacity(self.item_opacity(item))
+        if isinstance(item, CommentItem):
+            item.sync()
+        else:
+            item.setVisible(not self.module_hidden(module))
 
     def cad_style_changed(self):
         """Reglages generaux du CAD (types de ligne, unite) changes : proprietes des lignes relues (seules celles dont

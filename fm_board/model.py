@@ -181,12 +181,13 @@ ICON_ROWS = [
     ("frame_format", "Barre : format du cadre"), ("lock", "Barre : verrou"), ("more", "Barre : plus"),
     ("minus", "Zoom : dézoomer"), ("plus", "Zoom : zoomer"), ("fit", "Zoom : tout voir"),
     ("close", "Fermer le fil de commentaire"),
+    ("miro", "Modules : Miro"), ("fade", "Modules : griser les éléments"), ("hide", "Modules : masquer les éléments"),
 ]
 
 # Icones du module CAD (Reglages > Module CAD > Icones ; meme cle d'icone `ui_board_<genre>`) : barre d'outils CAD,
 # bouton « Mode CAD » du board, gestion, historique de la barre de commande. Les menus du CAD n'ont pas d'icone.
 CAD_ICON_ROWS = [
-    ("cad", "Mode CAD (barre d'outils du board)"),
+    ("cad", "Module CAD (sélecteur de modules du board)"),
     ("cad_line", "Dessin : ligne"), ("cad_pline", "Dessin : polyligne"), ("cad_circle", "Dessin : cercle"),
     ("cad_arc", "Dessin : arc"), ("cad_rect", "Dessin : rectangle"), ("cad_hatch", "Dessin : hachures"),
     ("cad_move", "Modification : déplacer"), ("cad_copy", "Modification : copier"),

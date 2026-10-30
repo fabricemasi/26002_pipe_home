@@ -1282,6 +1282,55 @@ class CadDisplaySettingsTest(CadBoardCase):
         self.assertTrue(look["tip_bg"].endswith(M["panel_bg"][1:]))
 
 
+class ModuleLookTest(CadBoardCase):
+    """Selecteur de modules du board : entites CAD grisees (dessinees en transparence, accrochables, jamais choisies)
+    ou masquees (ni dessinees, ni choisies, ni accrochees). Etat GLOBAL lu au dessin : aucune entite retouchee."""
+
+    def test_faded_then_hidden_cad_entities(self):
+        from PySide6.QtGui import QImage, QPainter
+        item = self.line((0, 0), (200, 0))
+        item.setSelected(True)
+
+        def ink() -> int:
+            image = QImage(400, 400, QImage.Format_ARGB32_Premultiplied)
+            image.fill(0)
+            painter = QPainter(image)
+            from fm_cad.cad_items import CadBatch
+            for batch in [i for i in self.pane.scene.items() if isinstance(i, CadBatch)]:
+                painter.save()
+                painter.translate(200, 200)
+                batch.paint(painter, None)
+                painter.restore()
+            painter.end()
+            return max(QColor.fromRgba(image.pixel(x, 200)).alpha() for x in range(200, 400))
+
+        full = ink()
+        self.pane.toggle_module_look("cad", "fade")
+        self.assertFalse(item.isSelected())                      # grise : selection retiree...
+        self.assertLess(ink(), full)                             # ... dessinee en transparence
+        self.assertGreater(ink(), 0)
+        self.assertIsNone(self.ctl.pick(self.vp((100, 0))))      # jamais choisie au clic
+        self.click((100, 0))
+        self.assertFalse(item.isSelected())
+        item.setSelected(True)
+        self.assertFalse(item.isSelected())
+        self.type("L")
+        self.move((203, 3))
+        self.assertEqual(self.ctl.res.point, (200.0, 0.0))      # mais toujours accrochable
+        self.type("")
+        self.pane.toggle_module_look("cad", "hide")
+        self.assertEqual(ink(), 0)                               # masquee : plus dessinee...
+        self.type("L")
+        self.move((203, 3))
+        self.assertIsNone(self.ctl.res.candidate)                # ... ni accrochee
+        self.type("")
+        self.pane.toggle_module_look("cad", "hide")
+        self.pane.toggle_module_look("cad", "fade")
+        self.assertEqual(ink(), full)
+        self.click((100, 0))
+        self.assertTrue(item.isSelected())
+
+
 class IdleMagnetTest(CadBoardCase):
     def test_cursor_snaps_to_a_point_outside_commands_too(self):
         item = self.line((0, 0), (200, 0))
