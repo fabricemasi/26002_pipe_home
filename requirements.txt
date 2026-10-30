@@ -25,3 +25,8 @@ PyOpenGL
 # Lecture des videos par LibVLC (moteur de VLC : decodage materiel, son, cache reseau) : python-vlc + VLC 3
 # installe (64 bits). Sans eux, le module lit par PyAV.
 python-vlc
+# Module tableur (paquet fm_tableur/) : moteur de calcul des formules (formualizer, Rust, MIT / Apache-2.0) et
+# lecture / ecriture des classeurs Excel .xlsx / .xlsm (openpyxl, MIT). Sans formualizer, les formules gardent la
+# derniere valeur connue (signale) ; sans openpyxl, pas d'import / export Excel (CSV toujours disponible).
+formualizer==0.13.0
+openpyxl

@@ -30,8 +30,9 @@ MODULES = {
                        "test_viewer_*.py", "test_folder_viewer_menu.py"],
     "fm_miro": ["test_board.py"],
     "fm_cad": ["test_cad*.py"],
-    "fm_board": ["test_board.py", "test_cad*.py", "test_design*.py"],
+    "fm_board": ["test_board.py", "test_cad*.py", "test_design*.py", "test_tableur*.py"],
     "fm_design": ["test_design*.py"],
+    "fm_tableur": ["test_tableur*.py"],
     "apercus": ["test_abr_preview.py", "test_ai_preview.py", "test_alembic_conversion.py",
                 "test_automatic_tasks.py", "test_cube_lut.py", "test_dwg_thumbnail.py", "test_hip_preview.py",
                 "test_manual_file_preview.py", "test_previews_modules.py", "test_render_log.py", "test_turntable*.py", "test_lightroom_*.py"],
@@ -49,7 +50,7 @@ MODULES = {
 # Noms des docs actuelles (docs/agents/<nom>.md) acceptés aussi.
 ALIAS = {"video": "fm_video", "markdown": "fm_markdown", "visionneuse": "fm_visionneuse",
          "board": "fm_board", "miro": "fm_miro", "cad": "fm_cad",
-         "design": "fm_design"}
+         "design": "fm_design", "tableur": "fm_tableur"}
 
 
 def _all_files():
