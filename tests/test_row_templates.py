@@ -151,6 +151,7 @@ class HeightBadgeTest(_Tables):
         badge = row._width_badge_list[0]
         self.assertTrue(badge.isVisible())
         self.assertEqual(badge.text(), f"{row.minimumHeight()} px")
+        self.assertGreaterEqual(badge.x(), 30 + 16)         # decale du curseur : il ne le masque pas
         send_mouse(row, QEvent.MouseButtonRelease, pos + QPoint(0, 25), Qt.NoButton)
         self.assertFalse(badge.isVisible())
 

@@ -1347,11 +1347,18 @@ class _CellEdgeDrag(QObject):
     def _show_height_badge(self, row: int, gpos: QPoint):
         """Encart « N px » (celui des largeurs) pendant le glissement de la bordure basse d'une ligne
         (demande de l'utilisateur) : hauteur REELLE (jamais sous le contenu), pose au-dessus de la bordure,
-        sous le curseur."""
+        DECALE a droite du curseur pour qu'il ne le masque pas (a gauche s'il n'y a pas la place)."""
         widget = self._heights.rows[row]
         height = widget.minimumHeight() or widget.height()          # posee par _RowHeights.apply
         x = widget.mapFromGlobal(gpos).x()
-        _width_badges(widget, 1)[0].show_on(QRect(x, max(0, height - 19), 1, 17), height)
+        badge = _width_badges(widget, 1)[0]
+        badge.show_on(QRect(x, max(0, height - 19), 1, 17), height)
+        left = x + self._BADGE_OFFSET
+        if left + badge.width() > widget.width():
+            left = x - self._BADGE_OFFSET - badge.width()
+        badge.move(max(0, left), badge.y())
+
+    _BADGE_OFFSET = 16          # curseur de redimensionnement : ~10 px de part et d'autre de son point chaud
 
 
 def split_of(widget: QWidget) -> "SplitCell | None":
