@@ -1316,6 +1316,38 @@ class NotesTest(DesignTestCase):
         self.scene.undo.undo()
         self.assertEqual(self.scene._items[page.item_id].data["notes"], "")
 
+class LinkTest(DesignTestCase):
+    def test_link_opened_in_presentation_and_badges_not_exported(self):
+        page = self.page(400, 300)
+        shape = self.ctl.add_shape("rect", {"x": 0.0, "y": 0.0, "w": 400.0, "h": 150.0, "fill": "#00aa00"})
+        self.ctl._select([shape])
+        with mock.patch("PySide6.QtWidgets.QInputDialog.getText", return_value=("exemple.org", True)):
+            self.key(Qt.Key_K, Qt.ControlModifier)
+            settle(0.05)
+        self.assertEqual(shape.data["link"], "exemple.org")
+        doc.change(self.scene, [shape], lambda i: i.data.update(locked=True), "Verrou")
+        image = render.render_image(page, 1.0)
+        corner = image.pixelColor(390, 12)                          # où seraient le cadenas et le lien
+        self.assertEqual(corner.name(), "#00aa00")                  # export : pas de pastille
+        window = self.ctl.present(start_page=page)
+        try:
+            settle()
+            W, H = window.width(), window.height()
+            k = min(W / 400, H / 300)
+            on_link = QPointF((W - 400 * k) / 2 + 200 * k, (H - 300 * k) / 2 + 50 * k)
+            outside = QPointF((W - 400 * k) / 2 + 200 * k, (H - 300 * k) / 2 + 250 * k)
+            self.assertEqual(window.link_at(on_link), "exemple.org")
+            self.assertEqual(window.link_at(outside), "")
+            opened = []
+            with mock.patch("PySide6.QtGui.QDesktopServices.openUrl", side_effect=lambda url: opened.append(url)):
+                QApplication.sendEvent(window, QMouseEvent(QEvent.MouseButtonPress, on_link, on_link,
+                                                           Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+            self.assertEqual([u.toString() for u in opened], ["http://exemple.org"])
+            self.assertEqual(window.index, 0)                       # pas de page suivante
+        finally:
+            window.close()
+            settle()
+
 class CurvedTextTest(DesignTestCase):
     def test_curved_text_box_edit_and_render(self):
         page = self.page(800, 600)

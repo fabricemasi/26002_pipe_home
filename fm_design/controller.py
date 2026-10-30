@@ -609,6 +609,10 @@ class DesignController(GestureMixin, CommandMixin, QObject):
         if alt and shift and key == Qt.Key_L:
             self.toggle_lock()
             return True
+        if ctrl and not shift and not alt and key == Qt.Key_K and sel:
+            from .menus_present import edit_link             # lien (comme Canva), ouvert en présentation
+            QTimer.singleShot(0, lambda: edit_link(self, sel))
+            return True
         texts = [i for i in sel if isinstance(i, DesignTextItem)]
         if ctrl and texts:
             toggles = {Qt.Key_B: "bold", Qt.Key_I: "italic", Qt.Key_U: "underline"}

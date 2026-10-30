@@ -7,6 +7,17 @@ from . import design_model as dm, document as doc
 from .menus import _popup
 
 
+def edit_link(ctl, items):
+    """Lien des éléments choisis (Ctrl+K, comme Canva) : adresse web ou chemin de fichier, ouvert d'un clic en
+    présentation ; vide = retirer. Pastille « lien » sur l'élément, à l'écran seulement."""
+    from PySide6.QtWidgets import QInputDialog
+    text, ok = QInputDialog.getText(ctl.pane, "Lien", "Adresse (https://…) ou fichier ; vide = retirer :",
+                                    text=items[0].data.get("link", ""))
+    if ok:
+        link = text.strip()
+        doc.change(ctl.scene, items, lambda i: i.data.update(link=link), "Lien" if link else "Retirer le lien")
+
+
 def element_animate_menu(ctl, anchor, items):
     """Animation propre aux éléments choisis : « Comme la page », « Aucune » (là dès l'arrivée) ou une autre."""
     menu = _menu(ctl.pane, "design_element_animate")

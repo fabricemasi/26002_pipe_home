@@ -379,6 +379,8 @@ def open_context_menu(ctl, global_pos):
                 menu.addAction("Grouper (Ctrl+G)").triggered.connect(lambda: doc.set_group(ctl.scene, items, True))
         locked = all(i.locked() for i in items)
         menu.addAction("Déverrouiller" if locked else "Verrouiller (Alt+Maj+L)").triggered.connect(ctl.toggle_lock)
+        from .menus_present import edit_link
+        menu.addAction("Lien (Ctrl+K)…").triggered.connect(lambda: QTimer.singleShot(0, lambda: edit_link(ctl, items)))
         if len(items) == 1:
             menu.addAction("Renommer le calque…").triggered.connect(
                 lambda: QTimer.singleShot(0, lambda: rename_layer(ctl, items[0])))
@@ -439,7 +441,7 @@ SHORTCUTS = [
     ("Ctrl+B / I / U", "gras, italique, souligné"), ("Ctrl+Maj+K", "majuscules"),
     ("Ctrl+Maj+L / E / R / J", "aligner le texte : gauche, centre, droite, justifié"),
     ("Ctrl+Maj+> / <", "taille du texte"), ("Maj+R", "règles (tirer un repère depuis une règle)"),
-    ("Ctrl+Alt+P", "présenter en plein écran"), ("Ctrl+F", "rechercher et remplacer"),
+    ("Ctrl+Alt+P", "présenter en plein écran"), ("Ctrl+F", "rechercher et remplacer"), ("Ctrl+K", "lien (ouvert en présentation)"),
     ("N (présentation)", "notes du présentateur"), ("Ctrl+Z / Ctrl+Y", "annuler / rétablir"),
     ("Molette, bouton du milieu, Espace", "zoomer, se déplacer dans le board"),
 ]

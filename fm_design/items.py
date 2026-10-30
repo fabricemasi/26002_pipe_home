@@ -372,7 +372,8 @@ class DesignElement(DesignItem):
             painter.translate(-c)
         self.paint_content(painter)
         painter.restore()                           # (resetTransform effaçait la place de l'élément à l'écran)
-        self.paint_badges(painter)
+        if widget is not None:                      # cadenas, lien : à l'écran seulement (rendu, export : widget None)
+            self.paint_badges(painter)
 
 
 class DesignShapeItem(DesignElement):

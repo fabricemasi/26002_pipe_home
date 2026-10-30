@@ -1,6 +1,7 @@
 """Mode PRÉSENTATION (comme « Présenter » de Canva, local) : les pages en plein écran, une à la fois.
 Flèches / Espace / PageDown / clic = page suivante, flèche gauche / PageUp / clic droit = précédente, Origine / Fin,
-N = notes du présentateur de la page (bandeau en bas, `notes` de la page), Échap = quitter. Chaque page est rendue UNE fois à la taille de l'écran (`render.render_image`), la suivante est
+N = notes du présentateur de la page (bandeau en bas, `notes` de la page), Échap = quitter. Clic sur un élément qui
+a un lien (Ctrl+K) = ouvrir le lien (main au survol), pas de changement de page. Chaque page est rendue UNE fois à la taille de l'écran (`render.render_image`), la suivante est
 préparée pendant qu'on regarde la courante : le passage d'une page à l'autre est immédiat.
 
 Animations (« Animer » de Canva, réglées par page : `transition`, `animation`) : la page arrive (fondu, glissement,
@@ -52,6 +53,7 @@ class PresentationWindow(QWidget):
         self._prepare.timeout.connect(self._prepare_next)
         self._previous: int | None = None          # page qui s'en va pendant la transition
         self.show_notes = False
+        self.setMouseTracking(True)                  # main au survol d'un lien
         self._direction = 1
         self.anim = QVariantAnimation(self)
         self.anim.setStartValue(0.0)
@@ -334,5 +336,31 @@ class PresentationWindow(QWidget):
         else:
             super().keyPressEvent(event)
 
+    def link_at(self, pos) -> str:
+        """Lien de l'élément le plus haut sous `pos` (fenêtre) sur la page affichée, sinon « »."""
+        if not self.pages:
+            return ""
+        try:
+            page = self.pages[self.index]
+            w, h = page.size()
+            k = min(self.width() / w, self.height() / h)
+            point = QPointF((pos.x() - (self.width() - w * k) / 2) / k, (pos.y() - (self.height() - h * k) / 2) / k)
+            for element in reversed(page.elements()):
+                link = element.data.get("link") or ""
+                if link and element.isVisible() and page.mapRectFromScene(element.sceneBoundingRect()).contains(point):
+                    return link
+        except RuntimeError:                           # page retirée du board entre-temps
+            pass
+        return ""
+
+    def mouseMoveEvent(self, event):
+        self.setCursor(Qt.PointingHandCursor if self.link_at(event.position()) else Qt.BlankCursor)
+
     def mousePressEvent(self, event):
+        link = self.link_at(event.position()) if event.button() == Qt.LeftButton else ""
+        if link:
+            from PySide6.QtCore import QUrl
+            from PySide6.QtGui import QDesktopServices
+            QDesktopServices.openUrl(QUrl.fromUserInput(link))
+            return
         self.go(self.index + (-1 if event.button() == Qt.RightButton else 1))
