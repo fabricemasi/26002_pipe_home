@@ -121,8 +121,9 @@ Sources consultées (aide officielle) : canva.com/help/canva-keyboard-shortcuts,
 - DÉDUIT (usage courant, non revérifié ici) : T / R / C / L pour texte / rectangle / cercle / ligne, Alt + glisser
   pour dupliquer (ici Ctrl + Alt + glisser à cause de la règle Ctrl), flèches 1 px / Maj 10 px, pages empilées
   verticalement, rotation aimantée, poignées de côté d'une image = recadrage, coins = proportions gardées.
-- NON reproduit (hors périmètre local ou non confirmé) : comptes, cloud, collaboration, bibliothèque en ligne,
-  IA, publication, impression ; animations ; cadres-masques à formes (« frames ») ; texte multistyle par caractère.
+- NON reproduit (hors périmètre local) : comptes, cloud, collaboration, bibliothèque en ligne, IA, publication,
+  commande d'impression, vidéo. (Animations, cadres-masques à formes, texte multistyle, texte courbé, liens, notes du
+  présentateur, rechercher et remplacer, kit de marque : faits depuis, voir le PLAN.)
 
 ## Mesures (fluidité, offscreen 2 400 × 1 300, une page 1 920 × 1 080, éléments mêlés formes / textes / lignes)
 
@@ -170,8 +171,9 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 
 - Validation à la main en vraie fenêtre NON faite (session autonome) : gestes vérifiés par tests automatiques hors
   écran (événements souris / clavier envoyés au viewport) et captures hors écran ; mesures en vraie fenêtre faites.
-- Retouches d'image (luminosité, contraste, saturation) : seulement avec numpy (présent dans l'environnement) ;
-  sans numpy, noir et blanc et flou seulement.
+- Retouches d'image (luminosité, contraste, saturation) : avec numpy ; sans numpy, noir et blanc et flou seulement.
+  Pas de version sans numpy (décidé 2026-10-30) : `pipeline_browser_debug.bat` installe matplotlib, qui dépend de
+  numpy (et `requirements.txt` le liste) : le cas ne se présente pas en pratique.
 - Un élément Design ne peut pas être déplacé en mode Miro (pas de `ItemIsMovable`) : on passe en mode Design.
 - Page sans rotation ; animations seulement en présentation (pas dans l'export), réglées par page ou par élément ; pas de vidéo ; texte courbé : sur une ligne, ombre sans flou, sans surlignage ; secteurs et anneau n'utilisent que la 1re série ; kit de marque
   partagé entre boards : couleurs, polices, logos et styles de texte (un logo est un chemin de fichier : déplacé, il est
