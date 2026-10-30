@@ -185,6 +185,24 @@ class DesignPageItem(DesignItem):
     def __init__(self, data: dict):
         super().__init__(data)
         self.setFlag(QGraphicsItem.ItemClipsChildrenToShape, True)
+        self.snapshot: QPixmap | None = None     # image de la page entière pendant un zoom continu (voir controller)
+
+    def snapshot_on(self) -> bool:
+        return self.snapshot is not None
+
+    def paint(self, painter, option, widget=None):
+        if self.snapshot is None:
+            super().paint(painter, option, widget)
+            return
+        # Zoom continu : la page et tous ses éléments en UNE image (les éléments ne peignent rien, voir
+        # DesignElement.paint) ; image nette refaite à la fin du geste.
+        rect = self.content_rect()
+        path = QPainterPath()
+        path.addRect(rect)
+        page_shadow = {"shadow": {"enabled": True, "color": "#33000000", "dx": 0.0, "dy": 6.0, "blur": 14.0}}
+        paint_shadow(painter, page_shadow, path, ("page", rect.width(), rect.height()))
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        painter.drawPixmap(rect, self.snapshot, QRectF(self.snapshot.rect()))
 
     def _place_from_data(self):
         super()._place_from_data()
@@ -289,6 +307,7 @@ def _cover(source: QRectF, target: QRectF) -> QRectF:
 
 class DesignElement(DesignItem):
     """Élément d'une page : rotation, miroir, opacité, ombre ; enfant de sa page."""
+    live = False                              # manipulé pendant que sa page est figée en image (gestures.py)
 
     def _place_from_data(self):
         super()._place_from_data()
@@ -334,16 +353,19 @@ class DesignElement(DesignItem):
         return self.content_rect().adjusted(-e, -e, e, e)
 
     def paint(self, painter, option, widget=None):
+        page = self.parentItem()
+        if page is not None and getattr(page, "snapshot", None) is not None and not self.live:
+            return                                  # zoom continu / geste : peint dans l'image de sa page
         painter.setRenderHint(QPainter.Antialiasing, True)
         flip_h, flip_v = bool(self.data.get("flip_h")), bool(self.data.get("flip_v"))
+        painter.save()
         if flip_h or flip_v:
             c = self.content_rect().center()
             painter.translate(c)
             painter.scale(-1 if flip_h else 1, -1 if flip_v else 1)
             painter.translate(-c)
         self.paint_content(painter)
-        if flip_h or flip_v:
-            painter.resetTransform()
+        painter.restore()                           # (resetTransform effaçait la place de l'élément à l'écran)
         self.paint_badges(painter)
 
 
@@ -432,6 +454,13 @@ class DesignShapeItem(DesignElement):
 class _DesignText(_Text):
     """Texte en cours d'édition : Ctrl+B / I / U et Ctrl+Maj+> / < stylent la PARTIE choisie du texte ; un menu de
     la barre contextuelle (couleur, police, taille) n'interrompt pas l'édition (il s'applique à la partie choisie)."""
+
+    def paint(self, painter, option, widget=None):
+        page = self.owner.parentItem()
+        if (page is not None and getattr(page, "snapshot", None) is not None and not self.editing()
+                and not self.owner.live):
+            return                                  # zoom continu : dans l'image de la page
+        super().paint(painter, option, widget)
 
     def focusOutEvent(self, event):
         if event.reason() == Qt.PopupFocusReason and self.editing():

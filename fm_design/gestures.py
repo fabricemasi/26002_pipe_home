@@ -10,7 +10,7 @@ from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
 from PySide6.QtGui import QPolygonF, QTransform
 
 from . import design_model as dm, document as doc, geometry
-from .items import DesignImageItem, DesignShapeItem, DesignTextItem
+from .items import DesignElement, DesignImageItem, DesignShapeItem, DesignTextItem
 from .overlay import angle_of, mid
 
 
@@ -55,12 +55,49 @@ class GestureMixin:
         if page is not None and kind in ("move", "resize"):
             targets = [doc.local_box(i) for i in doc.elements(self.scene, page)
                        if i not in items and i.isVisible()]
+        frozen = self._freeze_page(page, items) if kind in ("move", "resize", "multi_resize", "rotate") else None
         self._gesture = {"kind": kind, "items": items, "start": scene_pos, "before": before, "page": page,
-                         "targets": targets, "moved": False,
+                         "targets": targets, "moved": False, "frozen": frozen,
                          "pos0": {i: QPointF(i.pos()) for i in items},
                          "data0": {i: copy.deepcopy(i.to_dict()) for i in items},
                          "box0": geometry.union([doc.local_box(i) for i in items]), **extra}
         self.refresh()
+
+    def _freeze_page(self, page, items):
+        """Page de beaucoup d'éléments : tout SAUF les éléments manipulés devient une image fixe le temps du geste
+        (chaque image du geste ne peint plus que ceux-là). Un élément manipulé passe au-dessus des autres pendant le
+        geste (sa vraie place dans l'ordre revient à la fin)."""
+        if page is None or page.snapshot is not None or len(page.childItems()) < self.SNAPSHOT_MIN:
+            return None
+        from PySide6.QtGui import QPixmap
+        from . import render
+        w, h = page.size()
+        ratio = self.view.devicePixelRatioF() or 1.0
+        scale = min(self.view.zoom() * ratio, self.SNAPSHOT_SIDE / max(w, h))
+        page.snapshot = QPixmap.fromImage(render.render_image(page, max(0.01, scale), exclude=set(items)))
+        for item in items:
+            item.live = True
+        # Les autres éléments MASQUÉS le temps du geste : Qt redessinait leur image gardée à chaque image (1 000
+        # éléments : l'essentiel du coût) alors qu'ils sont déjà dans l'image de la page. Choisis : jamais masqués.
+        hidden = [c for c in page.childItems() if isinstance(c, DesignElement) and c not in items
+                  and c.isVisible() and not c.isSelected()]
+        for child in hidden:
+            child.setVisible(False)
+        page.update()
+        return page, hidden
+
+    def _thaw_page(self, frozen, items):
+        if frozen is None:
+            return
+        page, hidden = frozen
+        for item in items:
+            item.live = False
+        for child in hidden:
+            if child.scene() is self.scene:
+                child.setVisible(True)
+        page.snapshot = None
+        page.update()
+        self.scene.update(page.sceneBoundingRect())
 
     def _start_handle(self, handle, scene_pos, mods):
         sel = self.selection()
@@ -340,6 +377,7 @@ class GestureMixin:
         self.tip = None
         if g is None:
             return
+        self._thaw_page(g.get("frozen"), g["items"])
         if cancel or not g["moved"]:
             if g["moved"]:
                 self.scene.apply_states(g["before"])

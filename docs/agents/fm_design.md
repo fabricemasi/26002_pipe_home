@@ -126,6 +126,15 @@ VRAIE FENÊTRE Windows (même sonde, `QT_QPA_PLATFORM=windows`, 300 éléments, 
 20 ms / image (p95 36), redimensionner / pivoter 19 ms, changer de sélection 31 ms, zoom 55 ms / cran, pan 13 ms,
 curseur en direct 19 ms, changer de page 32 ms (dont ~10 ms d'envoi de la fenêtre à Windows, comme le board).
 Après le texte multistyle (hors écran, 300 éléments) : inchangé (déplacer 15,5 ms, sélection 19 ms, zoom 44 ms).
+IMAGE DE PAGE (2026-10-30) : une page d'au moins `SNAPSHOT_MIN` (60) éléments est peinte comme UNE image
+(`DesignPageItem.snapshot`, `render.render_image`, côté ≤ 2 400 px) pendant un zoom continu (`_zoom_changed`, nette
+300 ms après le dernier cran) et pendant un geste (`GestureMixin._freeze_page` : tout sauf les éléments manipulés,
+les autres MASQUÉS — Qt redessinait sinon leur image gardée à chaque image) ; magnétisme par recherche
+dichotomique (`geometry.best_snap`, ~4 ms par mouvement à 1 000 éléments avant). Vraie fenêtre, avant → après :
+300 éléments : déplacer 20 → 11 ms, pivoter 19 → 10 ms, zoom 55 → 17 ms / cran ; 1 000 éléments : déplacer
+~45 → 14 ms, pivoter → 10 ms, zoom ~150 → 32 ms. Contrepartie : pendant le geste, l'élément manipulé passe
+au-dessus des autres (sa place dans l'ordre revient au relâché) ; l'image est prise au 1er mouvement / cran.
+Reste : changer de sélection à 1 000 éléments ~38 ms (repeinture entière de la vue, `FullViewportUpdate` de la coque).
 Corrections : (1) `boundingRect` GARDÉ par élément (Qt le demande ~3 fois par élément et par image ; 108 000 appels
 Python pour 60 images) ; (2) contenu du panneau latéral OPAQUE (Qt retire les voisins opaques de la zone à
 peindre : les miniatures des modèles étaient repeintes à chaque image du board, ~5 ms) ; (3) miniatures des pages
@@ -137,8 +146,6 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 
 - Validation à la main en vraie fenêtre NON faite (session autonome) : gestes vérifiés par tests automatiques hors
   écran (événements souris / clavier envoyés au viewport) et captures hors écran ; mesures en vraie fenêtre faites.
-- Zoom avec ~1 000 éléments sur une page : 137-174 ms / cran (peinture réelle de chaque élément, le cache des
-  éléments est coupé pendant le zoom par la coque, comme pour Miro).
 - Retouches d'image (luminosité, contraste, saturation) : seulement avec numpy (présent dans l'environnement) ;
   sans numpy, noir et blanc et flou seulement.
 - Un élément Design ne peut pas être déplacé en mode Miro (pas de `ItemIsMovable`) : on passe en mode Design.

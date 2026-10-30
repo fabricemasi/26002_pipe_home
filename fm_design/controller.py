@@ -59,7 +59,11 @@ class DesignController(GestureMixin, CommandMixin, QObject):
         self._refresh_timer.timeout.connect(self._refresh)
         self.scene.selectionChanged.connect(self._on_selection)
         self.scene.contentChanged.connect(self.refresh)
-        self.view.zoomChanged.connect(lambda _z: self.refresh())
+        self.view.zoomChanged.connect(self._zoom_changed)
+        self._snap_timer = QTimer(self)
+        self._snap_timer.setSingleShot(True)
+        self._snap_timer.setInterval(300)              # après le retour du cache des éléments (250 ms, coque)
+        self._snap_timer.timeout.connect(self._drop_snapshots)
         from .rulers import Rulers
         from .ui import DesignChrome
         self.ui = DesignChrome(pane, self)
@@ -94,6 +98,44 @@ class DesignController(GestureMixin, CommandMixin, QObject):
         self.refresh()
         self.view._sync_cursor()
         self.stateChanged.emit()
+
+    # Zoom continu (molette, pincement) : une page de beaucoup d'éléments est peinte comme UNE image (prise au début
+    # du geste), au lieu de chaque élément à chaque cran ; nette à nouveau 300 ms après le dernier cran.
+    SNAPSHOT_MIN = 60                     # éléments dans la page à partir desquels l'image est prise
+    SNAPSHOT_SIDE = 2400                  # côté maximal de l'image (pixels)
+
+    def _zoom_changed(self, _zoom):
+        self.refresh()
+        if not self.view.zooming():
+            return
+        self._snap_timer.start()
+        visible = self.view.mapToScene(self.view.viewport().rect()).boundingRect()
+        for page in self.pages():
+            if page.snapshot is not None or not page.isVisible():
+                continue
+            rect = page.mapRectToScene(page.content_rect())
+            if not rect.intersects(visible) or len(page.childItems()) < self.SNAPSHOT_MIN:
+                continue
+            self._take_snapshot(page)
+
+    def _take_snapshot(self, page):
+        from PySide6.QtGui import QPixmap
+        from . import render
+        w, h = page.size()
+        ratio = self.view.devicePixelRatioF() or 1.0
+        scale = min(self.view.zoom() * ratio, self.SNAPSHOT_SIDE / max(w, h))
+        page.snapshot = QPixmap.fromImage(render.render_image(page, max(0.01, scale)))
+        page.update()
+
+    def _drop_snapshots(self):
+        if self.view.zooming():
+            self._snap_timer.start()
+            return
+        for page in self.pages():
+            if page.snapshot is not None:
+                page.snapshot = None
+                page.update()
+        self.scene.update()
 
     def refresh(self):
         """Overlay redessiné une fois par passage de boucle (les signaux arrivent par rafales)."""

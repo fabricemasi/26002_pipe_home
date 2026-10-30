@@ -16,7 +16,8 @@ from .items import DesignPageItem
 FORMATS = {"png": "PNG", "jpg": "JPEG", "jpeg": "JPEG", "pdf": "PDF", "svg": "SVG"}
 
 
-def paint_page(painter: QPainter, page: DesignPageItem, transparent: bool = False, bleed: float = 0.0):
+def paint_page(painter: QPainter, page: DesignPageItem, transparent: bool = False, bleed: float = 0.0,
+               exclude=()):
     """Peint `page` (fond + éléments visibles, ordre d'empilement) dans `painter`, en coordonnées de la page ;
     `bleed` (unités) = fond perdu : fond et éléments débordants gardés jusqu'à cette distance des bords."""
     option = QStyleOptionGraphicsItem()
@@ -29,7 +30,7 @@ def paint_page(painter: QPainter, page: DesignPageItem, transparent: bool = Fals
     page_inverse, _ok = page.sceneTransform().inverted()
     base = painter.transform()
     for element in page.elements():
-        if not element.isVisible():
+        if not element.isVisible() or element in exclude:
             continue
         painter.save()
         painter.setTransform(element.sceneTransform() * page_inverse * base)
@@ -44,14 +45,14 @@ def paint_page(painter: QPainter, page: DesignPageItem, transparent: bool = Fals
 
 
 def render_image(page: DesignPageItem, scale: float = 1.0, transparent: bool = False,
-                 background: str | None = None) -> QImage:
+                 background: str | None = None, exclude=()) -> QImage:
     w, h = page.size()
     width, height = max(1, round(w * scale)), max(1, round(h * scale))
     image = QImage(width, height, QImage.Format_ARGB32_Premultiplied)
     image.fill(Qt.transparent if transparent else QColor(background or "#ffffff"))
     painter = QPainter(image)
     painter.scale(width / w, height / h)
-    paint_page(painter, page, transparent=transparent)
+    paint_page(painter, page, transparent=transparent, exclude=exclude)
     painter.end()
     return image
 

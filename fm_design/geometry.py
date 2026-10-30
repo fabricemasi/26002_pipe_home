@@ -2,6 +2,8 @@
 Rectangles = (x, y, w, h) en coordonnées de page."""
 from __future__ import annotations
 
+from bisect import bisect_left
+
 
 def edges(rect) -> tuple[list[float], list[float]]:
     """Repères d'un rectangle : (gauche, centre, droite), (haut, milieu, bas)."""
@@ -12,9 +14,13 @@ def edges(rect) -> tuple[list[float], list[float]]:
 def best_snap(mine: list[float], theirs: list[float], threshold: float):
     """Plus petit décalage (|d| <= seuil) qui pose un repère de `mine` sur un repère de `theirs` :
     (décalage, valeur visée) ou (None, None)."""
+    # Repères triés + recherche dichotomique : seuls les deux voisins de chaque valeur comptent (comparer chaque
+    # bord à tous les repères coûtait ~4 ms par mouvement avec 1 000 éléments).
+    ordered = sorted(theirs)
     best = None
     for a in mine:
-        for b in theirs:
+        i = bisect_left(ordered, a)
+        for b in ordered[max(0, i - 1):i + 1]:
             d = b - a
             if abs(d) <= threshold and (best is None or abs(d) < abs(best[0])):
                 best = (d, b)

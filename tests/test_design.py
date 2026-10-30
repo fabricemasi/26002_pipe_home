@@ -971,5 +971,44 @@ class BrandTest(DesignTestCase):
         self.assertEqual(settings_store.load_settings()["board_design_brand"]["colors"], [])
 
 
+class ZoomSnapshotTest(DesignTestCase):
+    def test_busy_page_painted_as_one_image_while_zooming(self):
+        page = self.page()
+        dicts = [{"type": dm.SHAPE, "id": f"s{n}", "x": float(n % 20) * 45, "y": float(n // 20) * 45, "w": 40.0,
+                  "h": 40.0} for n in range(self.ctl.SNAPSHOT_MIN + 5)]
+        doc.insert_elements(self.scene, page, dicts)
+        small = doc.add_page(self.scene, 300, 300, after=page)
+        self.ctl.add_shape("rect")
+        self.view.zoom_by(1.1)
+        self.assertIsNotNone(page.snapshot)
+        self.assertIsNone(small.snapshot)                         # peu d'éléments : peinture habituelle
+        self.view.viewport().grab()                                # peinture avec l'image : sans erreur
+        settle(0.7)
+        self.assertIsNone(page.snapshot)                          # nette à nouveau après le geste
+        image = render.render_image(page, 0.2)
+        self.assertEqual(image.pixelColor(4, 4).name(), "#8b3dff")  # le rendu normal n'est pas touché
+
+    def test_busy_page_frozen_during_a_move(self):
+        page = self.page()
+        dicts = [{"type": dm.SHAPE, "id": f"s{n}", "x": float(n % 20) * 45, "y": float(n // 20) * 45, "w": 40.0,
+                  "h": 40.0} for n in range(self.ctl.SNAPSHOT_MIN + 5)]
+        doc.insert_elements(self.scene, page, dicts)
+        item = doc.elements(self.scene, page)[0]
+        start = self.center(item)
+        self.mouse(QEvent.MouseButtonPress, start, mods=Qt.ControlModifier | Qt.AltModifier)
+        self.mouse(QEvent.MouseMove, start + QPointF(30, 0), buttons=Qt.LeftButton,
+                   mods=Qt.ControlModifier | Qt.AltModifier)
+        self.assertIsNotNone(page.snapshot)
+        moving = self.ctl.selection()[0]
+        self.assertTrue(moving.live)
+        self.assertFalse(item.isVisible())                        # figé dans l'image de la page
+        self.view.viewport().grab()
+        self.mouse(QEvent.MouseButtonRelease, start + QPointF(30, 0), mods=Qt.ControlModifier | Qt.AltModifier)
+        self.assertIsNone(page.snapshot)
+        self.assertFalse(moving.live)
+        self.assertTrue(item.isVisible())
+        self.assertAlmostEqual(moving.pos().x(), item.pos().x() + 30, delta=0.01)
+
+
 if __name__ == "__main__":
     unittest.main()
