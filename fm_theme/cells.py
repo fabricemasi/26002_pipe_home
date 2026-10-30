@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import time
 import weakref
+from contextlib import contextmanager
 from typing import Callable
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer, Signal
@@ -30,6 +31,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QKeySequence, QShortcut, QTextCursor
 
 from fm_theme.layout import (
+    _Section, _SubSection, _ancestors, _reflow_chain,
     _ReorderOverlay,
     _finish_reorder,
     _TABLE_HEAD, _lock_min_height, _prestyle_flat_frame, _prestyle_flat_row, _register_cells_table,
@@ -887,6 +889,31 @@ class SplitCell(QWidget):
 # Bordures de colonnes saisissables sur les cellules
 # ==========================================================================
 
+_DEFERRED_REFLOW: list[list] = []
+
+
+@contextmanager
+def batched_reflow():
+    """Plusieurs tableaux changent de hauteur ensemble (gabarit de ligne recopie, tableaux lies) : leurs
+    sections ancetres sont remises en page UNE fois a la fin (union des chaines, de la plus interne a la plus
+    externe), au lieu d'une fois par tableau (~30 ms chacune : toute la section du haut est recalculee)."""
+    _DEFERRED_REFLOW.append([])
+    try:
+        yield
+    finally:
+        frames = _DEFERRED_REFLOW.pop()
+        if frames:
+            chain = {}
+            for frame in dict.fromkeys(frames):
+                try:
+                    for depth, parent in enumerate(reversed(list(_ancestors(frame)))):
+                        if isinstance(parent, (_Section, _SubSection)):
+                            chain[parent] = depth
+                except RuntimeError:                     # tableau detruit entre-temps
+                    continue
+            _reflow_chain(sorted(chain, key=chain.get, reverse=True))
+
+
 class _RowHeights:
     """Hauteur de chaque ligne d'un tableau : naturelle (celle du contenu) ou imposee a la main
     (bordure basse de la ligne tiree a la souris). `equal` : toutes les lignes ont la meme hauteur
@@ -917,15 +944,21 @@ class _RowHeights:
         self.frame.setMinimumHeight(0)
         _lock_min_height(self.frame)
         self.frame.updateGeometry()
-        _reflow_ancestors(self.frame)       # les sections qui contiennent le tableau suivent
+        if _DEFERRED_REFLOW:
+            _DEFERRED_REFLOW[-1].append(self.frame)      # batched_reflow : une seule fois pour tous les tableaux
+        else:
+            _reflow_ancestors(self.frame)   # les sections qui contiennent le tableau suivent
 
     def set_height(self, i: int, height: int):
         self._sync_size()
         if self.equal:
             self.user = [max(0, height)] * len(self.rows)
+            self.user = [h if h > self.natural(k) else 0 for k, h in enumerate(self.user)]
         else:
-            self.user[i] = max(0, height)
-        self.user = [h if h > self.natural(k) else 0 for k, h in enumerate(self.user)]
+            # SEULE la ligne tiree revient a « naturelle » sous son contenu : remettre les AUTRES a 0 effacait la
+            # hauteur de gabarit d'une ligne au contenu plus haut, et ce 0 repartait sur tout son type
+            # (hauteurs qui changeaient toutes seules, bug signale 2026-10-29).
+            self.user[i] = max(0, height) if height > self.natural(i) else 0
         self.apply()
         self.frame.dimsChanged.emit()
 
@@ -1958,12 +1991,13 @@ class _CellsState:
             tpl["height"] = self.heights.user[r] if r < len(self.heights.user) else 0
         return tpl
 
-    def apply_row_template(self, r: int, tpl: dict) -> None:
+    def apply_row_template(self, r: int, tpl: dict, relayout: bool = True) -> bool:
         """Pose le gabarit `tpl` sur la ligne `r` (sans rien signaler). Une ligne d'un autre format du meme
-        type (Bordures sans epaisseur) prend ce qui la concerne et garde le reste."""
+        type (Bordures sans epaisseur) prend ce qui la concerne et garde le reste. `relayout=False` : la
+        hauteur est notee, l'appelant remet le tableau en page UNE fois (`heights.apply`) si on rend True."""
         if self.row_template(r) == tpl:
             self._row_snaps[r] = tpl
-            return
+            return False
         for cell, value in zip(self._row_cells(r), tpl.get("align") or ()):
             h, _sep, v = str(value).partition(",")
             if h in _H and v in _V:
@@ -1992,24 +2026,34 @@ class _CellsState:
                 split.setWidths(widths)
                 resized = True
         heights = self.heights
+        taller = False
         if heights is not None and "height" in tpl:
             heights._sync_size()
             if r < len(heights.user) and heights.user[r] != int(tpl["height"] or 0):
                 heights.user[r] = int(tpl["height"] or 0)
-                heights.apply()
+                taller = True
+                if relayout:
+                    heights.apply()
         self._row_snaps[r] = self.row_template(r)
         if resized and self.fit_split is not None:
             self.fit_split(c)              # la colonne se cale sur ses cellules divisees, comme a la souris
+        return taller and not relayout
 
-    def apply_row_templates(self) -> None:
-        """Gabarit de son type sur chaque ligne qui en a un (apres restauration des dimensions du tableau)."""
+    def apply_row_templates(self, kinds=None) -> None:
+        """Gabarit de son type sur chaque ligne qui en a un (apres restauration des dimensions du tableau) ;
+        `kinds` : seulement ces types. Le tableau n'est remis en page qu'une fois."""
         templates = _TABLE_DIMS.get(ROW_TEMPLATES_KEY) or {}
+        relayout = False
         for r, kind in self.row_kinds.items():
+            if kinds is not None and kind not in kinds:
+                continue
             tpl = templates.get(kind)
             if isinstance(tpl, dict):
-                self.apply_row_template(r, tpl)
+                relayout |= self.apply_row_template(r, tpl, relayout=False)
             else:
                 self._row_snaps[r] = self.row_template(r)
+        if relayout and self.heights is not None:
+            self.heights.apply()
 
     def sync_row_templates(self, *_args) -> None:
         """Dimensions du tableau changees : une ligne a gabarit modifiee devient le gabarit de son type,
@@ -2298,13 +2342,12 @@ _SPREAD_TIMER: list = []
 
 
 def set_row_kinds(frame: QWidget, kinds: dict[int, str]) -> None:
-    """Type de chaque ligne d'un tableau a cellules ({ligne logique: kind}) ; seules les lignes a cellule
-    divisee suivent un gabarit."""
+    """Type de chaque ligne d'un tableau a cellules ({ligne logique: type}) : `kind` d'une cellule divisee, ou type
+    de contenu d'une ligne simple (« contenu:<champ> », voir la fenetre v2) ; None = pas de gabarit."""
     state = getattr(frame, "_extra_dims", None)
     if not isinstance(state, _CellsState):
         return
-    state.row_kinds = {r: ROW_FAMILIES.get(kind, kind) for r, kind in kinds.items()
-                       if kind and state._row_split(r)[1] is not None}
+    state.row_kinds = {r: ROW_FAMILIES.get(kind, kind) for r, kind in kinds.items() if kind}
     if state.row_kinds:
         _TEMPLATE_STATES.add(state)
         frame.dimsChanged.connect(state.sync_row_templates)
@@ -2343,30 +2386,37 @@ def spread_row_templates(hidden: bool = False) -> None:
     start = time.perf_counter()
     _SPREADING = True
     try:
-        for state in list(_TEMPLATE_STATES):
-            if hidden and time.perf_counter() - start > 0.006:
-                # Rattrapage par morceaux (~6 ms par image ; d'un bloc : ~75 ms pour les Bordures) : la suite a
-                # l'image suivante (les tableaux deja faits sont sautes, gabarit identique).
-                late.update(pending)
-                break
-            try:
-                if state.frame is None or not state.frame._dims_applied:
-                    continue
-                off_screen = not hidden and state.frame.visibleRegion().isEmpty()
-            except RuntimeError:                         # tableau detruit
-                _TEMPLATE_STATES.discard(state)
-                continue
-            for r, kind in state.row_kinds.items():
-                if kind in pending and pending[kind] != (state, r) and isinstance(templates.get(kind), dict):
-                    if off_screen:
-                        late.add(kind)
-                    else:
-                        state.apply_row_template(r, templates[kind])
+        with batched_reflow():
+            _spread_over(pending, templates, hidden, late, start)
     finally:
         _SPREADING = False
     if late:
         _PENDING_LATE[:] = sorted(set(_PENDING_LATE) | late)
         _late_timer().start(16 if hidden else 250)
+
+
+def _spread_over(pending: dict, templates: dict, hidden: bool, late: set, start: float) -> None:
+    """Corps de spread_row_templates : `late` recoit les types a finir plus tard (hors ecran, ou rattrapage
+    interrompu)."""
+    for state in list(_TEMPLATE_STATES):
+        if hidden and time.perf_counter() - start > 0.006:
+            # Rattrapage par morceaux (~6 ms par image ; d'un bloc : ~75 ms pour les Bordures) : la suite a
+            # l'image suivante (les tableaux deja faits sont sautes, gabarit identique).
+            late.update(pending)
+            return
+        try:
+            if state.frame is None or not state.frame._dims_applied:
+                continue
+            off_screen = not hidden and state.frame.visibleRegion().isEmpty()
+        except RuntimeError:                         # tableau detruit
+            _TEMPLATE_STATES.discard(state)
+            continue
+        kinds = {kind for kind in state.row_kinds.values()
+                 if kind in pending and isinstance(templates.get(kind), dict)}
+        if kinds and off_screen:
+            late |= kinds
+        elif kinds:
+            state.apply_row_templates(kinds)          # la ligne source, deja au gabarit, est sautee
 
 
 # ==========================================================================

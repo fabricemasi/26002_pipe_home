@@ -140,6 +140,79 @@ def send_mouse(widget, kind, pos, buttons=Qt.LeftButton):
     QApplication.sendEvent(widget, event)
 
 
+class ContentRowsTest(_Tables):
+    """Lignes sans cellule divisee : meme gabarit quand elles ont le meme type de contenu (meme champ)."""
+
+    def simple_table(self, *fields):
+        rows = [(f"ligne {i}", f, None) for i, f in enumerate(fields)]
+        frame = v2._flat_cells_table(rows)
+        frame.show()
+        self.frames.append(frame)
+        return frame
+
+    @staticmethod
+    def slider(kind="slider"):
+        from fm_theme.widgets import _SliderField
+        field = _SliderField(0, 100, 10)
+        field._row_kind = kind
+        return field
+
+    @staticmethod
+    def toggle():
+        from fm_theme.widgets import _Toggle
+        field = _Toggle(False, show_label=False)
+        field._row_kind = "bool"
+        return field
+
+    def test_rows_with_the_same_field_share_alignment_and_height(self):
+        f1 = self.simple_table(self.slider(), self.toggle())
+        f2 = self.simple_table(self.slider("ratio"))           # autre cle, meme champ : un curseur
+        settle()
+        s1, s2 = f1._extra_dims, f2._extra_dims
+        self.assertEqual(s1.row_kinds[0], s2.row_kinds[0])
+        s1.cells["r0c1"].setAlign("center", "top")
+        settle()
+        self.assertEqual(s2.cells["r0c1"].align(), ("center", "top"))
+        self.assertEqual(s1.cells["r1c1"].align()[1], "center")   # le toggle : autre contenu, intact
+        s1.heights.set_height(0, s1.heights.natural(0) + 20)
+        settle()
+        self.assertEqual(s2.heights.user[0], s1.heights.user[0])
+        self.assertEqual(s1.heights.user[1], 0)
+
+    def test_another_row_drag_does_not_reset_a_template_height(self):
+        """Bug signale : les hauteurs changeaient toutes seules. Une ligne dont le contenu est plus haut que le
+        gabarit gardait la hauteur du gabarit (sous son contenu) ; tirer une AUTRE ligne de son tableau la
+        remettait a 0, ce qui passait pour une modification et remettait a 0 le gabarit de tout son type."""
+        f1 = self.simple_table(self.slider())
+        tall = self.slider()
+        tall.setMinimumHeight(90)                              # contenu plus haut que le gabarit
+        f2 = self.simple_table(tall, self.toggle())
+        settle()
+        s1, s2 = f1._extra_dims, f2._extra_dims
+        s1.heights.set_height(0, s1.heights.natural(0) + 15)
+        settle()
+        wanted = s1.heights.user[0]
+        s2.heights.set_height(1, s2.heights.natural(1) + 10)   # on tire la ligne du toggle
+        settle()
+        self.assertEqual(s1.heights.user[0], wanted)
+        self.assertEqual(s2.heights.user[0], wanted)
+
+    def test_generic_holder_has_no_template(self):
+        holder = QWidget()
+        holder._row_kind = "font_role"
+        frame = self.simple_table(holder)
+        self.assertEqual(frame._extra_dims.row_kinds, {})
+
+
+class OpeningWindowTest(_Tables):
+    def test_opening_a_settings_window_keeps_the_session_templates(self):
+        """Bug signale : la fenetre de reglages qui s'ouvre relisait `table_dims` du fichier et effacait les
+        gabarits poses dans la session (fm_theme puis Parametres generaux de fm_browser)."""
+        _TABLE_DIMS[cells.ROW_TEMPLATES_KEY] = {"contenu:_SliderField": {"align": ["left,center"], "height": 61}}
+        win = v2.SettingsWindowV2(module="theme")
+        self.frames.append(win)
+        self.assertEqual(_TABLE_DIMS[cells.ROW_TEMPLATES_KEY]["contenu:_SliderField"]["height"], 61)
+
 class HeightBadgeTest(_Tables):
     def test_dragging_a_row_height_shows_its_height_in_pixels(self):
         frame, _splits = self.make(("corners", 5), ("padding", 5))

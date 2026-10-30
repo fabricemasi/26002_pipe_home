@@ -55,6 +55,9 @@ def without_row_templates(test, frame):
 
 
 def build(module: str | None = None):
+    # Gabarits de lignes gardes d'une fenetre a l'autre dans la session : une fenetre de test part sans ceux
+    # qu'un test precedent a poses.
+    v2._TABLE_DIMS.pop(cells.ROW_TEMPLATES_KEY, None)
     win = v2.SettingsWindowV2(module=module)
     v2.expand_all(win.stack.currentWidget())
     for node in win.stack.currentWidget().findChildren(v2._LazyNode):
@@ -311,6 +314,7 @@ class SplitCellTest(WindowTestCase):
         frame = next(f for f in self.win.findChildren(_TableFrame) if cells.split_of(
             next((w for w in f.findChildren(cells.SplitCell)), None)) is not None)
         state = frame._extra_dims
+        without_row_templates(self, frame)
         key, cell = next((k, c) for k, c in state.cells.items() if cells.split_of(c.content()))
         split = cells.split_of(cell.content())
         split.setSubAlign(2, "right", "bottom", notify=False)

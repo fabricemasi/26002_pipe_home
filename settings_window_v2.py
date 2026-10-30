@@ -2048,8 +2048,28 @@ def _flat_cells_table(rows: list) -> QWidget:
         head_align[2] = Qt.AlignCenter
     frame, head, _cells = build_cells_table(columns, table_rows, head_align=head_align)
     frame._v2_head = head
-    set_row_kinds(frame, {r: getattr(field, "_row_kind", None) for r, (_l, field, _t, _s) in enumerate(rows)})
+    set_row_kinds(frame, {r: _row_content_kind(field) for r, (_l, field, _t, _s) in enumerate(rows)})
     return frame
+
+
+# Lignes SANS cellule divisee : meme gabarit quand elles ont le meme TYPE DE CONTENU (le meme champ : une seule
+# couleur, un curseur, une liste... ; demande de l'utilisateur, 2026-10-29), quelle que soit leur cle. Variantes d'un
+# meme champ ramenees a lui.
+_CONTENT_FAMILIES = {"_CompactHeaderColor": "_CompactAppOrCustomColorField", "_FontSelectField": "_SelectField",
+                     "_RatioSliderField": "_SliderField"}
+
+
+def _row_content_kind(field: QWidget) -> str | None:
+    """Type de gabarit d'une ligne : son `kind` si sa cellule est divisee (Bordures, Border radius...), sinon la
+    classe de son champ (un conteneur generique, qui peut tout contenir, n'en a pas)."""
+    if getattr(field, "_row_kind", None) is None:
+        return None
+    if getattr(field, "_split", None) is not None or isinstance(field, SplitCell):
+        return field._row_kind
+    name = type(field).__name__
+    if type(field) is QWidget:
+        return None
+    return f"contenu:{_CONTENT_FAMILIES.get(name, name)}"
 
 
 def _dim_row(field: QWidget, dimmed: bool):
@@ -3034,7 +3054,13 @@ class SettingsWindowV2(QDialog):
         self._persist_timer.timeout.connect(self._persist_now)
         # Memes prerequis de style que SettingsWindow.__init__ : les widgets
         # lisent ces reglages a leur creation.
+        # Gabarits de lignes deja poses dans cette session (une autre fenetre de reglages, l'editeur fm_theme) :
+        # gardes, plus recents que ceux du fichier — sinon la fenetre qui s'ouvre les effacait (bug signale :
+        # hauteurs de fm_browser differentes de celles reglees dans fm_theme).
+        session_rows = copy.deepcopy(_TABLE_DIMS.get(ROW_TEMPLATES_KEY) or {})
         _set_table_dims(_renamed_dims(self.settings.get("table_dims") or {}))
+        if session_rows:
+            _TABLE_DIMS[ROW_TEMPLATES_KEY] = {**(_TABLE_DIMS.get(ROW_TEMPLATES_KEY) or {}), **session_rows}
         seed_window_look(self.settings)
         # Override d'un element enregistre pendant que la fenetre est ouverte : sa copie des
         # reglages (renvoyee par l'apercu en direct) le connait aussi.
@@ -3788,9 +3814,11 @@ class SettingsWindowV2(QDialog):
         _TABLE_DIMS[source.dimsKey()] = dims        # un tableau du groupe construit plus tard la reprend
         self._syncing_dims = True
         try:
-            for frame in self.findChildren(_TableFrame):
-                if frame is not source and frame._dims_applied and                         getattr(frame, "_link_group", None) == source._link_group:
-                    frame.applyDims(dims)
+            with settings_cells.batched_reflow():     # sections remises en page une fois pour tous les tableaux
+                for frame in self.findChildren(_TableFrame):
+                    if frame is not source and frame._dims_applied and \
+                            getattr(frame, "_link_group", None) == source._link_group:
+                        frame.applyDims(dims)
         finally:
             self._syncing_dims = False
 
