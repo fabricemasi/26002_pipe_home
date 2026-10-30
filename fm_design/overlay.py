@@ -87,6 +87,14 @@ class DesignOverlay(QGraphicsItem):
             painter.drawPolygon(poly)
             if c.gesture_kind() not in ("move",):
                 self._paint_handles(painter, zoom)
+        preview = c.preview_guide
+        current = c.current_page()
+        if preview is not None and current is not None:
+            axis, pos = preview
+            w, h = current.size()
+            painter.setPen(QPen(QColor(0, 190, 255, 230), 1.0 / zoom, Qt.DashLine))
+            a, b = (QPointF(pos, 0), QPointF(pos, h)) if axis == "v" else (QPointF(0, pos), QPointF(w, pos))
+            painter.drawLine(current.mapToScene(a), current.mapToScene(b))
         for line in c.guides:
             pen = QPen(QColor("#ff2fd0"), 1.0 / zoom)
             painter.setPen(pen)

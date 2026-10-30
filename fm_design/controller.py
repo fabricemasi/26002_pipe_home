@@ -47,6 +47,7 @@ class DesignController(GestureMixin, CommandMixin, QObject):
         self.marquee: QRectF | None = None
         self.tip = None                     # (point de scène, texte) : taille / angle pendant un geste
         self.crop_item: DesignImageItem | None = None
+        self.preview_guide = None           # (axe, position) : repère tiré depuis une règle, pas encore posé
         self._page_id = ""
         self._gesture = None
         self._press = None
@@ -59,8 +60,10 @@ class DesignController(GestureMixin, CommandMixin, QObject):
         self.scene.selectionChanged.connect(self._on_selection)
         self.scene.contentChanged.connect(self.refresh)
         self.view.zoomChanged.connect(lambda _z: self.refresh())
+        from .rulers import Rulers
         from .ui import DesignChrome
         self.ui = DesignChrome(pane, self)
+        self.rulers = Rulers(self)
         self.refresh()
 
     # ------------------------------------------------------------------ activation
@@ -74,6 +77,7 @@ class DesignController(GestureMixin, CommandMixin, QObject):
             if not isinstance(item, DesignElement):
                 item.setSelected(False)
         self.ui.show()
+        self.rulers.place()
         self.refresh()
         self.view.setFocus()
         self.stateChanged.emit()
@@ -86,6 +90,7 @@ class DesignController(GestureMixin, CommandMixin, QObject):
         self.active = False
         self.hover = None
         self.ui.hide()
+        self.rulers.place()
         self.refresh()
         self.view._sync_cursor()
         self.stateChanged.emit()
@@ -574,7 +579,14 @@ class DesignController(GestureMixin, CommandMixin, QObject):
                 if 0 <= n < len(pages):
                     self.set_current_page(pages[n], show=True)
             return True
-        if not ctrl and not alt:
+        if shift and not ctrl and not alt and key == Qt.Key_R:
+            self.rulers.set_visible(not self.rulers.visible)
+            return True
+        if key == Qt.Key_Question or (shift and key == Qt.Key_Comma):
+            from .menus import show_shortcuts
+            show_shortcuts(self)
+            return True
+        if not ctrl and not alt and not shift:
             shortcuts = {Qt.Key_T: ("text", None), Qt.Key_R: ("shape", "rect"), Qt.Key_C: ("shape", "ellipse"),
                          Qt.Key_L: ("shape", "line")}
             if key in shortcuts:

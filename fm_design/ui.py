@@ -176,6 +176,7 @@ class DesignChrome(QObject):
         for widget in (self.rail, self.context, self.pagebar):
             widget.layout().activate()
             widget.resize(widget.sizeHint())
+        self.ctl.rulers.place()
         top = title.bottom() + 10
         self.rail.move(margin, max(top, (pane.height() - self.rail.height()) // 2))
         self.panel.move(self.rail.geometry().right() + 8, top)

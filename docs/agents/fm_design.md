@@ -22,6 +22,7 @@ Troisième module du board (après Miro et CAD), créé le 2026-10-29 à la dema
 | Barres : rail, barre contextuelle, barre des pages (miniatures) | `ui.py` | `DesignChrome`, `build_context_bar`, `PageThumb` |
 | Menus : couleurs (dont couleurs du document), fond / dégradé, contour, ombre, position, masque, effets du texte, police, réglages / filtres d'image, redimensionner, export, clic droit | `menus.py` | `*_menu`, `open_context_menu`, `export_menu`, `parse_size` |
 | Présentation plein écran | `present.py` | `PresentationWindow` |
+| Règles graduées (haut, gauche) | `rulers.py` | `Rulers`, `Ruler`, `tick_step` |
 | Panneau latéral (modèles et formats, éléments, texte, images, position et calques) | `panels.py` | `build_<onglet>`, `LayerList`, `PositionPanel` |
 | Modèles de conception (originaux) | `templates.py` | `TEMPLATES` |
 | Rendu hors écran : miniatures, export PNG / JPEG / PDF / SVG | `render.py` | `paint_page`, `export_pages` |
@@ -148,7 +149,8 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 | Texte multistyle (par caractère), listes à puces | À faire | Texte |
 | Grilles de photos (6 mises en page), cadres vides en forme, dépôt / bibliothèque = remplir le cadre (cadrage couvrant), « Remplacer l'image… » | Terminée | Images |
 | Repères de page (clic droit sur la page : ajouter ; Ctrl + glisser : déplacer ; clic droit dessus : retirer ; aimantants), marges affichées (5 % du petit côté) | Terminée | Pages |
-| Règles graduées le long de la vue, fond perdu à l'export PDF | À faire | Pages |
+| Règles graduées (Maj+R, unités de la page courante ; tirer depuis une règle = nouveau repère), aide des raccourcis (? ou clic droit) | Terminée | Pages |
+| Fond perdu à l'export PDF (impression) | À faire | Export |
 | Styles du document : couleurs utilisées (menus de couleur), styles de texte utilisés (onglet Texte : appliquer / nouveau texte) | Terminée | Texte, Styles |
 | Kit de marque enregistré hors d'un design (polices / couleurs partagées entre boards) | À faire | Réglages |
 | Espacement égal entre deux voisins pendant Ctrl + glisser (segments tracés), renommer un calque, export d'une plage de pages (« 1-3, 5 ») | Terminée | Gestes, Export |

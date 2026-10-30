@@ -793,5 +793,32 @@ class MenusTest(DesignTestCase):
         self.scene.undo.undo()                                # tout reste annulable
 
 
+class RulerTest(DesignTestCase):
+    def test_rulers_toggle_and_drag_out_a_guide(self):
+        from fm_design.rulers import tick_step
+        self.assertEqual(tick_step(1.0), 100)
+        self.assertEqual(tick_step(0.5), 200)
+        self.assertEqual(tick_step(2.0), 50)
+        page = self.page()
+        self.key(Qt.Key_R, Qt.ShiftModifier, "R")
+        self.assertTrue(self.ctl.rulers.left.isVisible())
+        self.assertEqual(doc.elements(self.scene, page), [])          # Maj+R ne crée pas de rectangle
+        ruler = self.ctl.rulers.left
+        target = self.view.mapFromScene(page.mapToScene(QPointF(250, 300)))
+        local = ruler.mapFrom(self.pane, self.view.viewport().mapTo(self.pane, target))
+        ruler.mousePressEvent(QMouseEvent(QEvent.MouseButtonPress, QPointF(5, 50), QPointF(), Qt.LeftButton,
+                                          Qt.LeftButton, Qt.NoModifier))
+        ruler.mouseMoveEvent(QMouseEvent(QEvent.MouseMove, QPointF(local), QPointF(), Qt.NoButton, Qt.LeftButton,
+                                         Qt.NoModifier))
+        self.assertIsNotNone(self.ctl.preview_guide)
+        ruler.mouseReleaseEvent(QMouseEvent(QEvent.MouseButtonRelease, QPointF(local), QPointF(), Qt.LeftButton,
+                                            Qt.NoButton, Qt.NoModifier))
+        self.assertEqual(page.data["guides"][0]["axis"], "v")
+        self.assertAlmostEqual(page.data["guides"][0]["pos"], 250, delta=2.5)
+        ruler.grab()                                                   # la règle se peint sans erreur
+        self.key(Qt.Key_R, Qt.ShiftModifier, "R")
+        self.assertFalse(self.ctl.rulers.left.isVisible())
+
+
 if __name__ == "__main__":
     unittest.main()

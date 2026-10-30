@@ -318,6 +318,10 @@ def open_context_menu(ctl, global_pos):
         if page.data.get("guides"):
             guides.addAction("Retirer tous les repères").triggered.connect(lambda: doc.change(
                 ctl.scene, [page], lambda i: i.data.update(guides=[]), "Repères"))
+        rulers = guides.addAction("Règles (Maj+R)")
+        rulers.setCheckable(True)
+        rulers.setChecked(ctl.rulers.visible)
+        rulers.triggered.connect(lambda on: ctl.rulers.set_visible(bool(on)))
         margins = guides.addAction("Afficher les marges")
         margins.setCheckable(True)
         margins.setChecked(bool(page.data.get("margins")))
@@ -326,8 +330,34 @@ def open_context_menu(ctl, global_pos):
         if page.data.get("bg_asset"):
             menu.addAction("Retirer l'image d'arrière-plan").triggered.connect(
                 lambda: doc.change(ctl.scene, [page], lambda i: i.data.update(bg_asset=""), "Arrière-plan"))
+    menu.addSeparator()
+    menu.addAction("Raccourcis clavier (?)…").triggered.connect(lambda: QTimer.singleShot(0, lambda: show_shortcuts(ctl)))
     menu.aboutToHide.connect(ctl.scene.commit_live)
     menu.popup(global_pos)
+
+
+SHORTCUTS = [
+    ("Ctrl + glisser", "déplacer (Ctrl + Alt + glisser : une copie) ; sans Ctrl : cadre de sélection"),
+    ("Clic / Maj + clic", "choisir / ajouter à la sélection"),
+    ("Double-clic", "modifier un texte, recadrer une image"),
+    ("T, R, C, L", "texte, rectangle, cercle, ligne"),
+    ("Suppr", "supprimer"), ("Ctrl+C / X / V", "copier, couper, coller"), ("Ctrl+D", "dupliquer"),
+    ("Ctrl+Alt+C / V", "copier / coller le style"), ("Ctrl+A", "tout choisir dans la page"),
+    ("Ctrl+G / Ctrl+Maj+G", "grouper / dissocier"), ("Alt+Maj+L", "verrouiller"),
+    ("Ctrl+] / [  (Alt : extrême)", "avancer / reculer (premier plan / arrière-plan)"),
+    ("Flèches (Maj : ×10)", "décaler de 1 px"), ("PageUp / PageDown", "page précédente / suivante"),
+    ("Ctrl+B / I / U", "gras, italique, souligné"), ("Ctrl+Maj+K", "majuscules"),
+    ("Ctrl+Maj+L / E / R / J", "aligner le texte : gauche, centre, droite, justifié"),
+    ("Ctrl+Maj+> / <", "taille du texte"), ("Maj+R", "règles (tirer un repère depuis une règle)"),
+    ("Ctrl+Alt+P", "présenter en plein écran"), ("Ctrl+Z / Ctrl+Y", "annuler / rétablir"),
+    ("Molette, bouton du milieu, Espace", "zoomer, se déplacer dans le board"),
+]
+
+
+def show_shortcuts(ctl):
+    from PySide6.QtWidgets import QMessageBox
+    text = "\n".join(f"{keys} : {what}" for keys, what in SHORTCUTS)
+    QMessageBox.information(ctl.pane, "Module Design : raccourcis", text)
 
 
 def rename_layer(ctl, item):
