@@ -286,18 +286,18 @@ def build_text(ctl, parent):
         button.setStyleSheet(f"font-size: {int(font.pointSizeF())}pt; font-weight: {700 if preset != 'body' else 400};")
         button.setMinimumHeight({"heading": 44, "subheading": 36, "body": 30}[preset])
         layout.addWidget(button)
+    from .panel_brand import build_brand_styles, document_style_menu
+    build_brand_styles(ctl, widget, layout)
     styles = document_text_styles(ctl)
     if styles:
         layout.addSpacing(6)
-        layout.addWidget(_label("Styles du document (clic : appliquer à la sélection, sinon nouveau texte)"))
+        layout.addWidget(_label("Styles du document (clic : appliquer à la sélection, sinon nouveau texte ; "
+                                "clic droit : ajouter à la marque)"))
         for style in styles:
-            label = f"{style['font_family'] or 'Police par défaut'} · {style['font_size']:g} px" + (
-                " · gras" if style.get("bold") else "")
-            button = _wide_button(label, "Style de texte déjà utilisé dans ce design",
-                                  lambda _c=False, st=style: apply_text_style(ctl, st), widget)
-            button.setStyleSheet(f"color: {style['color']}; font-family: '{style['font_family']}';"
-                                 if QColor(style["color"]).lightness() > 60 else
-                                 f"font-family: '{style['font_family']}';")
+            button = text_style_button(ctl, style, "Style de texte déjà utilisé dans ce design", widget)
+            button.setContextMenuPolicy(Qt.CustomContextMenu)
+            button.customContextMenuRequested.connect(
+                lambda pos, b=button, st=style: document_style_menu(ctl, b, st, pos))
             layout.addWidget(button)
     layout.addSpacing(6)
     layout.addWidget(_label("Combinaisons de polices"))
@@ -314,6 +314,18 @@ TEXT_STYLE_KEYS = ("font_family", "font_size", "color", "bold", "italic", "under
                    "line_height")
 
 
+def text_style_button(ctl, style, tip, parent, name=""):
+    """Bouton d'un style de texte (police, taille, gras ; dans sa police et sa couleur) : clic = l'appliquer."""
+    label = f"{style['font_family'] or 'Police par défaut'} · {style['font_size']:g} px" + (
+        " · gras" if style.get("bold") else "")
+    button = _wide_button(f"{name} — {label}" if name else label, tip,
+                          lambda _c=False, st=style: apply_text_style(ctl, st), parent)
+    button.setStyleSheet(f"color: {style['color']}; font-family: '{style['font_family']}';"
+                         if QColor(style.get("color") or dm.INK).lightness() > 60 else
+                         f"font-family: '{style['font_family']}';")
+    return button
+
+
 def document_text_styles(ctl) -> list[dict]:
     """Styles de texte DISTINCTS du design (les plus grands d'abord, 8 au plus) : styles réutilisables."""
     seen, out = set(), []
@@ -328,6 +340,7 @@ def document_text_styles(ctl) -> list[dict]:
 
 
 def apply_text_style(ctl, style):
+    style = {k: style[k] for k in TEXT_STYLE_KEYS if k in style}       # (nom d'un style de la marque : pas copié)
     texts = [i for i in ctl.selection() if isinstance(i, DesignTextItem)]
     if texts:
         doc.change(ctl.scene, texts, lambda i: i.data.update(style), "Style de texte")

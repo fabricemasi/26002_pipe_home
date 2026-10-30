@@ -17,7 +17,7 @@ BOARD_DEFAULTS: dict[str, Any] = {
     # Presets des outils de dessin du board (etat temps reel) : {outil: [{color, width, opacity?} x 3]}.
     "board_pen_presets": {},
     # Module Design : kit de marque PARTAGÉ entre tous les boards (état temps réel) : couleurs et polices favorites.
-    "board_design_brand": {"colors": [], "fonts": [], "logos": []},
+    "board_design_brand": {"colors": [], "fonts": [], "logos": [], "styles": []},
     # Grille unique du board et du CAD (Reglages > Module MRO > Grille) : pas en centiemes, intensite en dixiemes de %
     "board_grid_step": 400, "board_grid_unit": "board", "board_grid_factor": 4, "board_grid_fade_start": 12,
     "board_grid_fade_full": 60, "board_grid_style": "lines", "board_grid_thickness": 1, "board_grid_auto_color": True,

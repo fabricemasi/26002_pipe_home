@@ -1,4 +1,6 @@
-"""Logos du kit de marque (onglet Images) : images favorites partagées par TOUS les boards
+"""Logos et styles de texte du kit de marque. Styles (onglet Texte) : police, taille, couleur, gras… d'un style du
+document, ajouté par clic droit, nommé « Style N » (renommable), partagé par tous les boards ; clic = l'appliquer.
+Logos (onglet Images) : images favorites partagées par TOUS les boards
 (`board_design_brand["logos"]`, chemins absolus, fichiers laissés à leur place). Clic = ajouter à la page (copiée
 dans le board comme toute image importée) ; clic droit = retirer de la marque. Un fichier introuvable (disque
 débranché, fichier déplacé) reste dans la liste et est compté à part ; « Retirer les introuvables » le retire.
@@ -78,3 +80,60 @@ def _add(ctl, paths):
 def _remove(ctl, value):
     ctl.brand_remove("logos", value)
     ctl.ui.set_tab("images")
+
+
+# ---------------------------------------------------------------- styles de texte
+def build_brand_styles(ctl, widget, layout):
+    from .panels import _label, text_style_button
+    styles = ctl.brand()["styles"]
+    if not styles:
+        return
+    layout.addSpacing(6)
+    layout.addWidget(_label("Marque : styles de texte"))
+    for style in styles:
+        button = text_style_button(ctl, style, "Style de la marque (clic droit : renommer, retirer)", widget,
+                                   style.get("name", ""))
+        button.setContextMenuPolicy(Qt.CustomContextMenu)
+        button.customContextMenuRequested.connect(lambda pos, b=button, st=style: brand_style_menu(ctl, b, st, pos))
+        layout.addWidget(button)
+
+
+def document_style_menu(ctl, button, style, pos):
+    menu = _menu(ctl.pane, "design_text_style")
+    known = [{k: v for k, v in s.items() if k != "name"} for s in ctl.brand()["styles"]]
+    action = menu.addAction("Ajouter à la marque")
+    action.setEnabled(dict(style) not in known)
+    action.triggered.connect(lambda: add_style(ctl, style))
+    menu.popup(button.mapToGlobal(pos))
+
+
+def brand_style_menu(ctl, button, style, pos):
+    from PySide6.QtCore import QTimer
+    menu = _menu(ctl.pane, "design_brand_style")
+    menu.addAction("Renommer…").triggered.connect(lambda: QTimer.singleShot(0, lambda: rename_style(ctl, style)))
+    menu.addAction("Retirer de la marque").triggered.connect(lambda: remove_style(ctl, style))
+    menu.popup(button.mapToGlobal(pos))
+
+
+def add_style(ctl, style):
+    styles = ctl.brand()["styles"]
+    used = {s.get("name") for s in styles}
+    n = 1
+    while f"Style {n}" in used:
+        n += 1
+    ctl.brand_add("styles", {**style, "name": f"Style {n}"})
+    ctl.ui.set_tab("text")
+
+
+def rename_style(ctl, style):
+    from PySide6.QtWidgets import QInputDialog
+    name, ok = QInputDialog.getText(ctl.pane, "Style de la marque", "Nom :", text=style.get("name", ""))
+    if ok and name.strip():
+        style["name"] = name.strip()
+        ctl._save_brand()
+        ctl.ui.set_tab("text")
+
+
+def remove_style(ctl, style):
+    ctl.brand_remove("styles", style)
+    ctl.ui.set_tab("text")

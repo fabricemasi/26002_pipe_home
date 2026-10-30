@@ -1114,15 +1114,38 @@ class BrandTest(DesignTestCase):
         self.ctl.brand_add("colors", "#123456")
         self.ctl.brand_add("fonts", "Georgia")
         self.ctl.brand_add("colors", "#123456")                       # pas de doublon
-        self.assertEqual(self.ctl.brand(), {"colors": ["#123456"], "fonts": ["Georgia"], "logos": []})
-        saved = settings_store.load_settings()["board_design_brand"]
-        self.assertEqual(saved, {"colors": ["#123456"], "fonts": ["Georgia"], "logos": []})
+        expected = {"colors": ["#123456"], "fonts": ["Georgia"], "logos": [], "styles": []}
+        self.assertEqual(self.ctl.brand(), expected)
+        self.assertEqual(settings_store.load_settings()["board_design_brand"], expected)
         other = board_ui.BoardPane(self.host, settings_store.load_settings())
         _PANES.append(other)
         other.set_module("design")
         self.assertEqual(other.design.brand()["colors"], ["#123456"])   # un autre board la voit
         self.ctl.brand_remove("colors", "#123456")
         self.assertEqual(settings_store.load_settings()["board_design_brand"]["colors"], [])
+
+    def test_brand_text_styles(self):
+        import settings_store
+        from fm_design import panel_brand
+        from fm_design.panels import TEXT_STYLE_KEYS, document_text_styles
+        self.page()
+        source = self.ctl.add_text("title", {"text": "Titre", "font_family": "Georgia", "color": "#aa0000"},
+                                   edit=False)
+        style = document_text_styles(self.ctl)[0]
+        panel_brand.add_style(self.ctl, style)
+        saved = settings_store.load_settings()["board_design_brand"]["styles"]
+        self.assertEqual(saved, [{**style, "name": "Style 1"}])
+        self.assertEqual(self.ctl.ui.tab, "text")
+        labels = [b.text() for b in self.ctl.ui.panel_content.findChildren(board_ui._TextButton)]
+        self.assertTrue(any(t.startswith("Style 1 — Georgia") for t in labels))
+        target = self.ctl.add_text("body", {"text": "Corps"}, edit=False)
+        self.ctl._select([target])
+        from fm_design.panels import apply_text_style
+        apply_text_style(self.ctl, self.ctl.brand()["styles"][0])
+        self.assertEqual({k: target.data[k] for k in TEXT_STYLE_KEYS}, {k: source.data[k] for k in TEXT_STYLE_KEYS})
+        self.assertEqual(target.data["name"], "")                          # nom du calque : pas celui du style
+        panel_brand.remove_style(self.ctl, self.ctl.brand()["styles"][0])
+        self.assertEqual(settings_store.load_settings()["board_design_brand"]["styles"], [])
 
     def test_brand_logos(self):
         import settings_store

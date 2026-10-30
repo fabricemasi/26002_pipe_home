@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QApplication
 from . import design_model as dm, document as doc, geometry
 from .items import DesignImageItem, DesignPageItem, DesignTextItem
 
-BRAND_CAPS = {"colors": 24, "fonts": 12, "logos": 24}     # kit de marque : nombre gardé par sorte
+BRAND_CAPS = {"colors": 24, "fonts": 12, "logos": 24, "styles": 12}     # kit de marque : nombre gardé par sorte
 
 
 class CommandMixin:
@@ -269,8 +269,8 @@ class CommandMixin:
 
     # ------------------------------------------------------------------ kit de marque (tous les boards)
     def brand(self) -> dict:
-        """Couleurs, polices et logos (chemins de fichiers) favoris, partagés par tous les boards (réglage d'état
-        `board_design_brand`)."""
+        """Couleurs, polices, logos (chemins de fichiers) et styles de texte favoris, partagés par tous les boards
+        (réglage d'état `board_design_brand`)."""
         kept = getattr(self, "_brand", None)
         if kept is None:
             raw = self.pane._settings.get("board_design_brand")
@@ -283,7 +283,9 @@ class CommandMixin:
             raw = raw if isinstance(raw, dict) else {}
             kept = {"colors": [c for c in raw.get("colors", []) if isinstance(c, str) and c.startswith("#")][:24],
                     "fonts": [f for f in raw.get("fonts", []) if isinstance(f, str) and f][:12],
-                    "logos": [p for p in raw.get("logos", []) if isinstance(p, str) and p][:BRAND_CAPS["logos"]]}
+                    "logos": [p for p in raw.get("logos", []) if isinstance(p, str) and p][:BRAND_CAPS["logos"]],
+                    "styles": [s for s in raw.get("styles", []) if isinstance(s, dict) and s.get("font_size")]
+                    [:BRAND_CAPS["styles"]]}
             self._brand = kept
         return kept
 
