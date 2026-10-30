@@ -159,8 +159,8 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 - Retouches d'image (luminosité, contraste, saturation) : seulement avec numpy (présent dans l'environnement) ;
   sans numpy, noir et blanc et flou seulement.
 - Un élément Design ne peut pas être déplacé en mode Miro (pas de `ItemIsMovable`) : on passe en mode Design.
-- Page sans rotation ; pas d'animation ni de vidéo ; graphiques à une seule série ; pas de kit de marque partagé entre
-  boards limité aux couleurs et polices (pas de logos ni de styles de texte complets).
+- Page sans rotation ; pas d'animation ni de vidéo ; secteurs et anneau n'utilisent que la 1re série ; kit de marque
+  partagé entre boards limité aux couleurs et polices (pas de logos ni de styles de texte complets).
 
 ## PLAN DE TRAVAIL (persistant, mis à jour à chaque étape)
 
@@ -181,6 +181,7 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 | Export PNG / JPEG / PDF multipage / SVG, échelle, qualité, fond transparent | Terminée | Rendu |
 | Tableaux (lignes / colonnes, en-tête, couleurs, cellules modifiées sur place, Tab) et graphiques (barres, courbe, secteurs, anneau ; données « Libellé ; valeur ») | Terminée | Éléments |
 | Image de page pendant le zoom et les gestes (pages de 60 éléments et plus) | Terminée | Fluidité |
+| Graphiques à plusieurs séries (jusqu'à 8) : données « Libellé ; valeur ; valeur… », 1re ligne facultative = noms (légende) ; barres groupées, une courbe par série ; enregistrés en `values` (1re série, format d'origine) + `more_series` + `series_names` | Terminée | Tableaux et graphiques |
 | Validation graphique en vraie fenêtre Windows (pas seulement hors écran) | À faire | — |
 | Texte multistyle : gras / italique / souligné / taille / couleur / police sur une PARTIE du texte (pendant l'édition : raccourcis, ou barre contextuelle : boutons sans focus, menus qui gardent l'édition — `_DesignText.focusOutEvent` ignore `PopupFocusReason`), enregistré en `spans`, mis à l'échelle avec la boîte | Terminée | Texte |
 | Listes à puces / numérotées (toute la boîte, menu Alignement) | Terminée | Texte |

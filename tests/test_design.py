@@ -1046,9 +1046,13 @@ class DataVisTest(DesignTestCase):
 
     def test_charts_render_and_parse(self):
         from fm_design.design_model import parse_series, series_text
-        self.assertEqual(parse_series("Lun ; 3\nMar: 4,5\n7"), (["Lun", "Mar", ""], [3.0, 4.5, 7.0]))
+        self.assertEqual(parse_series("Lun ; 3\nMar: 4,5\n7"), (["Lun", "Mar", ""], [[3.0, 4.5, 7.0]], []))
         self.assertIsNone(parse_series("Lun ; x"))
-        self.assertEqual(series_text(["a"], [2.0]), "a ; 2")
+        self.assertIsNone(parse_series("Libellé ; Ventes\n"))           # en-tête sans valeurs
+        self.assertEqual(series_text(["a"], [[2.0]]), "a ; 2")
+        text = "Libellé ; Ventes ; Coûts\nJan ; 3 ; 1,5\nFév ; 4"
+        self.assertEqual(parse_series(text), (["Jan", "Fév"], [[3.0, 4.0], [1.5, 0.0]], ["Ventes", "Coûts"]))
+        self.assertEqual(parse_series(series_text(*parse_series(text))), parse_series(text))
         page = self.page(800, 600)
         for kind in ("bar", "line", "pie", "donut"):
             chart = self.ctl.add_chart(kind)
@@ -1063,6 +1067,30 @@ class DataVisTest(DesignTestCase):
         bad = model.normalize_item({"id": "c", "type": "design_chart", "chart": "x", "values": [1, "a", 2],
                                     "labels": ["u"]})
         self.assertEqual((bad["chart"], bad["values"], bad["labels"]), ("bar", [1.0, 2.0], ["u", ""]))
+
+    def test_chart_with_several_series(self):
+        from unittest import mock
+        from fm_design import menus_data
+        page = self.page(800, 600)
+        chart = self.ctl.add_chart("bar")
+        doc.change(self.scene, [chart], lambda i: i.data.update(x=0.0, y=0.0, w=800.0, h=600.0), "Place")
+        text = "Libellé ; Ventes ; Coûts\nJan ; 3 ; 5\nFév ; 4 ; 2"
+        with mock.patch.object(menus_data.QInputDialog, "getMultiLineText", return_value=(text, True)):
+            menus_data.edit_chart_data(self.ctl, chart)
+        self.assertEqual((chart.data["values"], chart.data["more_series"], chart.data["series_names"]),
+                         ([3.0, 4.0], [[5.0, 2.0]], ["Ventes", "Coûts"]))
+        for kind in ("bar", "line"):
+            doc.change(self.scene, [chart], lambda i: i.data.update(chart=kind), "Type")
+            image = render.render_image(page, 0.5)
+            colours = {image.pixelColor(x, y).name() for x in range(0, 400, 3) for y in range(0, 300, 3)}
+            self.assertIn("#22d3ee", colours, kind)                    # 2e série dans la 2e couleur
+        self.scene.undo.undo()
+        self.scene.undo.undo()
+        self.scene.undo.undo()                                         # avant la saisie : une seule série
+        self.assertEqual(self.scene._items[chart.item_id].data.get("more_series") or [], [])
+        bad = model.normalize_item({"id": "c", "type": "design_chart", "values": [1, 2],
+                                    "more_series": [[5], "x", [1, 2, 3]], "series_names": ["a", "b", "c", "d"]})
+        self.assertEqual((bad["more_series"], bad["series_names"]), ([[5.0, 0.0], [1.0, 2.0]], ["a", "b", "c"]))
 
 
 if __name__ == "__main__":

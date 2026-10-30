@@ -208,7 +208,8 @@ class DesignChartItem(DesignElement):
     def paint_content(self, painter):
         data = self.data
         rect = self.content_rect()
-        values = [float(v) for v in data.get("values") or []]
+        series, names = dm.chart_series(data)
+        values = [float(v) for v in series[0]]
         labels = list(data.get("labels") or [])
         size = float(data.get("font_size", 18.0))
         font = QFont(resolve_family(str(data.get("font_family") or "")))
@@ -223,15 +224,38 @@ class DesignChartItem(DesignElement):
         if kind in ("pie", "donut"):
             self._paint_pie(painter, rect, values, labels, size, ink, kind == "donut")
         else:
-            self._paint_axes_chart(painter, rect, values, labels, size, ink, kind)
+            self._paint_axes_chart(painter, rect, series, names, labels, size, ink, kind)
 
-    def _paint_axes_chart(self, painter, rect, values, labels, size, ink, kind):
+    def _paint_legend(self, painter, rect, names, colors, size, ink) -> float:
+        """Légende des séries sur une ligne en haut (centrée) ; hauteur prise."""
+        metrics = painter.fontMetrics()
+        widths = [size * 1.4 + metrics.horizontalAdvance(n) + size for n in names]
+        x = rect.left() + max(0.0, (rect.width() - sum(widths) + size) / 2)
+        for n, name in enumerate(names):
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(colors[n % len(colors)]))
+            painter.drawRoundedRect(QRectF(x, rect.top() + size * 0.2, size, size), size * 0.2, size * 0.2)
+            painter.setPen(ink)
+            painter.drawText(QRectF(x + size * 1.4, rect.top(), widths[n], size * 1.4),
+                             Qt.AlignVCenter | Qt.AlignLeft, name)
+            x += widths[n]
+        return size * 1.8
+
+    def _paint_axes_chart(self, painter, rect, series, names, labels, size, ink, kind):
         colors = self._colors()
-        top = max(values + [0.0])
-        bottom = min(values + [0.0])
+        values = series[0]
+        many = len(series) > 1
+        if names:
+            legend = self._paint_legend(painter, rect, [n or f"Série {k + 1}" for k, n in enumerate(names)], colors,
+                                        size, ink)
+            rect = rect.adjusted(0, legend, 0, 0)
+        every = [v for serie in series for v in serie]
+        top = max(every + [0.0])
+        bottom = min(every + [0.0])
         span = (top - bottom) or 1.0
-        plot = rect.adjusted(size * 0.5, size * 1.6 if self.data.get("show_values", True) else size * 0.5,
-                             -size * 0.5, -size * 1.8)
+        show_values = self.data.get("show_values", True)
+        plot = rect.adjusted(size * 0.5, size * 1.6 if show_values else size * 0.5, -size * 0.5,
+                             -size * (3.2 if show_values and bottom < 0 else 1.8))   # valeur sous une barre négative
         if plot.width() <= 4 or plot.height() <= 4:
             return
 
@@ -245,36 +269,45 @@ class DesignChartItem(DesignElement):
         zero = y_of(0.0)
         count = len(values)
         slot = plot.width() / count
-        points = []
-        for n, value in enumerate(values):
+        group = slot * 0.64                  # barres d'un même libellé côte à côte dans 64 % de la case
+        bar_w = group / len(series) if kind == "bar" else slot
+        for n in range(count):
             cx = plot.left() + slot * (n + 0.5)
-            y = y_of(value)
-            if kind == "bar":
-                bar = QRectF(cx - slot * 0.32, min(y, zero), slot * 0.64, abs(zero - y))
-                painter.setPen(Qt.NoPen)
-                painter.setBrush(QColor(colors[n % len(colors)]))
-                path = QPainterPath()
-                r = min(slot * 0.08, bar.height() / 2)
-                path.addRoundedRect(bar, r, r)
-                painter.drawPath(path)
-            points.append(QPointF(cx, y))
-            painter.setPen(ink)
-            if self.data.get("show_values", True):
-                painter.drawText(QRectF(cx - slot / 2, y - size * 1.5 if value >= 0 else y + size * 0.1, slot,
-                                        size * 1.4), Qt.AlignCenter, f"{value:g}")
+            for k, serie in enumerate(series):
+                value = serie[n] if n < len(serie) else 0.0
+                y = y_of(value)
+                x = cx - group / 2 + bar_w * (k + 0.5) if kind == "bar" else cx
+                if kind == "bar":
+                    bar = QRectF(x - bar_w / 2 + (bar_w * 0.06 if many else 0), min(y, zero),
+                                 bar_w * (0.88 if many else 1.0), abs(zero - y))
+                    painter.setPen(Qt.NoPen)
+                    painter.setBrush(QColor(colors[(k if many else n) % len(colors)]))
+                    path = QPainterPath()
+                    r = min(bar.width() * 0.12, bar.height() / 2)
+                    path.addRoundedRect(bar, r, r)
+                    painter.drawPath(path)
+                if show_values and (kind == "bar" or not many):
+                    painter.setPen(ink)
+                    width = bar_w if kind == "bar" else slot
+                    painter.drawText(QRectF(x - width / 2, y - size * 1.5 if value >= 0 else y + size * 0.1, width,
+                                            size * 1.4), Qt.AlignCenter, f"{value:g}")
             if n < len(labels):
-                painter.drawText(QRectF(cx - slot / 2, plot.bottom() + size * 0.3, slot, size * 1.4),
+                painter.setPen(ink)
+                painter.drawText(QRectF(cx - slot / 2, rect.bottom() - size * 1.5, slot, size * 1.4),
                                  Qt.AlignCenter, labels[n])
-        if kind == "line" and points:
-            pen = QPen(QColor(colors[0]), max(1.5, size * 0.18))
-            pen.setJoinStyle(Qt.RoundJoin)
-            pen.setCapStyle(Qt.RoundCap)
-            painter.setPen(pen)
-            for a, b in zip(points, points[1:]):
-                painter.drawLine(a, b)
-            painter.setBrush(QColor("#ffffff"))
-            for p in points:
-                painter.drawEllipse(p, size * 0.25, size * 0.25)
+        if kind == "line":
+            for k, serie in enumerate(series):
+                points = [QPointF(plot.left() + slot * (n + 0.5), y_of(serie[n] if n < len(serie) else 0.0))
+                          for n in range(count)]
+                pen = QPen(QColor(colors[k % len(colors)]), max(1.5, size * 0.18))
+                pen.setJoinStyle(Qt.RoundJoin)
+                pen.setCapStyle(Qt.RoundCap)
+                painter.setPen(pen)
+                for a, b in zip(points, points[1:]):
+                    painter.drawLine(a, b)
+                painter.setBrush(QColor("#ffffff"))
+                for p in points:
+                    painter.drawEllipse(p, size * 0.25, size * 0.25)
         painter.setPen(QPen(QColor(ink.red(), ink.green(), ink.blue(), 140), max(1.0, size * 0.06)))
         painter.drawLine(QPointF(plot.left(), zero), QPointF(plot.right(), zero))
 

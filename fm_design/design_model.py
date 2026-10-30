@@ -61,9 +61,11 @@ DEFAULTS: dict[str, dict] = {
             "font_family": "", "font_size": 22.0, "color": INK, "bold": False, "align": "left",
             "header_fill": "#8b3dff", "header_color": "#ffffff", "fill": "#ffffff", "alt_fill": "#f3effc",
             "stroke": "#d0c6e8", "stroke_width": 1.5, **STYLE_COMMON},
-    # Graphique : « bar », « line », « pie », « donut » ; une série ; couleurs vides = palette du module.
+    # Graphique : « bar », « line », « pie », « donut » ; « values » = 1re série (format d'origine), « more_series » =
+    # séries suivantes (listes de nombres), « series_names » = noms de toutes les séries (légende) ; secteurs et anneau
+    # n'utilisent que la 1re série ; couleurs vides = palette du module.
     CHART: {"w": 600.0, "h": 400.0, "chart": "bar", "labels": ["A", "B", "C", "D"], "values": [4.0, 7.0, 3.0, 6.0],
-            "colors": [], "font_family": "", "font_size": 18.0, "color": INK, "show_values": True,
+            "more_series": [], "series_names": [], "colors": [], "font_family": "", "font_size": 18.0, "color": INK, "show_values": True,
             "show_grid": True, "hole": "#ffffff", **STYLE_COMMON},
 }
 
@@ -263,30 +265,75 @@ def resize_grid(data: dict, rows: int, cols: int):
     data["rows"], data["cols"] = rows, cols
 
 
-def parse_series(text: str) -> tuple[list[str], list[float]] | None:
-    """« Libellé ; valeur » par ligne (séparateur ; ou tabulation ou :) -> (libellés, valeurs) ; None si illisible."""
-    labels, values = [], []
+MAX_SERIES = 8
+
+
+def _number(text: str) -> float | None:
+    try:
+        return float(text.replace(",", ".").replace(" ", "").replace("\u00a0", ""))
+    except ValueError:
+        return None
+
+
+def parse_series(text: str) -> tuple[list[str], list[list[float]], list[str]] | None:
+    """« Libellé ; valeur ; valeur… » par ligne (colonnes séparées par ; ou tabulation ; « Libellé : valeur » aussi)
+    -> (libellés, séries, noms des séries). 1re ligne sans aucun nombre après le libellé = noms des séries. Case vide
+    = 0. None si une valeur est illisible ou s'il n'y a aucune valeur."""
+    rows = []
     for line in (text or "").splitlines():
-        line = line.strip()
-        if not line:
+        if not line.strip():
             continue
-        for sep in (";", "\t", ":"):
-            if sep in line:
-                label, _sep, value = line.rpartition(sep)
-                break
+        if ";" in line:
+            cells = line.split(";")
+        elif "\t" in line:
+            cells = line.split("\t")
+        elif ":" in line:
+            label, _sep, value = line.rpartition(":")
+            cells = [label, value]
         else:
-            label, value = "", line
-        try:
-            number = float(value.strip().replace(",", ".").replace(" ", ""))
-        except ValueError:
-            return None
-        labels.append(label.strip())
-        values.append(number)
-    return (labels, values) if values else None
+            cells = ["", line]
+        rows.append([c.strip() for c in cells])
+    names: list[str] = []
+    if rows and len(rows[0]) > 1 and all(_number(c) is None for c in rows[0][1:] if c):
+        names = rows.pop(0)[1:]
+    count = min(MAX_SERIES, max((len(r) - 1 for r in rows), default=0))
+    if count < 1:
+        return None
+    labels, series = [], [[] for _ in range(count)]
+    for row in rows:
+        labels.append(row[0])
+        for k in range(count):
+            cell = row[k + 1] if k + 1 < len(row) else ""
+            number = _number(cell) if cell else 0.0
+            if number is None:
+                return None
+            series[k].append(number)
+    names = (names + [""] * count)[:count]
+    return labels, series, names if any(names) else []
 
 
-def series_text(labels, values) -> str:
-    return "\n".join(f"{label} ; {value:g}" for label, value in zip(labels, values))
+def series_text(labels, series, names=()) -> str:
+    """Inverse de parse_series : ligne d'en-tête seulement s'il y a des noms."""
+    lines = []
+    if any(names):
+        lines.append(" ; ".join(["Libellé", *names]))
+    for n, label in enumerate(labels):
+        lines.append(" ; ".join([label, *(f"{s[n]:g}" if n < len(s) else "0" for s in series)]))
+    return "\n".join(lines)
+
+
+def chart_series(data: dict) -> tuple[list[list[float]], list[str]]:
+    """Toutes les séries d'un graphique (la 1re = « values ») et leurs noms (vides si aucun)."""
+    series = [list(data.get("values") or [])] + [list(s) for s in data.get("more_series") or []]
+    names = [str(n) for n in data.get("series_names") or []]
+    return series, (names + [""] * len(series))[:len(series)] if any(names) else []
+
+
+def set_chart_series(data: dict, labels, series, names):
+    data["labels"] = list(labels)
+    data["values"] = list(series[0])
+    data["more_series"] = [list(s) for s in series[1:]]
+    data["series_names"] = list(names)
 
 
 def normalize_datavis(item: dict) -> dict:
@@ -304,4 +351,11 @@ def normalize_datavis(item: dict) -> dict:
         values = [float(v) for v in item.get("values") or [] if isinstance(v, (int, float)) and not isinstance(v, bool)]
         item["values"] = values
         item["labels"] = (labels + [""] * len(values))[:len(values)]
+        more = item.get("more_series") if isinstance(item.get("more_series"), list) else []
+        item["more_series"] = [
+            ([float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 0.0 for v in serie]
+             + [0.0] * len(values))[:len(values)]
+            for serie in more[:MAX_SERIES - 1] if isinstance(serie, list)]
+        names = item.get("series_names") if isinstance(item.get("series_names"), list) else []
+        item["series_names"] = [str(n) for n in names[:1 + len(item["more_series"])]]
     return item

@@ -74,17 +74,20 @@ def chart_menu(ctl, anchor, charts):
 
 
 def edit_chart_data(ctl, chart):
-    """Données d'un graphique : « Libellé ; valeur », une ligne par point (illisible = rien ne change)."""
-    from .design_model import parse_series, series_text
-    text, ok = QInputDialog.getMultiLineText(ctl.pane, "Données du graphique",
-                                             "Une ligne par point : « Libellé ; valeur »",
-                                             series_text(chart.data.get("labels") or [], chart.data.get("values") or []))
+    """Données d'un graphique : « Libellé ; valeur ; valeur… », une ligne par point, une colonne par série ; 1re ligne
+    facultative = noms des séries (illisible = rien ne change)."""
+    series, names = dm.chart_series(chart.data)
+    text, ok = QInputDialog.getMultiLineText(
+        ctl.pane, "Données du graphique",
+        "Une ligne par point : « Libellé ; valeur ; valeur… » (une colonne par série).\n"
+        "1re ligne facultative, les noms des séries : « Libellé ; Ventes ; Coûts ».",
+        dm.series_text(chart.data.get("labels") or [], series, names))
     if not ok:
         return
-    found = parse_series(text)
+    found = dm.parse_series(text)
     if found is None:
         from PySide6.QtWidgets import QMessageBox
         QMessageBox.warning(ctl.pane, "Données du graphique", "Valeur illisible : rien n'a changé.")
         return
-    labels, values = found
-    doc.change(ctl.scene, [chart], lambda i: i.data.update(labels=labels, values=values), "Données du graphique")
+    labels, series, names = found
+    doc.change(ctl.scene, [chart], lambda i: dm.set_chart_series(i.data, labels, series, names), "Données du graphique")
