@@ -254,6 +254,7 @@ def read(path, progress=None) -> Workbook:
             parsed = R.parse_range(ws.auto_filter.ref)
             if parsed:
                 sheet.autofilter = parsed[1]
+                sheet.filters = {parsed[1][1] + k: v for k, v in _criteria_of(ws.auto_filter).items()}
         sheet.protected = bool(ws.protection.sheet)
         if not _import_tables(ws, sheet) and "tableaux structurés (mise en forme et références de tableau)" in lost:
             lost.remove("tableaux structurés (mise en forme et références de tableau)")
@@ -404,8 +405,32 @@ def _import_tables(ws, sheet) -> int:
         sheet.tables.append({"name": table.displayName, "ref": parsed[1],
                              "header": table.headerRowCount != 0, "totals": bool(table.totalsRowCount),
                              "style": EXCEL_STYLE.get(getattr(info, "name", None), "bleu"),
-                             "banded": bool(getattr(info, "showRowStripes", True))})
+                             "banded": bool(getattr(info, "showRowStripes", True)),
+                             "filter": table.autoFilter is not None,
+                             "filters": {str(k): v for k, v in _criteria_of(table.autoFilter).items()}})
     return bad
+
+
+def _criteria_of(auto_filter) -> dict[int, dict]:
+    """Critères d'un filtre automatique d'Excel : {position de colonne: {"values": [...]}} (listes de valeurs
+    seulement ; les filtres personnalisés / par couleur / top 10 ne sont pas repris)."""
+    out = {}
+    for column in getattr(auto_filter, "filterColumn", None) or []:
+        filters = getattr(column, "filters", None)
+        if filters is None:
+            continue
+        values = [str(v) for v in (filters.filter or [])]
+        if filters.blank:
+            values.append("")
+        if values:
+            out[int(column.colId)] = {"values": sorted(values)}
+    return out
+
+
+def _add_criteria(auto_filter, criteria: dict[int, dict]):
+    for offset, rule in sorted(criteria.items()):
+        values = [v for v in rule.get("values", []) if v != ""]
+        auto_filter.add_filter_column(int(offset), values, blank="" in rule.get("values", []))
 
 
 def _export_tables(ws, sheet, book, warnings):
@@ -427,6 +452,13 @@ def _export_tables(ws, sheet, book, warnings):
             xt.tableColumns = [TableColumn(id=i + 1, name=n) for i, n in enumerate(names)]
             xt.tableStyleInfo = TableStyleInfo(name=STYLES.get(table.get("style"), STYLES["bleu"])[2],
                                                showRowStripes=bool(table.get("banded", True)))
+            if table.get("filter", True) and table.get("header", True):
+                from openpyxl.worksheet.filters import AutoFilter
+                last = r1 - (1 if table.get("totals") else 0)
+                xt.autoFilter = AutoFilter(ref=R.range_name(r0, c0, last, c1))
+                _add_criteria(xt.autoFilter, {int(k): v for k, v in (table.get("filters") or {}).items()})
+            else:
+                xt.autoFilter = None
             ws.add_table(xt)
         except Exception as exc:                           # noqa: BLE001
             warnings.append(f"tableau non exporté ({table['name']}) : {exc}")
@@ -578,6 +610,7 @@ def write(book: Workbook, path) -> list[str]:
             ws.freeze_panes = R.cell_name(sheet.freeze[0], sheet.freeze[1])
         if sheet.autofilter:
             ws.auto_filter.ref = R.range_name(*sheet.autofilter)
+            _add_criteria(ws.auto_filter, {c - sheet.autofilter[1]: rule for c, rule in sheet.filters.items()})
         if sheet.protected:
             ws.protection.sheet = True
         _export_validations(ws, sheet)

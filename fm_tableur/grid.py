@@ -60,7 +60,7 @@ class GridWidget(GridInput, QAbstractScrollArea):
     contextMenuWanted = Signal(object, str)   # (position globale, "cells" / "rows" / "cols")
     sheetSwitch = Signal(int)                 # Ctrl+PgUp / PgDn : -1 / +1
     tableRequested = Signal()                 # Ctrl+T / Ctrl+L : créer un tableau
-    filterMenuWanted = Signal(int, object)    # (colonne, position globale) : bouton du filtre automatique
+    filterMenuWanted = Signal(int, int, object)  # (ligne, colonne, position) : bouton de filtre (feuille, tableau)
     dropdownWanted = Signal(int, int, object)  # (ligne, colonne, position globale) : liste déroulante
 
     def __init__(self, session, parent=None, settings: dict | None = None):
@@ -419,13 +419,25 @@ class GridWidget(GridInput, QAbstractScrollArea):
                 painter.drawLine(QPointF(x, g["hh"]), QPointF(x, height))
         self._paint_headers(painter, top_rows, main_rows, left_cols, main_cols, width, height)
 
-    def filter_button_rect(self, col) -> QRectF | None:
-        af = self.sheet.autofilter
-        if af is None or not af[1] <= col <= af[3]:
-            return None
-        rect = self.cell_rect(af[0], col, merged=False)
+    def filter_button_rect(self, row, col) -> QRectF:
+        rect = self.cell_rect(row, col, merged=False)
         size = min(rect.height() - 2, 16 * self.zoom)
         return QRectF(rect.right() - size - 2, rect.bottom() - size - 1, size, size)
+
+    def filter_buttons(self):
+        """(ligne, colonne, critère actif) des boutons de filtre : filtre de la feuille et de chaque tableau."""
+        from . import filters
+        for scope in filters.scopes(self.sheet):
+            active = scope.criteria(self.sheet)
+            for col in range(scope.c0, min(scope.c1, scope.c0 + 200) + 1):
+                yield scope.header, col, col in active
+
+    def filter_button_at(self, pos):
+        """(ligne, colonne) du bouton de filtre sous la souris, ou None."""
+        for row, col, _on in self.filter_buttons():
+            if self.filter_button_rect(row, col).contains(pos):
+                return row, col
+        return None
 
     def dropdown_rect(self) -> QRectF | None:
         r, c = self.view.current
@@ -440,13 +452,12 @@ class GridWidget(GridInput, QAbstractScrollArea):
         """Boutons du filtre automatique, flèche de liste déroulante, coins des commentaires."""
         sheet = self.sheet
         painter.save()
-        if sheet.autofilter is not None:
-            af = sheet.autofilter
-            for col in range(af[1], min(af[3], af[1] + 200) + 1):
-                rect = self.filter_button_rect(col)
-                if rect is None or rect.right() < 0 or rect.left() > self.viewport().width():
+        if sheet.autofilter is not None or sheet.tables:
+            width_vp, height_vp = self.viewport().width(), self.viewport().height()
+            for row, col, on in self.filter_buttons():
+                rect = self.filter_button_rect(row, col)
+                if rect.right() < 0 or rect.left() > width_vp or rect.bottom() < 0 or rect.top() > height_vp:
                     continue
-                on = col in sheet.filters
                 painter.setPen(QPen(QColor("#8a8a8a"), 1))
                 painter.setBrush(QColor("#ddeedd" if on else "#f7f7f7"))
                 painter.drawRect(rect.adjusted(0.5, 0.5, -0.5, -0.5))

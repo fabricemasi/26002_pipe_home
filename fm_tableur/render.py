@@ -220,7 +220,7 @@ def paint_cells(painter, book, sheet, rows: Span, cols: Span, zoom: float, cache
     # 2. fonds (tableaux structurés d'abord : le fond propre d'une cellule passe devant, comme Excel)
     fills = []
     for table in sheet.tables:
-        _table_fills(table, rows, cols, fills)
+        _table_fills(table, rows, cols, fills, sheet.rows.hidden)
     if has_axis_styles:
         for r, y, h in rows.items:
             for c, x, w in cols.items:
@@ -299,8 +299,10 @@ def paint_cells(painter, book, sheet, rows: Span, cols: Span, zoom: float, cache
     painter.restore()
 
 
-def _table_fills(table, rows: Span, cols: Span, fills: list):
-    """Style à bandes d'un tableau : entête colorée, une ligne sur deux teintée, totaux teintés."""
+def _table_fills(table, rows: Span, cols: Span, fills: list, hidden=()):
+    """Style à bandes d'un tableau : entête colorée, une ligne VISIBLE sur deux teintée (comme Excel après un
+    filtre), totaux teintés."""
+    import bisect
     from .structured import STYLES
     head, band, _excel = STYLES.get(table.get("style"), STYLES["bleu"])
     if head is None:
@@ -311,6 +313,7 @@ def _table_fills(table, rows: Span, cols: Span, fills: list):
         return
     left, right = xs[0][0], xs[-1][0] + xs[-1][1]
     first = r0 + (1 if table.get("header", True) else 0)
+    masked = sorted(h for h in hidden if first <= h <= r1) if hidden else []
     for r, y, h in rows.items:
         if not r0 <= r <= r1:
             continue
@@ -318,7 +321,7 @@ def _table_fills(table, rows: Span, cols: Span, fills: list):
             fills.append((QRectF(left, y, right - left, h), head))
         elif r == r1 and table.get("totals"):
             fills.append((QRectF(left, y, right - left, h), band))
-        elif table.get("banded", True) and (r - first) % 2 == 0:
+        elif table.get("banded", True) and (r - first - bisect.bisect_left(masked, r)) % 2 == 0:
             fills.append((QRectF(left, y, right - left, h), band))
 
 

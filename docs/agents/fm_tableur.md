@@ -25,6 +25,7 @@ Cœur SANS Qt (testable seul) :
 | Opérations (saisie, styles, bordures, copier / coller, recopie, tri, filtre, fusion, feuilles, rechercher, doublons, convertir) | `ops.py` | une fonction = une étape d'annulation |
 | Tableaux structurés : définition, noms de colonnes, traduction des références structurées pour le moteur | `structured.py` | `resolve`, `iter_structured`, `columns`, `at`, `STYLES`, `rename_column_refs` |
 | Opérations sur les tableaux (créer, convertir, renommer, style, totaux, extension auto, colonne calculée) | `tables_ops.py` | `create`, `convert_to_range`, `rename`, `toggle_totals`, `after_input`, `header_renamed` |
+| Filtres automatiques : feuille ET chaque tableau (portées, critères, lignes masquées) | `filters.py` | `scopes`, `scope_at`, `values`, `apply`, `clear`, `set_table_buttons` |
 | Format natif (JSON dans l'élément du `.mro`) | `io_native.py` | `to_dict`, `from_dict` |
 | Excel .xlsx / .xlsm (openpyxl) : import, export, préfixes `_xlfn.`, contrôle de l'archive | `io_xlsx.py` | `read`, `write`, `check_archive`, `unsupported_parts` |
 | Graphiques d'un fichier Excel (XML `xl/charts/`, qu'openpyxl ne lit pas) -> graphiques liés | `io_xlsx_charts.py` | `read_charts` |
@@ -117,9 +118,17 @@ imported=…)` + `files_mode.attach`), `_toggle_board` (bouton « board » de la
   « ligne courante » non retraduites quand seule la taille change, `row_only` ; noms de colonnes gardés par
   cellules d'entête, `columns`) ; renommer une entête ~0,95 s (10 000 formules réécrites puis renvoyées au moteur).
   Piège : une mémoire indexée sur `book.revision` rendait les ANCIENS noms au milieu d'une étape d'annulation (la
-  révision ne change qu'à la fin) : indexée sur les objets des cellules d'entête (immuables). Pas encore :
-  boutons de filtre dans les entêtes d'un tableau, poignée de redimensionnement, styles « Clair » / « Foncé »
-  d'Excel (5 styles « Moyen »).
+  révision ne change qu'à la fin) : indexée sur les objets des cellules d'entête (immuables).
+- **Filtres des tableaux** (2026-10-30, demande de l'utilisateur) : chaque tableau a ses boutons de filtre dans son
+  entête (comme Excel, actifs à la création ; menu « Tableau » > masquer / afficher les boutons), en plus du filtre
+  de la feuille ; même mécanique (`filters.py` : une PORTÉE = entête, lignes de données sans la ligne des totaux,
+  colonnes, critères). Critères d'un tableau rangés par POSITION dans le tableau (`table["filters"]`, clés « 0 »,
+  « 1 »…) : ils suivent le tableau déplacé. Menu du bouton : trier A → Z / Z → A (données du tableau seulement),
+  effacer le filtre de la colonne, effacer tous les filtres, cases des valeurs affichées. Bandes calculées sur les
+  lignes VISIBLES (Excel). Excel : `autoFilter` du tableau et critères « liste de valeurs » (vides compris) lus et
+  écrits, aussi pour le filtre de la feuille ; les filtres personnalisés / par couleur / top 10 d'un fichier ne sont
+  pas repris (le masquage des lignes, lui, l'est). Pas encore : poignée de redimensionnement d'un tableau, styles
+  « Clair » / « Foncé » d'Excel (5 styles « Moyen »).
 - **Ruban** : rangée de commandes dans une zone qui DÉFILE horizontalement (fenêtre étroite) ; jamais écrasée
   (piège : la mise en page rétrécissait les boutons sous leur taille utile, « G » devenait « : »).
 - **Colonne élargie** quand un NOMBRE saisi n'y tient pas et que sa largeur est celle par défaut (Excel) ; une
@@ -173,7 +182,8 @@ englobant (une région `QRegion` pour la sélection) ; texte : `QStaticText` + p
 - `tests/test_tableur_ui.py` (17) : clavier / souris de la grille, pointage, poignée, presse-papiers, barre de
   formule, feuilles, peinture < 50 ms, aller-retour Excel (fichier écrit par openpyxl -> modifié -> exporté ->
   relu -> comparé), éléments non repris signalés, archive malformée / bombe refusées, CSV à la française.
-- `tests/test_tableur_tables.py` (10) : traduction de toute la syntaxe, mots-clés français, échappements,
+- `tests/test_tableur_tables.py` (14) : filtres des tableaux (critères, ET, effacer, boutons, annulation,
+  déplacement du tableau, filtre de la feuille, aller-retour Excel, clic sur le bouton dans la grille) ; traduction de toute la syntaxe, mots-clés français, échappements,
   recalcul quand le tableau change, extension, colonne calculée, totaux, renommer (tableau / entête), insertion
   de lignes, convertir en plage, annulation, format natif, aller-retour Excel, Ctrl+T.
 - `tests/test_tableur_board.py` (11) : sélecteur, griser / masquer, Ctrl pour déplacer, édition sur place,
@@ -204,5 +214,6 @@ englobant (une région `QRegion` pour la sélection) ; texte : `QStaticText` + p
 - 2026-10-30 — FAIT : tableaux structurés (création, références structurées traduites, extension, colonne
   calculée, totaux, renommer, convertir, import / export Excel), `tests/test_tableur_tables.py`.
 - Fonctions obligataires : écartées pour l'instant par l'utilisateur (2026-10-30).
-- Prochaine action : filtres dans les entêtes des tableaux ; police par défaut dans les réglages ; vérifier
+- 2026-10-30 — FAIT : filtres des tableaux (`filters.py`), bandes sur lignes visibles.
+- Prochaine action : poignée de redimensionnement des tableaux ; police par défaut dans les réglages ; vérifier
   l'ouverture des fichiers exportés dans Microsoft Excel (non disponible ici).

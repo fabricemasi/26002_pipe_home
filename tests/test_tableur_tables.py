@@ -225,3 +225,93 @@ class CtrlTTest(unittest.TestCase):
         finally:
             w.detach()
             w.deleteLater()
+
+
+class TableFiltersTest(unittest.TestCase):
+    def setUp(self):
+        from fm_tableur import filters
+        self.F = filters
+        self.s, self.sheet = make()
+        put(self.s, self.sheet, 4, 0, "Repas")
+        put(self.s, self.sheet, 4, 1, "5")
+        put(self.s, self.sheet, 4, 2, "1")
+        self.table = tables_ops.create(self.s.book, self.s.stack, self.sheet, (0, 0, 4, 2))
+        self.scope = self.F.scope_at(self.sheet, 0, 0)
+
+    def test_buttons_values_criteria_and_clear(self):
+        s, sh, F = self.s, self.sheet, self.F
+        self.assertTrue(self.table["filter"])
+        self.assertEqual((self.scope.kind, self.scope.first, self.scope.last), ("table", 1, 4))
+        self.assertIsNone(F.scope_at(sh, 1, 0))                       # seulement la ligne d'entête
+        self.assertEqual(F.values(s.book, sh, self.scope, 0), ["Hôtel", "Repas", "Transport"])
+        F.apply(s.book, s.stack, sh, self.scope, 0, {"Repas"})
+        self.assertEqual(sh.rows.hidden, {1, 3})
+        F.apply(s.book, s.stack, sh, F.scope_at(sh, 0, 1), 1, {"20"})   # deux critères : ET
+        self.assertEqual(sh.rows.hidden, {1, 3, 4})
+        self.assertEqual(sh.tables[0]["filters"], {"0": {"values": ["Repas"]}, "1": {"values": ["20"]}})
+        s.stack.undo()
+        self.assertEqual(sh.rows.hidden, {1, 3})
+        F.clear(s.book, s.stack, sh, F.scope_at(sh, 0, 0))
+        self.assertEqual((sh.rows.hidden, sh.tables[0]["filters"]), (set(), {}))
+        F.apply(s.book, s.stack, sh, F.scope_at(sh, 0, 0), 0, {"Hôtel"})
+        F.set_table_buttons(s.book, s.stack, sh, sh.tables[0], False)  # boutons retirés : tout réaffiché
+        self.assertEqual((sh.rows.hidden, F.scope_at(sh, 0, 0)), (set(), None))
+
+    def test_criteria_follow_the_table_and_sheet_filter_still_works(self):
+        s, sh, F = self.s, self.sheet, self.F
+        F.apply(s.book, s.stack, sh, self.scope, 2, {"4"})
+        ops.insert_lines(s.book, s.stack, sh, "col", 0, 2)              # tableau déplacé de deux colonnes
+        scope = F.scope_at(sh, 0, 2)
+        self.assertEqual(scope.criteria(sh), {4: {"values": ["4"]}})
+        self.assertEqual(F.values(s.book, sh, scope, 4), ["1", "2", "3", "4"])
+        other, osheet = make()
+        ops.set_autofilter(other.book, other.stack, osheet, (0, 0, 3, 2))
+        self.assertEqual(ops.filter_values(other.book, osheet, 0), ["Hôtel", "Repas", "Transport"])
+        ops.apply_filter(other.book, other.stack, osheet, 0, {"Repas"})
+        self.assertEqual(osheet.rows.hidden, {1, 3})
+
+    def test_excel_round_trip_of_filters(self):
+        import openpyxl
+        from fm_tableur import io_xlsx
+        s, sh, F = self.s, self.sheet, self.F
+        F.apply(s.book, s.stack, sh, self.scope, 0, {"Repas", ""})
+        tmp = tempfile.mkdtemp()
+        try:
+            out = os.path.join(tmp, "filtres.xlsx")
+            io_xlsx.write(s.book, out)
+            raw = openpyxl.load_workbook(out).active.tables["Tableau1"]
+            self.assertEqual(raw.autoFilter.ref, "A1:C5")
+            again = io_xlsx.read(out)
+            table = again.sheets[0].tables[0]
+            self.assertTrue(table["filter"])
+            self.assertEqual(table["filters"], {"0": {"values": ["", "Repas"]}})
+            self.assertEqual(again.sheets[0].rows.hidden, {1, 3})
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_grid_button_opens_the_table_menu(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtCore import QPointF, Qt
+        from PySide6.QtGui import QMouseEvent
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance() or QApplication([])
+        from fm_tableur.widget import SpreadsheetWidget
+        w = SpreadsheetWidget(self.s)
+        w.resize(900, 500)
+        w.show()
+        app.processEvents()
+        got = []
+        w.grid.filterMenuWanted.disconnect()
+        w.grid.filterMenuWanted.connect(lambda r, c, _p: got.append((r, c)))
+        try:
+            self.assertEqual([(r, c) for r, c, _on in w.grid.filter_buttons()], [(0, 0), (0, 1), (0, 2)])
+            center = w.grid.filter_button_rect(0, 1).center()
+            vp = w.grid.viewport()
+            QApplication.sendEvent(vp, QMouseEvent(QMouseEvent.MouseButtonPress, center, vp.mapToGlobal(center),
+                                                   Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+            self.assertEqual(got, [(0, 1)])
+            self.assertNotEqual(w.grid.view.current, (0, 1))           # le clic n'a pas choisi la cellule
+            w._filter_menu(0, 0, vp.mapToGlobal(QPointF(10, 10).toPoint()))   # menu construit sans erreur
+        finally:
+            w.detach()
+            w.deleteLater()

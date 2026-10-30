@@ -40,7 +40,7 @@ def create(book, stack, sheet, rect, header: bool | None = None, name: str | Non
     if header is None:
         header = _looks_like_header(book, sheet, rect)
     table = {"name": name or T.unique_name(book), "ref": (r0, c0, r1, c1), "header": True, "totals": False,
-             "style": style, "banded": True}
+             "style": style, "banded": True, "filter": True, "filters": {}}
     stack.begin("Créer un tableau")
     if not header:                                         # Excel ajoute une ligne d'entêtes au-dessus
         if r0 == 0 or any((r0 - 1, c) in sheet.cells for c in range(c0, c1 + 1)):

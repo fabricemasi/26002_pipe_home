@@ -703,19 +703,27 @@ class SpreadsheetWidget(QWidget):
             area, _h = self._sort_area()
             ops.set_autofilter(self.book, self.stack, sheet, area)
 
-    def _filter_menu(self, col, pos):
+    def _filter_menu(self, row, col, pos):
+        """Bouton de filtre d'une entête (filtre de la feuille ou d'un tableau) : trier, cases des valeurs."""
         from settings_menu import menu_row
         from PySide6.QtWidgets import QCheckBox, QScrollArea
+        from . import filters
         sheet = self.grid.sheet
-        values = ops.filter_values(self.book, sheet, col)
-        current = sheet.filters.get(col, {}).get("values")
+        scope = filters.scope_at(sheet, row, col)
+        if scope is None:
+            return
+        values = filters.values(self.book, sheet, scope, col)
+        current = scope.criteria(sheet).get(col, {}).get("values")
+        data = (scope.first, scope.c0, scope.last, scope.c1)
         m = menu(self, "filtre")
         m.addAction("Trier A → Z").triggered.connect(
-            lambda: ops.sort_range(self.book, self.stack, sheet, sheet.autofilter, [(col, True)], header=True))
+            lambda: ops.sort_range(self.book, self.stack, sheet, data, [(col, True)], header=False))
         m.addAction("Trier Z → A").triggered.connect(
-            lambda: ops.sort_range(self.book, self.stack, sheet, sheet.autofilter, [(col, False)], header=True))
+            lambda: ops.sort_range(self.book, self.stack, sheet, data, [(col, False)], header=False))
         m.addAction("Effacer le filtre de cette colonne").triggered.connect(
-            lambda: ops.apply_filter(self.book, self.stack, sheet, col, None))
+            lambda: filters.apply(self.book, self.stack, sheet, scope, col, None))
+        m.addAction("Effacer tous les filtres").triggered.connect(
+            lambda: filters.clear(self.book, self.stack, sheet, scope))
         box = QWidget()
         lay = QVBoxLayout(box)
         lay.setContentsMargins(4, 2, 4, 2)
@@ -731,8 +739,8 @@ class SpreadsheetWidget(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setFixedSize(220, min(260, 24 * len(checks) + 8))
         menu_row(m, "", scroll)
-        m.addAction("Appliquer").triggered.connect(lambda: ops.apply_filter(
-            self.book, self.stack, sheet, col, {c.value for c in checks if c.isChecked()}
+        m.addAction("Appliquer").triggered.connect(lambda: filters.apply(
+            self.book, self.stack, sheet, scope, col, {c.value for c in checks if c.isChecked()}
             if not all(c.isChecked() for c in checks) else None))
         m.popup(pos)
 
@@ -845,6 +853,10 @@ class SpreadsheetWidget(QWidget):
         sub.addAction("Sans lignes à bandes" if table.get("banded", True) else "Lignes à bandes").triggered\
             .connect(lambda: tables_ops.set_props(self.book, self.stack, self.grid.sheet, table,
                                                   banded=not table.get("banded", True)))
+        from . import filters
+        sub.addAction("Masquer les boutons de filtre" if table.get("filter", True) else "Boutons de filtre")\
+            .triggered.connect(lambda: filters.set_table_buttons(self.book, self.stack, self.grid.sheet, table,
+                                                                 not table.get("filter", True)))
         sub.addAction("Sélectionner le tableau").triggered.connect(
             lambda: self.grid.select_range(table["ref"], current=self.grid.view.current))
         sub.addAction("Convertir en plage").triggered.connect(

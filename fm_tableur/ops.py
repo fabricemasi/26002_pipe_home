@@ -611,33 +611,18 @@ def set_autofilter(book, stack, sheet, rect):
 
 
 def filter_values(book, sheet, col) -> list[str]:
-    """Valeurs affichées distinctes d'une colonne du filtre (ordre d'Excel)."""
-    if sheet.autofilter is None:
-        return []
-    r0, _c0, r1, _c1 = sheet.autofilter
-    seen = {}
-    for r in range(r0 + 1, r1 + 1):
-        text, _color, value = display_text(book, sheet, r, col)
-        seen.setdefault(text, value)
-    return [t for t, _v in sorted(seen.items(), key=lambda tv: _sort_key(tv[1], True))]
+    """Valeurs affichées distinctes d'une colonne du filtre de la FEUILLE (voir `filters.py` pour les tableaux)."""
+    from . import filters
+    scope = next((x for x in filters.scopes(sheet) if x.kind == "sheet"), None)
+    return filters.values(book, sheet, scope, col) if scope is not None else []
 
 
 def apply_filter(book, stack, sheet, col, allowed: set[str] | None):
-    """Critère d'une colonne : textes affichés gardés (None = tout). Lignes non retenues masquées."""
-    def mutate(s):
-        if allowed is None:
-            s.filters.pop(col, None)
-        else:
-            s.filters[col] = {"values": sorted(allowed)}
-        r0, _c0, r1, _c1 = s.autofilter
-        for r in range(r0 + 1, r1 + 1):
-            keep = all(display_text(book, s, r, fc)[0] in set(rule["values"]) for fc, rule in s.filters.items())
-            if keep:
-                s.rows.hidden.discard(r)
-            else:
-                s.rows.hidden.add(r)
-        s.rows.changed()
-    stack.push(C.SheetState(sheet, mutate, "Filtrer", kind="structure"))
+    """Critère d'une colonne du filtre de la FEUILLE : textes affichés gardés (None = tout)."""
+    from . import filters
+    scope = next((x for x in filters.scopes(sheet) if x.kind == "sheet"), None)
+    if scope is not None:
+        filters.apply(book, stack, sheet, scope, col, allowed)
 
 
 # ---------------------------------------------------------------- fusion

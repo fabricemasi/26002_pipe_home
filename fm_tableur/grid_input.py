@@ -214,9 +214,9 @@ class GridInput:
                 self.dropdownWanted.emit(*self.view.current, event.globalPosition().toPoint())
                 event.accept()
                 return
-            fb = self.filter_button_rect(info[1])
-            if fb is not None and fb.contains(pos):
-                self.filterMenuWanted.emit(info[1], event.globalPosition().toPoint())
+            button = self.filter_button_at(pos)
+            if button is not None:
+                self.filterMenuWanted.emit(button[0], button[1], event.globalPosition().toPoint())
                 event.accept()
                 return
         if self.is_editing() and zone == "cell" and self._can_point():
