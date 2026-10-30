@@ -313,7 +313,7 @@ class BoardScene(QGraphicsScene):
         if not ids:
             return
         for item_id in list(ids):                            # page Design : ses elements avec elle
-            hook = getattr(self._items[item_id], "dependent_ids", None)
+            hook = getattr(self._items.get(item_id), "dependent_ids", None)   # absent (deja retire) : rien
             if hook is not None:
                 ids |= hook(self)
         for item in self._items.values():                    # fleches accrochees a un element supprime

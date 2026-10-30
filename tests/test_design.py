@@ -724,5 +724,74 @@ class MoreTest(DesignTestCase):
         del a
 
 
+class MenusTest(DesignTestCase):
+    """Chaque menu s'ouvre et chaque action (sauf celles qui ouvrent une fenêtre, « … ») s'exécute sans erreur."""
+
+    def run_menu(self, opener):
+        from PySide6.QtWidgets import QMenu
+        errors = []
+        old_hook = sys.excepthook
+        sys.excepthook = lambda *exc: errors.append(exc)
+        try:
+            opener()
+            settle(0.02)
+            menu = QApplication.activePopupWidget()
+            self.assertIsInstance(menu, QMenu)
+            actions = []
+
+            def collect(m):
+                for action in m.actions():
+                    if action.menu() is not None:
+                        collect(action.menu())
+                    elif action.text() and not action.text().endswith("…") and action.isEnabled():
+                        actions.append(action)
+            collect(menu)
+            menu.close()
+            for action in actions:
+                action.trigger()
+                settle(0.01)
+        finally:
+            sys.excepthook = old_hook
+        self.assertEqual(errors, [])
+        return len(actions)
+
+    def test_all_menus(self):
+        from fm_design import menus
+        page = self.page()
+        doc.apply_template(self.scene, templates.by_key("slide"), page=page)
+        source = self.tmp / "m.png"
+        QImage(30, 20, QImage.Format_RGB32).save(str(source))
+        self.ctl.add_image_files([source])
+        image = self.ctl.selection()[0]
+        shapes = [i for i in doc.elements(self.scene, page) if isinstance(i, DesignShapeItem)]
+        texts = [i for i in doc.elements(self.scene, page) if isinstance(i, DesignTextItem)]
+        line = self.ctl.add_shape("line")
+        anchor = self.ctl.ui.context
+        everything = doc.elements(self.scene, page)
+        count = 0
+        for opener in (
+                lambda: menus.color_menu(self.ctl, anchor, texts, "color", "Couleur"),
+                lambda: menus.fill_menu(self.ctl, anchor, shapes),
+                lambda: menus.stroke_menu(self.ctl, anchor, shapes + [line, image]),
+                lambda: menus.shadow_menu(self.ctl, anchor, everything),
+                lambda: menus.position_menu(self.ctl, anchor, everything),
+                lambda: menus.shape_kind_menu(self.ctl, anchor, shapes),
+                lambda: menus.mask_menu(self.ctl, anchor, [image]),
+                lambda: menus.text_effects_menu(self.ctl, anchor, texts),
+                lambda: menus.size_menu(self.ctl, anchor, texts),
+                lambda: menus.align_menu(self.ctl, anchor, texts),
+                lambda: menus.adjust_menu(self.ctl, anchor, [image]),
+                lambda: menus.flip_menu(self.ctl, anchor, everything),
+                lambda: menus.resize_menu(self.ctl, anchor, page),
+                lambda: menus.export_menu(self.ctl, anchor)):
+            count += self.run_menu(opener)
+        self.ctl._select([image])
+        count += self.run_menu(lambda: menus.open_context_menu(self.ctl, anchor.mapToGlobal(anchor.rect().center())))
+        self.ctl._select([])
+        count += self.run_menu(lambda: self.ctl.ui.page_menu(page.item_id, anchor.mapToGlobal(anchor.rect().center())))
+        self.assertGreater(count, 60)
+        self.scene.undo.undo()                                # tout reste annulable
+
+
 if __name__ == "__main__":
     unittest.main()
