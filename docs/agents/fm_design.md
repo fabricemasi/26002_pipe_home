@@ -26,7 +26,8 @@ Troisième module du board (après Miro et CAD), créé le 2026-10-29 à la dema
 | Menus du texte (effets, police, taille, alignement, listes) | `menus_text.py` | — |
 | Menus des tableaux / graphiques, données d'un graphique | `menus_data.py` | `table_menu`, `chart_menu`, `edit_chart_data` |
 | Menu Exporter | `menus_export.py` | `export_menu`, `run_export` |
-| Présentation plein écran | `present.py` | `PresentationWindow` |
+| Présentation plein écran, transitions et animations (images préparées posées avec opacité / décalage / échelle, ~3 ms par image en 1920 × 1080) | `present.py` | `PresentationWindow`, `durations`, `_paint_page` ; couches : `render.render_layers` |
+| Menu « Animer » d'une page (barre contextuelle sans sélection) | `menus_present.py` | `animate_menu` |
 | Règles graduées (haut, gauche) | `rulers.py` | `Rulers`, `Ruler`, `tick_step` |
 | Panneau latéral (modèles et formats, éléments, texte, images, position et calques) | `panels.py` | `build_<onglet>`, `LayerList`, `PositionPanel` |
 | Modèles de conception (originaux) | `templates.py` | `TEMPLATES` |
@@ -159,7 +160,8 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 - Retouches d'image (luminosité, contraste, saturation) : seulement avec numpy (présent dans l'environnement) ;
   sans numpy, noir et blanc et flou seulement.
 - Un élément Design ne peut pas être déplacé en mode Miro (pas de `ItemIsMovable`) : on passe en mode Design.
-- Page sans rotation ; pas d'animation ni de vidéo ; secteurs et anneau n'utilisent que la 1re série ; kit de marque
+- Page sans rotation ; animations seulement en présentation, par page entière (pas élément par élément, pas dans
+  l'export) ; pas de vidéo ; secteurs et anneau n'utilisent que la 1re série ; kit de marque
   partagé entre boards limité aux couleurs et polices (pas de logos ni de styles de texte complets).
 
 ## PLAN DE TRAVAIL (persistant, mis à jour à chaque étape)
@@ -193,4 +195,5 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 | Styles du document : couleurs utilisées (menus de couleur), styles de texte utilisés (onglet Texte : appliquer / nouveau texte) | Terminée | Texte, Styles |
 | Kit de marque partagé entre TOUS les boards (couleurs et polices favorites : menus de couleur « Marque » / « Ajouter à la marque », menu Police) : réglage d'état `board_design_brand` (`BOARD_DEFAULTS`, `_LIVE_STATE_KEYS` de `settings_store`, écrit par `save_live_state` comme `board_pen_presets`) | Terminée | Réglages |
 | Espacement égal entre deux voisins pendant Ctrl + glisser (segments tracés), renommer un calque, export d'une plage de pages (« 1-3, 5 ») | Terminée | Gestes, Export |
-| Icônes réglables : lignes `design*` ajoutées à `ICON_ROWS` (fenêtre de réglages : vérifier l'affichage) | Partielle | — |
+| Icônes réglables : lignes `design*` de `ICON_ROWS` (rail, barre des pages, dont « Présenter ») ; test : chaque bouton a sa ligne et lit `ui_board_<genre>` (fenêtre de réglages entière non regardée à l'œil) | Terminée | — |
+| Animations de présentation (« Animer ») : transition de page (fondu, glissement, zoom) et arrivée des éléments (fondu, montée, apparition, entrée latérale), par page ou toutes ; champs de page `transition`, `animation` | Terminée | Présentation |

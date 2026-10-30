@@ -1,14 +1,28 @@
 """Mode PRÉSENTATION (comme « Présenter » de Canva, local) : les pages en plein écran, une à la fois.
 Flèches / Espace / PageDown / clic = page suivante, flèche gauche / PageUp / clic droit = précédente, Origine / Fin,
 Échap = quitter. Chaque page est rendue UNE fois à la taille de l'écran (`render.render_image`), la suivante est
-préparée pendant qu'on regarde la courante : le passage d'une page à l'autre est immédiat."""
+préparée pendant qu'on regarde la courante : le passage d'une page à l'autre est immédiat.
+
+Animations (« Animer » de Canva, réglées par page : `transition`, `animation`) : la page arrive (fondu, glissement,
+zoom) puis ses éléments (fondu, montée, apparition, entrée latérale). Rien n'est repeint pendant l'animation : les
+images préparées (page entière ; pour une page animée, fond seul + éléments seuls, `render.render_layers`) sont
+seulement posées avec une opacité, un décalage ou une échelle. Une touche pendant l'animation passe
+à la page suivante sans attendre."""
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, Qt, QTimer
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, QVariantAnimation
 from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import QWidget
 
 from . import render
+
+TRANSITION_MS = 450
+ANIMATION_MS = 600
+
+
+def _ease(t: float) -> float:
+    t = max(0.0, min(1.0, t))
+    return 1.0 - (1.0 - t) ** 3
 
 
 class PresentationWindow(QWidget):
@@ -21,60 +35,158 @@ class PresentationWindow(QWidget):
         self.pages = list(pages)
         self.index = max(0, min(len(self.pages) - 1, start))
         self._images: dict[int, QPixmap] = {}
+        self._layers: dict[int, tuple[QPixmap, QPixmap]] = {}
         self._size = None
         self._prepare = QTimer(self)
         self._prepare.setSingleShot(True)
         self._prepare.setInterval(30)
         self._prepare.timeout.connect(self._prepare_next)
+        self._previous: int | None = None          # page qui s'en va pendant la transition
+        self._direction = 1
+        self.anim = QVariantAnimation(self)
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(1.0)
+        self.anim.valueChanged.connect(lambda _v: self.update())
+        self.anim.finished.connect(self.update)
 
     def start(self):
         self.showFullScreen()
         self.activateWindow()
         self.setFocus()
+        self._play(None)
+
+    # ---------------------------------------------------------------- images préparées
+    def _check_size(self):
+        size = (self.width(), self.height(), self.devicePixelRatioF())
+        if size != self._size:
+            self._images.clear()
+            self._layers.clear()
+            self._size = size
+
+    def _scale(self, page) -> float:
+        w, h = page.size()
+        return min(self.width() / w, self.height() / h) * (self.devicePixelRatioF() or 1.0)
+
+    def _pixmap(self, image) -> QPixmap:
+        pixmap = QPixmap.fromImage(image)
+        pixmap.setDevicePixelRatio(self.devicePixelRatioF() or 1.0)
+        return pixmap
 
     def _image(self, index: int) -> QPixmap | None:
         if not (0 <= index < len(self.pages)):
             return None
-        size = (self.width(), self.height(), self.devicePixelRatioF())
-        if size != self._size:
-            self._images.clear()
-            self._size = size
+        self._check_size()
         if index not in self._images:
             page = self.pages[index]
-            w, h = page.size()
-            ratio = self.devicePixelRatioF() or 1.0
-            scale = min(self.width() / w, self.height() / h) * ratio
-            pixmap = QPixmap.fromImage(render.render_image(page, scale))
-            pixmap.setDevicePixelRatio(ratio)
-            self._images[index] = pixmap
+            self._images[index] = self._pixmap(render.render_image(page, self._scale(page)))
         return self._images[index]
 
+    def _layer_pair(self, index: int) -> tuple[QPixmap, QPixmap] | None:
+        """Fond seul et éléments seuls d'une page dont les éléments s'animent (sinon None)."""
+        if not (0 <= index < len(self.pages)) or self.pages[index].data.get("animation", "none") == "none":
+            return None
+        self._check_size()
+        if index not in self._layers:
+            page = self.pages[index]
+            back, front = render.render_layers(page, self._scale(page))
+            self._layers[index] = (self._pixmap(back), self._pixmap(front))
+        return self._layers[index]
+
     def _prepare_next(self):
+        if self.anim.state() == QVariantAnimation.Running:
+            self._prepare.start()                      # pas de rendu pendant une animation
+            return
         for index in (self.index + 1, self.index - 1):
             try:
                 self._image(index)
+                self._layer_pair(index)
             except RuntimeError:                       # page retirée du board entre-temps
                 pass
+
+    # ---------------------------------------------------------------- navigation
+    def durations(self, index: int) -> tuple[int, int, int]:
+        """(durée de la transition, début de l'animation des éléments, durée totale) en ms pour arriver sur `index`."""
+        data = self.pages[index].data
+        transition = TRANSITION_MS if data.get("transition", "none") != "none" else 0
+        if data.get("animation", "none") == "none":
+            return transition, transition, transition
+        delay = transition // 2
+        return transition, delay, delay + ANIMATION_MS
+
+    def _play(self, previous: int | None):
+        self.anim.stop()
+        self._previous = previous
+        total = self.durations(self.index)[2] if self.pages else 0
+        if total > 0:
+            self.anim.setDuration(total)
+            self.anim.start()
+        self.update()
 
     def go(self, index: int):
         index = max(0, min(len(self.pages) - 1, index))
         if index != self.index:
-            self.index = index
-            self.update()
+            previous, self.index = self.index, index
+            self._direction = 1 if index > previous else -1
+            self._play(previous)
         self._prepare.start()
+
+    # ---------------------------------------------------------------- peinture
+    def _draw(self, painter, pixmap, opacity=1.0, dx=0.0, dy=0.0, scale=1.0):
+        if pixmap is None or opacity <= 0.0:
+            return
+        ratio = pixmap.devicePixelRatio() or 1.0
+        target = QRectF(0, 0, pixmap.width() / ratio * scale, pixmap.height() / ratio * scale)
+        target.moveCenter(QRectF(self.rect()).center() + QPointF(dx, dy))
+        painter.setOpacity(opacity)
+        painter.drawPixmap(target, pixmap, QRectF(pixmap.rect()))
+        painter.setOpacity(1.0)
+
+    def _paint_page(self, painter, ms: float | None):
+        """Page courante ; `ms` = temps écoulé de son arrivée (None = arrivée terminée)."""
+        page = self.pages[self.index]
+        transition, delay, _total = self.durations(self.index)
+        kind = page.data.get("transition", "none")
+        t = 1.0 if ms is None or transition == 0 else _ease(ms / transition)
+        if t < 1.0 and self._previous is not None:
+            old = self._image(self._previous)
+            if kind == "slide":
+                self._draw(painter, old, dx=-self._direction * self.width() * t)
+            else:
+                self._draw(painter, old)
+        opacity, dx, scale = 1.0, 0.0, 1.0
+        if t < 1.0:
+            if kind == "slide":
+                dx = self._direction * self.width() * (1.0 - t)
+            else:
+                opacity = t
+                scale = 0.85 + 0.15 * t if kind == "zoom" else 1.0
+        animation = page.data.get("animation", "none")
+        a = 1.0 if ms is None or animation == "none" else _ease((ms - delay) / ANIMATION_MS)
+        layers = self._layer_pair(self.index) if a < 1.0 else None
+        if layers is None:
+            self._draw(painter, self._image(self.index), opacity, dx, 0.0, scale)
+            return
+        back, front = layers
+        self._draw(painter, back, opacity, dx, 0.0, scale)
+        e_opacity, e_dx, e_dy, e_scale = opacity * a, dx, 0.0, scale
+        if animation == "rise":
+            e_dy = (1.0 - a) * self.height() * 0.06
+        elif animation == "pop":
+            e_scale = scale * (0.8 + 0.2 * a)
+        elif animation == "slide":
+            e_dx = dx - (1.0 - a) * self.width() * 0.08
+        self._draw(painter, front, e_opacity, e_dx, e_dy, e_scale)
 
     def paintEvent(self, _event):
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor("#000000"))
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        running = self.anim.state() == QVariantAnimation.Running
         try:
-            pixmap = self._image(self.index)
-        except RuntimeError:
-            pixmap = None
-        if pixmap is not None:
-            ratio = pixmap.devicePixelRatio() or 1.0
-            target = QRectF(0, 0, pixmap.width() / ratio, pixmap.height() / ratio)
-            target.moveCenter(QRectF(self.rect()).center())
-            painter.drawPixmap(target, pixmap, QRectF(pixmap.rect()))
+            if self.pages:
+                self._paint_page(painter, float(self.anim.currentTime()) if running else None)
+        except RuntimeError:                           # page retirée du board entre-temps
+            pass
         painter.setPen(QColor(255, 255, 255, 90))
         font = QFont()
         font.setPointSize(9)
@@ -82,7 +194,8 @@ class PresentationWindow(QWidget):
         painter.drawText(QRectF(self.rect()).adjusted(0, 0, -14, -8), Qt.AlignRight | Qt.AlignBottom,
                          f"{self.index + 1} / {len(self.pages)}")
         painter.end()
-        self._prepare.start()
+        if not running:
+            self._prepare.start()
 
     def keyPressEvent(self, event):
         key = event.key()

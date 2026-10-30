@@ -19,7 +19,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PySide6.QtCore import QEvent, QPointF, Qt
-from PySide6.QtGui import QColor, QImage, QKeyEvent, QMouseEvent
+from PySide6.QtGui import QColor, QImage, QKeyEvent, QMouseEvent, QPainter
 from PySide6.QtWidgets import QApplication, QWidget
 
 APP = QApplication.instance() or QApplication([])
@@ -454,6 +454,31 @@ class ExportTest(DesignTestCase):
 class InterfaceTest(DesignTestCase):
     """Panneaux, barre contextuelle, miniatures, calques : construits et branchés (hors écran)."""
 
+    def test_rail_icons_are_settable(self):
+        """Chaque bouton du rail et de la barre des pages a sa ligne « Réglages > Module MRO > Icônes » et lit l'icône
+        choisie (`ui_board_<genre>`) ; sans icône choisie, le glyphe peint."""
+        from fm_board.model import ICON_ROWS
+        from fm_board.settings import _board_icon_rows
+        from PySide6.QtGui import QPixmap
+        ui = self.ctl.ui
+        kinds = {b.kind for b in ui.rail.findChildren(board_ui._GlyphButton)}
+        kinds |= {b.kind for b in ui.pagebar.findChildren(board_ui._GlyphButton)}
+        self.assertTrue({"design_templates", "design_export", "design_present", "design_add_page"} <= kinds)
+        rows = {kind for kind, _label in ICON_ROWS}
+        self.assertEqual(kinds - rows, set())
+        keys = {spec.params["ui_key"] for spec in _board_icon_rows()}
+        self.assertIn("ui_board_design_present", keys)
+        asked = []
+
+        def provider(kind, size):
+            asked.append(kind)
+            pixmap = QPixmap(size, size)
+            pixmap.fill(QColor("#00ff00"))
+            return pixmap
+        with mock.patch.object(board_ui, "ICON_PROVIDER", provider):
+            ui.rail.repaint()
+        self.assertIn("design_present", asked)
+
     def test_every_tab_and_context_bar_builds(self):
         page = self.page()
         for name, _g, _t in __import__("fm_design.ui", fromlist=["TABS"]).TABS:
@@ -611,6 +636,98 @@ class StyleAndPresentTest(DesignTestCase):
             window.close()
             settle()
 
+
+class AnimationTest(DesignTestCase):
+    """Présentation animée : couches de rendu, transition de page, arrivée des éléments, menu « Animer »."""
+
+    def two_pages(self):
+        first = self.page(400, 300)
+        doc.change(self.scene, [first], lambda i: i.data.update(background="#0000ff"), "Fond")
+        self.ctl.add_shape("rect", {"x": 0.0, "y": 0.0, "w": 100.0, "h": 300.0, "fill": "#ff0000"})
+        second = doc.add_page(self.scene, 400, 300, after=first)
+        doc.change(self.scene, [second], lambda i: i.data.update(background="#00ff00", transition="fade",
+                                                                 animation="rise"), "Animer")
+        self.ctl.set_current_page(second)
+        self.ctl.add_shape("rect", {"x": 300.0, "y": 0.0, "w": 100.0, "h": 300.0, "fill": "#ff0000"})
+        return first, second
+
+    def test_layers(self):
+        first, _second = self.two_pages()
+        back, front = render.render_layers(first, 1.0)
+        self.assertEqual(back.pixelColor(50, 150).name(), "#0000ff")       # fond seul
+        self.assertEqual(front.pixelColor(50, 150).name(), "#ff0000")      # éléments seuls
+        self.assertEqual(front.pixelColor(300, 150).alpha(), 0)
+
+    def test_animated_presentation(self):
+        first, second = self.two_pages()
+        window = self.ctl.present(start_page=first)
+        try:
+            settle()
+            self.assertNotEqual(window.anim.state(), window.anim.State.Running)   # 1re page : rien à animer
+            QApplication.sendEvent(window, QKeyEvent(QEvent.KeyPress, Qt.Key_Right, Qt.NoModifier))
+            self.assertEqual(window.index, 1)
+            self.assertEqual(window.anim.state(), window.anim.State.Running)
+            transition, delay, total = window.durations(1)
+            self.assertEqual(window.anim.duration(), total)
+            W, H = window.width(), window.height()
+            scale = min(W / 400, H / 300)
+            left, top = (W - 400 * scale) / 2, (H - 300 * scale) / 2
+
+            def frame(ms):
+                image = QImage(W, H, QImage.Format_ARGB32)
+                image.fill(QColor("#000000"))
+                painter = QPainter(image)
+                window._paint_page(painter, ms)
+                painter.end()
+                return image
+
+            def at(image, x, y):
+                return image.pixelColor(int(left + x * scale), int(top + y * scale))
+            middle = frame(transition * 0.3)                       # fondu : les deux fonds mêlés, éléments cachés
+            mixed = at(middle, 200, 150)
+            self.assertGreater(mixed.blue(), 20)
+            self.assertGreater(mixed.green(), 20)
+            self.assertLess(at(middle, 350, 150).red(), 30)        # forme de la page 2 pas encore arrivée
+            end = frame(None)
+            self.assertEqual(at(end, 350, 150).name(), "#ff0000")
+            self.assertEqual(at(end, 200, 150).name(), "#00ff00")
+            for kind in ("slide", "zoom"):
+                for animation in ("fade", "pop", "slide"):
+                    second.data.update(transition=kind, animation=animation)
+                    frame(delay + 100.0)                           # chaque variante peinte sans erreur
+            window.anim.setCurrentTime(total)
+            settle()
+        finally:
+            window.close()
+            settle()
+
+    def test_animate_menu(self):
+        from fm_design.menus_present import animate_menu
+        first, second = self.two_pages()
+        self.ctl.set_current_page(first)
+        animate_menu(self.ctl, self.ctl.ui.context, first)
+        settle(0.02)
+        menu = QApplication.activePopupWidget()
+        actions = {}
+        for action in menu.actions():
+            for sub in (action.menu().actions() if action.menu() else [action]):
+                actions.setdefault(sub.text(), sub)
+        self.assertTrue(actions["Fondu"].isChecked() is False)
+        actions["Glissement"].trigger()
+        menu.close()
+        settle(0.02)
+        self.assertEqual(first.data["transition"], "slide")
+        animate_menu(self.ctl, self.ctl.ui.context, first)
+        settle(0.02)
+        menu = QApplication.activePopupWidget()
+        [a for a in menu.actions() if a.text() == "Appliquer à toutes les pages"][0].trigger()
+        menu.close()
+        settle(0.02)
+        self.assertEqual((second.data["transition"], second.data["animation"]), ("slide", "none"))
+        self.scene.undo.undo()
+        self.assertEqual(self.scene._items[second.item_id].data["transition"], "fade")
+        bad = model.normalize_item({"id": "p", "type": "design_page", "transition": "x", "animation": 3})
+        self.assertEqual((bad["transition"], bad["animation"]), ("none", "none"))
 
 class EffectsTest(DesignTestCase):
     def test_image_mask_text_outline_and_new_shapes(self):
@@ -1069,7 +1186,6 @@ class DataVisTest(DesignTestCase):
         self.assertEqual((bad["chart"], bad["values"], bad["labels"]), ("bar", [1.0, 2.0], ["u", ""]))
 
     def test_chart_with_several_series(self):
-        from unittest import mock
         from fm_design import menus_data
         page = self.page(800, 600)
         chart = self.ctl.add_chart("bar")

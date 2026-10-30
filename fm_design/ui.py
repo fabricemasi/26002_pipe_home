@@ -19,6 +19,7 @@ from .menus import (_popup, _reset_crop, adjust_menu, color_menu, fill_menu, fli
                     toggle_text_style)
 from .menus_data import chart_menu, table_menu
 from .menus_export import export_menu
+from .menus_present import animate_menu
 from .menus_text import align_menu, font_menu, size_menu, text_effects_menu
 from .datavis import DesignChartItem, DesignTableItem
 from .items import DesignImageItem, DesignShapeItem, DesignTextItem
@@ -475,6 +476,9 @@ def build_context_bar(chrome, ctl):
         glyph("design_resize", "Redimensionner le design", lambda b: resize_menu(ctl, b, page))
         w, h = page.size()
         text_button(f"{round(w)} × {round(h)} px", "Dimensions de la page", lambda b: resize_menu(ctl, b, page))
+        animated = page.data.get("transition", "none") != "none" or page.data.get("animation", "none") != "none"
+        text_button("Animer ●" if animated else "Animer", "Transition et animation en présentation",
+                    lambda b: animate_menu(ctl, b, page))
         return
     shapes = [i for i in sel if isinstance(i, DesignShapeItem)]
     texts = [i for i in sel if isinstance(i, DesignTextItem)]

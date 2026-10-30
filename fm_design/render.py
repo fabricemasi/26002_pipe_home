@@ -17,15 +17,17 @@ FORMATS = {"png": "PNG", "jpg": "JPEG", "jpeg": "JPEG", "pdf": "PDF", "svg": "SV
 
 
 def paint_page(painter: QPainter, page: DesignPageItem, transparent: bool = False, bleed: float = 0.0,
-               exclude=()):
+               exclude=(), background: bool = True):
     """Peint `page` (fond + éléments visibles, ordre d'empilement) dans `painter`, en coordonnées de la page ;
-    `bleed` (unités) = fond perdu : fond et éléments débordants gardés jusqu'à cette distance des bords."""
+    `bleed` (unités) = fond perdu : fond et éléments débordants gardés jusqu'à cette distance des bords ;
+    `background` False = éléments seuls (couche animée de la présentation)."""
     option = QStyleOptionGraphicsItem()
     painter.save()
     painter.setRenderHint(QPainter.Antialiasing, True)
     painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
     painter.setRenderHint(QPainter.TextAntialiasing, True)
-    page.paint_background(painter, transparent=transparent, bleed=bleed)
+    if background:
+        page.paint_background(painter, transparent=transparent, bleed=bleed)
     painter.setClipRect(page.content_rect().adjusted(-bleed, -bleed, bleed, bleed))
     page_inverse, _ok = page.sceneTransform().inverted()
     base = painter.transform()
@@ -55,6 +57,19 @@ def render_image(page: DesignPageItem, scale: float = 1.0, transparent: bool = F
     paint_page(painter, page, transparent=transparent, exclude=exclude)
     painter.end()
     return image
+
+
+def render_layers(page: DesignPageItem, scale: float = 1.0) -> tuple[QImage, QImage]:
+    """Deux couches de la page pour l'animer : le fond seul (opaque) et les éléments seuls (fond transparent)."""
+    back = render_image(page, scale, exclude=set(page.elements()))
+    w, h = page.size()
+    front = QImage(back.width(), back.height(), QImage.Format_ARGB32_Premultiplied)
+    front.fill(Qt.transparent)
+    painter = QPainter(front)
+    painter.scale(back.width() / w, back.height() / h)
+    paint_page(painter, page, background=False)
+    painter.end()
+    return back, front
 
 
 def thumbnail(page: DesignPageItem, max_w: int, max_h: int, ratio: float = 1.0) -> QPixmap:

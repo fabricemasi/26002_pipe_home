@@ -33,7 +33,8 @@ FILL_TYPES = ("solid", "linear", "radial", "none")
 DEFAULTS: dict[str, dict] = {
     # `guides` = repères de la page [{"axis": "v" | "h", "pos": unités de page}] ; `margins` = marges affichées.
     PAGE: {"w": 1080.0, "h": 1080.0, "name": "", "index": 0, "background": "#ffffff", "bg_type": "solid",
-           "bg2": "#e8e0ff", "bg_angle": 90.0, "format": "custom", "guides": [], "margins": False},
+           "bg2": "#e8e0ff", "bg_angle": 90.0, "format": "custom", "guides": [], "margins": False,
+           "transition": "none", "animation": "none"},        # présentation : arrivée de la page, de ses éléments
     # Forme : `shape` = noms de fm_miro (rect, ellipse, triangle…) + « line » (trait horizontal au milieu de la
     # boîte, tourné par `rotation`) ; fill_type solid / linear / radial (fill -> fill2, angle) / none.
     SHAPE: {"w": 240.0, "h": 240.0, "shape": "rect", "fill": "#8b3dff", "fill_type": "solid", "fill2": "#22d3ee",
@@ -95,6 +96,10 @@ SHAPE_KINDS = ("rect", "round", "ellipse", "triangle", "diamond", "pentagon", "h
                "line")
 MASK_KINDS = ("", "round", "ellipse", "triangle", "diamond", "hexagon", "star", "heart", "cloud")
 RADIUS_SHAPES = ("rect", "round", "callout")
+# Présentation (« Animer » de Canva) : TRANSITION = arrivée de la page, ANIMATION = arrivée de ses éléments.
+TRANSITIONS = (("none", "Aucune"), ("fade", "Fondu"), ("slide", "Glissement"), ("zoom", "Zoom"))
+ANIMATIONS = (("none", "Aucune"), ("fade", "Fondu"), ("rise", "Montée"), ("pop", "Apparition"),
+              ("slide", "Entrée latérale"))
 CAP_KINDS = ("none", "arrow", "filled", "circle")
 
 
@@ -145,6 +150,10 @@ def normalize_entity(item: dict) -> dict:
             item["list"] = ""
     if kind == PAGE:
         item["guides"] = valid_guides(item.get("guides"))
+        if item["transition"] not in dict(TRANSITIONS):
+            item["transition"] = "none"
+        if item["animation"] not in dict(ANIMATIONS):
+            item["animation"] = "none"
     if kind in (TABLE, CHART):
         normalize_datavis(item)
     if kind == SHAPE and item["fill_type"] not in FILL_TYPES:

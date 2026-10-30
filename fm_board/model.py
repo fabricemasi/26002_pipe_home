@@ -189,7 +189,7 @@ ICON_ROWS = [
     ("design_templates", "Design : modèles et formats"), ("design_elements", "Design : éléments"),
     ("design_text", "Design : texte"), ("design_images", "Design : images"),
     ("design_layers", "Design : position et calques"), ("design_export", "Design : exporter"),
-    ("design_add_page", "Design : ajouter une page"),
+    ("design_present", "Design : présenter"), ("design_add_page", "Design : ajouter une page"),
 ]
 
 # Icones du module CAD (Reglages > Module CAD > Icones ; meme cle d'icone `ui_board_<genre>`) : barre d'outils CAD,
