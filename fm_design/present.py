@@ -1,6 +1,6 @@
 """Mode PRÉSENTATION (comme « Présenter » de Canva, local) : les pages en plein écran, une à la fois.
 Flèches / Espace / PageDown / clic = page suivante, flèche gauche / PageUp / clic droit = précédente, Origine / Fin,
-Échap = quitter. Chaque page est rendue UNE fois à la taille de l'écran (`render.render_image`), la suivante est
+N = notes du présentateur de la page (bandeau en bas, `notes` de la page), Échap = quitter. Chaque page est rendue UNE fois à la taille de l'écran (`render.render_image`), la suivante est
 préparée pendant qu'on regarde la courante : le passage d'une page à l'autre est immédiat.
 
 Animations (« Animer » de Canva, réglées par page : `transition`, `animation`) : la page arrive (fondu, glissement,
@@ -51,6 +51,7 @@ class PresentationWindow(QWidget):
         self._prepare.setInterval(30)
         self._prepare.timeout.connect(self._prepare_next)
         self._previous: int | None = None          # page qui s'en va pendant la transition
+        self.show_notes = False
         self._direction = 1
         self.anim = QVariantAnimation(self)
         self.anim.setStartValue(0.0)
@@ -247,6 +248,8 @@ class PresentationWindow(QWidget):
                 self._paint_page(painter, float(self.anim.currentTime()) if running else None)
         except RuntimeError:                           # page retirée du board entre-temps
             pass
+        if self.show_notes and self.pages:
+            self._paint_notes(painter)
         painter.setPen(QColor(255, 255, 255, 90))
         font = QFont()
         font.setPointSize(9)
@@ -257,10 +260,35 @@ class PresentationWindow(QWidget):
         if not running:
             self._prepare.start()
 
+    def _paint_notes(self, painter):
+        """Bandeau des notes en bas de l'écran (texte blanc sur fond sombre), « Aucune note » si vide."""
+        try:
+            text = str(self.pages[self.index].data.get("notes", "")).strip()
+        except RuntimeError:
+            return
+        font = QFont()
+        font.setPointSize(13)
+        painter.setFont(font)
+        margin = 24
+        width = self.width() - 2 * margin
+        flags = Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap
+        shown = text or "Aucune note pour cette page."
+        needed = painter.boundingRect(QRectF(0, 0, width - 32, self.height() / 2), flags, shown)
+        band = QRectF(margin, self.height() - margin - needed.height() - 28, width, needed.height() + 24)
+        painter.setOpacity(1.0)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 200))
+        painter.drawRoundedRect(band, 8, 8)
+        painter.setPen(QColor(255, 255, 255, 235 if text else 140))
+        painter.drawText(band.adjusted(16, 12, -16, -12), flags, shown)
+
     def keyPressEvent(self, event):
         key = event.key()
         if key == Qt.Key_Escape:
             self.close()
+        elif key == Qt.Key_N:
+            self.show_notes = not self.show_notes
+            self.update()
         elif key in (Qt.Key_Right, Qt.Key_Down, Qt.Key_Space, Qt.Key_PageDown, Qt.Key_Return, Qt.Key_Enter):
             self.go(self.index + 1)
         elif key in (Qt.Key_Left, Qt.Key_Up, Qt.Key_PageUp, Qt.Key_Backspace):

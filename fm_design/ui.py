@@ -388,6 +388,8 @@ class DesignChrome(QObject):
         menu = _menu(self.pane, "design_page")
         menu.addAction("Dupliquer la page").triggered.connect(lambda: self._after(doc.duplicate_page(self.scene, page)))
         menu.addAction("Renommer…").triggered.connect(lambda: QTimer.singleShot(0, lambda: self.rename_page(page)))
+        menu.addAction("Notes du présentateur…").triggered.connect(
+            lambda: QTimer.singleShot(0, lambda: self.edit_notes(page)))
         index = pages.index(page)
         if index > 0:
             menu.addAction("Monter").triggered.connect(lambda: self._move(page, index - 1))
@@ -427,6 +429,14 @@ class DesignChrome(QObject):
         name, ok = QInputDialog.getText(self.pane, "Renommer la page", "Nom :", text=page.data.get("name", ""))
         if ok:
             doc.change(self.scene, [page], lambda i: i.data.update(name=name.strip()), "Renommer la page")
+
+    def edit_notes(self, page):
+        """Notes du présentateur de la page (affichées par N en présentation, jamais exportées)."""
+        text, ok = QInputDialog.getMultiLineText(self.pane, "Notes du présentateur",
+                                                 "Affichées en présentation avec la touche N :",
+                                                 str(page.data.get("notes", "")))
+        if ok and text != page.data.get("notes", ""):
+            doc.change(self.scene, [page], lambda i: i.data.update(notes=text), "Notes du présentateur")
 
     def drag_page(self, thumb, event):
         """Ctrl + glisser une miniature : fantôme (opacité DRAG_GHOST_OPACITY), place d'arrivée marquée."""

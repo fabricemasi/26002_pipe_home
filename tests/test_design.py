@@ -1226,6 +1226,32 @@ class HiddenPageTest(DesignTestCase):
         thumb = [t for t in self.ctl.ui._thumbs if t.page_id == second.item_id][0]
         self.assertFalse(thumb.hidden)
 
+class NotesTest(DesignTestCase):
+    def test_speaker_notes_edited_and_shown_with_n(self):
+        from fm_design import ui as design_ui
+        page = self.page(400, 300)
+        with mock.patch.object(design_ui.QInputDialog, "getMultiLineText", return_value=("Dire bonjour", True)):
+            self.ctl.ui.edit_notes(page)
+        self.assertEqual(page.data["notes"], "Dire bonjour")
+        window = self.ctl.present(start_page=page)
+        try:
+            settle()
+            before = window.grab().toImage()
+            QApplication.sendEvent(window, QKeyEvent(QEvent.KeyPress, Qt.Key_N, Qt.NoModifier))
+            self.assertTrue(window.show_notes)
+            after = window.grab().toImage()
+
+            def light(image):                                      # pixels clairs dans le bas de l'écran
+                h = image.height()
+                return sum(1 for x in range(0, image.width(), 2) for y in range(h - 90, h - 20, 2)
+                           if image.pixelColor(x, y).lightness() > 150)
+            self.assertGreater(light(after), light(before))        # texte blanc du bandeau
+        finally:
+            window.close()
+            settle()
+        self.scene.undo.undo()
+        self.assertEqual(self.scene._items[page.item_id].data["notes"], "")
+
 class CurvedTextTest(DesignTestCase):
     def test_curved_text_box_edit_and_render(self):
         page = self.page(800, 600)
