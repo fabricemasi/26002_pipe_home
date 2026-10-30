@@ -170,8 +170,8 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 - Retouches d'image (luminosité, contraste, saturation) : seulement avec numpy (présent dans l'environnement) ;
   sans numpy, noir et blanc et flou seulement.
 - Un élément Design ne peut pas être déplacé en mode Miro (pas de `ItemIsMovable`) : on passe en mode Design.
-- Page sans rotation ; animations seulement en présentation, par page entière (pas élément par élément, pas dans
-  l'export) ; pas de vidéo ; secteurs et anneau n'utilisent que la 1re série ; kit de marque
+- Page sans rotation ; animations seulement en présentation (pas dans l'export), réglées par page (pas d'animation
+  propre à un élément choisi) ; pas de vidéo ; secteurs et anneau n'utilisent que la 1re série ; kit de marque
   partagé entre boards limité aux couleurs et polices (pas de logos ni de styles de texte complets).
 
 ## PLAN DE TRAVAIL (persistant, mis à jour à chaque étape)
@@ -207,4 +207,4 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 | Kit de marque partagé entre TOUS les boards (couleurs et polices favorites : menus de couleur « Marque » / « Ajouter à la marque », menu Police) : réglage d'état `board_design_brand` (`BOARD_DEFAULTS`, `_LIVE_STATE_KEYS` de `settings_store`, écrit par `save_live_state` comme `board_pen_presets`) | Terminée | Réglages |
 | Espacement égal entre deux voisins pendant Ctrl + glisser (segments tracés), renommer un calque, export d'une plage de pages (« 1-3, 5 ») | Terminée | Gestes, Export |
 | Icônes réglables : lignes `design*` de `ICON_ROWS` (rail, barre des pages, dont « Présenter ») ; test : chaque bouton a sa ligne et lit `ui_board_<genre>` (fenêtre de réglages entière non regardée à l'œil) | Terminée | — |
-| Animations de présentation (« Animer ») : transition de page (fondu, glissement, zoom) et arrivée des éléments (fondu, montée, apparition, entrée latérale), par page ou toutes ; champs de page `transition`, `animation` | Terminée | Présentation |
+| Animations de présentation (« Animer ») : transition de page (fondu, glissement, zoom) et arrivée des éléments (fondu, montée, apparition, entrée latérale, « un par un » : ordre d'empilement, un groupe d'un coup, une petite image par élément `render.render_units`, préparée au repos : 42 ms à 300 éléments, 2,4 ms par image), par page ou toutes ; champs de page `transition`, `animation` | Terminée | Présentation |

@@ -3,6 +3,7 @@ multipage, SVG). La page et ses éléments sont peints DIRECTEMENT (sans `QGraph
 board (post-it, CAD, overlay, sélection) n'y entre et la scène n'est pas touchée."""
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 
@@ -21,7 +22,6 @@ def paint_page(painter: QPainter, page: DesignPageItem, transparent: bool = Fals
     """Peint `page` (fond + éléments visibles, ordre d'empilement) dans `painter`, en coordonnées de la page ;
     `bleed` (unités) = fond perdu : fond et éléments débordants gardés jusqu'à cette distance des bords ;
     `background` False = éléments seuls (couche animée de la présentation)."""
-    option = QStyleOptionGraphicsItem()
     painter.save()
     painter.setRenderHint(QPainter.Antialiasing, True)
     painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
@@ -29,10 +29,17 @@ def paint_page(painter: QPainter, page: DesignPageItem, transparent: bool = Fals
     if background:
         page.paint_background(painter, transparent=transparent, bleed=bleed)
     painter.setClipRect(page.content_rect().adjusted(-bleed, -bleed, bleed, bleed))
+    paint_elements(painter, page, [e for e in page.elements() if e not in exclude])
+    painter.restore()
+
+
+def paint_elements(painter: QPainter, page: DesignPageItem, elements):
+    """Peint `elements` (de `page`, visibles seulement) dans l'ordre donné, en coordonnées de la page."""
+    option = QStyleOptionGraphicsItem()
     page_inverse, _ok = page.sceneTransform().inverted()
     base = painter.transform()
-    for element in page.elements():
-        if not element.isVisible() or element in exclude:
+    for element in elements:
+        if not element.isVisible():
             continue
         painter.save()
         painter.setTransform(element.sceneTransform() * page_inverse * base)
@@ -43,7 +50,6 @@ def paint_page(painter: QPainter, page: DesignPageItem, transparent: bool = Fals
             painter.setTransform(text.sceneTransform() * page_inverse * base)
             text.paint(painter, option, None)
         painter.restore()
-    painter.restore()
 
 
 def render_image(page: DesignPageItem, scale: float = 1.0, transparent: bool = False,
@@ -70,6 +76,50 @@ def render_layers(page: DesignPageItem, scale: float = 1.0) -> tuple[QImage, QIm
     paint_page(painter, page, background=False)
     painter.end()
     return back, front
+
+
+def animation_units(page: DesignPageItem) -> list[list]:
+    """Éléments visibles de `page` par ordre d'empilement, un groupe = une seule unité (animation « Un par un »)."""
+    units, by_group = [], {}
+    for element in page.elements():
+        if not element.isVisible():
+            continue
+        group = element.data.get("group") or ""
+        if group and group in by_group:
+            by_group[group].append(element)
+            continue
+        unit = [element]
+        units.append(unit)
+        if group:
+            by_group[group] = unit
+    return units
+
+
+def render_units(page: DesignPageItem, scale: float, units) -> list[tuple[QRectF, QImage]]:
+    """Chaque unité peinte seule dans une image à sa taille : (rectangle dans la page, image)."""
+    w, h = page.size()
+    bounds = QRectF(0, 0, w, h)
+    out = []
+    for unit in units:
+        rect = QRectF()
+        for element in unit:
+            rect = rect.united(page.mapRectFromScene(element.sceneBoundingRect()))
+        rect = rect.intersected(bounds)
+        if rect.isEmpty():
+            continue
+        image = QImage(max(1, math.ceil(rect.width() * scale)), max(1, math.ceil(rect.height() * scale)),
+                       QImage.Format_ARGB32_Premultiplied)
+        image.fill(Qt.transparent)
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+        painter.scale(scale, scale)
+        painter.translate(-rect.topLeft())
+        paint_elements(painter, page, unit)
+        painter.end()
+        out.append((QRectF(rect.topLeft(), QSizeF(image.width() / scale, image.height() / scale)), image))
+    return out
 
 
 def thumbnail(page: DesignPageItem, max_w: int, max_h: int, ratio: float = 1.0) -> QPixmap:

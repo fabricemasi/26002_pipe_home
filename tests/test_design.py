@@ -701,6 +701,41 @@ class AnimationTest(DesignTestCase):
             window.close()
             settle()
 
+    def test_one_by_one(self):
+        from fm_design import present
+        page = self.page(400, 300)
+        a = self.ctl.add_shape("rect", {"x": 0.0, "y": 0.0, "w": 100.0, "h": 100.0, "fill": "#ff0000"})
+        b = self.ctl.add_shape("rect", {"x": 150.0, "y": 0.0, "w": 100.0, "h": 100.0, "fill": "#00ff00"})
+        c = self.ctl.add_shape("rect", {"x": 300.0, "y": 0.0, "w": 100.0, "h": 100.0, "fill": "#0000ff"})
+        doc.set_group(self.scene, [b, c], True)
+        doc.change(self.scene, [page], lambda i: i.data.update(animation="cascade"), "Animer")
+        self.assertEqual([len(u) for u in render.animation_units(page)], [1, 2])   # le groupe arrive d'un coup
+        window = self.ctl.present(start_page=page)
+        try:
+            settle()
+            transition, delay, total = window.durations(0)
+            self.assertEqual(total, delay + round(present.cascade_step(2)) + present.UNIT_MS)
+            W, H = window.width(), window.height()
+            k = min(W / 400, H / 300)
+            left, top = (W - 400 * k) / 2, (H - 300 * k) / 2
+
+            def frame(ms):
+                image = QImage(W, H, QImage.Format_ARGB32)
+                image.fill(QColor("#000000"))
+                painter = QPainter(image)
+                window._paint_page(painter, ms)
+                painter.end()
+                return lambda x, y: image.pixelColor(int(left + x * k), int(top + y * k))
+            early = frame(delay + 100.0)                           # 1er en route, groupe pas encore parti (160 ms)
+            self.assertLess(early(50, 60).green(), 200)
+            self.assertEqual(early(350, 60).name(), "#ffffff")
+            done = frame(None)
+            self.assertEqual((done(50, 60).name(), done(200, 60).name(), done(350, 60).name()),
+                             ("#ff0000", "#00ff00", "#0000ff"))
+        finally:
+            window.close()
+            settle()
+
     def test_animate_menu(self):
         from fm_design.menus_present import animate_menu
         first, second = self.two_pages()

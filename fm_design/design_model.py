@@ -99,7 +99,7 @@ RADIUS_SHAPES = ("rect", "round", "callout")
 # Présentation (« Animer » de Canva) : TRANSITION = arrivée de la page, ANIMATION = arrivée de ses éléments.
 TRANSITIONS = (("none", "Aucune"), ("fade", "Fondu"), ("slide", "Glissement"), ("zoom", "Zoom"))
 ANIMATIONS = (("none", "Aucune"), ("fade", "Fondu"), ("rise", "Montée"), ("pop", "Apparition"),
-              ("slide", "Entrée latérale"))
+              ("slide", "Entrée latérale"), ("cascade", "Un par un"))
 CAP_KINDS = ("none", "arrow", "filled", "circle")
 
 

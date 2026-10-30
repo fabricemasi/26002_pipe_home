@@ -4,9 +4,10 @@ Flèches / Espace / PageDown / clic = page suivante, flèche gauche / PageUp / c
 préparée pendant qu'on regarde la courante : le passage d'une page à l'autre est immédiat.
 
 Animations (« Animer » de Canva, réglées par page : `transition`, `animation`) : la page arrive (fondu, glissement,
-zoom) puis ses éléments (fondu, montée, apparition, entrée latérale). Rien n'est repeint pendant l'animation : les
-images préparées (page entière ; pour une page animée, fond seul + éléments seuls, `render.render_layers`) sont
-seulement posées avec une opacité, un décalage ou une échelle. Une touche pendant l'animation passe
+zoom) puis ses éléments (fondu, montée, apparition, entrée latérale, ou « un par un » dans l'ordre d'empilement,
+un groupe à la fois). Rien n'est repeint pendant l'animation : les images préparées (page entière ; pour une page
+animée, fond seul + éléments seuls, `render.render_layers`, ou une petite image par élément, `render.render_units`)
+sont seulement posées avec une opacité, un décalage ou une échelle. Une touche pendant l'animation passe
 à la page suivante sans attendre."""
 from __future__ import annotations
 
@@ -18,6 +19,12 @@ from . import render
 
 TRANSITION_MS = 450
 ANIMATION_MS = 600
+UNIT_MS = 450                  # « un par un » : arrivée d'un élément ; les suivants partent tous les `cascade_step`
+
+
+def cascade_step(count: int) -> float:
+    """Écart (ms) entre deux éléments « un par un » : 160 ms, resserré pour que tout soit là en ~1,4 s."""
+    return min(160.0, 1400.0 / max(1, count))
 
 
 def _ease(t: float) -> float:
@@ -36,6 +43,8 @@ class PresentationWindow(QWidget):
         self.index = max(0, min(len(self.pages) - 1, start))
         self._images: dict[int, QPixmap] = {}
         self._layers: dict[int, tuple[QPixmap, QPixmap]] = {}
+        self._units: dict[int, tuple[QPixmap, list]] = {}
+        self._unit_count: dict[int, int] = {}
         self._size = None
         self._prepare = QTimer(self)
         self._prepare.setSingleShot(True)
@@ -61,6 +70,7 @@ class PresentationWindow(QWidget):
         if size != self._size:
             self._images.clear()
             self._layers.clear()
+            self._units.clear()
             self._size = size
 
     def _scale(self, page) -> float:
@@ -83,7 +93,8 @@ class PresentationWindow(QWidget):
 
     def _layer_pair(self, index: int) -> tuple[QPixmap, QPixmap] | None:
         """Fond seul et éléments seuls d'une page dont les éléments s'animent (sinon None)."""
-        if not (0 <= index < len(self.pages)) or self.pages[index].data.get("animation", "none") == "none":
+        if not (0 <= index < len(self.pages)) or self.pages[index].data.get("animation", "none") in ("none",
+                                                                                                    "cascade"):
             return None
         self._check_size()
         if index not in self._layers:
@@ -91,6 +102,21 @@ class PresentationWindow(QWidget):
             back, front = render.render_layers(page, self._scale(page))
             self._layers[index] = (self._pixmap(back), self._pixmap(front))
         return self._layers[index]
+
+    def _cascade(self, index: int) -> tuple[QPixmap, list] | None:
+        """Fond seul et une image par élément (ou groupe) d'une page « un par un » (sinon None)."""
+        if not (0 <= index < len(self.pages)) or self.pages[index].data.get("animation") != "cascade":
+            return None
+        self._check_size()
+        if index not in self._units:
+            page = self.pages[index]
+            scale = self._scale(page)
+            back = render.render_image(page, scale, exclude=set(page.elements()))
+            units = [(rect, QPixmap.fromImage(image))
+                     for rect, image in render.render_units(page, scale, render.animation_units(page))]
+            self._units[index] = (self._pixmap(back), units)
+            self._unit_count[index] = len(units)
+        return self._units[index]
 
     def _prepare_next(self):
         if self.anim.state() == QVariantAnimation.Running:
@@ -100,17 +126,26 @@ class PresentationWindow(QWidget):
             try:
                 self._image(index)
                 self._layer_pair(index)
+                self._cascade(index)
             except RuntimeError:                       # page retirée du board entre-temps
                 pass
 
     # ---------------------------------------------------------------- navigation
     def durations(self, index: int) -> tuple[int, int, int]:
         """(durée de la transition, début de l'animation des éléments, durée totale) en ms pour arriver sur `index`."""
-        data = self.pages[index].data
+        page = self.pages[index]
+        data = page.data
         transition = TRANSITION_MS if data.get("transition", "none") != "none" else 0
         if data.get("animation", "none") == "none":
             return transition, transition, transition
         delay = transition // 2
+        if data.get("animation") == "cascade":
+            count = self._unit_count.get(index)
+            if count is None:
+                count = len(render.animation_units(page))
+            if count == 0:
+                return transition, delay, transition
+            return transition, delay, delay + round(cascade_step(count) * (count - 1)) + UNIT_MS
         return transition, delay, delay + ANIMATION_MS
 
     def _play(self, previous: int | None):
@@ -161,7 +196,10 @@ class PresentationWindow(QWidget):
                 opacity = t
                 scale = 0.85 + 0.15 * t if kind == "zoom" else 1.0
         animation = page.data.get("animation", "none")
-        a = 1.0 if ms is None or animation == "none" else _ease((ms - delay) / ANIMATION_MS)
+        if animation == "cascade" and ms is not None and ms < _total:
+            self._paint_cascade(painter, page, ms - delay, opacity, dx, scale)
+            return
+        a = 1.0 if ms is None or animation in ("none", "cascade") else _ease((ms - delay) / ANIMATION_MS)
         layers = self._layer_pair(self.index) if a < 1.0 else None
         if layers is None:
             self._draw(painter, self._image(self.index), opacity, dx, 0.0, scale)
@@ -176,6 +214,28 @@ class PresentationWindow(QWidget):
         elif animation == "slide":
             e_dx = dx - (1.0 - a) * self.width() * 0.08
         self._draw(painter, front, e_opacity, e_dx, e_dy, e_scale)
+
+    def _paint_cascade(self, painter, page, ms, opacity, dx, scale):
+        """« Un par un » : fond, puis chaque élément (ou groupe) qui monte en fondu, l'un après l'autre."""
+        prepared = self._cascade(self.index)
+        if prepared is None:
+            return
+        back, units = prepared
+        self._draw(painter, back, opacity, dx, 0.0, scale)
+        w, h = page.size()
+        k = min(self.width() / w, self.height() / h) * scale
+        center = QRectF(self.rect()).center()
+        left, top = center.x() + dx - w * k / 2, center.y() - h * k / 2
+        step = cascade_step(len(units))
+        for n, (rect, pixmap) in enumerate(units):
+            u = _ease((ms - n * step) / UNIT_MS)
+            if u <= 0.0:
+                break                                  # les suivants ne sont pas encore partis
+            target = QRectF(left + rect.x() * k, top + rect.y() * k + (1.0 - u) * 24.0, rect.width() * k,
+                            rect.height() * k)
+            painter.setOpacity(opacity * u)
+            painter.drawPixmap(target, pixmap, QRectF(pixmap.rect()))
+        painter.setOpacity(1.0)
 
     def paintEvent(self, _event):
         painter = QPainter(self)
