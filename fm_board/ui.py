@@ -45,7 +45,8 @@ TOOLS = [("select", "Sélection (V)"), ("hand", "Main (H, ou Espace)"), ("sticky
 # Selecteur de modules (demande de l'utilisateur) : a l'ouverture, aucune barre d'outils, seulement ces boutons ; la
 # barre d'outils d'un module s'affiche quand il est active. Par module : griser, masquer ses elements.
 MODULES = [("miro", "Miro", "Module Miro : post-it, textes, formes, dessin, commentaires (sa barre d'outils)"),
-           ("cad", "CAD", "Module CAD : dessin technique 2D (lignes, calques, accrochages, barre de commande)")]
+           ("cad", "CAD", "Module CAD : dessin technique 2D (lignes, calques, accrochages, barre de commande)"),
+           ("design", "Design", "Module Design : pages, formes, textes, images, modèles, export (à la manière de Canva)")]
 DRAW_BAR = [("pen", "Stylo"), ("highlighter", "Surligneur"), ("smart", "Dessin intelligent (formes reconnues)"),
             ("eraser", "Gomme (traits entiers)"), ("precision_eraser", "Gomme de précision (coupe les traits)"),
             ("lasso", "Lasso (sélection à main levée)")]
@@ -85,6 +86,10 @@ def paint_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
     if kind.startswith("cad"):
         from fm_cad.cad_ui import paint_cad_glyph              # module CAD : ses icones
         paint_cad_glyph(painter, kind, rect, color)
+        return
+    if kind.startswith("design"):
+        from fm_design.glyphs import paint_design_glyph        # module Design : ses icones
+        paint_design_glyph(painter, kind, rect, color)
         return
     pen = QPen(color, 1.4)
     pen.setCapStyle(Qt.RoundCap)
@@ -1133,7 +1138,8 @@ class BoardPane(QWidget):
         self._preset_index = {"pen": 0, "highlighter": 0, "smart": 0}
         self._draw_tool = "pen"
         self.cad = None                         # module CAD (fm_cad/cad.py), cree au 1er usage
-        self.module = None                      # module actif : "miro", "cad" ou None (aucune barre d'outils)
+        self.design = None                      # module Design (fm_design/controller.py), cree au 1er usage
+        self.module = None                      # module actif : "miro", "cad", "design" ou None (aucune barre)
         self._cad_export_units = "mm"           # unites du dernier export DXF / DWG (session)
         self.view.cad = None
         self._build_chrome()
@@ -1372,12 +1378,21 @@ class BoardPane(QWidget):
     def set_module(self, name: str | None):
         """Selecteur de modules : « miro » (sa barre d'outils), « cad » (mode CAD et ses barres) ou None (aucune barre
         d'outils : seulement le selecteur, comme a l'ouverture)."""
+        if name != "design" and self.design_active():
+            self.design.deactivate()
         self.module = name
         if name == "cad":
             self.toggle_cad(True)
             return
         if self.cad_active():
             self.toggle_cad(False)
+        if name == "design":
+            self._contextbar.hide()
+            if self.design is None:
+                from fm_design.controller import DesignController
+                self.design = DesignController(self)
+                self.view.design = self.design
+            self.design.activate()
         if name is None and self.view.tool != "hand":
             self.view.set_tool("select")
         self._sync_tools(self.view.tool)
@@ -1415,6 +1430,8 @@ class BoardPane(QWidget):
         """Active / desactive le mode CAD sur ce board (les entites CAD restent visibles) ; module « cad » du
         selecteur."""
         on = (self.cad is None or not self.cad.active) if on is None else on
+        if on and self.design_active():
+            self.design.deactivate()
         if on:
             self.module = "cad"
         elif self.module == "cad":
@@ -1442,9 +1459,14 @@ class BoardPane(QWidget):
     def cad_active(self) -> bool:
         return self.cad is not None and self.cad.active
 
+    def design_active(self) -> bool:
+        return self.design is not None and self.design.active
+
     def _on_tool_button(self, kind: str):
         if self.cad_active():
             self.toggle_cad(False)                  # un outil du board : retour au board
+        if self.design_active():
+            self.set_module("miro")
         if kind == "image":
             self.insert_image_dialog()
             return
@@ -2235,6 +2257,8 @@ class BoardPane(QWidget):
             panel.raise_()
         if self.cad_active():
             self.cad.ui.place()
+        if self.design_active():
+            self.design.ui.place()
 
     def _sync_badge(self):
         """Rendu OpenGL : l'encart est peint par la couche GPU (le widget se cache) ; classique : le widget."""

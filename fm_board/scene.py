@@ -23,6 +23,7 @@ from PySide6.QtGui import QBrush, QColor, QImage, QPaintEngine, QPainter, QPen, 
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene
 
 from fm_cad import cad_items, cad_model  # noqa: F401 - cad_items : enregistre le type « cad_line »
+from fm_design import items as design_items  # noqa: F401 - enregistre les types du module Design
 from . import model, serialization
 from fm_cad.cad_items import FADE_OPACITY, unit_of
 from .commands import StateCommand
@@ -35,7 +36,7 @@ INDEX_MIN = 2000.0                      # demi-etendue minimale de l'index de la
 PAGE = "__page__"
 # Modules du board (selecteur du board, `BoardPane.set_module`) : leurs elements se grisent ou se masquent a part
 # (demande de l'utilisateur). Grise = visible en transparence, ni selectionnable ni modifiable.
-MODULES = ("miro", "cad")
+MODULES = ("miro", "cad", "design")
 CLIPBOARD_MIME = "application/x-pipeline-board"
 SNAP_DEFAULTS = {"enabled": True, "objects": True, "grid": False, "guides": True, "resize": True, "distance": 6}
 
@@ -174,6 +175,9 @@ class BoardScene(QGraphicsScene):
         self.addItem(item)
         self._items[item.item_id] = item
         self._zoomers = None
+        hook = getattr(item, "added_to_scene", None)      # module Design : element rattache a sa page
+        if hook is not None:
+            hook(self)
         item.sync()
         if self.module_styled(self.module_of(item)):
             self.apply_module_look(item)
@@ -188,6 +192,9 @@ class BoardScene(QGraphicsScene):
         if item is not None:
             if item.text_item is not None and item.text_item.editing():
                 item.text_item.stop()
+            hook = getattr(item, "removing_from_scene", None)  # page Design : ses elements detaches avant
+            if hook is not None:
+                hook(self)
             self.removeItem(item)
             item.deleteLater()
 
@@ -305,6 +312,10 @@ class BoardScene(QGraphicsScene):
         ids = {i.item_id for i in items if isinstance(i, BoardItem) and not i.locked()}
         if not ids:
             return
+        for item_id in list(ids):                            # page Design : ses elements avec elle
+            hook = getattr(self._items[item_id], "dependent_ids", None)
+            if hook is not None:
+                ids |= hook(self)
         for item in self._items.values():                    # fleches accrochees a un element supprime
             if isinstance(item, ConnectorItem) and item.attached_ids() & ids:
                 ids.add(item.item_id)
@@ -382,7 +393,7 @@ class BoardScene(QGraphicsScene):
     # -- modules (Miro / CAD) : elements grises ou masques --
     @staticmethod
     def module_of(item) -> str:
-        return "cad" if getattr(item, "CAD", False) else "miro"
+        return getattr(item, "MODULE", None) or ("cad" if getattr(item, "CAD", False) else "miro")
 
     def module_hidden(self, module: str) -> bool:
         return self.module_look[module]["hide"]
@@ -402,6 +413,9 @@ class BoardScene(QGraphicsScene):
 
     def item_opacity(self, item) -> float:
         """Opacite normale d'un element (la gomme la rend apres l'avoir baissee)."""
+        hook = getattr(item, "module_opacity", None)          # module Design : opacite propre, page grisee seule
+        if hook is not None:
+            return hook(self.module_faded(self.module_of(item)))
         return FADE_OPACITY if self.module_faded(self.module_of(item)) else 1.0
 
     def set_module_look(self, module: str, fade: bool | None = None, hide: bool | None = None):
@@ -558,7 +572,7 @@ class BoardScene(QGraphicsScene):
                 continue
             data["id"] = mapping[raw["id"]]
             data["locked"] = False
-            if data["type"] == "image" and source_board and self.board_path is not None:
+            if data.get("asset") and source_board and self.board_path is not None:
                 self._bring_asset(data, source_board)
             if data["type"] == "connector":
                 for end in ("src", "dst"):

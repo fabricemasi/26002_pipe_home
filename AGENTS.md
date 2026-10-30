@@ -52,7 +52,7 @@ Fenêtre de réglages (ordre de dépendance) : `settings_store.py` (palette `M`,
 
 Les données propres à l'appli sont dans `data/` (réglages, presets, état des fenêtres, cache d'aperçus, icônes de logiciels) ; `files/` contient les modèles Blender et profils de rendu, `icons/` les SVG de l'interface.
 
-Paquets : `fm_board/` (coque du board MRO), `fm_miro/` (tableau blanc), `fm_cad/` (CAD), `fm_visionneuse/`, `fm_markdown/` (module Markdown), `fm_video/` (module vidéo) ; aucun ne dépend de la fenêtre principale (elle leur pose des `HOOKS`).
+Paquets : `fm_board/` (coque du board MRO), `fm_miro/` (tableau blanc), `fm_cad/` (CAD), `fm_design/` (Design, façon Canva), `fm_visionneuse/`, `fm_markdown/` (module Markdown), `fm_video/` (module vidéo) ; aucun ne dépend de la fenêtre principale (elle leur pose des `HOOKS`).
 
 ### Réglages (règles de base)
 Enregistrer UNE clé d'état temps réel : `settings_store.save_live_state(clé, valeur)` (écrit cette clé dans le fichier tel qu'il est), jamais `load_settings()` + `save_settings()` (cela fige dans le fichier les valeurs du preset actif, même périmées).
@@ -71,6 +71,7 @@ Le détail de chaque module (choix de l'utilisateur, pièges, mesures, tests) es
 - `docs/agents/fm_markdown.md` : module Markdown / code (`fm_markdown/`, ex `mdeditor/` + `markdown_preview.py`), aperçu des notes, CSS / Obsidian.
 - `docs/agents/fm_board.md` : coque du board (`fm_board/`, ex `board/` : fichier `.mro`, scène, vue, barres) ; `docs/agents/fm_miro.md` : tableau blanc (`fm_miro/`, clone de Miro).
 - `docs/agents/fm_cad.md` : module CAD du board (`fm_cad/`, ex `board/cad*.py`).
+- `docs/agents/fm_design.md` : module Design du board (`fm_design/`, à la manière de Canva : pages, formes, textes, images, modèles, export) ; plan de travail et mesures en fin de doc.
 - `docs/agents/fm_video.md` : module vidéo (`fm_video/`, ex `video/`).
 - `docs/agents/reglages.md` : fenêtre de réglages v2 et ses briques (tableaux, toggles, presets, menus contextuels, fenêtres additionnelles, « Changement de style à la volée », « Override settings », couleurs, cheminement / barre de navigation, préchargement), gabarits de lignes, réutilisation dans d'autres applis.
 - `docs/agents/fm_theme.md` : PROJET (non codé) de séparation en deux entités, fm_theme (aspect : variantes d'éléments, presets) et fm_browser (tout le reste) ; ordre de migration, questions ouvertes.

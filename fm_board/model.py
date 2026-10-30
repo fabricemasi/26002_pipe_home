@@ -19,6 +19,7 @@ import copy
 import uuid
 
 from fm_cad import cad_model
+from fm_design import design_model
 
 FORMAT = "pipeline-board"
 VERSION = 2
@@ -87,6 +88,8 @@ DEFAULTS: dict[str, dict] = {
     "cad_dim": {k: None for k in cad_model.ENTITY_DEFAULTS["cad_dim"]},
     "cad_hatch": {k: None for k in cad_model.ENTITY_DEFAULTS["cad_hatch"]},
     "cad_text": {k: None for k in cad_model.ENTITY_DEFAULTS["cad_text"]},
+    # Module Design (fm_design/design_model.py) : pages et elements ; valeurs bornees par design_model.normalize_entity.
+    **{kind: copy.deepcopy(values) for kind, values in design_model.DEFAULTS.items()},
 }
 COMMON = {"x": 0.0, "y": 0.0, "z": 0.0, "rotation": 0.0, "locked": False, "link": ""}
 ROTATABLE = ("shape", "text", "image")
@@ -182,6 +185,11 @@ ICON_ROWS = [
     ("minus", "Zoom : dézoomer"), ("plus", "Zoom : zoomer"), ("fit", "Zoom : tout voir"),
     ("close", "Fermer le fil de commentaire"),
     ("miro", "Modules : Miro"), ("fade", "Modules : griser les éléments"), ("hide", "Modules : masquer les éléments"),
+    ("design", "Modules : Design"),
+    ("design_templates", "Design : modèles et formats"), ("design_elements", "Design : éléments"),
+    ("design_text", "Design : texte"), ("design_images", "Design : images"),
+    ("design_layers", "Design : position et calques"), ("design_export", "Design : exporter"),
+    ("design_add_page", "Design : ajouter une page"),
 ]
 
 # Icones du module CAD (Reglages > Module CAD > Icones ; meme cle d'icone `ui_board_<genre>`) : barre d'outils CAD,
@@ -249,6 +257,8 @@ def normalize_item(raw) -> dict | None:
             item["cap_size"] = round(8 + item["width"] * 2.2, 2)
     if kind in cad_model.CAD_TYPES:
         cad_model.normalize_entity(item)
+    if kind in design_model.DESIGN_TYPES:
+        design_model.normalize_entity(item)
     if kind == "shape" and item["shape"] == "round" and "radius" not in raw:
         item["radius"] = round(min(item["w"], item["h"]) * 0.18, 2)        # anciens fichiers (version 1)
     if kind == "shape" and item["shape"] not in SHAPE_KINDS:

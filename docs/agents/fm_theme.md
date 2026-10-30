@@ -158,6 +158,8 @@ Référence APERÇUS hors sandbox AVANT modification : deux FAIL de `test_render
 
 Validation de cette étape : pyflakes sans nom indéfini ni alerte nouvelle (les imports inutilisés des tests étaient déjà présents) ; aperçus : mêmes deux FAIL initiaux, 16 fichiers avec les nouveaux tests ; suite complète : 32 FAIL / ERROR contre 32 avant sur 79 fichiers (78 avant), aucun échec nouveau. Un plantage natif `0xC0000409` après les 7 tests vidéo OK a disparu à la relance ciblée de `test_video_analysis.py` (7/7 OK, sortie 0) ; imports dans trois ordres et sans dépendances optionnelles ; fenêtre principale lancée hors écran avec état isolé. Aucun push. Carte et détails : `docs/agents/apercus.md`.
 
+MODULE DESIGN (2026-10-29, mission autonome de l'utilisateur) : nouveau paquet `fm_design/` (éditeur façon Canva), troisième module du board ; carte, décisions, mesures et PLAN DE TRAVAIL à jour dans `docs/agents/fm_design.md` (point de reprise). Crochets ajoutés dans la coque (model, scene, view, ui) listés là-bas ; Miro et CAD inchangés (tests du board : seul l'échec déjà connu).
+
 PIÈGES déjà rencontrés pendant ces découpages :
 - Variable de module RÉAFFECTÉE (`global X`, ou `module.X = …` ailleurs) : la laisser dans le module qui la LIT, les autres écrivent `module.X = …` (jamais `from m import X` puis réaffectation : copie figée).
 - Patch de test : viser le module qui APPELLE le nom (`main_window.viewer_chrome.save_settings`), jamais l'ancien module ni la façade — sinon le patch n'agit plus SANS faire échouer le test.
