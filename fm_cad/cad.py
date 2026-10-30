@@ -1735,7 +1735,10 @@ class CadController(QObject):
             state["window"] = (start, self.cursor_doc, crossing, self.cursor_view)
         snap = self.hover_snap if prompt is None else None
         if snap is not None:
-            if look["show_markers"]:
+            snaps = self.engine.settings
+            if look["show_markers"] and snaps.osnap and snap.candidate.mode in snaps.modes:
+                # Marqueur = accrochage objet ALLUME (OSNAP et ce mode coche) : l'aimant seul des poignees n'en montre
+                # pas (demande de l'utilisateur).
                 state["marker"] = (snap.candidate.mode, snap.candidate.point)
             if look["magnet"] and self.cursor_view:
                 state["cursor"] = self.doc_to_view(snap.point)      # reticule aimante, hors commande aussi

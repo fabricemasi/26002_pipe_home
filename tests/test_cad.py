@@ -1308,6 +1308,16 @@ class IdleMagnetTest(CadBoardCase):
             self.move(spot)
             self.assertIsNotNone(self.ctl.hover_snap, spot)
             self.assertEqual(self.ctl.hover_snap.point, grip)
+            state = self.ctl.overlay_state()
+            self.assertEqual(state["cursor"], self.ctl.doc_to_view(grip))      # reticule aimante...
+            self.assertNotIn("marker", state)                                   # ... sans marqueur d'accrochage
+        self.ctl.apply_settings(dict(self.ctl.settings, board_cad_osnap=True, board_cad_osnap_end=True))
+        self.move((100, 60))
+        self.move((104, 3))
+        self.assertNotIn("marker", self.ctl.overlay_state())                    # milieu non coche : pas de marqueur
+        self.move((100, 60))
+        self.move((203, 3))
+        self.assertEqual(self.ctl.overlay_state()["marker"][1], (200.0, 0.0))  # extremite cochee : marqueur
         item.setSelected(False)
         self.move((100, 60))
         self.move((203, 3))
