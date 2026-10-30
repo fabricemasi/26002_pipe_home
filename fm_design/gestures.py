@@ -16,18 +16,20 @@ from .overlay import angle_of, mid
 
 class GestureMixin:
     # -- cadre de sélection (glisser sans Ctrl) --
-    def _marquee_start(self, pos, scene_pos, mods, armed: bool):
+    def _marquee_start(self, pos, scene_pos, mods, on_element: bool):
         base = self.selection() if mods & Qt.ShiftModifier else []
         members = self._press[2] if self._press and self._press[0] == "click" else None
-        self._press = ("marquee", pos, scene_pos, base, mods, False, members)
+        self._press = ("marquee", pos, scene_pos, base, mods, False, members, on_element)
 
     def _marquee_move(self, pos, mods):
-        _kind, start, start_scene, base, start_mods, moved, members = self._press
+        _kind, start, start_scene, base, start_mods, moved, members, on_element = self._press
         if not moved and (pos - start).manhattanLength() < 4:
             return
-        self._press = ("marquee", start, start_scene, base, start_mods, True, None)
+        self._press = ("marquee", start, start_scene, base, start_mods, True, None, on_element)
         rect = QRectF(start_scene, self.view.mapToScene(pos.toPoint())).normalized()
         self.marquee = rect
+        # Glissé depuis un élément sans Ctrl : rappel de la règle (Ctrl + glisser = déplacer).
+        self.tip = (self.view.mapToScene(pos.toPoint()), "Ctrl + glisser pour déplacer") if on_element else None
         hit = [i for i in doc.elements(self.scene)
                if i.isVisible() and self.scene.item_active(i) and i.mapRectToScene(i.content_rect()).intersects(rect)]
         wanted = set(self._expand(hit)) | set(base)
@@ -100,6 +102,15 @@ class GestureMixin:
             self._do_rotate(g, scene_pos, mods)
         elif kind == "crop_edge":
             self._do_crop_edge(g, scene_pos)
+        elif kind == "guide":
+            page, n = g["page"], g["guide"]
+            local = page.mapFromScene(scene_pos)
+            guides = [dict(x) for x in g["guides0"]]
+            axis = guides[n]["axis"]
+            limit = page.size()[0] if axis == "v" else page.size()[1]
+            guides[n]["pos"] = round(min(limit, max(0.0, local.x() if axis == "v" else local.y())), 2)
+            page.data["guides"] = guides
+            self.tip = (scene_pos, f"{round(guides[n]['pos'])} px")
         elif kind == "crop_pan":
             item = g["items"][0]
             inverse, _ok = item.sceneTransform().inverted()
@@ -131,7 +142,8 @@ class GestureMixin:
         self.guides = []
         if threshold is not None and page is not None:
             x, y, w, h = g["box0"]
-            sx, sy, guides = geometry.snap_move((x + dx, y + dy, w, h), g["targets"], page.size(), threshold)
+            sx, sy, guides = geometry.snap_move((x + dx, y + dy, w, h), g["targets"], page.size(), threshold,
+                                                page_guides(page))
             dx += sx
             dy += sy
             self.guides = self._guide_lines(page, guides)
@@ -161,8 +173,9 @@ class GestureMixin:
         self.guides = []
         if threshold is not None and page is not None and abs(item.rotation()) < 1e-6 and len(handle) == 1:
             ox, oy = g["pos0"][item].x(), g["pos0"][item].y()
-            xs = [0.0, page.size()[0] / 2, page.size()[0]] + [v for t in g["targets"] for v in geometry.edges(t)[0]]
-            ys = [0.0, page.size()[1] / 2, page.size()[1]] + [v for t in g["targets"] for v in geometry.edges(t)[1]]
+            gx, gy = page_guides(page)
+            xs = [0.0, page.size()[0] / 2, page.size()[0], *gx] + [v for t in g["targets"] for v in geometry.edges(t)[0]]
+            ys = [0.0, page.size()[1] / 2, page.size()[1], *gy] + [v for t in g["targets"] for v in geometry.edges(t)[1]]
             guides = []
             if handle in ("l", "r"):
                 value = ox + (left if handle == "l" else right)
@@ -324,6 +337,11 @@ class GestureMixin:
                 self.scene.apply_states(g["before"])
             self.refresh()
             return
+        if g["kind"] == "guide":
+            page = g["page"]
+            self.scene.push(g["before"], self.scene.snapshot([page.item_id]), "Déplacer un repère")
+            self.refresh()
+            return
         items = [i for i in g["items"] if i.scene() is self.scene]
         if g["kind"] == "move" and items:
             box = QRectF()
@@ -336,7 +354,7 @@ class GestureMixin:
         for item in items:
             item.data = item.to_dict()
             self.scene.item_moved(item)
-        text = {"move": "Déplacer", "resize": "Redimensionner", "multi_resize": "Redimensionner",
+        text = {"move": "Déplacer", "resize": "Redimensionner", "guide": "Repère", "multi_resize": "Redimensionner",
                 "rotate": "Rotation", "crop_edge": "Recadrer", "crop_pan": "Recadrer"}[g["kind"]]
         self.scene.push(g["before"], self.scene.snapshot(list(g["before"])), text)
         self.refresh()
@@ -364,3 +382,10 @@ class GestureMixin:
         return [("tl", tl, angle), ("tr", tr, angle), ("br", br, angle), ("bl", bl, angle),
                 ("l", mid(tl, bl), angle), ("r", mid(tr, br), angle), ("t", mid(tl, tr), angle),
                 ("b", mid(bl, br), angle)]
+
+
+def page_guides(page) -> tuple[list, list]:
+    """(x des repères verticaux, y des horizontaux) d'une page."""
+    guides = page.data.get("guides") or []
+    return ([float(g["pos"]) for g in guides if g.get("axis") == "v"],
+            [float(g["pos"]) for g in guides if g.get("axis") == "h"])

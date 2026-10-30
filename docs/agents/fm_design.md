@@ -88,6 +88,8 @@ board est fait à la main (`_notify_cad_layer`, `scene.item_moved` en fin de ges
   R rectangle, C cercle, L ligne ; texte : Ctrl+B / I / U, Ctrl+Maj+K majuscules, Ctrl+Maj+L / E / R / J alignement,
   Ctrl+Maj+> / < taille. Les autres lettres sont prises (les outils de Miro ne s'activent pas). Molette, bouton du
   milieu, Espace : zoom / pan du board.
+- Repères : Ctrl + glisser = déplacer (sans Ctrl : cadre de sélection), aimantants ; glisser un élément SANS Ctrl
+  affiche la bulle « Ctrl + glisser pour déplacer ».
 - Pages (barre du bas) : clic = aller à la page (affichée dans la zone libre, hors panneau) ; Ctrl + glisser =
   réordonner (fantôme `DRAG_GHOST_OPACITY`) ; clic droit = dupliquer, renommer, monter / descendre, redimensionner,
   supprimer ; « + » = page du même format. Calques (panneau) : Ctrl + glisser = ordre, cadenas = verrou.
@@ -145,6 +147,7 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 | Validation graphique en vraie fenêtre Windows (pas seulement hors écran) | À faire | — |
 | Texte multistyle (par caractère), listes à puces | À faire | Texte |
 | Grilles de photos (6 mises en page), cadres vides en forme, dépôt / bibliothèque = remplir le cadre (cadrage couvrant), « Remplacer l'image… » | Terminée | Images |
-| Règles / repères de page fixes, marges d'impression, fond perdu | À faire | Pages |
+| Repères de page (clic droit sur la page : ajouter ; Ctrl + glisser : déplacer ; clic droit dessus : retirer ; aimantants), marges affichées (5 % du petit côté) | Terminée | Pages |
+| Règles graduées le long de la vue, fond perdu à l'export PDF | À faire | Pages |
 | Styles de marque (palette du document, styles de texte réutilisables) | À faire | Texte, Styles |
 | Icônes réglables : lignes `design*` ajoutées à `ICON_ROWS` (fenêtre de réglages : vérifier l'affichage) | Partielle | — |

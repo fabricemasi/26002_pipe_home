@@ -29,8 +29,9 @@ STYLE_COMMON = {"page": "", "group": "", "opacity": 1.0, "flip_h": False, "flip_
 FILL_TYPES = ("solid", "linear", "radial", "none")
 
 DEFAULTS: dict[str, dict] = {
+    # `guides` = repères de la page [{"axis": "v" | "h", "pos": unités de page}] ; `margins` = marges affichées.
     PAGE: {"w": 1080.0, "h": 1080.0, "name": "", "index": 0, "background": "#ffffff", "bg_type": "solid",
-           "bg2": "#e8e0ff", "bg_angle": 90.0, "format": "custom"},
+           "bg2": "#e8e0ff", "bg_angle": 90.0, "format": "custom", "guides": [], "margins": False},
     # Forme : `shape` = noms de fm_miro (rect, ellipse, triangle…) + « line » (trait horizontal au milieu de la
     # boîte, tourné par `rotation`) ; fill_type solid / linear / radial (fill -> fill2, angle) / none.
     SHAPE: {"w": 240.0, "h": 240.0, "shape": "rect", "fill": "#8b3dff", "fill_type": "solid", "fill2": "#22d3ee",
@@ -122,9 +123,28 @@ def normalize_entity(item: dict) -> dict:
         item["line_height"] = min(5.0, max(0.5, item["line_height"]))
         if item["align"] not in ("left", "center", "right", "justify"):
             item["align"] = "left"
+    if kind == PAGE:
+        item["guides"] = valid_guides(item.get("guides"))
     if kind == SHAPE and item["fill_type"] not in FILL_TYPES:
         item["fill_type"] = "solid"
     return item
+
+
+def valid_guides(value) -> list[dict]:
+    out = []
+    for guide in value if isinstance(value, list) else []:
+        try:
+            axis, pos = guide["axis"], float(guide["pos"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if axis in ("v", "h"):
+            out.append({"axis": axis, "pos": round(pos, 2)})
+    return out
+
+
+def margin_size(w: float, h: float) -> float:
+    """Marge affichée d'une page : 5 % du plus petit côté (repère visuel, rien n'est déplacé)."""
+    return round(min(w, h) * 0.05, 2)
 
 
 def valid_crop(value) -> list[float]:

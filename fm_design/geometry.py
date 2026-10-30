@@ -21,10 +21,12 @@ def best_snap(mine: list[float], theirs: list[float], threshold: float):
     return best if best is not None else (None, None)
 
 
-def snap_move(rect, targets: list, page_size, threshold: float):
-    """Magnétisme d'un déplacement : bords et centres de `rect` sur ceux de la page et des `targets`.
-    Retourne (dx, dy, guides) ; guides = [("v", x) | ("h", y)]."""
-    xs_t, ys_t = [0.0, page_size[0] / 2, page_size[0]], [0.0, page_size[1] / 2, page_size[1]]
+def snap_move(rect, targets: list, page_size, threshold: float, extra=((), ())):
+    """Magnétisme d'un déplacement : bords et centres de `rect` sur ceux de la page, des `targets` et des repères
+    de la page (`extra` = (x des repères verticaux, y des horizontaux)). Retourne (dx, dy, guides) ; guides =
+    [("v", x) | ("h", y)]."""
+    xs_t = [0.0, page_size[0] / 2, page_size[0]] + list(extra[0])
+    ys_t = [0.0, page_size[1] / 2, page_size[1]] + list(extra[1])
     for t in targets:
         ex, ey = edges(t)
         xs_t += ex

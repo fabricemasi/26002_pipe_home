@@ -306,10 +306,43 @@ def open_context_menu(ctl, global_pos):
         menu.addAction("Couleur de la page…").triggered.connect(
             lambda: QTimer.singleShot(0, lambda: fill_menu(ctl, ctl.ui.context, [page],
                                                            ("background", "bg_type", "bg2", "bg_angle"), "Fond de page")))
+        guides = menu.addMenu("Repères et marges")
+        w, h = page.size()
+        guides.addAction("Ajouter un repère vertical (centre)").triggered.connect(
+            lambda: add_guide(ctl, page, "v", w / 2))
+        guides.addAction("Ajouter un repère horizontal (milieu)").triggered.connect(
+            lambda: add_guide(ctl, page, "h", h / 2))
+        if page.data.get("guides"):
+            guides.addAction("Retirer tous les repères").triggered.connect(lambda: doc.change(
+                ctl.scene, [page], lambda i: i.data.update(guides=[]), "Repères"))
+        margins = guides.addAction("Afficher les marges")
+        margins.setCheckable(True)
+        margins.setChecked(bool(page.data.get("margins")))
+        margins.triggered.connect(lambda on: doc.change(ctl.scene, [page], lambda i: i.data.update(margins=bool(on)),
+                                                        "Marges"))
         if page.data.get("bg_asset"):
             menu.addAction("Retirer l'image d'arrière-plan").triggered.connect(
                 lambda: doc.change(ctl.scene, [page], lambda i: i.data.update(bg_asset=""), "Arrière-plan"))
     menu.aboutToHide.connect(ctl.scene.commit_live)
+    menu.popup(global_pos)
+
+
+def add_guide(ctl, page, axis, pos):
+    doc.change(ctl.scene, [page], lambda i: i.data.update(
+        guides=list(i.data.get("guides") or []) + [{"axis": axis, "pos": round(pos, 2)}]), "Ajouter un repère")
+
+
+def guide_menu(ctl, guide, global_pos):
+    """Clic droit sur un repère : le retirer (Ctrl + glisser le déplace)."""
+    page, n = guide
+    menu = _menu(ctl.pane, "design_guide")
+
+    def drop(i):
+        guides = list(i.data.get("guides") or [])
+        if 0 <= n < len(guides):
+            guides.pop(n)
+        i.data["guides"] = guides
+    menu.addAction("Retirer ce repère").triggered.connect(lambda: doc.change(ctl.scene, [page], drop, "Repère"))
     menu.popup(global_pos)
 
 

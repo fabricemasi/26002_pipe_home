@@ -113,10 +113,30 @@ class DesignOverlay(QGraphicsItem):
             painter.setPen(QColor(dm.ACCENT) if page is current and self.controller.active else QColor(90, 90, 90))
             box = QRectF(r.left(), r.top() - 22 / zoom, r.width(), 18 / zoom)
             painter.drawText(box, Qt.AlignLeft | Qt.AlignVCenter, label)
+            self._paint_page_guides(painter, page, r, zoom)
             if page is current and self.controller.active:
                 painter.setPen(QPen(QColor(dm.ACCENT), 1.0 / zoom))
                 painter.setBrush(Qt.NoBrush)
                 painter.drawRect(r.adjusted(-1 / zoom, -1 / zoom, 1 / zoom, 1 / zoom))
+
+    def _paint_page_guides(self, painter, page, r, zoom):
+        """Repères (traits cyan sur toute la page) et marges (cadre en tirets), seulement en mode Design."""
+        if not self.controller.active:
+            return
+        guides = page.data.get("guides") or []
+        if guides:
+            painter.setPen(QPen(QColor(0, 190, 255, 200), 1.0 / zoom))
+            for guide in guides:
+                pos = float(guide["pos"])
+                if guide["axis"] == "v":
+                    painter.drawLine(page.mapToScene(QPointF(pos, 0)), page.mapToScene(QPointF(pos, page.size()[1])))
+                else:
+                    painter.drawLine(page.mapToScene(QPointF(0, pos)), page.mapToScene(QPointF(page.size()[0], pos)))
+        if page.data.get("margins"):
+            m = dm.margin_size(*page.size())
+            painter.setPen(QPen(QColor(0, 190, 255, 160), 1.0 / zoom, Qt.DashLine))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(r.adjusted(m, m, -m, -m))
 
     def _paint_handles(self, painter, zoom):
         for name, point, angle in self.controller.handles():

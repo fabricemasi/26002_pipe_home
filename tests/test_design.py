@@ -672,5 +672,28 @@ class GridTest(DesignTestCase):
         self.assertEqual(frame.data["mask"], "ellipse")
 
 
+class GuidesTest(DesignTestCase):
+    def test_guides_snap_move_with_ctrl_and_survive_save(self):
+        from fm_design.menus import add_guide
+        page = self.page()
+        add_guide(self.ctl, page, "v", 300.0)
+        item = self.ctl.add_shape("rect", {"x": 100.0, "y": 600.0, "w": 100.0, "h": 50.0})
+        start = self.center(item)
+        self.drag(start, start + QPointF(95, 0), mods=Qt.ControlModifier)        # bord droit 295 -> repère 300
+        self.assertAlmostEqual(item.pos().x(), 200.0, delta=0.01)
+        # Ctrl + glisser le repère : il bouge ; sans Ctrl : cadre de sélection, le repère reste
+        line = page.mapToScene(QPointF(300, 100))
+        self.drag(line, line + QPointF(100, 0))
+        self.assertEqual(page.data["guides"][0]["pos"], 300.0)
+        self.drag(line, line + QPointF(100, 0), mods=Qt.ControlModifier)
+        self.assertAlmostEqual(page.data["guides"][0]["pos"], 400.0, delta=0.5)
+        self.scene.undo.undo()
+        self.assertEqual(page.data["guides"][0]["pos"], 300.0)
+        self.assertTrue(self.pane.save())
+        data = json.loads(self.path.read_text(encoding="utf-8"))
+        saved = [i for i in data["items"] if i["type"] == "design_page"][0]
+        self.assertEqual(saved["guides"], [{"axis": "v", "pos": 300.0}])
+
+
 if __name__ == "__main__":
     unittest.main()

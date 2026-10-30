@@ -274,6 +274,10 @@ class DesignController(GestureMixin, CommandMixin, QObject):
                 return False                     # clic dans le texte édité : curseur, sélection du texte
             self.view.finish_text_edit()
         if event.button() == Qt.RightButton:
+            guide = self.guide_at(pos)
+            if guide is not None and self._element_at(pos) is None:
+                self._press = ("guide_menu", pos, guide)
+                return True
             target = self._element_at(pos)
             if target is not None and not target.isSelected():
                 self._select([target])
@@ -296,6 +300,14 @@ class DesignController(GestureMixin, CommandMixin, QObject):
                 self.end_crop()
         if page is not None:
             self.set_current_page(page)
+        guide = self.guide_at(pos) if mods & Qt.ControlModifier and target is None else None
+        if guide is not None:                        # Ctrl + glisser un repère (règle de l'appli)
+            page, n = guide
+            self.scene.commit_live()
+            self._gesture = {"kind": "guide", "page": page, "guide": n, "items": [], "moved": False,
+                             "before": self.scene.snapshot([page.item_id]),
+                             "guides0": [dict(x) for x in page.data.get("guides") or []]}
+            return True
         if mods & Qt.ControlModifier:
             # Règle de l'appli : déplacer = Ctrl + glisser (sur l'élément ou dans la sélection).
             sel = self.selection()
@@ -321,13 +333,27 @@ class DesignController(GestureMixin, CommandMixin, QObject):
                 self._press = ("click", pos, None)
             else:
                 self._press = ("click", pos, members)  # relâché sans glisser : lui seul (sortir d'une multi)
-            self._marquee_start(pos, scene_pos, mods, armed=True)
+            self._marquee_start(pos, scene_pos, mods, on_element=True)
             return True
         if not mods & Qt.ShiftModifier:
             self.scene.clearSelection()
         self._press = ("click", pos, None)
-        self._marquee_start(pos, scene_pos, mods, armed=True)
+        self._marquee_start(pos, scene_pos, mods, on_element=False)
         return True
+
+    def guide_at(self, view_pos):
+        """(page, index) du repère sous le pointeur (6 px), sinon None."""
+        scene_pos = self.view.mapToScene(view_pos.toPoint() if hasattr(view_pos, "toPoint") else view_pos)
+        page = self._page_at(scene_pos)
+        if page is None:
+            return None
+        local = page.mapFromScene(scene_pos)
+        reach = 6.0 / max(0.01, self.scene.zoom)
+        for n, guide in enumerate(page.data.get("guides") or []):
+            value = local.x() if guide["axis"] == "v" else local.y()
+            if abs(value - float(guide["pos"])) <= reach:
+                return page, n
+        return None
 
     def mouse_move(self, event) -> bool:
         pos = event.position()
@@ -351,6 +377,10 @@ class DesignController(GestureMixin, CommandMixin, QObject):
             return True
         if press is None:
             return self.text_editing() is False and event.button() in (Qt.LeftButton, Qt.RightButton)
+        if press[0] == "guide_menu":
+            from .menus import guide_menu
+            guide_menu(self, press[2], self.view.viewport().mapToGlobal(event.position().toPoint()))
+            return True
         if press[0] == "menu":
             from .menus import open_context_menu
             open_context_menu(self, self.view.viewport().mapToGlobal(event.position().toPoint()))
