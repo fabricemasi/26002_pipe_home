@@ -7,7 +7,8 @@ import time
 import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6.QtCore import QCoreApplication  # noqa: E402
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QPointF, Qt  # noqa: E402
+from PySide6.QtGui import QMouseEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QWidget  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
@@ -37,7 +38,9 @@ def settle(ms: int = 40):
         QCoreApplication.processEvents()
 
 
-class RowTemplatesTest(unittest.TestCase):
+class _Tables(unittest.TestCase):
+    """Tableaux faits avec les briques des reglages, detruits a la fin du test."""
+
     def setUp(self):
         _TABLE_DIMS.clear()
         self.frames = []
@@ -54,6 +57,8 @@ class RowTemplatesTest(unittest.TestCase):
         self.frames.append(frame)
         return frame, splits
 
+
+class RowTemplatesTest(_Tables):
     def test_widths_follow_on_every_row_of_the_same_kind(self):
         _f1, (a, other) = self.make(("sides", 5), ("corners", 5))
         _f2, (b,) = self.make(("sides", 5))
@@ -127,6 +132,27 @@ class RowTemplatesTest(unittest.TestCase):
         self.assertEqual(b.widths(), [0] * 5)               # pendant le geste : seulement les tableaux a l'ecran
         settle(300)
         self.assertEqual(b.widths(), [0, 45, 0, 0, 0])
+
+
+def send_mouse(widget, kind, pos, buttons=Qt.LeftButton):
+    event = QMouseEvent(kind, QPointF(pos), QPointF(widget.mapToGlobal(pos)),
+                        Qt.LeftButton if kind != QEvent.MouseMove else Qt.NoButton, buttons, Qt.NoModifier)
+    QApplication.sendEvent(widget, event)
+
+
+class HeightBadgeTest(_Tables):
+    def test_dragging_a_row_height_shows_its_height_in_pixels(self):
+        frame, _splits = self.make(("corners", 5), ("padding", 5))
+        settle()
+        row = frame._extra_dims.heights.rows[0]
+        pos = QPoint(30, row.height() - 1)                  # bord bas de la ligne
+        send_mouse(row, QEvent.MouseButtonPress, pos)
+        send_mouse(row, QEvent.MouseMove, pos + QPoint(0, 25))
+        badge = row._width_badge_list[0]
+        self.assertTrue(badge.isVisible())
+        self.assertEqual(badge.text(), f"{row.minimumHeight()} px")
+        send_mouse(row, QEvent.MouseButtonRelease, pos + QPoint(0, 25), Qt.NoButton)
+        self.assertFalse(badge.isVisible())
 
 
 if __name__ == "__main__":

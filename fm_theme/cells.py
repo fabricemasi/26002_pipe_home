@@ -1314,6 +1314,7 @@ class _CellEdgeDrag(QObject):
             if self._vdrag is not None:
                 row, y0, h0 = self._vdrag
                 self._heights.set_height(row, h0 + gpos.y() - y0)
+                self._show_height_badge(row, gpos)
                 return True
             if head._boundary_at(head.mapFromGlobal(gpos).x()) is not None:
                 obj.setCursor(Qt.SizeHorCursor)
@@ -1330,6 +1331,7 @@ class _CellEdgeDrag(QObject):
             row = self._row_hit(obj, event)
             if row is not None:
                 self._vdrag = (row, gpos.y(), self._heights.rows[row].height())
+                self._show_height_badge(row, gpos)
                 return True
             return False
         if etype == QEvent.MouseButtonRelease:
@@ -1337,9 +1339,19 @@ class _CellEdgeDrag(QObject):
                 head.endDrag()
                 return True
             if self._vdrag is not None:
+                _hide_width_badges(self._heights.rows[self._vdrag[0]])
                 self._vdrag = None
                 return True
         return False
+
+    def _show_height_badge(self, row: int, gpos: QPoint):
+        """Encart « N px » (celui des largeurs) pendant le glissement de la bordure basse d'une ligne
+        (demande de l'utilisateur) : hauteur REELLE (jamais sous le contenu), pose au-dessus de la bordure,
+        sous le curseur."""
+        widget = self._heights.rows[row]
+        height = widget.minimumHeight() or widget.height()          # posee par _RowHeights.apply
+        x = widget.mapFromGlobal(gpos).x()
+        _width_badges(widget, 1)[0].show_on(QRect(x, max(0, height - 19), 1, 17), height)
 
 
 def split_of(widget: QWidget) -> "SplitCell | None":
