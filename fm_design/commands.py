@@ -218,7 +218,7 @@ class CommandMixin:
     STYLE_KEYS = ("fill", "fill_type", "fill2", "gradient_angle", "stroke", "stroke_width", "stroke_style", "radius",
                   "opacity", "shadow", "font_family", "font_size", "color", "bold", "italic", "underline", "strike",
                   "uppercase", "align", "line_height", "letter_spacing", "text_bg", "text_stroke",
-                  "text_stroke_width", "brightness", "contrast", "saturation", "blur", "grayscale", "mask")
+                  "text_stroke_width", "curve", "brightness", "contrast", "saturation", "blur", "grayscale", "mask")
 
     def copy_style(self):
         """Copier le style (Ctrl+Alt+C, comme Canva) : propriétés d'aspect du premier élément choisi."""
@@ -245,10 +245,13 @@ class CommandMixin:
     def present(self, start_page=None):
         """Présentation plein écran (Ctrl+Alt+P), à partir de la page courante."""
         from .present import PresentationWindow
-        pages = self.pages()
+        pages = [p for p in self.pages() if not p.data.get("hidden") or p is start_page]   # masquées : sautées
         if not pages:
             return None
         current = start_page or self.current_page()
+        if current not in pages:                       # page courante masquée : la suivante montrée
+            following = [p for p in pages if p.data.get("index", 0) > (current.data.get("index", 0) if current else 0)]
+            current = following[0] if following else pages[0]
         window = PresentationWindow(pages, pages.index(current) if current in pages else 0, self.pane.window())
         window.start()
         return window

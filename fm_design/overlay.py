@@ -75,7 +75,8 @@ class DesignOverlay(QGraphicsItem):
         for page in c.pages():
             r = page.sceneBoundingRect()
             key.append((id(page), page.isVisible(), r.x(), r.y(), r.width(), r.height(), page.data.get("name"),
-                        page.data.get("index"), repr(page.data.get("guides")), bool(page.data.get("margins"))))
+                        page.data.get("index"), repr(page.data.get("guides")), bool(page.data.get("margins")),
+                        bool(page.data.get("hidden"))))
         return tuple(key)
 
     def dynamic_rects(self) -> list[QRectF]:
@@ -186,7 +187,7 @@ class DesignOverlay(QGraphicsItem):
             if not page.isVisible():
                 continue
             r = page.mapRectToScene(page.content_rect())
-            label = dm.page_label(page.data, number)
+            label = dm.page_label(page.data, number) + (" — masquée" if page.data.get("hidden") else "")
             painter.setPen(QColor(dm.ACCENT) if page is current and self.controller.active else QColor(90, 90, 90))
             box = QRectF(r.left(), r.top() - 22 / zoom, r.width(), 18 / zoom)
             painter.drawText(box, Qt.AlignLeft | Qt.AlignVCenter, label)

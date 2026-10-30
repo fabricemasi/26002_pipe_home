@@ -1190,6 +1190,42 @@ class ZoomSnapshotTest(DesignTestCase):
         self.assertAlmostEqual(moving.pos().x(), item.pos().x() + 30, delta=0.01)
 
 
+class HiddenPageTest(DesignTestCase):
+    def test_hidden_page_skipped_by_presentation_and_export_all(self):
+        from fm_design import menus_export
+        first = self.page(400, 300)
+        second = doc.add_page(self.scene, 400, 300, after=first)
+        third = doc.add_page(self.scene, 400, 300, after=second)
+        self.ctl.ui._set_hidden(second, True)
+        self.assertTrue(second.data["hidden"])
+        thumb = [t for t in self.ctl.ui._thumbs if t.page_id == second.item_id][0]
+        self.assertTrue(thumb.hidden)
+        window = self.ctl.present(start_page=first)
+        try:
+            self.assertEqual(window.pages, [first, third])
+        finally:
+            window.close()
+            settle()
+        self.ctl.set_current_page(second)
+        window = self.ctl.present()
+        try:
+            self.assertIs(window.pages[window.index], third)       # page courante masquée : la suivante
+        finally:
+            window.close()
+            settle()
+        written = []
+        with mock.patch.object(menus_export.QFileDialog, "getSaveFileName",
+                               return_value=(str(self.tmp / "x.pdf"), "")),                 mock.patch("fm_design.render.export_pages", side_effect=lambda pages, *a, **k: written.append(pages)
+                           or []):
+            menus_export.run_export(self.ctl, {"scope": "all", "fmt": "pdf", "scale": 100, "quality": 90,
+                                               "transparent": False, "bleed": False, "marks": False})
+        self.assertEqual(written[0], [first, third])
+        self.scene.undo.undo()
+        settle()
+        self.assertFalse(self.scene._items[second.item_id].data["hidden"])
+        thumb = [t for t in self.ctl.ui._thumbs if t.page_id == second.item_id][0]
+        self.assertFalse(thumb.hidden)
+
 class CurvedTextTest(DesignTestCase):
     def test_curved_text_box_edit_and_render(self):
         page = self.page(800, 600)

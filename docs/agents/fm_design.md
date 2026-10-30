@@ -200,6 +200,7 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 | Peinture partielle en Design (sélection, survol : seules les zones changées ; 35 → 14 ms à 1 000 éléments) | Terminée | Fluidité |
 | Animation « Un par un », logos du kit de marque, rechercher et remplacer (Ctrl+F : textes et cellules de toutes les pages, Suivant / Remplacer / Tout remplacer en une étape, éléments verrouillés laissés) | Terminée | Présentation, Réglages, Texte |
 | Texte courbé (« Courbe » dans les effets du texte) | Terminée | Texte |
+| Masquer une page (clic droit sur sa miniature : voilée et barrée ; sautée en présentation et à l'export « toutes les pages », gardée à l'export de la page courante ou d'une plage) ; « Copier le style » emporte la courbe | Terminée | Pages |
 | Graphiques à plusieurs séries (jusqu'à 8) : données « Libellé ; valeur ; valeur… », 1re ligne facultative = noms (légende) ; barres groupées, une courbe par série ; enregistrés en `values` (1re série, format d'origine) + `more_series` + `series_names` | Terminée | Tableaux et graphiques |
 | Validation graphique en vraie fenêtre Windows (pas seulement hors écran) | À faire | — |
 | Texte multistyle : gras / italique / souligné / taille / couleur / police sur une PARTIE du texte (pendant l'édition : raccourcis, ou barre contextuelle : boutons sans focus, menus qui gardent l'édition — `_DesignText.focusOutEvent` ignore `PopupFocusReason`), enregistré en `spans`, mis à l'échelle avec la boîte | Terminée | Texte |

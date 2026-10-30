@@ -8,7 +8,7 @@ curseurs / couleurs / polices = champs des réglages. Contenu refait seulement q
 passage de boucle) ; miniatures refaites 300 ms après un changement, seulement celles des pages modifiées."""
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer
+from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QAbstractButton, QApplication, QHBoxLayout, QInputDialog, QScrollArea
 
@@ -43,6 +43,7 @@ class PageThumb(QAbstractButton):
         self.pixmap = None
         self.number = 1
         self.current = False
+        self.hidden = bool(page.data.get("hidden"))
         self._press = None
         w, h = page.size()
         self.setFixedSize(QSize(max(30, min(110, round(THUMB_H * w / max(1.0, h)))) + 6, THUMB_H + 18))
@@ -58,11 +59,16 @@ class PageThumb(QAbstractButton):
             p.drawPixmap(box, self.pixmap, QRectF(self.pixmap.rect()))
         else:
             p.fillRect(box, QColor("#ffffff"))
+        if self.hidden:                                 # page masquée : voilée, barrée
+            p.fillRect(box, QColor(0, 0, 0, 120))
+            p.setPen(QPen(QColor(255, 255, 255, 200), 1.6))
+            p.drawLine(box.topLeft() + QPointF(6, 6), box.bottomRight() - QPointF(6, 6))
         p.setPen(QPen(QColor(dm.ACCENT) if self.current else QColor(255, 255, 255, 50), 2.0 if self.current else 1.0))
         p.setBrush(Qt.NoBrush)
         p.drawRect(box)
         p.setPen(QColor(C["text"]))
-        p.drawText(QRectF(0, THUMB_H + 3, self.width(), 15), Qt.AlignCenter, str(self.number))
+        p.drawText(QRectF(0, THUMB_H + 3, self.width(), 15), Qt.AlignCenter,
+                   f"{self.number} (masquée)" if self.hidden and self.width() > 70 else str(self.number))
         p.end()
 
     def mousePressEvent(self, event):
@@ -333,10 +339,11 @@ class DesignChrome(QObject):
         if [t.page_id for t in self._thumbs] != [p.item_id for p in pages]:
             self.rebuild_pages()
             return
-        for n, thumb in enumerate(self._thumbs, 1):
+        for n, (thumb, page) in enumerate(zip(self._thumbs, pages), 1):
             on = current is not None and thumb.page_id == current.item_id
-            if thumb.current != on or thumb.number != n:
-                thumb.current, thumb.number = on, n
+            hidden = bool(page.data.get("hidden"))
+            if thumb.current != on or thumb.number != n or thumb.hidden != hidden:
+                thumb.current, thumb.number, thumb.hidden = on, n, hidden
                 thumb.update()
 
     def refresh_thumbs(self):
@@ -388,12 +395,20 @@ class DesignChrome(QObject):
             menu.addAction("Descendre").triggered.connect(lambda: self._move(page, index + 1))
         menu.addAction("Redimensionner…").triggered.connect(
             lambda: QTimer.singleShot(0, lambda: resize_menu(self.ctl, self.pagebar, page)))
+        hidden = bool(page.data.get("hidden"))
+        menu.addAction("Afficher la page" if hidden else "Masquer la page (présentation, export)").triggered.connect(
+            lambda: self._set_hidden(page, not hidden))
         menu.addSeparator()
         if len(pages) > 1:
             menu.addAction("Supprimer la page").triggered.connect(lambda: self._delete(page))
         else:
             menu.addAction("Supprimer le design (page et éléments)").triggered.connect(lambda: self._delete(page))
         menu.popup(global_pos)
+
+    def _set_hidden(self, page, hidden: bool):
+        doc.change(self.scene, [page], lambda i: i.data.update(hidden=hidden),
+                   "Masquer la page" if hidden else "Afficher la page")
+        self.rebuild_pages()
 
     def _after(self, page):
         self.ctl.set_current_page(page, show=True)

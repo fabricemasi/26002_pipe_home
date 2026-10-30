@@ -34,7 +34,8 @@ DEFAULTS: dict[str, dict] = {
     # `guides` = repères de la page [{"axis": "v" | "h", "pos": unités de page}] ; `margins` = marges affichées.
     PAGE: {"w": 1080.0, "h": 1080.0, "name": "", "index": 0, "background": "#ffffff", "bg_type": "solid",
            "bg2": "#e8e0ff", "bg_angle": 90.0, "format": "custom", "guides": [], "margins": False,
-           "transition": "none", "animation": "none"},        # présentation : arrivée de la page, de ses éléments
+           "transition": "none", "animation": "none",        # présentation : arrivée de la page, de ses éléments
+           "hidden": False},                                  # page masquée : hors présentation et export « toutes »
     # Forme : `shape` = noms de fm_miro (rect, ellipse, triangle…) + « line » (trait horizontal au milieu de la
     # boîte, tourné par `rotation`) ; fill_type solid / linear / radial (fill -> fill2, angle) / none.
     SHAPE: {"w": 240.0, "h": 240.0, "shape": "rect", "fill": "#8b3dff", "fill_type": "solid", "fill2": "#22d3ee",

@@ -59,6 +59,8 @@ def run_export(ctl, state):
     from . import render
     from . import geometry
     pages = ctl.pages()
+    if state["scope"] == "all":
+        pages = [p for p in pages if not p.data.get("hidden")]       # pages masquées : seulement à la demande
     if state["scope"] == "current":
         current = ctl.current_page()
         pages = [current] if current is not None else []
