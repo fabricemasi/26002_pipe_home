@@ -1190,6 +1190,36 @@ class ZoomSnapshotTest(DesignTestCase):
         self.assertAlmostEqual(moving.pos().x(), item.pos().x() + 30, delta=0.01)
 
 
+class CurvedTextTest(DesignTestCase):
+    def test_curved_text_box_edit_and_render(self):
+        page = self.page(800, 600)
+        text = self.ctl.add_text("title", {"text": "Bonjour tout le monde", "x": 0.0, "y": 0.0,
+                                           "color": "#ff0000"}, edit=False)
+        flat = (text.data["w"], text.data["h"])
+        doc.change(self.scene, [text], lambda i: i.data.update(curve=80.0), "Courbe")
+        self.assertIsNotNone(text._curve)
+        self.assertNotEqual((text.data["w"], text.data["h"]), flat)          # boîte à la taille de l'arc
+        image = render.render_image(page, 1.0)
+        reds = [(x, y) for x in range(0, int(text.data["w"]), 3) for y in range(0, int(text.data["h"]), 3)
+                if image.pixelColor(x, y).red() > 200 and image.pixelColor(x, y).green() < 80]
+        self.assertTrue(reds)                                                # lettres peintes (export compris)
+        middle_top = min(y for _x, y in reds)
+        self.assertLess(middle_top, text.data["h"] / 3)                      # arche : le haut au milieu
+        self.view.setFocus()
+        self.ctl.edit_text(text)
+        self.assertTrue(text.text_item.editing())
+        self.assertIsNone(text._curve)                                       # droit pendant l'édition
+        text.finish_edit()
+        settle()
+        self.assertIsNotNone(self.scene._items[text.item_id]._curve)
+        bad = model.normalize_item({"id": "t", "type": "design_text", "curve": 500})
+        self.assertEqual(bad["curve"], 100.0)
+        for _n in range(3):                                                  # (l'édition a fait une étape)
+            if not self.scene._items[text.item_id].data["curve"]:
+                break
+            self.scene.undo.undo()
+        self.assertIsNone(self.scene._items[text.item_id]._curve)            # annulé : de nouveau droit
+
 class FindReplaceTest(DesignTestCase):
     def test_replace_text_keeps_styled_parts(self):
         self.assertEqual(dm.find_spans("Abc abc", "abc", False), [(0, 3), (4, 7)])

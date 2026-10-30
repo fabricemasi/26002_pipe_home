@@ -8,7 +8,8 @@ from .menus import _live, _popup, style_selection, text_selection
 
 
 def text_effects_menu(ctl, anchor, texts):
-    """Contour des lettres : épaisseur (0 = aucun) et couleur ; « Creux » = lettres vides cerclées."""
+    """Contour des lettres : épaisseur (0 = aucun) et couleur ; « Creux » = lettres vides cerclées ; « Courbe » =
+    texte posé sur un arc (-100 creux … 100 arche, `text_curve.py`)."""
     from settings_menu import menu_row
     menu = _menu(ctl.pane, "design_text_effects")
     first = texts[0].data
@@ -32,8 +33,12 @@ def text_effects_menu(ctl, anchor, texts):
     hollow.triggered.connect(lambda: doc.change(ctl.scene, texts, lambda i: i.data.update(
         text_stroke=i.data.get("color", dm.INK), text_stroke_width=max(2.0, float(i.data.get("text_stroke_width", 0))),
         color="#00000000"), "Creux"))
+    curve = _slider(-100, 100, round(float(first.get("curve", 0.0) or 0.0)), unit="")
+    curve.valueChanged.connect(lambda v: _live(ctl, "design_text_curve", texts,
+                                               lambda i: i.data.update(curve=float(v)), "Courbe"))
+    menu_row(menu, "Courbe", curve)
     menu.addAction("Aucun effet").triggered.connect(lambda: doc.change(
-        ctl.scene, texts, lambda i: i.data.update(text_stroke_width=0.0), "Contour"))
+        ctl.scene, texts, lambda i: i.data.update(text_stroke_width=0.0, curve=0.0), "Effets du texte"))
     _popup(ctl, menu, anchor)
 
 

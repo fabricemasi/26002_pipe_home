@@ -45,6 +45,7 @@ DEFAULTS: dict[str, dict] = {
     TEXT: {"w": 520.0, "h": 60.0, "text": "", "font_family": "", "font_size": 48.0, "color": INK, "bold": False,
            "italic": False, "underline": False, "strike": False, "uppercase": False, "align": "left",
            "line_height": 1.2, "letter_spacing": 0.0, "text_bg": "", "text_stroke": INK, "text_stroke_width": 0.0,
+           "curve": 0.0,                   # texte courbé : -100 (creux) … 100 (arche), 0 = droit (text_curve.py)
            # Style d'une PARTIE du texte (posé pendant l'édition : Ctrl+B / I / U, Ctrl+Maj+> / <) :
            # [{"start", "end" (caractères), "bold"?, "italic"?, "underline"?, "size"? (px), "color"?, "family"?}]
            # par-dessus le style de
@@ -148,6 +149,10 @@ def normalize_entity(item: dict) -> dict:
             item["align"] = "left"
         if item["list"] not in ("", "bullet", "number"):
             item["list"] = ""
+        try:
+            item["curve"] = max(-100.0, min(100.0, float(item.get("curve") or 0.0)))
+        except (TypeError, ValueError):
+            item["curve"] = 0.0
     if kind == PAGE:
         item["guides"] = valid_guides(item.get("guides"))
         if item["transition"] not in dict(TRANSITIONS):

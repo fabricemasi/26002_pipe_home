@@ -31,6 +31,7 @@ Troisième module du board (après Miro et CAD), créé le 2026-10-29 à la dema
 | Règles graduées (haut, gauche) | `rulers.py` | `Rulers`, `Ruler`, `tick_step` |
 | Panneau latéral (modèles et formats, éléments, texte, images, position et calques) | `panels.py` | `build_<onglet>`, `LayerList`, `PositionPanel` |
 | Logos du kit de marque (onglet Images ; clic droit sur une image de la bibliothèque = l'ajouter) | `panel_brand.py` | `build_brand_logos`, `library_menu` |
+| Texte courbé (menu Effets du texte : « Courbe » -100 creux … 100 arche ; lettres posées une à une, styles partiels compris ; droit pendant l'édition ; boîte à la taille de l'arc, ancrée à gauche) | `text_curve.py` ; `DesignTextItem._layout_curve` | `curve_layout`, `paint_curve` |
 | Rechercher et remplacer (Ctrl+F, panneau hors du rail `EXTRA_TABS`) : textes et cellules, styles partiels décalés | `find_replace.py` ; `design_model.find_spans`, `replace_text` | `build_find`, `matches`, `replace`, `show_next` |
 | Modèles de conception (originaux) | `templates.py` | `TEMPLATES` |
 | Rendu hors écran : miniatures, export PNG / JPEG / PDF / SVG | `render.py` | `paint_page`, `export_pages` |
@@ -173,7 +174,7 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
   sans numpy, noir et blanc et flou seulement.
 - Un élément Design ne peut pas être déplacé en mode Miro (pas de `ItemIsMovable`) : on passe en mode Design.
 - Page sans rotation ; animations seulement en présentation (pas dans l'export), réglées par page (pas d'animation
-  propre à un élément choisi) ; pas de vidéo ; secteurs et anneau n'utilisent que la 1re série ; kit de marque
+  propre à un élément choisi) ; pas de vidéo ; texte courbé : sur une ligne, ombre sans flou, sans surlignage ; secteurs et anneau n'utilisent que la 1re série ; kit de marque
   partagé entre boards : couleurs, polices et logos (pas de styles de texte complets ; un logo est un chemin de
   fichier : déplacé, il est compté « introuvable »).
 
@@ -198,6 +199,7 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 | Image de page pendant le zoom et les gestes (pages de 60 éléments et plus) | Terminée | Fluidité |
 | Peinture partielle en Design (sélection, survol : seules les zones changées ; 35 → 14 ms à 1 000 éléments) | Terminée | Fluidité |
 | Animation « Un par un », logos du kit de marque, rechercher et remplacer (Ctrl+F : textes et cellules de toutes les pages, Suivant / Remplacer / Tout remplacer en une étape, éléments verrouillés laissés) | Terminée | Présentation, Réglages, Texte |
+| Texte courbé (« Courbe » dans les effets du texte) | Terminée | Texte |
 | Graphiques à plusieurs séries (jusqu'à 8) : données « Libellé ; valeur ; valeur… », 1re ligne facultative = noms (légende) ; barres groupées, une courbe par série ; enregistrés en `values` (1re série, format d'origine) + `more_series` + `series_names` | Terminée | Tableaux et graphiques |
 | Validation graphique en vraie fenêtre Windows (pas seulement hors écran) | À faire | — |
 | Texte multistyle : gras / italique / souligné / taille / couleur / police sur une PARTIE du texte (pendant l'édition : raccourcis, ou barre contextuelle : boutons sans focus, menus qui gardent l'édition — `_DesignText.focusOutEvent` ignore `PopupFocusReason`), enregistré en `spans`, mis à l'échelle avec la boîte | Terminée | Texte |

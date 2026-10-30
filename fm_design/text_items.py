@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QGraphicsTextItem
 from fm_miro.items import ITEM_CLASSES, _Text, text_font
 from . import design_model as dm
 from .items import ALIGN, DesignElement, shadow_extent
+from .text_curve import curve_layout, paint_curve
 
 
 class _DesignText(_Text):
@@ -22,6 +23,8 @@ class _DesignText(_Text):
         if (page is not None and getattr(page, "snapshot", None) is not None and not self.editing()
                 and not self.owner.live):
             return                                  # zoom continu : dans l'image de la page
+        if getattr(self.owner, "_curve", None) is not None and not self.editing():
+            return                                  # texte courbé : peint par la boîte (text_curve.py)
         super().paint(painter, option, widget)
 
     def focusOutEvent(self, event):
@@ -205,11 +208,38 @@ class DesignTextItem(DesignElement):
             cursor.mergeCharFormat(fmt)
             self._apply_list(document, key[4])
         item.setPos(0, 0)
+        if self._layout_curve(document, font):
+            return
+        self._curve = None
         height = max(size * 0.8, document.size().height())
         if abs(height - float(data.get("h", 0.0))) > 0.01:
             self.prepareGeometryChange()
             data["h"] = round(height, 2)
             self.setTransformOriginPoint(float(data.get("w", 0.0)) / 2, height / 2)
+
+    def _layout_curve(self, document, font) -> bool:
+        """Texte courbé (hors édition) : lettres posées sur l'arc, boîte à la taille de l'arc ; False = texte droit."""
+        curve = float(self.data.get("curve", 0.0) or 0.0)
+        if abs(curve) < 1 or self.text_item.editing() or not self.text_item.toPlainText().strip():
+            return False
+        key = (self.text_item.toPlainText(), self._format_key, repr(spans_of(document)), curve, font.toString(),
+               self.data.get("color"))                 # styles réels du document (posés après la boîte)
+        kept = getattr(self, "_curve", None)
+        if kept is None or kept[0] != key:
+            glyphs, bounds = curve_layout(document, font, QColor(self.data.get("color", dm.INK)), curve)
+            kept = self._curve = (key, glyphs, bounds)
+        w, h = round(max(8.0, kept[2].width()), 2), round(max(8.0, kept[2].height()), 2)
+        if abs(w - float(self.data.get("w", 0.0))) > 0.01 or abs(h - float(self.data.get("h", 0.0))) > 0.01:
+            self.prepareGeometryChange()
+            self.data["w"], self.data["h"] = w, h
+            self.setTransformOriginPoint(w / 2, h / 2)
+        return True
+
+    def start_edit(self):
+        super().start_edit()
+        if getattr(self, "_curve", None) is not None:
+            self.layout_text()                      # texte courbé : droit pendant l'édition (comme Canva)
+            self.update()
 
     @staticmethod
     def _apply_list(document, kind: str):
@@ -242,6 +272,10 @@ class DesignTextItem(DesignElement):
             painter.setPen(QPen(QColor(0, 0, 0, 90), 1 / self._zoom(), Qt.DashLine))
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(self.content_rect())
+            return
+        kept = getattr(self, "_curve", None)
+        if kept is not None and not self.text_item.editing():
+            paint_curve(painter, kept[1], -kept[2].topLeft(), self.data.get("shadow"))
             return
         shadow = self.data.get("shadow") or {}
         if shadow.get("enabled"):
@@ -288,6 +322,9 @@ class DesignTextItem(DesignElement):
     def finish_edit(self):
         """Fin de l'édition ; un texte vidé disparaît (comme dans Canva), dans une étape à lui."""
         super().finish_edit()
+        if abs(float(self.data.get("curve", 0.0) or 0.0)) >= 1:
+            self.layout_text()                      # de nouveau courbé
+            self.update()
         if not (self.data.get("text") or "").strip():
             from PySide6.QtCore import QTimer
             QTimer.singleShot(0, self._drop_if_empty)
