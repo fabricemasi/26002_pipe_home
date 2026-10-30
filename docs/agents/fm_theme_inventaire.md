@@ -4,7 +4,7 @@ Produit par `python tools/inventaire_reglages.py` (ne pas éditer à la main : c
 
 | Catégorie | Clés |
 |---|---|
-| Aspect générique → fm_theme | 420 |
+| Aspect générique → fm_theme | 421 |
 | Aspect propre à fm_browser → références vers fm_theme | 960 |
 | Fonctionnement → reste dans fm_browser | 240 |
 
@@ -25,9 +25,9 @@ Produit par `python tools/inventaire_reglages.py` (ne pas éditer à la main : c
 `ctx_menu_editable`, `ctx_menu_bg`, `ctx_menu_border_enabled`, `ctx_menu_border`, `ctx_menu_border_thickness`, `ctx_menu_border_color`, `ctx_menu_border_radius`, `ctx_menu_border_radius_linked`, `ctx_menu_padding`, `ctx_menu_padding_linked`, `ctx_menu_font_family`, `ctx_menu_font_bold`, `ctx_menu_font_italic`, `ctx_menu_font_size`, `ctx_menu_font_smoothing_enabled`, `ctx_menu_font_smoothing`, `ctx_menu_font_color`, `ctx_menu_item_padding`, `ctx_menu_item_padding_linked`, `ctx_menu_hover_color`, `ctx_menu_hover_text_color`, `ctx_menu_hover_radius`, `ctx_menu_hover_radius_linked`, `ctx_menu_hover_border_enabled`, `ctx_menu_hover_border`, `ctx_menu_hover_border_thickness`, `ctx_menu_hover_border_enabled_linked`, `ctx_menu_hover_margin`, `ctx_menu_hover_margin_linked`, `ctx_menu_disabled_color`, `ctx_menu_icon_size`, `ctx_menu_control_gap`, `ctx_menu_slider_width`, `ctx_menu_label_font_family`, `ctx_menu_label_font_bold`, `ctx_menu_label_font_italic`, `ctx_menu_label_font_size`, `ctx_menu_label_font_smoothing_enabled`, `ctx_menu_label_font_smoothing`, `ctx_menu_label_font_color`, `ctx_menu_label_bg`, `ctx_menu_label_padding`, `ctx_menu_label_padding_linked`, `ctx_menu_label_uppercase`, `ctx_menu_sep_color`, `ctx_menu_sep_thickness`, `ctx_menu_sep_padding`, `ctx_menu_sep_padding_linked`, `ctx_menu_shadow_enabled`, `ctx_menu_shadow`, `ctx_menu_shadow_size`, `ctx_menu_shadow_enabled_linked`, `ctx_menu_border_enabled_linked`
 
 </details>
-<details><summary><code>divers</code> : 1 clés (échelle générale de l'interface)</summary>
+<details><summary><code>divers</code> : 2 clés (gabarits des lignes des fenêtres de réglages (choix de l'utilisateur, 2026-10-29) ; échelle générale de l'interface)</summary>
 
-`ui_scale`
+`ui_scale`, `row_templates`
 
 </details>
 <details><summary><code>extra_</code> : 29 clés (fenêtre additionnelle)</summary>

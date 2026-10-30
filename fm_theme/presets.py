@@ -27,7 +27,9 @@ PRESETS_DIR = Path(__file__).resolve().parent / "presets"   # redirigé par test
 STANDARD = "standard"                                         # nom de la variante unique des types sans variantes
 
 # Valeurs générales (pas de variantes) : clés exactes, et préfixe des rôles de texte.
-GENERAL_KEYS = ("colors", "ui_scale", "window_radius")
+# `row_templates` : gabarits des lignes des fenetres de reglages, un par type de ligne (fm_theme.cells,
+# ROW_TEMPLATES_KEY) — de l'aspect commun a toutes les applis du theme (choix de l'utilisateur, 2026-10-29).
+GENERAL_KEYS = ("colors", "ui_scale", "window_radius", "row_templates")
 GENERAL_PREFIX = "font_"
 # Types à une variante : type -> préfixe des clés.
 TYPE_PREFIXES = {
@@ -243,6 +245,20 @@ def update_preset(name: str, changes: dict, drop: tuple = (), folder: Path | Non
         _set_value(preset, key, _DROP, editing or {})
     save_preset(preset, folder)
     return preset
+
+
+def save_row_templates(name: str, templates: dict, folder: Path | None = None) -> bool:
+    """Gabarits des lignes des fenêtres de réglages dans le preset `name` (valeur générale `row_templates`).
+    N'écrit que s'ils ont changé (chaque écriture réveille la surveillance du fichier dans les applis). Retourne
+    True si le fichier a été écrit ; preset introuvable : rien."""
+    try:
+        preset = load_preset(find_preset(name, folder))
+    except (OSError, ValueError, TypeError):
+        return False
+    if (preset.get("general") or {}).get("row_templates") == templates:
+        return False
+    update_preset(name, {"row_templates": templates}, folder=folder)
+    return True
 
 
 # -- Variantes d'un type (titres, curseurs, champs, boutons, tableaux, onglets, menus, fenêtres) : créées,

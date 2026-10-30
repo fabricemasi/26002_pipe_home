@@ -60,6 +60,7 @@ EXCEPTIONS: dict[str, tuple[str, str]] = {
     "column_override_enabled_by_title": (FONC, "override d'élément (reste côté appli)"),
     "font_table_columns": (FONC, "disposition du tableau des polices"),
     "ui_scale": (THEME, "échelle générale de l'interface"),
+    "row_templates": (THEME, "gabarits des lignes des fenêtres de réglages (choix de l'utilisateur, 2026-10-29)"),
     # Mots d'aspect dans le nom, mais comportement ou contenu du document :
     **{k: (FONC, "comportement") for k in (
         "md_tab_size", "md_line_numbers", "video_moodboard_proxy_width", "video_analysis_exclude_black",

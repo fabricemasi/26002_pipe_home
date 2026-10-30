@@ -80,6 +80,10 @@ class ThemeStore:
             tp.update_preset(self.name, theme, drop=theme_drop, editing=self.editing)
         self._save_app(rest, tuple(k for k in drop if k not in theme_drop))
 
+    def save_row_templates(self, templates: dict) -> None:
+        """Gabarits des lignes des fenetres de reglages : dans le preset edite (valeur generale du theme)."""
+        tp.save_row_templates(self.name, templates)
+
     def save_changes(self, changed: dict) -> dict:
         theme, rest = self._split(changed)
         if theme:

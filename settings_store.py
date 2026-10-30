@@ -958,6 +958,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Variante d'un type d'element (titres, boutons, tableaux...) que fm_browser UTILISE a la place de la variante par
     # defaut du preset fm_theme : {type: variante} (decide par l'utilisateur, 2026-10-27). Le preset n'est pas modifie.
     "theme_default_variants": {},
+    # Gabarits des lignes des fenetres de reglages ({type de ligne: aspect}, fm_theme.cells) : ranges dans le preset
+    # fm_theme lie (valeur generale du theme, fm_theme.presets.GENERAL_KEYS).
+    "row_templates": {},
 }
 
 # Section "TITRE" (voir SettingsWindow._section_titre/_TITLE_LEVEL_DEFAULTS,

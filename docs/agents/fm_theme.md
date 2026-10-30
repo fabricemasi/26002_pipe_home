@@ -50,6 +50,7 @@ Une variante absente du preset chargé → repli sur la variante par défaut du 
 - Stockés **dans le dépôt** (choix de l'utilisateur, 2026-10-27), dossier `fm_theme/presets/`, un fichier par preset (`<nom>.json`), partagé par toutes les applis et synchronisé avec le reste. Les tests ne doivent jamais y écrire (redirection par `_isolate`, comme les presets actuels).
 - Chaque fichier porte un numéro de format (`"format": 1`) pour pouvoir le migrer plus tard.
 - **Noms de variantes stables** : les applis y font référence par nom. Renommer une variante dans fm_theme crée un alias de l'ancien nom.
+- **Gabarits des lignes des fenêtres de réglages** (choix de l'utilisateur, 2026-10-29) : valeur générale `row_templates` du preset ({type de ligne : aspect}, `fm_theme.cells`, détail dans `docs/agents/reglages.md`). Écrits dans le preset à la fin de chaque geste (`presets.save_row_templates`, seulement s'ils ont changé), par l'éditeur (preset édité) comme par fm_browser (preset lié) ; relus par la surveillance du fichier (`external_values` → `cells.reload_row_templates`). Un changement de `row_templates` seul ne refait rien dans la fenêtre principale (`_apply_settings`).
 
 ## Choix du preset par appli
 

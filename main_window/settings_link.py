@@ -414,6 +414,12 @@ class SettingsLinkMixin:
         # `changed_keys` (apercu en direct de la v2) : les cles que le geste a vraiment changees.
         changed = set(changed_keys) if changed_keys else (
             {k for k, v in settings.items() if previous.get(k) != v} | (previous.keys() - settings.keys()))
+        if changed == {"row_templates"}:
+            # Gabarits des lignes des fenetres de reglages (preset fm_theme relu) : rien a refaire ici, les
+            # fenetres de reglages ouvertes les reprennent (external_values).
+            if isinstance(ui_state.APPLIED_SETTINGS, dict):
+                ui_state.APPLIED_SETTINGS["row_templates"] = settings.get("row_templates")
+            return
         md_changed = {k for k in changed if k.startswith("md_")}
         if md_changed:
             # Feuille CSS partagee avec Obsidian : apercu aussitot, ecriture regroupee apres le geste (css_sync).

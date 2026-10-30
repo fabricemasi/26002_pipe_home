@@ -16,6 +16,7 @@ settings_widgets, a copier tel quel dans une nouvelle appli).
 """
 from __future__ import annotations
 
+import json
 import time
 import weakref
 from contextlib import contextmanager
@@ -891,6 +892,19 @@ class SplitCell(QWidget):
 
 _DEFERRED_REFLOW: list[list] = []
 
+# Bordure basse d'une ligne en cours de glissement : la hauteur ne va qu'a la ligne tiree. Recopiee en direct
+# (gabarit de son type, tableaux lies), les lignes identiques AU-DESSUS grandissaient aussi et poussaient la ligne
+# tiree loin du curseur ; on tirait encore pour la rattraper (lignes de ~900 px, bug signale 2026-10-29). La
+# recopie part au relachement (`end_height_drag`).
+HEIGHT_DRAG = [False]
+
+
+def end_height_drag(frame: QWidget) -> None:
+    HEIGHT_DRAG[0] = False
+    frame.dimsChanged.emit()            # tableaux lies (fenetre v2) : recopies maintenant
+    if _PENDING_SPREAD:
+        _spread_timer().start()
+
 
 @contextmanager
 def batched_reflow():
@@ -1364,6 +1378,7 @@ class _CellEdgeDrag(QObject):
             row = self._row_hit(obj, event)
             if row is not None:
                 self._vdrag = (row, gpos.y(), self._heights.rows[row].height())
+                HEIGHT_DRAG[0] = True
                 self._show_height_badge(row, gpos)
                 return True
             return False
@@ -1374,6 +1389,7 @@ class _CellEdgeDrag(QObject):
             if self._vdrag is not None:
                 _hide_width_badges(self._heights.rows[self._vdrag[0]])
                 self._vdrag = None
+                end_height_drag(self._heights.frame)
                 return True
         return False
 
@@ -2060,14 +2076,18 @@ class _CellsState:
         recopie sur les autres lignes de ce type a l'image suivante."""
         if _SPREADING or self.frame is None or not getattr(self.frame, "_dims_applied", False):
             return
+        changed = False
         for r, kind in self.row_kinds.items():
             tpl = self.row_template(r)
             if r in self._row_snaps and tpl != self._row_snaps[r]:
                 self._row_snaps[r] = tpl
                 _TABLE_DIMS.setdefault(ROW_TEMPLATES_KEY, {})[kind] = tpl
                 _PENDING_SPREAD[kind] = (self, r)
-        if _PENDING_SPREAD:
+                changed = True
+        if _PENDING_SPREAD and not HEIGHT_DRAG[0]:
             _spread_timer().start()
+        if changed:
+            _save_timer().start()          # enregistres a la fin du geste (preset fm_theme, voir la fenetre v2)
 
     # -- entete supprime, textes au-dessus des lignes --
 
@@ -2353,6 +2373,54 @@ def set_row_kinds(frame: QWidget, kinds: dict[int, str]) -> None:
         frame.dimsChanged.connect(state.sync_row_templates)
 
 
+_SAVE_TIMER: list = []
+_TEMPLATE_LISTENERS: list = []                  # weakref.WeakMethod : (gabarits) -> None, a la fin du geste
+
+
+def add_row_template_listener(callback) -> None:
+    """`callback(gabarits)` apres chaque modification d'un gabarit (geste termine depuis 400 ms) : la fenetre de
+    reglages les range dans son preset fm_theme. Methode liee, gardee en reference faible (fenetre detruite :
+    oubliee)."""
+    _TEMPLATE_LISTENERS.append(weakref.WeakMethod(callback))
+
+
+def _save_timer() -> QTimer:
+    if not _SAVE_TIMER:
+        timer = QTimer(singleShot=True, interval=400)
+        timer.timeout.connect(_notify_templates)
+        _SAVE_TIMER.append(timer)
+    return _SAVE_TIMER[0]
+
+
+def _notify_templates() -> None:
+    if HEIGHT_DRAG[0]:
+        _save_timer().start()                     # geste en cours : plus tard
+        return
+    templates = json.loads(json.dumps(_TABLE_DIMS.get(ROW_TEMPLATES_KEY) or {}))
+    for ref in list(_TEMPLATE_LISTENERS):
+        callback = ref()
+        if callback is None:
+            _TEMPLATE_LISTENERS.remove(ref)
+            continue
+        try:
+            callback(templates)
+        except RuntimeError:                      # fenetre detruite
+            _TEMPLATE_LISTENERS.remove(ref)
+
+
+def reload_row_templates(templates: dict) -> None:
+    """Gabarits relus ailleurs (preset fm_theme modifie par un autre processus) : poses sur toutes les lignes, a
+    l'ecran tout de suite, les autres a la pause (comme une modification)."""
+    templates = templates if isinstance(templates, dict) else {}
+    if templates == (_TABLE_DIMS.get(ROW_TEMPLATES_KEY) or {}):
+        return
+    _TABLE_DIMS[ROW_TEMPLATES_KEY] = json.loads(json.dumps(templates))
+    for kind in templates:
+        _PENDING_SPREAD[kind] = (None, None)
+    if _PENDING_SPREAD:
+        _spread_timer().start()
+
+
 def _spread_timer() -> QTimer:
     """Une recopie par image au plus (un glissement signale chaque mouvement de souris)."""
     if not _SPREAD_TIMER:
@@ -2376,6 +2444,8 @@ def spread_row_templates(hidden: bool = False) -> None:
     seulement ceux qui sont A L'ECRAN (une vingtaine de tableaux a remettre en page : ~25 ms le pas, fenetre
     entierement construite) ; les autres quand le geste marque une pause (`hidden`)."""
     global _SPREADING
+    if HEIGHT_DRAG[0]:
+        return                          # recopie au relachement (end_height_drag)
     if hidden:
         pending, _PENDING_LATE[:] = {kind: None for kind in _PENDING_LATE}, []
     else:

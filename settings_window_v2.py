@@ -2996,6 +2996,14 @@ class AppSettingsStore:
             settings.pop(key, None)
         save_settings(settings)
 
+    def save_row_templates(self, templates: dict) -> None:
+        """Gabarits de lignes : dans le preset fm_theme LIE (rien sans theme lie : ils restent dans la session)."""
+        import fm_theme.presets as theme_presets
+        from settings_store import theme_in_use
+        name = theme_in_use(load_settings())
+        if name:
+            theme_presets.save_row_templates(name, templates)
+
     def save_changes(self, changed: dict) -> dict:
         """Enregistrer : seules les cles modifiees par la fenetre ; le preset actif (et le preset fm_theme lie)
         les retient aussi. Retourne les reglages enregistres."""
@@ -3054,13 +3062,19 @@ class SettingsWindowV2(QDialog):
         self._persist_timer.timeout.connect(self._persist_now)
         # Memes prerequis de style que SettingsWindow.__init__ : les widgets
         # lisent ces reglages a leur creation.
-        # Gabarits de lignes deja poses dans cette session (une autre fenetre de reglages, l'editeur fm_theme) :
-        # gardes, plus recents que ceux du fichier — sinon la fenetre qui s'ouvre les effacait (bug signale :
-        # hauteurs de fm_browser differentes de celles reglees dans fm_theme).
+        # Gabarits de lignes : ceux du preset fm_theme (`row_templates`, partages par toutes les applis du theme)
+        # font reference. Sans eux : ceux deja poses dans cette session (une fenetre qui s'ouvre les effacait :
+        # bug signale), puis ceux de l'ancien rangement (`table_dims`, cle « @lignes ») — recopies dans le preset.
         session_rows = copy.deepcopy(_TABLE_DIMS.get(ROW_TEMPLATES_KEY) or {})
         _set_table_dims(_renamed_dims(self.settings.get("table_dims") or {}))
-        if session_rows:
+        theme_rows = self.settings.get("row_templates")
+        if theme_rows:
+            _TABLE_DIMS[ROW_TEMPLATES_KEY] = copy.deepcopy(theme_rows)
+        elif session_rows:
             _TABLE_DIMS[ROW_TEMPLATES_KEY] = {**(_TABLE_DIMS.get(ROW_TEMPLATES_KEY) or {}), **session_rows}
+        settings_cells.add_row_template_listener(self._save_row_templates)
+        if not theme_rows and _TABLE_DIMS.get(ROW_TEMPLATES_KEY):
+            self._save_row_templates(copy.deepcopy(_TABLE_DIMS[ROW_TEMPLATES_KEY]))
         seed_window_look(self.settings)
         # Override d'un element enregistre pendant que la fenetre est ouverte : sa copie des
         # reglages (renvoyee par l'apercu en direct) le connait aussi.
@@ -3187,10 +3201,12 @@ class SettingsWindowV2(QDialog):
                     dims[frame.dimsKey()] = frame.collectDims()
             except RuntimeError:             # tableau detruit depuis
                 pass
-        if _TABLE_DIMS.get(ROW_TEMPLATES_KEY):     # gabarits des types de ligne (fm_theme.cells)
-            dims[ROW_TEMPLATES_KEY] = copy.deepcopy(_TABLE_DIMS[ROW_TEMPLATES_KEY])
+        dims.pop(ROW_TEMPLATES_KEY, None)          # gabarits de lignes : dans le preset fm_theme (_save_row_templates)
         if dims != (self.settings.get("table_dims") or {}):
+            rows = _TABLE_DIMS.get(ROW_TEMPLATES_KEY)
             _set_table_dims(dims)
+            if rows:
+                _TABLE_DIMS[ROW_TEMPLATES_KEY] = rows
             self._autosave({"table_dims": dims})
         for key in ("element_spaces", "element_spaces_below", "title_order", "toggle_style_overrides"):
             state = self.settings.get(key) or {}
@@ -3808,7 +3824,9 @@ class SettingsWindowV2(QDialog):
     def _sync_linked(self, source: _TableFrame):
         # Recopie d'un gabarit de ligne en cours : elle atteint deja les lignes des tableaux lies (refaire tout
         # leur tableau coutait ~15 ms par pas de glissement).
-        if self._syncing_dims or not source._dims_applied or settings_cells._SPREADING:
+        # Hauteur de ligne en cours de glissement : recopie au relachement (settings_cells.HEIGHT_DRAG).
+        if (self._syncing_dims or not source._dims_applied or settings_cells._SPREADING
+                or settings_cells.HEIGHT_DRAG[0]):
             return
         dims = source.collectDims()
         _TABLE_DIMS[source.dimsKey()] = dims        # un tableau du groupe construit plus tard la reprend
@@ -3842,6 +3860,15 @@ class SettingsWindowV2(QDialog):
         except RuntimeError:
             pass
 
+    def _save_row_templates(self, templates: dict):
+        """Gabarits de lignes modifies (fm_theme.cells, fin du geste) : ranges dans le preset fm_theme par le
+        magasin de la fenetre (`save_row_templates`), tout de suite (pas d'AUTOSAVE : c'est de l'aspect partage)."""
+        save = getattr(self._store, "save_row_templates", None)
+        if save is not None:
+            save(templates)
+        for target in (self.settings, self._original_settings):
+            target["row_templates"] = copy.deepcopy(templates)
+
     def external_values(self, values: dict):
         """Reglages changes et ENREGISTRES hors de la fenetre (tableau a la volee de la visionneuse) : la
         fenetre les reprend (copie des reglages, valeurs d'origine) et refait les tableaux deja construits
@@ -3849,6 +3876,8 @@ class SettingsWindowV2(QDialog):
         ou a l'enregistrement."""
         if not values:
             return
+        if "row_templates" in values:                 # preset fm_theme relu : gabarits poses sur les lignes
+            settings_cells.reload_row_templates(values.get("row_templates") or {})
         palette = self.settings.get("colors")
         self.settings.update(copy.deepcopy(values))
         self._original_settings.update(copy.deepcopy(values))

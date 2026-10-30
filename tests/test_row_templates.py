@@ -213,6 +213,63 @@ class OpeningWindowTest(_Tables):
         self.frames.append(win)
         self.assertEqual(_TABLE_DIMS[cells.ROW_TEMPLATES_KEY]["contenu:_SliderField"]["height"], 61)
 
+class ThemePresetTest(_Tables):
+    """Gabarits ranges dans le preset fm_theme (valeur generale `row_templates`, choix de l'utilisateur)."""
+
+    def test_preset_round_trip(self):
+        import fm_theme.presets as tp
+        name = tp.unique_name("Gabarits")
+        tp.save_preset(tp.from_settings({"ui_scale": 1.0}, name))
+        rows = {"sides": {"align": ["left,center"], "height": 70}}
+        self.assertTrue(tp.save_row_templates(name, rows))
+        self.assertFalse(tp.save_row_templates(name, rows))            # inchange : pas d'ecriture
+        preset = tp.load_preset(tp.find_preset(name))
+        self.assertEqual(preset["general"]["row_templates"], rows)
+        self.assertEqual(tp.to_settings(preset)["row_templates"], rows)
+        tp.delete_preset(name)
+
+    def test_change_is_handed_to_the_listeners_after_the_gesture(self):
+        got = []
+
+        class Window:
+            def save(self, templates):
+                got.append(templates)
+        window = Window()
+        cells.add_row_template_listener(window.save)
+        _f1, (a,) = self.make(("corners", 5))
+        settle()
+        a.setWidths([0, 33, 0, 0, 0])
+        a.changed.emit()
+        settle(100)
+        self.assertEqual(got, [])                                      # pas pendant le geste
+        settle(450)
+        self.assertEqual(got[-1]["corners"]["split"], [0, 33, 0, 0, 0])
+
+    def test_window_takes_the_templates_of_the_theme_preset(self):
+        rows = {"contenu:_SliderField": {"align": ["left,center", "center,center"], "height": 0}}
+        saved = []
+
+        class Store(v2.AppSettingsStore):
+            def load(self):
+                settings = super().load()
+                settings["row_templates"] = rows
+                return settings
+
+            def save_row_templates(self, templates):
+                saved.append(templates)
+        _TABLE_DIMS[cells.ROW_TEMPLATES_KEY] = {"sides": {"height": 99}}  # session : le preset l'emporte
+        win = v2.SettingsWindowV2(module="theme", store=Store())
+        self.frames.append(win)
+        self.assertEqual(_TABLE_DIMS[cells.ROW_TEMPLATES_KEY], rows)
+        self.assertEqual(saved, [])                                    # rien a recopier
+
+    def test_templates_read_back_from_the_preset_reach_the_rows(self):
+        _f1, (a,) = self.make(("padding", 5))
+        settle()
+        cells.reload_row_templates({"padding": {"split": [0, 0, 47, 0, 0]}})
+        settle()
+        self.assertEqual(a.widths(), [0, 0, 47, 0, 0])
+
 class HeightBadgeTest(_Tables):
     def test_dragging_a_row_height_shows_its_height_in_pixels(self):
         frame, _splits = self.make(("corners", 5), ("padding", 5))
@@ -227,6 +284,30 @@ class HeightBadgeTest(_Tables):
         self.assertGreaterEqual(badge.x(), 30 + 16)         # decale du curseur : il ne le masque pas
         send_mouse(row, QEvent.MouseButtonRelease, pos + QPoint(0, 25), Qt.NoButton)
         self.assertFalse(badge.isVisible())
+
+    def test_height_is_copied_on_release_not_during_the_drag(self):
+        """Bug signale (lignes de ~900 px) : recopiee pendant le glissement, la hauteur faisait grandir les lignes
+        identiques AU-DESSUS, la ligne tiree s'eloignait du curseur et on tirait encore pour la rattraper."""
+        other, _s = self.make(("bg_fill", 2))
+        frame, _s = self.make(("bg_fill", 2))
+        settle()
+        before = other._extra_dims.heights.rows[0].height()
+        row = frame._extra_dims.heights.rows[0]
+        press = row.mapToGlobal(QPoint(30, row.height() - 1))        # curseur reel : position ecran fixe
+
+        def send(kind, g, buttons=Qt.LeftButton):
+            QApplication.sendEvent(row, QMouseEvent(kind, QPointF(row.mapFromGlobal(g)), QPointF(g),
+                                                    Qt.LeftButton if kind != QEvent.MouseMove else Qt.NoButton,
+                                                    buttons, Qt.NoModifier))
+        send(QEvent.MouseButtonPress, press)
+        for dy in (10, 20, 30):
+            send(QEvent.MouseMove, press + QPoint(0, dy))
+            settle(30)
+            self.assertEqual(other._extra_dims.heights.rows[0].height(), before)   # rien ne bouge ailleurs
+        send(QEvent.MouseButtonRelease, press + QPoint(0, 30), Qt.NoButton)
+        settle(60)
+        self.assertEqual(other._extra_dims.heights.rows[0].height(), row.height())
+        self.assertEqual(row.height(), before + 30)
 
 
 if __name__ == "__main__":
