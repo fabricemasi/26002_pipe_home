@@ -63,7 +63,6 @@ class GridInput:
     def select(self, row, col, extend=False, add=False, keep_scroll=False):
         view = self.view
         before = (list(view.ranges), view.current)
-        scroll_before = self.scroll_xy()
         row = max(0, min(R.MAX_ROWS - 1, row))
         col = max(0, min(R.MAX_COLS - 1, col))
         if extend:
@@ -87,7 +86,7 @@ class GridInput:
             self._end_point = (row, col)
             if not keep_scroll:
                 self.ensure_visible(row, col)
-        self.update_selection_area(before if self.scroll_xy() == scroll_before else None)
+        self.update_selection_area(before)            # après un défilement : zones déjà décalées avec l'image
         self.currentChanged.emit()
 
     def select_range(self, rect, current=None):

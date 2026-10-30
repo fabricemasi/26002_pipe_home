@@ -24,6 +24,27 @@ LOOK = {
     "selection": "#107c41", "selection_fill": "#24107c41", "ref_colors": ["#3c78d8", "#e06666", "#8e63ce",
                                                                            "#38a169", "#d97706", "#0891b2"],
 }
+def look_from(settings: dict | None) -> dict:
+    """Couleurs du contenu d'après les réglages (`tableur_<clé>` de `LOOK`) ; références « @… » de l'appli
+    résolues ; teinte de la sélection dérivée de sa couleur."""
+    look = dict(LOOK)
+    for key in LOOK:
+        value = (settings or {}).get("tableur_" + key)
+        if isinstance(value, str) and value:
+            if value.startswith("@"):
+                try:
+                    from app_style import resolve_color_ref
+                    value = resolve_color_ref(value)
+                except Exception:                          # noqa: BLE001 - référence inconnue : défaut
+                    continue
+            look[key] = value
+    if (settings or {}).get("tableur_selection"):
+        tint = QColor(look["selection"])
+        tint.setAlpha(36)
+        look["selection_fill"] = tint.name(QColor.HexArgb)
+    return look
+
+
 BORDER_WIDTHS = {"thin": 1.0, "hair": 0.6, "medium": 2.0, "thick": 3.0, "double": 3.0, "dashed": 1.0,
                  "dotted": 1.0, "mediumDashed": 2.0, "dashDot": 1.0, "mediumDashDot": 2.0, "dashDotDot": 1.0,
                  "mediumDashDotDot": 2.0, "slantDashDot": 2.0}
@@ -44,6 +65,7 @@ class DisplayCache:
         self.show_formulas = False
         self._plans: dict = {}
         self._plans_key = None
+        self.formula_lang = "en"
 
     def _check(self):
         engine = self.book.engine
@@ -69,6 +91,9 @@ class DisplayCache:
         found = self._items.get(key)
         if found is None:
             text, color, value = ops.display_text(self.book, sheet, row, col, self.loc, self.show_formulas)
+            if self.show_formulas and isinstance(value, str) and value.startswith("=") and text == value:
+                from .formula_lang import to_local
+                text = to_local(text, self.formula_lang)
             if isinstance(value, V.XLError) or isinstance(value, bool):
                 align = "center"
             elif isinstance(value, (int, float)) and not (self.show_formulas and isinstance(value, str)):

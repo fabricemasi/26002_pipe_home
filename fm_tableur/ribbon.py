@@ -6,7 +6,7 @@ Board (`FontPicker`), pastilles (`_SwatchGrid`). Chaque bouton appelle une méth
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QScrollArea, QStackedWidget, QVBoxLayout, QWidget
 
 from . import numfmt
 
@@ -20,8 +20,11 @@ TABS = ["Accueil", "Insertion", "Formules", "Données", "Affichage"]
 
 def _button(text, tip, slot, parent, width=0, bold=False):
     from fm_board.ui import _TextButton
-    button = _TextButton(text, tip, parent, width)
+    button = _TextButton(text, tip, parent, 0)
     button.setFixedHeight(26)
+    button.setStyleSheet("QPushButton { padding: 0px 7px; }")   # le reste : feuille de style de l'appli
+    # jamais écrasé sous sa taille utile (sinon le texte est rogné : un « G » devenait « : »)
+    button.setMinimumWidth(max(width, button.sizeHint().width()))
     if bold:
         font = button.font()
         font.setBold(True)
@@ -59,7 +62,15 @@ class Ribbon(QWidget):
         self.extra_row = self.tabs_row                 # boutons à droite (mode Standard / Board) : widget.py
         layout.addLayout(self.tabs_row)
         self.stack = QStackedWidget(self)
-        layout.addWidget(self.stack)
+        # rangée plus large que la fenêtre : elle défile (molette / barre) au lieu d'écraser les boutons
+        scroller = QScrollArea(self)
+        scroller.setFrameShape(QFrame.NoFrame)
+        scroller.setWidgetResizable(True)
+        scroller.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroller.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroller.setWidget(self.stack)
+        scroller.setFixedHeight(40)
+        layout.addWidget(scroller)
         builders = [self._home, self._insert, self._formulas, self._data, self._view]
         for build in builders:
             page = QWidget(self.stack)

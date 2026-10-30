@@ -24,6 +24,7 @@ from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene
 
 from fm_cad import cad_items, cad_model  # noqa: F401 - cad_items : enregistre le type « cad_line »
 from fm_design import items as design_items  # noqa: F401 - enregistre les types du module Design
+from fm_tableur import board_item as tableur_items  # noqa: F401 - enregistre le type « sheet » du module Tableur
 from . import model, serialization
 from fm_cad.cad_items import FADE_OPACITY, unit_of
 from .commands import StateCommand
@@ -36,7 +37,7 @@ INDEX_MIN = 2000.0                      # demi-etendue minimale de l'index de la
 PAGE = "__page__"
 # Modules du board (selecteur du board, `BoardPane.set_module`) : leurs elements se grisent ou se masquent a part
 # (demande de l'utilisateur). Grise = visible en transparence, ni selectionnable ni modifiable.
-MODULES = ("miro", "cad", "design")
+MODULES = ("miro", "cad", "design", "tableur")
 CLIPBOARD_MIME = "application/x-pipeline-board"
 SNAP_DEFAULTS = {"enabled": True, "objects": True, "grid": False, "guides": True, "resize": True, "distance": 6}
 

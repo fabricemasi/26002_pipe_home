@@ -67,10 +67,13 @@ def _axis_from(axis: Axis, raw):
     axis.changed()
 
 
-def sheet_to_dict(sheet: Sheet) -> dict:
+def sheet_to_dict(sheet: Sheet, engine=None) -> dict:
+    """`engine` donné : la valeur CALCULÉE de chaque formule est rangée avec elle (affichage sans moteur, cache)."""
     cells = []
+    live = engine is not None and engine.available
     for (r, c), cell in sheet.cells.items():
-        item = [r, c, _encode_value(cell.value), cell.formula, cell.style]
+        value = engine.value(sheet, r, c) if live and cell.formula else cell.value
+        item = [r, c, _encode_value(value), cell.formula, cell.style]
         while len(item) > 3 and not item[-1]:
             item.pop()
         if len(item) == 3 and item[2] is None:
@@ -152,7 +155,8 @@ def sheet_from_dict(raw: dict) -> Sheet:
 
 def to_dict(book: Workbook, active: int = 0) -> dict:
     out = {"format": FORMAT, "version": VERSION, "styles": book.styles.to_list(), "names": dict(book.names),
-           "calc_mode": book.calc_mode, "sheets": [sheet_to_dict(s) for s in book.sheets], "active": active}
+           "calc_mode": book.calc_mode, "sheets": [sheet_to_dict(s, book.engine) for s in book.sheets],
+           "active": active}
     if book.date_1904:
         out["date_1904"] = True
     if tuple(book.default_font) != ("Calibri", 11.0):

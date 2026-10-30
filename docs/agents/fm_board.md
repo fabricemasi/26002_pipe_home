@@ -6,7 +6,7 @@ Détail lu À LA DEMANDE (sorti d'AGENTS.md le 2026-10-26 pour alléger le conte
 
 ## Carte : fonctionnalité -> fichiers (à ouvrir directement)
 
-fm_board est la COQUE du board : fm_miro (tableau blanc, `docs/agents/fm_miro.md`), fm_cad (dessin technique, `docs/agents/fm_cad.md`) et fm_design (éditeur façon Canva, `docs/agents/fm_design.md` : ses crochets dans la coque y sont listés) s'y branchent. Aujourd'hui encore EN CYCLE (la coque importe `fm_cad.cad_model` / `cad_items` et `fm_miro.items` dès son chargement, `fm_cad.cad_items` importe `fm_miro.items`) : chargeable tant que les `__init__.py` de fm_miro / fm_cad restent MINIMAUX. À terme : un registre où chaque module inscrit ses types d'éléments, outils et barres (plan : `docs/agents/fm_theme.md`).
+fm_board est la COQUE du board : fm_miro (tableau blanc, `docs/agents/fm_miro.md`), fm_cad (dessin technique, `docs/agents/fm_cad.md`) et fm_design (éditeur façon Canva, `docs/agents/fm_design.md` : ses crochets dans la coque y sont listés) s'y branchent ; fm_tableur aussi (tableur façon Excel, élément « sheet », `docs/agents/fm_tableur.md` : crochets listés, dont les widgets EMBARQUÉS de la vue). Aujourd'hui encore EN CYCLE (la coque importe `fm_cad.cad_model` / `cad_items` et `fm_miro.items` dès son chargement, `fm_cad.cad_items` importe `fm_miro.items`) : chargeable tant que les `__init__.py` de fm_miro / fm_cad restent MINIMAUX. À terme : un registre où chaque module inscrit ses types d'éléments, outils et barres (plan : `docs/agents/fm_theme.md`).
 
 | Fonctionnalité | Fichiers (`fm_board/`) | Section ci-dessous |
 |---|---|---|

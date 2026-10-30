@@ -456,8 +456,8 @@ class SettingsLinkMixin:
             if getattr(self, "_video", None) is not None:
                 self._video.apply_settings(ui_state.APPLIED_SETTINGS or settings)
             return
-        if changed and all(k.startswith("board_") for k in changed):
-            # Reglages > Module MRO (magnetisme du board) : rien d'autre a refaire que le board ouvert.
+        if changed and all(k.startswith(("board_", "tableur_")) for k in changed):
+            # Reglages > Module MRO (magnetisme du board, module Tableur) : rien d'autre a refaire que le board ouvert.
             if isinstance(ui_state.APPLIED_SETTINGS, dict):
                 ui_state.APPLIED_SETTINGS.update({k: settings.get(k) for k in changed})
             if getattr(self, "_board", None) is not None:

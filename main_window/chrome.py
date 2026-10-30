@@ -79,7 +79,7 @@ class ChromeMixin:
         import fm_board as board
         on_board = self._board is not None
         self._set_button_usable(self.btn_board, on_board or (not viewer_open and is_file and (
-            board.is_board_file(path) or board.is_cad_drawing(path))))
+            board.is_board_file(path) or board.is_cad_drawing(path) or self._is_spreadsheet(path))))
         self.btn_board.set_alert(self._mode_on_color() if on_board else None)
         import fm_video as video
         on_video = getattr(self, "_video", None) is not None

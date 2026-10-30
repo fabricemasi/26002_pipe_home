@@ -272,10 +272,18 @@ def read(path, progress=None) -> Workbook:
             book.calc_mode = "manual"
     except Exception:                                      # noqa: BLE001
         pass
-    if _restore_charts(wb, book) and "graphiques du fichier (non importés)" in lost:
-        lost.remove("graphiques du fichier (non importés)")
+    label = "graphiques du fichier (non importés)"
+    if label in lost:
+        if _restore_charts(wb, book):
+            lost.remove(label)                             # graphiques écrits par le module : relus tels quels
+        else:
+            from .io_xlsx_charts import read_charts
+            problems = read_charts(path, book)             # graphiques d'Excel : relus depuis le XML
+            lost.remove(label)
+            for problem in sorted(set(problems)):
+                lost.append("graphique : " + problem)
         if "images / formes" in lost and not any(n.startswith("xl/media/") for n in names):
-            lost.remove("images / formes")                 # parties « drawings » = nos graphiques seulement
+            lost.remove("images / formes")                 # parties « drawings » = graphiques seulement
     if not book.sheets:
         book.add_sheet()
     return book

@@ -10,12 +10,13 @@ sélections, défilement) vit dans la session (`session.SheetView`) : partagé p
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRect, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen, QTextOption
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QRegion, QTextOption
 from PySide6.QtWidgets import QAbstractScrollArea, QFrame, QPlainTextEdit
 
 from . import numfmt, ops, refs as R, render
 from . import values as V
 from .engine import check_formula
+from .formula_lang import to_english, to_local
 from .grid_input import GridInput
 
 HEADER_H = 20.0
@@ -109,11 +110,10 @@ class GridWidget(GridInput, QAbstractScrollArea):
         lang = g("tableur_lang", "fr")
         self.loc = numfmt.Locale(dec if dec in (",", ".") else ",", thousands, lang)
         self.cache.loc = self.loc
-        for key in self.look:
-            value = g("tableur_" + key)
-            if isinstance(value, str) and value:
-                self.look[key] = value
+        self.look = render.look_from(self.settings)
         self.date_order = "mdy" if g("tableur_date_order") == "mdy" else "dmy"
+        self.formula_lang = "en" if g("tableur_formula_lang") == "en" else "fr"
+        self.cache.formula_lang = self.formula_lang
         self.enter_moves = g("tableur_enter_moves", "down")
         self.viewport().update()
 
@@ -131,6 +131,7 @@ class GridWidget(GridInput, QAbstractScrollArea):
         self.book = session.book
         self.cache = render.DisplayCache(self.book)
         self.cache.loc = self.loc
+        self.cache.formula_lang = self.formula_lang
         self.book.listeners.append(self._on_book_event)
         self.session.owners.append(self)
         self._restore_view()
@@ -369,9 +370,9 @@ class GridWidget(GridInput, QAbstractScrollArea):
     # -- peinture --
     def paintEvent(self, event):
         painter = QPainter(self.viewport())
-        area = event.rect()
-        painter.setClipRect(area)
-        self.paint_to(painter, area)
+        painter.setClipRegion(event.region())
+        for area in event.region():                    # chaque morceau de la région (sélection, bande de défilement)
+            self.paint_to(painter, area)
         painter.end()
 
     def paint_to(self, painter, area):
@@ -644,6 +645,8 @@ class GridWidget(GridInput, QAbstractScrollArea):
         if cell is None:
             return ""
         fmt = self.book.styles.get(cell.style).get("fmt")
+        if cell.formula:
+            return to_local(cell.formula, self.formula_lang)
         return V.edit_text(cell.value, cell.formula, fmt, self.loc)
 
     def begin_edit(self, text: str | None = None, mode: str = "edit", focus: bool = True):
@@ -712,7 +715,7 @@ class GridWidget(GridInput, QAbstractScrollArea):
             return True
         text = self._editor.toPlainText()
         if text.startswith("=") and len(text) > 1:
-            text = _close_parens(text)
+            text = to_english(_close_parens(text), self.formula_lang)
             problem = check_formula(text)
             if problem:
                 self.message.emit(f"Formule refusée : {problem}")
@@ -728,12 +731,29 @@ class GridWidget(GridInput, QAbstractScrollArea):
         old = self.sheet.cell(r, c)
         old_text = self.current_input_text() if old is not None else ""
         if text != old_text or rect is not None:
-            ops.set_input(self.book, self.session.stack, self.sheet, r, c, text, self.loc,
-                          rect=rect, date_order=self.date_order)
+            stack = self.session.stack
+            stack.begin("Saisir")
+            ops.set_input(self.book, stack, self.sheet, r, c, text, self.loc, rect=rect, date_order=self.date_order)
+            self._widen_for_number(r, c)
+            stack.end()
         if move and move != (0, 0) and not whole_selection:
             self.move_in_selection(*move)
         self.setFocus()
         return True
+
+    def _widen_for_number(self, r, c):
+        """Comme Excel : un NOMBRE saisi qui ne tient pas dans une colonne de largeur par défaut l'élargit (au lieu
+        d'afficher « #### ») ; une largeur choisie par l'utilisateur n'est jamais touchée."""
+        sheet = self.sheet
+        if c in sheet.cols.sizes or sheet.merge_at(r, c):
+            return
+        text, _color, value = ops.display_text(self.book, sheet, r, c, self.loc)
+        if not text or isinstance(value, bool) or not isinstance(value, (int, float)):
+            return
+        style = self.book.styles.get(sheet.style_index(r, c))
+        width = render.text_size(self.book, style, text)[0] + 10
+        if width > sheet.cols.size(c):
+            ops.set_sizes(self.book, self.session.stack, sheet, "col", [c], min(width, 400))
 
     def cancel_edit(self):
         if self._editing is None:
@@ -757,7 +777,7 @@ class GridWidget(GridInput, QAbstractScrollArea):
             vp.update()
             return
         g = self.geo()
-        region = QRect()
+        region = QRegion()                             # région (pas un rectangle englobant)
         for ranges, current in (before, (self.view.ranges, self.view.current)):
             for rect in list(ranges) + [(*current, *current)]:
                 r0, c0, r1, c1 = ops.norm(rect)
@@ -765,9 +785,9 @@ class GridWidget(GridInput, QAbstractScrollArea):
                     vp.update()
                     return
                 area = self.range_rect((r0, c0, r1, c1)).adjusted(-4, -4, 5, 5).toAlignedRect()
-                region = region.united(area)
-                region = region.united(QRect(0, area.top(), int(g["hw"]) + 1, area.height()))
-                region = region.united(QRect(area.left(), 0, area.width(), int(g["hh"]) + 1))
+                region += area
+                region += QRect(0, area.top(), int(g["hw"]) + 1, area.height())
+                region += QRect(area.left(), 0, area.width(), int(g["hh"]) + 1)
         vp.update(region)
 
     # -- presse-papiers (marque) --

@@ -46,7 +46,9 @@ TOOLS = [("select", "Sélection (V)"), ("hand", "Main (H, ou Espace)"), ("sticky
 # barre d'outils d'un module s'affiche quand il est active. Par module : griser, masquer ses elements.
 MODULES = [("miro", "Miro", "Module Miro : post-it, textes, formes, dessin, commentaires (sa barre d'outils)"),
            ("cad", "CAD", "Module CAD : dessin technique 2D (lignes, calques, accrochages, barre de commande)"),
-           ("design", "Design", "Module Design : pages, formes, textes, images, modèles, export (à la manière de Canva)")]
+           ("design", "Design", "Module Design : pages, formes, textes, images, modèles, export (à la manière de Canva)"),
+           ("tableur", "Tableur", "Module Tableur : classeurs, formules, graphiques, import / export Excel (à la manière "
+                                  "d'Excel)")]
 DRAW_BAR = [("pen", "Stylo"), ("highlighter", "Surligneur"), ("smart", "Dessin intelligent (formes reconnues)"),
             ("eraser", "Gomme (traits entiers)"), ("precision_eraser", "Gomme de précision (coupe les traits)"),
             ("lasso", "Lasso (sélection à main levée)")]
@@ -90,6 +92,20 @@ def paint_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
     if kind.startswith("design"):
         from fm_design.glyphs import paint_design_glyph        # module Design : ses icones
         paint_design_glyph(painter, kind, rect, color)
+        return
+    if kind == "tableur":                                       # module Tableur : une grille
+        pen = QPen(color, 1.4)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        s = min(rect.width(), rect.height()) * 0.26
+        c = rect.center()
+        box = QRectF(c.x() - s, c.y() - s * 0.8, 2 * s, 1.6 * s)
+        painter.drawRect(box)
+        for i in (1, 2):
+            painter.drawLine(QPointF(box.left(), box.top() + box.height() * i / 3),
+                             QPointF(box.right(), box.top() + box.height() * i / 3))
+        painter.drawLine(QPointF(box.left() + box.width() * 0.38, box.top()),
+                         QPointF(box.left() + box.width() * 0.38, box.bottom()))
         return
     pen = QPen(color, 1.4)
     pen.setCapStyle(Qt.RoundCap)
@@ -1139,6 +1155,7 @@ class BoardPane(QWidget):
         self._draw_tool = "pen"
         self.cad = None                         # module CAD (fm_cad/cad.py), cree au 1er usage
         self.design = None                      # module Design (fm_design/controller.py), cree au 1er usage
+        self.tableur = None                     # module Tableur (fm_tableur/board_ui.py), cree au 1er usage
         self.module = None                      # module actif : "miro", "cad", "design" ou None (aucune barre)
         self._cad_export_units = "mm"           # unites du dernier export DXF / DWG (session)
         self.view.cad = None
@@ -1187,6 +1204,8 @@ class BoardPane(QWidget):
                 self._settings["board_cad_gpu"] = False          # OpenGL indisponible : rendu par lots du processeur
         if self.cad is not None:
             self.cad.apply_settings(self._settings)
+        if self.tableur is not None:
+            self.tableur.apply_settings(self._settings)
 
     def _on_gpu_failed(self, message: str):
         """Rendu GPU impossible : le reglage est remis a faux (pas de nouvel essai a chaque ouverture) et signale."""
@@ -1380,6 +1399,8 @@ class BoardPane(QWidget):
         d'outils : seulement le selecteur, comme a l'ouverture)."""
         if name != "design" and self.design_active():
             self.design.deactivate()
+        if name != "tableur" and self.tableur is not None and self.tableur.active:
+            self.tableur.deactivate()
         self.module = name
         if name == "cad":
             self.toggle_cad(True)
@@ -1393,6 +1414,12 @@ class BoardPane(QWidget):
                 self.design = DesignController(self)
                 self.view.design = self.design
             self.design.activate()
+        if name == "tableur":
+            self._contextbar.hide()
+            if self.tableur is None:
+                from fm_tableur.board_ui import TableurController
+                self.tableur = TableurController(self)
+            self.tableur.activate()
         if name is None and self.view.tool != "hand":
             self.view.set_tool("select")
         self._sync_tools(self.view.tool)
@@ -1432,6 +1459,8 @@ class BoardPane(QWidget):
         on = (self.cad is None or not self.cad.active) if on is None else on
         if on and self.design_active():
             self.design.deactivate()
+        if on and self.tableur is not None and self.tableur.active:
+            self.tableur.deactivate()
         if on:
             self.module = "cad"
         elif self.module == "cad":
@@ -2259,6 +2288,8 @@ class BoardPane(QWidget):
             self.cad.ui.place()
         if self.design_active():
             self.design.ui.place()
+        if self.tableur is not None and self.tableur.active:
+            self.tableur.ui.place()
 
     def _sync_badge(self):
         """Rendu OpenGL : l'encart est peint par la couche GPU (le widget se cache) ; classique : le widget."""
@@ -2464,6 +2495,9 @@ class BoardPane(QWidget):
         if self.view.editing_text():
             self.scene.focusItem().clearFocus()
         self.scene.commit_live()
+        hook = getattr(self, "import_leave_hook", None)        # classeur ouvert depuis l'explorateur (fm_tableur)
+        if self.path is None and self.source is not None and hook is not None:
+            return True if not self._dirty else hook()
         if self.path is None and self.source is not None:
             if not self._dirty:
                 return True

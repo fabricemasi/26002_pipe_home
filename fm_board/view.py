@@ -598,6 +598,9 @@ class BoardView(QGraphicsView):
         zoom FIN (`zoom_fine_step`, demande de l'utilisateur ; Maj + molette deplacait la vue a l'horizontale) ; pave
         tactile, deux doigts en travers = deplacement."""
         delta = event.angleDelta()
+        if not (event.modifiers() & Qt.ControlModifier) and self._embedded_at(event.position()) is not None:
+            QGraphicsView.wheelEvent(self, event)          # classeur edite sur place : sa molette
+            return
         if event.modifiers() & Qt.ShiftModifier:
             steps = (delta.y() or delta.x()) / 120.0        # Windows peut rendre la molette en x avec Maj
             if steps:
@@ -665,6 +668,21 @@ class BoardView(QGraphicsView):
         if focus is not None and hasattr(focus, "editing") and focus.editing() and focus.owner is not exclude:
             focus.clearFocus()
 
+    # -- widgets embarques (module Tableur : classeur edite sur place, `EMBEDDED`) --
+    def _embedded_at(self, pos):
+        """Widget embarque (QGraphicsProxyWidget marque `EMBEDDED`) sous la souris, ou None : il recoit souris et
+        molette comme une fenetre ordinaire (Qt), la vue du board ne les interprete pas."""
+        item = self.itemAt(pos.toPoint())
+        while item is not None and not getattr(item, "EMBEDDED", False):
+            item = item.parentItem()
+        return item
+
+    def _end_embedded(self, keep=None):
+        """Clic ailleurs : fin de l'edition sur place de l'element qui en a une (une seule a la fois)."""
+        owner = getattr(self.board, "embedded_item", None)
+        if owner is not None and owner is not keep:
+            owner.stop_edit()
+
     def editing_text(self) -> bool:
         focus = self.board.focusItem()
         return focus is not None and hasattr(focus, "editing") and focus.editing()
@@ -688,6 +706,12 @@ class BoardView(QGraphicsView):
                 self.cad.note_pan()
             event.accept()
             return
+        embedded = self._embedded_at(pos)
+        if embedded is not None:
+            self._embedded_grab = True
+            QGraphicsView.mousePressEvent(self, event)
+            return
+        self._end_embedded()
         if self._cad_on() and self.cad.mouse_press(event):
             event.accept()
             return
@@ -776,6 +800,10 @@ class BoardView(QGraphicsView):
 
     def mouseMoveEvent(self, event):
         pos = event.position()
+        if getattr(self, "_embedded_grab", False) or (self._pan is None and not event.buttons()
+                                                      and self._embedded_at(pos) is not None):
+            QGraphicsView.mouseMoveEvent(self, event)
+            return
         if self._pan is not None:
             delta = pos - self._pan
             self._pan = pos
@@ -829,6 +857,10 @@ class BoardView(QGraphicsView):
         event.accept()
 
     def mouseReleaseEvent(self, event):
+        if getattr(self, "_embedded_grab", False):
+            self._embedded_grab = False
+            QGraphicsView.mouseReleaseEvent(self, event)
+            return
         if self._pan is not None and event.button() in (Qt.MiddleButton, Qt.LeftButton):
             self._pan = None
             self._pan_finished()
@@ -1045,6 +1077,10 @@ class BoardView(QGraphicsView):
             grabber.refresh_gesture(event.modifiers())
 
     def mouseDoubleClickEvent(self, event):
+        if self._embedded_at(event.position()) is not None:
+            self._embedded_grab = True
+            QGraphicsView.mouseDoubleClickEvent(self, event)
+            return
         if self._cad_on() and self.cad.mouse_double_click(event):
             event.accept()
             return

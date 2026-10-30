@@ -593,7 +593,8 @@ class SpreadsheetWidget(QWidget):
         if not ok or not item:
             return
         name = item.split(" — ")[0].strip().upper()
-        self.grid.begin_edit(f"={name}(", mode="enter")
+        from .formula_lang import FR
+        self.grid.begin_edit(f"={FR.get(name, name) if self.grid.formula_lang == 'fr' else name}(", mode="enter")
 
     def auto_function(self, fn):
         """Σ : fonction sur la plage de nombres au-dessus (ou à gauche) de la cellule active, comme Excel."""
@@ -619,7 +620,8 @@ class SpreadsheetWidget(QWidget):
             while left >= 0 and isinstance(ops.cell_value(self.book, sheet, r, left), (int, float)):
                 left -= 1
             text = f"={fn}({R.range_name(r, left + 1, r, c - 1)})" if left < c - 1 else f"={fn}()"
-        grid.begin_edit(text, mode="enter")
+        from .formula_lang import to_local
+        grid.begin_edit(to_local(text, grid.formula_lang), mode="enter")
 
     def edit_names(self):
         current = "\n".join(f"{k} = {v}" for k, v in sorted(self.book.names.items()))

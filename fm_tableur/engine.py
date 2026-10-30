@@ -24,6 +24,8 @@ except Exception:                                      # noqa: BLE001 - absent o
     fz = None
 
 MAX_EVAL_MS = 20_000                                   # garde-fou : calcul interminable interrompu
+BATCH_MIN = 300                                        # au-delà : écriture par lots (voir CalcEngine._write)
+BAND_ROWS = 512
 SCRATCH = "__fm_tableur_eval__"                        # feuille du moteur réservée aux formules hors cellule
 _MISSING = object()
 
@@ -165,18 +167,67 @@ class CalcEngine:
             self._wb = fz.Workbook(config=config)
         except Exception:                              # noqa: BLE001
             self._wb = fz.Workbook()
+        from . import extra_functions
+        extra_functions.register(self._wb, fz)            # MMULT, MINVERSE, DISC… absentes de formualizer 0.13
         self._sheets = {}
         self._anchors = {}
         for sheet in self.book.sheets:
             self._ensure_sheet(sheet.name)
         for sheet in self.book.sheets:
             engine_sheet = self._sheets[sheet.name.lower()]
-            for (row, col), cell in sheet.cells.items():
-                self._set(engine_sheet, row, col, cell)
-                if cell.formula and _DYNAMIC.search(cell.formula):
-                    self._anchors.setdefault(sheet.uid, set()).add((row, col))
+            self._write(engine_sheet, sheet, list(sheet.cells), empty_ok=True)
+            anchors = {k for k, cell in sheet.cells.items() if cell.formula and _DYNAMIC.search(cell.formula)}
+            if anchors:
+                self._anchors[sheet.uid] = anchors
         self._dirty = True
         self.recalc()
+
+    def _write(self, engine_sheet, sheet, keys, empty_ok=False):
+        """Cellules `keys` du modèle -> moteur. Beaucoup de cellules : par BANDES de lignes, les constantes en UN
+        lot rectangulaire (`set_values_batch`) puis les formules une à une — cellule par cellule, 100 000 valeurs
+        coûtaient ~2,1 s, en lots ~0,15-0,4 s (mesure de la sonde, formualizer 0.13). `empty_ok` : moteur neuf
+        (les cellules absentes du modèle sont déjà vides)."""
+        cells = sheet.cells
+        if len(keys) < BATCH_MIN:
+            for row, col in keys:
+                self._set(engine_sheet, row, col, cells.get((row, col)))
+            return
+        empty = fz.LiteralValue.empty()
+        bands: dict[int, list] = {}
+        for key in keys:
+            bands.setdefault(key[0] // BAND_ROWS, []).append(key)
+        for band in bands.values():
+            r0 = min(k[0] for k in band)
+            r1 = max(k[0] for k in band)
+            c0 = min(k[1] for k in band)
+            c1 = max(k[1] for k in band)
+            area = (r1 - r0 + 1) * (c1 - c0 + 1)
+            if area > 4 * len(band) + 64:                   # bande trop creuse : cellule par cellule
+                for row, col in band:
+                    self._set(engine_sheet, row, col, cells.get((row, col)))
+                continue
+            wanted = set(band)
+            formulas = []
+            rows = []
+            for r in range(r0, r1 + 1):
+                line = []
+                for c in range(c0, c1 + 1):
+                    cell = cells.get((r, c))
+                    if cell is None or cell.formula or cell.value is None:
+                        line.append(empty)
+                        if cell is not None and cell.formula and ((r, c) in wanted or not empty_ok):
+                            formulas.append((r, c, cell))
+                    else:
+                        line.append(_literal(cell.value))
+                rows.append(line)
+            try:
+                engine_sheet.set_values_batch(r0 + 1, c0 + 1, r1 - r0 + 1, c1 - c0 + 1, rows)
+            except Exception:                              # noqa: BLE001 - lot refusé : cellule par cellule
+                for row, col in band:
+                    self._set(engine_sheet, row, col, cells.get((row, col)))
+                continue
+            for r, c, cell in formulas:
+                self._set(engine_sheet, r, c, cell)
 
     def _ensure_sheet(self, name: str):
         key = name.lower()
@@ -197,8 +248,11 @@ class CalcEngine:
             else:
                 engine_sheet.set_value(row + 1, col + 1, _literal(cell.value))
         except Exception as exc:                       # noqa: BLE001 - formule refusée : #NAME? / #VALUE! en valeur
+            # le moteur annonce parfois le code dans son message (« #CIRC!: Self-reference detected »)
+            found = re.search(r"#[A-Z0-9/]+[!?]?", str(exc))
+            kind = V.CODE_TO_KIND.get(found.group(0), "Error") if found else "Error"
             try:
-                engine_sheet.set_value(row + 1, col + 1, fz.LiteralValue.error("Error", str(exc)[:200]))
+                engine_sheet.set_value(row + 1, col + 1, fz.LiteralValue.error(kind, str(exc)[:200]))
             except Exception:                          # noqa: BLE001
                 pass
 
@@ -210,13 +264,14 @@ class CalcEngine:
         engine_sheet = self._ensure_sheet(sheet.name)
         cells = sheet.cells
         anchors = self._anchors.setdefault(sheet.uid, set())
-        for row, col in keys:
-            cell = cells.get((row, col))
-            self._set(engine_sheet, row, col, cell)
+        keys = list(keys)
+        self._write(engine_sheet, sheet, keys)
+        for key in keys:
+            cell = cells.get(key)
             if cell is not None and cell.formula and _DYNAMIC.search(cell.formula):
-                anchors.add((row, col))
+                anchors.add(key)
             else:
-                anchors.discard((row, col))
+                anchors.discard(key)
         for row, col in anchors:
             self._set(engine_sheet, row, col, cells.get((row, col)))
         self._dirty = True

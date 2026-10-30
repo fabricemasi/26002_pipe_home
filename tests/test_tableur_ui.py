@@ -16,14 +16,13 @@ import zipfile
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
+from PySide6.QtCore import QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QImage, QKeyEvent, QMouseEvent, QPainter  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
-from fm_tableur import io_csv, io_xlsx, numfmt, ops, refs as R  # noqa: E402
-from fm_tableur import values as V  # noqa: E402
+from fm_tableur import io_csv, io_xlsx, numfmt, ops  # noqa: E402
 from fm_tableur.commands import SetCells  # noqa: E402
 from fm_tableur.document import Cell  # noqa: E402
 from fm_tableur.engine import cell_value, fz  # noqa: E402
@@ -168,6 +167,30 @@ class GridTest(UiCase):
         self.assertEqual(self.g.view.current, (1, 1))
         self.assertEqual(self.w.formula.text(), "=1+1")
 
+    def test_french_formula_input_and_display(self):
+        self.session.stack.push(SetCells(self.sheet, {(0, 0): Cell(2), (1, 0): Cell(4)}))
+        self.g.select(2, 0)
+        self.g.begin_edit("=SOMME(A1;A2)*1,5", mode="enter")
+        self.g.commit_edit(move=None)
+        self.assertEqual(self.sheet.cell(2, 0).formula, "=SUM(A1,A2)*1.5")
+        self.assertEqual(self.w.formula.text(), "=SOMME(A1;A2)*1,5")
+        if fz is not None:
+            self.assertEqual(cell_value(self.session.book, self.sheet, 2, 0), 9)
+
+    def test_number_widens_default_column_like_excel(self):
+        self.g.select(0, 0)
+        self.g.begin_edit("123456789012,5 €", mode="enter")
+        self.g.commit_edit(move=None)
+        self.assertGreater(self.sheet.cols.size(0), 64)
+        self.session.stack.undo()                              # saisie + largeur : UNE étape
+        self.assertNotIn(0, self.sheet.cols.sizes)
+        self.assertIsNone(self.sheet.cell(0, 0))
+        ops.set_sizes(self.session.book, self.session.stack, self.sheet, "col", [1], 40)
+        self.g.select(0, 1)
+        self.g.begin_edit("123456789", mode="enter")
+        self.g.commit_edit(move=None)
+        self.assertEqual(self.sheet.cols.size(1), 40)          # largeur choisie : jamais touchée
+
     def test_refused_formula_keeps_editing(self):
         self.g.select(0, 0)
         self.g.begin_edit("=1+*2", mode="enter")
@@ -251,6 +274,38 @@ class FilesTest(unittest.TestCase):
         self.assertEqual(again.style_of(a0, 1, 1).get("fmt"), "#,##0.00")
         self.assertEqual((a0.merges, a0.freeze), (s0.merges, s0.freeze))
         self.assertEqual(os.path.getsize(src) > 0, True)                     # l'original n'est pas réécrit
+
+    def test_excel_charts_are_read_and_linked(self):
+        import openpyxl
+        from openpyxl.chart import BarChart, LineChart, Reference
+        src = os.path.join(self.dir, "graphiques.xlsx")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Ventes"
+        for row in [["Mois", "Nord", "Sud"], ["Janv", 10, 7], ["Févr", 12, 9], ["Mars", 8, 11]]:
+            ws.append(row)
+        bar = BarChart()
+        bar.title = "Ventes par mois"
+        bar.add_data(Reference(ws, min_col=2, min_row=1, max_col=3, max_row=4), titles_from_data=True)
+        bar.set_categories(Reference(ws, min_col=1, min_row=2, max_row=4))
+        ws.add_chart(bar, "E2")
+        line = LineChart()
+        line.add_data(Reference(ws, min_col=2, min_row=1, max_row=4), titles_from_data=True)
+        ws.add_chart(line, "E20")
+        wb.save(src)
+        book = io_xlsx.read(src)
+        charts = book.sheets[0].charts
+        self.assertEqual(len(charts), 2)
+        first = charts[0]
+        self.assertEqual((first["type"], first["data"], first["title"], first["anchor"]),
+                         ("column", "A1:C4", "Ventes par mois", [1, 4]))
+        self.assertEqual(charts[1]["type"], "line")
+        self.assertFalse(any("graphique" in x for x in book.source["lost"]))
+        from fm_tableur.charts import chart_data
+        Session(book)
+        categories, series = chart_data(book, book.sheets[0], first)
+        self.assertEqual(categories, ["Janv", "Févr", "Mars"])
+        self.assertEqual(series, [("Nord", [10.0, 12.0, 8.0]), ("Sud", [7.0, 9.0, 11.0])])
 
     def test_unsupported_parts_reported(self):
         src = os.path.join(self.dir, "macros.xlsm")

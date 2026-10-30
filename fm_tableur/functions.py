@@ -37,5 +37,14 @@ def catalog():
     return [(n, DESCRIPTIONS.get(n, "")) for n in names]
 
 
-# Rempli par tools/tableur_functions.py (sonde du moteur) ; vide = liste des descriptions.
-SUPPORTED: set[str] = set()
+def _supported() -> set[str]:
+    """Liste VÉRIFIÉE produite par `tools/tableur_functions.py` (sonde du moteur) ; absente : les descriptions."""
+    from pathlib import Path
+    path = Path(__file__).with_name("fonctions_verifiees.txt")
+    try:
+        return {line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()}
+    except OSError:
+        return set()
+
+
+SUPPORTED: set[str] = _supported()

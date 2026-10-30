@@ -253,6 +253,25 @@ class EngineReferenceTest(unittest.TestCase):
 
 
 @unittest.skipIf(fz is None, "formualizer absent")
+class ExtraFunctionsTest(EngineReferenceTest):
+    """Fonctions ajoutées au moteur (`extra_functions.py`) : exemples de l'aide de Microsoft / calcul à la main."""
+
+    def test_matrices(self):
+        s, sheet = make([[1, 2], [3, 4]])
+        put(s, sheet, "D1", "=MMULT(A1:B2,A1:B2)")
+        self.assertEqual([val(s, sheet, a) for a in ("D1", "E1", "D2", "E2")], [7, 10, 15, 22])
+        self.check("=MDETERM({1,3,8,5;1,3,6,1;1,1,1,0;7,3,10,2})", 88.0)
+        self.check("=SUM(MINVERSE({4,-1;2,0}))", 1.5 + 0.5 - 1 + 0 + 0.5 - 0.5 + 0.5)
+        self.check("=MINVERSE({1,2;2,4})", V.XLError("#NUM!"))
+        self.check("=SUM(MUNIT(3))", 3.0)
+
+    def test_finance_extras(self):
+        self.check("=FVSCHEDULE(1,{0.09,0.11,0.1})", 1.33089, places=5)
+        self.check("=DISC(DATE(2007,1,25),DATE(2007,6,15),97.975,100,1)", 0.052420213, places=8)
+        self.check("=INTRATE(DATE(2008,2,15),DATE(2008,5,15),1000000,1014420,2)", 0.05768, places=5)
+
+
+@unittest.skipIf(fz is None, "formualizer absent")
 class RecalcTest(unittest.TestCase):
     def test_dependents_update_and_circular(self):
         s, sheet = make([[1, "=A1*2", "=B1+A1"]])
@@ -261,6 +280,10 @@ class RecalcTest(unittest.TestCase):
         self.assertEqual((val(s, sheet, "B1"), val(s, sheet, "C1")), (20, 30))
         put(s, sheet, "A1", "=C1")
         self.assertEqual(val(s, sheet, "A1"), V.XLError("#CIRC!"))
+        big, big_sheet = make()                    # moteur déjà rempli : il refuse l'auto-référence par exception
+        big.stack.push(C.SetCells(big_sheet, {(r, c): Cell(r) for r in range(400) for c in range(2)}))
+        put(big, big_sheet, "A1", "=A1*2")
+        self.assertEqual(val(big, big_sheet, "A1"), V.XLError("#CIRC!"))
 
     def test_cross_sheet_rename_and_remove(self):
         s, sheet = make(sheets=2)
@@ -413,6 +436,20 @@ class UndoAndOpsTest(unittest.TestCase):
         self.assertEqual(axis.index_at(axis.pos(1000) + 1), 1000)
 
 
+class FormulaLangTest(unittest.TestCase):
+    def test_french_round_trip(self):
+        from fm_tableur.formula_lang import to_english, to_local
+        cases = ['=SUM(A1:A3,2.5)+IF(B1>1,"a,b",TRUE)', "=VLOOKUP(\"x;y\",'Ma feuille'!A1:B2,2,FALSE)",
+                 "=INDEX(A1:B2,1,2)", "=SUM(A1,5)", "=IFERROR(XLOOKUP(A1,B:B,C:C),0.25)"]
+        for f in cases:
+            with self.subTest(f):
+                self.assertEqual(to_english(to_local(f)), f)
+        self.assertEqual(to_local('=SUM(A1:A3,2.5)+IF(B1>1,"a,b",TRUE)'), '=SOMME(A1:A3;2,5)+SI(B1>1;"a,b";VRAI)')
+        self.assertEqual(to_english("=somme(A1;B1)*1,5"), "=SUM(A1,B1)*1.5")
+        self.assertEqual(to_english("=SUM(A1,B1)"), "=SUM(A1,B1)")              # noms anglais acceptés
+        self.assertEqual(to_local("=SUM(A1,B1)", "en"), "=SUM(A1,B1)")
+
+
 class NativeFormatTest(unittest.TestCase):
     def test_round_trip_keeps_types_and_unknown_keys(self):
         s, sheet = make([[1, 2.5, "t", "VRAI", "#N/A", "=A1+B1", "30/10/2026"]])
@@ -428,7 +465,11 @@ class NativeFormatTest(unittest.TestCase):
         other = book.sheets[0]
         for c in range(7):
             a, b = sheet.cell(0, c), other.cell(0, c)
-            self.assertEqual((a.value, a.formula, type(a.value)), (b.value, b.formula, type(b.value)))
+            self.assertEqual(a.formula, b.formula)
+            if a.formula is None:
+                self.assertEqual((a.value, type(a.value)), (b.value, type(b.value)))
+            elif fz is not None:
+                self.assertEqual(b.value, 3.5)                  # valeur calculée rangée avec la formule
         self.assertEqual(book.style_of(other, 0, 6).get("fmt"), "dd/mm/yyyy")
         self.assertEqual((other.merges, other.freeze, other.comments, other.cols.sizes[1]),
                          ([(2, 2, 3, 3)], (1, 0), {(0, 0): "note"}, 120.0))

@@ -557,6 +557,9 @@ class ViewerMixin:
         if board.is_cad_drawing(path) and (ui_state.APPLIED_SETTINGS or {}).get("board_open_cad_drawings", True):
             self._open_cad_drawing(path)                  # dessin DXF / DWG : module MRO (lu en fond)
             return
+        if self._is_spreadsheet(path) and (ui_state.APPLIED_SETTINGS or {}).get("tableur_open_double_click", False):
+            self._open_spreadsheet(path)                  # classeur : module Tableur, mode Standard (lu en fond)
+            return
         if self._md_opens_on_double_click(path):
             if self._open_md_editor(path):                # module Markdown / code : note ou fichier DANS l'appli
                 return

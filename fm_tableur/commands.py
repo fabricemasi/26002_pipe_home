@@ -12,6 +12,7 @@ from . import refs as R
 from .document import Sheet, Workbook
 
 UNDO_LIMIT = 300
+REBUILD_ABOVE = 40_000          # insertion / suppression touchant plus de cellules : moteur reconstruit
 
 
 def _engine_push(book: Workbook, sheet: Sheet, keys):
@@ -211,6 +212,8 @@ class Lines(Command):
         if book.engine is not None:
             if book.names != self._saved[3]:
                 book.engine.rebuild()
+            elif len(old_keys) + len(new_cells) > REBUILD_ABOVE:
+                book.engine.rebuild()                    # moins cher que d'écrire deux fois chaque cellule
             else:
                 _engine_push(book, sheet, old_keys | set(new_cells))
                 for (uid, key) in others:
@@ -228,7 +231,7 @@ class Lines(Command):
         changed_names = book.names != names
         book.names = dict(names)
         if book.engine is not None:
-            if changed_names:
+            if changed_names or len(current) + len(cells) > REBUILD_ABOVE:
                 book.engine.rebuild()
             else:
                 _engine_push(book, sheet, current | set(cells))

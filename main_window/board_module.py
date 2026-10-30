@@ -38,6 +38,43 @@ class BoardModuleMixin:
             self._open_board(path)
         elif path is not None and path.is_file() and board.is_cad_drawing(path):
             self._open_cad_drawing(path)
+        elif path is not None and path.is_file() and self._is_spreadsheet(path):
+            self._open_spreadsheet(path)
+
+    @staticmethod
+    def _is_spreadsheet(path) -> bool:
+        return path is not None and Path(path).suffix.lower() in (".xlsx", ".xlsm", ".csv", ".tsv")
+
+    def _open_spreadsheet(self, path: Path):
+        """Classeur Excel / CSV dans le module Tableur, en mode Standard (fm_tableur/files_mode.py) : lu HORS du fil
+        de l'interface, ouvert en board en memoire ; le fichier n'est jamais reecrit sans le demander."""
+        path = Path(path)
+        if self._board is not None and self._board.source == path:
+            return
+        relay = _DrawingRelay(self)
+        self._drawing_relay = relay
+        relay.done.connect(lambda data, _r, error: self._spreadsheet_read(relay, path, data, error))
+        self.path_label.setText(f"Lecture de {path.name}…")
+
+        def work():
+            try:
+                from fm_tableur import files_mode
+                relay.done.emit(files_mode.read_as_board(path), None, None)
+            except Exception as exc:                        # noqa: BLE001 - fichier refuse : message
+                relay.done.emit(None, None, f"{type(exc).__name__} : {exc}")
+        threading.Thread(target=work, name="lecture classeur", daemon=True).start()
+
+    def _spreadsheet_read(self, relay, path: Path, data, error):
+        relay.deleteLater()
+        if relay is not self._drawing_relay:
+            return
+        self._drawing_relay = None
+        if error is not None:
+            self.path_label.setText(f"{path.name} : {error}")
+            return
+        if self._open_board(path, imported=data):
+            from fm_tableur import files_mode
+            files_mode.attach(self._board, path)
 
     def _open_cad_drawing(self, path: Path):
         """Dessin DXF / DWG dans le module MRO (demande de l'utilisateur) : lu et converti HORS du fil de
