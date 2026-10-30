@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QColor, QImage, QKeyEvent, QMouseEvent, QPainter
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 APP = QApplication.instance() or QApplication([])
 
@@ -704,7 +704,7 @@ class AnimationTest(DesignTestCase):
     def test_one_by_one(self):
         from fm_design import present
         page = self.page(400, 300)
-        a = self.ctl.add_shape("rect", {"x": 0.0, "y": 0.0, "w": 100.0, "h": 100.0, "fill": "#ff0000"})
+        self.ctl.add_shape("rect", {"x": 0.0, "y": 0.0, "w": 100.0, "h": 100.0, "fill": "#ff0000"})
         b = self.ctl.add_shape("rect", {"x": 150.0, "y": 0.0, "w": 100.0, "h": 100.0, "fill": "#00ff00"})
         c = self.ctl.add_shape("rect", {"x": 300.0, "y": 0.0, "w": 100.0, "h": 100.0, "fill": "#0000ff"})
         doc.set_group(self.scene, [b, c], True)
@@ -1114,15 +1114,41 @@ class BrandTest(DesignTestCase):
         self.ctl.brand_add("colors", "#123456")
         self.ctl.brand_add("fonts", "Georgia")
         self.ctl.brand_add("colors", "#123456")                       # pas de doublon
-        self.assertEqual(self.ctl.brand(), {"colors": ["#123456"], "fonts": ["Georgia"]})
+        self.assertEqual(self.ctl.brand(), {"colors": ["#123456"], "fonts": ["Georgia"], "logos": []})
         saved = settings_store.load_settings()["board_design_brand"]
-        self.assertEqual(saved, {"colors": ["#123456"], "fonts": ["Georgia"]})
+        self.assertEqual(saved, {"colors": ["#123456"], "fonts": ["Georgia"], "logos": []})
         other = board_ui.BoardPane(self.host, settings_store.load_settings())
         _PANES.append(other)
         other.set_module("design")
         self.assertEqual(other.design.brand()["colors"], ["#123456"])   # un autre board la voit
         self.ctl.brand_remove("colors", "#123456")
         self.assertEqual(settings_store.load_settings()["board_design_brand"]["colors"], [])
+
+    def test_brand_logos(self):
+        import settings_store
+        from fm_design import panel_brand
+        from fm_design.panels import ImageTile
+        page = self.page()
+        logo = self.tmp / "logo.png"
+        image = QImage(40, 20, QImage.Format_ARGB32)
+        image.fill(QColor("#ff6600"))
+        image.save(str(logo))
+        gone = str(self.tmp / "parti.png")
+        panel_brand._add(self.ctl, [str(logo), gone])
+        self.assertEqual(settings_store.load_settings()["board_design_brand"]["logos"], [str(logo), gone])
+        settle()
+        self.assertEqual(self.ctl.ui.tab, "images")
+        tiles = [t for t in self.ctl.ui.panel_content.findChildren(ImageTile) if t.path == logo]
+        self.assertEqual(len(tiles), 1)                                 # le fichier introuvable : pas de vignette
+        labels = [w.text() for w in self.ctl.ui.panel_content.findChildren(QLabel)]
+        self.assertIn("Marque : logos (1) — 1 introuvable", labels)
+        tiles[0].click()
+        added = [i for i in doc.elements(self.scene, page) if isinstance(i, DesignImageItem)]
+        self.assertEqual(len(added), 1)                                 # copié dans le board comme une image
+        panel_brand.remove_missing(self.ctl)
+        self.assertEqual(self.ctl.brand()["logos"], [str(logo)])
+        panel_brand._remove(self.ctl, str(logo))
+        self.assertEqual(settings_store.load_settings()["board_design_brand"]["logos"], [])
 
 
 class ZoomSnapshotTest(DesignTestCase):

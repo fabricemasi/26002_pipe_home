@@ -415,14 +415,18 @@ def build_images(ctl, parent):
     layout.addWidget(_wide_button("Choisir un dossier d'images…", "Bibliothèque locale (pour cette session)",
                                   lambda: choose_folder(ctl), widget))
     layout.addWidget(_label("Glisser-déposer des fichiers sur une page les ajoute aussi.", "value_muted"))
+    from .panel_brand import build_brand_logos, library_menu
+    tiles = []
+    build_brand_logos(ctl, widget, layout, tiles)
     files = library_files(ctl)
     layout.addWidget(_label(f"Bibliothèque ({len(files)})"))
     grid = QGridLayout()
     grid.setSpacing(4)
-    tiles = []
     for n, path in enumerate(files):
         tile = ImageTile(path, widget)
         tile.clicked.connect(lambda _c=False, p=path: ctl.add_image_files([p]))
+        tile.setContextMenuPolicy(Qt.CustomContextMenu)
+        tile.customContextMenuRequested.connect(lambda pos, t=tile, p=path: library_menu(ctl, t, p, pos))
         grid.addWidget(tile, n // 3, n % 3)
         tiles.append(tile)
     layout.addLayout(grid)

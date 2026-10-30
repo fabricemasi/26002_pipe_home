@@ -30,6 +30,7 @@ Troisième module du board (après Miro et CAD), créé le 2026-10-29 à la dema
 | Menu « Animer » d'une page (barre contextuelle sans sélection) | `menus_present.py` | `animate_menu` |
 | Règles graduées (haut, gauche) | `rulers.py` | `Rulers`, `Ruler`, `tick_step` |
 | Panneau latéral (modèles et formats, éléments, texte, images, position et calques) | `panels.py` | `build_<onglet>`, `LayerList`, `PositionPanel` |
+| Logos du kit de marque (onglet Images ; clic droit sur une image de la bibliothèque = l'ajouter) | `panel_brand.py` | `build_brand_logos`, `library_menu` |
 | Modèles de conception (originaux) | `templates.py` | `TEMPLATES` |
 | Rendu hors écran : miniatures, export PNG / JPEG / PDF / SVG | `render.py` | `paint_page`, `export_pages` |
 | Glyphes des boutons | `glyphs.py` | `paint_design_glyph` (appelé par `fm_board.ui.paint_glyph`) |
@@ -172,7 +173,8 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 - Un élément Design ne peut pas être déplacé en mode Miro (pas de `ItemIsMovable`) : on passe en mode Design.
 - Page sans rotation ; animations seulement en présentation (pas dans l'export), réglées par page (pas d'animation
   propre à un élément choisi) ; pas de vidéo ; secteurs et anneau n'utilisent que la 1re série ; kit de marque
-  partagé entre boards limité aux couleurs et polices (pas de logos ni de styles de texte complets).
+  partagé entre boards : couleurs, polices et logos (pas de styles de texte complets ; un logo est un chemin de
+  fichier : déplacé, il est compté « introuvable »).
 
 ## PLAN DE TRAVAIL (persistant, mis à jour à chaque étape)
 
@@ -204,7 +206,7 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 | Règles graduées (Maj+R, unités de la page courante ; tirer depuis une règle = nouveau repère), aide des raccourcis (? ou clic droit) | Terminée | Pages |
 | Fond perdu (3 mm) et traits de coupe à l'export PDF (impression) | Terminée | Export |
 | Styles du document : couleurs utilisées (menus de couleur), styles de texte utilisés (onglet Texte : appliquer / nouveau texte) | Terminée | Texte, Styles |
-| Kit de marque partagé entre TOUS les boards (couleurs et polices favorites : menus de couleur « Marque » / « Ajouter à la marque », menu Police) : réglage d'état `board_design_brand` (`BOARD_DEFAULTS`, `_LIVE_STATE_KEYS` de `settings_store`, écrit par `save_live_state` comme `board_pen_presets`) | Terminée | Réglages |
+| Kit de marque partagé entre TOUS les boards (couleurs et polices favorites : menus de couleur « Marque » / « Ajouter à la marque », menu Police ; logos : onglet Images, `panel_brand.py`, chemins absolus) : réglage d'état `board_design_brand` (`BOARD_DEFAULTS`, `_LIVE_STATE_KEYS` de `settings_store`, écrit par `save_live_state` comme `board_pen_presets`) | Terminée | Réglages |
 | Espacement égal entre deux voisins pendant Ctrl + glisser (segments tracés), renommer un calque, export d'une plage de pages (« 1-3, 5 ») | Terminée | Gestes, Export |
 | Icônes réglables : lignes `design*` de `ICON_ROWS` (rail, barre des pages, dont « Présenter ») ; test : chaque bouton a sa ligne et lit `ui_board_<genre>` (fenêtre de réglages entière non regardée à l'œil) | Terminée | — |
 | Animations de présentation (« Animer ») : transition de page (fondu, glissement, zoom) et arrivée des éléments (fondu, montée, apparition, entrée latérale, « un par un » : ordre d'empilement, un groupe d'un coup, une petite image par élément `render.render_units`, préparée au repos : 42 ms à 300 éléments, 2,4 ms par image), par page ou toutes ; champs de page `transition`, `animation` | Terminée | Présentation |

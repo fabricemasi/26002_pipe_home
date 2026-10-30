@@ -11,6 +11,8 @@ from PySide6.QtWidgets import QApplication
 from . import design_model as dm, document as doc, geometry
 from .items import DesignImageItem, DesignPageItem, DesignTextItem
 
+BRAND_CAPS = {"colors": 24, "fonts": 12, "logos": 24}     # kit de marque : nombre gardé par sorte
+
 
 class CommandMixin:
     # ------------------------------------------------------------------ commandes
@@ -264,7 +266,8 @@ class CommandMixin:
 
     # ------------------------------------------------------------------ kit de marque (tous les boards)
     def brand(self) -> dict:
-        """Couleurs et polices favorites, partagées par tous les boards (réglage d'état `board_design_brand`)."""
+        """Couleurs, polices et logos (chemins de fichiers) favoris, partagés par tous les boards (réglage d'état
+        `board_design_brand`)."""
         kept = getattr(self, "_brand", None)
         if kept is None:
             raw = self.pane._settings.get("board_design_brand")
@@ -276,7 +279,8 @@ class CommandMixin:
                     raw = None
             raw = raw if isinstance(raw, dict) else {}
             kept = {"colors": [c for c in raw.get("colors", []) if isinstance(c, str) and c.startswith("#")][:24],
-                    "fonts": [f for f in raw.get("fonts", []) if isinstance(f, str) and f][:12]}
+                    "fonts": [f for f in raw.get("fonts", []) if isinstance(f, str) and f][:12],
+                    "logos": [p for p in raw.get("logos", []) if isinstance(p, str) and p][:BRAND_CAPS["logos"]]}
             self._brand = kept
         return kept
 
@@ -286,7 +290,7 @@ class CommandMixin:
         if value in values:
             values.remove(value)
         values.insert(0, value)
-        del values[24 if kind == "colors" else 12:]
+        del values[BRAND_CAPS[kind]:]
         self._save_brand()
 
     def brand_remove(self, kind: str, value: str):
@@ -297,7 +301,7 @@ class CommandMixin:
 
     def _save_brand(self):
         """Enregistré comme les préréglages de stylo du board (`save_live_state`, rien d'autre n'est écrit)."""
-        brand = {"colors": list(self.brand()["colors"]), "fonts": list(self.brand()["fonts"])}
+        brand = {kind: list(values) for kind, values in self.brand().items()}
         self.pane._settings["board_design_brand"] = brand
         try:
             from settings_store import save_live_state
