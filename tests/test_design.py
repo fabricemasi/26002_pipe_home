@@ -911,6 +911,31 @@ class RichTextMenuTest(DesignTestCase):
         self.assertEqual(spans, [{"start": 0, "end": 5, "italic": True, "color": "#ff3131"}])
         self.assertEqual(text.data["color"], dm.INK)               # la boîte garde sa couleur
 
+    def test_custom_color_on_selected_part(self):
+        from PySide6.QtGui import QTextCursor
+        from fm_design import menus
+        self.page()
+        text = self.ctl.add_text("body", {"text": "Bleu ici"}, edit=False)
+        self.ctl.edit_text(text)
+        cursor = text.text_item.textCursor()
+        cursor.setPosition(0)
+        cursor.setPosition(4, QTextCursor.KeepAnchor)
+        text.text_item.setTextCursor(cursor)
+        menus.custom_color(self.ctl, self.ctl.ui.context, [text], "color", "Couleur", dm.INK)
+        settle(0.02)
+        popup = QApplication.activePopupWidget()
+        popup.colorChanged.emit("#0000ff")
+        popup.cancelled.emit()                                     # Échap : couleur d'avant
+        popup.colorChanged.emit("#00ff00")
+        popup.committed.emit("#00ff00")
+        popup._resolved = True                                     # validé (fermer valide sinon la couleur affichée)
+        popup.close()
+        settle(0.02)
+        self.assertTrue(self.ctl.text_editing())
+        self.view.finish_text_edit()
+        settle()
+        self.assertEqual(text.to_dict()["spans"], [{"start": 0, "end": 4, "color": "#00ff00"}])
+
 
 class ListTest(DesignTestCase):
     def test_bullet_and_numbered_lists(self):

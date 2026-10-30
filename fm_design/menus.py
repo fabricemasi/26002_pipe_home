@@ -6,7 +6,7 @@ réglages."""
 from __future__ import annotations
 
 from PySide6.QtCore import QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QTextFormat
 from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QInputDialog, QVBoxLayout, QWidget
 
 from fm_board.ui import FontPicker, _GlyphButton, _menu, _slider, _SwatchGrid
@@ -119,6 +119,34 @@ def custom_color(ctl, anchor, items, key, label, current, setter=None):
     from settings_widgets import _ColorPickerPopup
     popup = _ColorPickerPopup(current if isinstance(current, str) and current.startswith("#") else "#ffffff",
                               label, ctl.pane)
+    editor = text_selection(ctl) if key == "color" else None
+    if editor is not None:
+        # Partie d'un texte en édition (le sélecteur est une fenêtre « popup » : l'édition continue) : aperçu en
+        # direct sur la partie choisie, Échap = couleur d'avant ; l'étape d'annulation est celle de l'édition.
+        from PySide6.QtGui import QTextCharFormat
+        before = QTextCharFormat(editor.textCursor().charFormat())
+
+        def paint(c):
+            fmt = QTextCharFormat()
+            fmt.setForeground(QColor(c))
+            style_selection(editor, fmt)
+
+        def restore():
+            fmt = QTextCharFormat()
+            if before.hasProperty(QTextFormat.ForegroundBrush):
+                fmt.setForeground(before.foreground())
+                style_selection(editor, fmt)
+            else:
+                cursor = editor.textCursor()
+                fmt = QTextCharFormat(cursor.charFormat())
+                fmt.clearForeground()
+                cursor.setCharFormat(fmt)
+                editor.setTextCursor(cursor)
+        popup.colorChanged.connect(paint)
+        popup.committed.connect(paint)
+        popup.cancelled.connect(restore)
+        popup.show_near(anchor if isinstance(anchor, QWidget) else ctl.pane)
+        return
     apply = setter or (lambda i, c: i.data.update({key: c}))
     live_key = f"design_color:{key}"
     popup.colorChanged.connect(lambda c: _live(ctl, live_key, items, lambda i: apply(i, c), label))
