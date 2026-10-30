@@ -43,7 +43,8 @@ DEFAULTS: dict[str, dict] = {
            "italic": False, "underline": False, "strike": False, "uppercase": False, "align": "left",
            "line_height": 1.2, "letter_spacing": 0.0, "text_bg": "", "text_stroke": INK, "text_stroke_width": 0.0,
            # Style d'une PARTIE du texte (posé pendant l'édition : Ctrl+B / I / U, Ctrl+Maj+> / <) :
-           # [{"start", "end" (caractères), "bold"?, "italic"?, "underline"?, "size"? (px)}] par-dessus le style de
+           # [{"start", "end" (caractères), "bold"?, "italic"?, "underline"?, "size"? (px), "color"?, "family"?}]
+           # par-dessus le style de
            # la boîte.
            "spans": [], **STYLE_COMMON},
     # Image : `crop` = [x0, y0, x1, y1] partie VISIBLE de l'image source (fractions, non destructif) ; réglages
@@ -149,6 +150,10 @@ def valid_spans(value) -> list[dict]:
                 clean[key] = span[key]
         if isinstance(span.get("size"), (int, float)) and not isinstance(span.get("size"), bool) and span["size"] > 0:
             clean["size"] = round(float(span["size"]), 2)
+        if isinstance(span.get("color"), str) and span["color"].startswith("#"):
+            clean["color"] = span["color"]
+        if isinstance(span.get("family"), str) and span["family"]:
+            clean["family"] = span["family"]
         if len(clean) > 2:
             out.append(clean)
     return out

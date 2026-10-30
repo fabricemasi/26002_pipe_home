@@ -884,5 +884,33 @@ class RichTextTest(DesignTestCase):
         self.assertEqual(item["spans"], [{"start": 0, "end": 2, "italic": True}])
 
 
+class RichTextMenuTest(DesignTestCase):
+    def test_menus_style_the_selected_part_while_editing(self):
+        from PySide6.QtGui import QTextCursor
+        from fm_design import menus
+        self.page()
+        text = self.ctl.add_text("body", {"text": "Rouge et noir"}, edit=False)
+        self.ctl.edit_text(text)
+        editor = text.text_item
+        cursor = editor.textCursor()
+        cursor.setPosition(0)
+        cursor.setPosition(5, QTextCursor.KeepAnchor)
+        editor.setTextCursor(cursor)
+        self.assertIs(menus.text_selection(self.ctl), editor)
+        menus.color_menu(self.ctl, self.ctl.ui.context, [text], "color", "Couleur")
+        settle(0.02)
+        popup = QApplication.activePopupWidget()
+        grid = popup.findChildren(__import__("fm_board.ui", fromlist=["_SwatchGrid"])._SwatchGrid)[0]
+        grid.picked.emit("#ff3131")
+        settle(0.02)
+        self.assertTrue(self.ctl.text_editing())                    # l'édition continue
+        menus.toggle_text_style(self.ctl, [text], "italic", False)
+        self.view.finish_text_edit()
+        settle()
+        spans = text.to_dict()["spans"]
+        self.assertEqual(spans, [{"start": 0, "end": 5, "italic": True, "color": "#ff3131"}])
+        self.assertEqual(text.data["color"], dm.INK)               # la boîte garde sa couleur
+
+
 if __name__ == "__main__":
     unittest.main()

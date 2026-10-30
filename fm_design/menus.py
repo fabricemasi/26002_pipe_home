@@ -28,6 +28,42 @@ def _live(ctl, key, items, change, text):
 
 
 # ---------------------------------------------------------------- menus de propriétés
+def text_selection(ctl):
+    """Texte en cours d'édition dont une partie est choisie (son éditeur), sinon None : les menus du texte
+    s'appliquent alors à cette partie."""
+    if not ctl.text_editing():
+        return None
+    editor = ctl.scene.focusItem()
+    if editor is None or not hasattr(editor, "textCursor") or not editor.textCursor().hasSelection():
+        return None
+    return editor
+
+
+def style_selection(editor, fmt) -> bool:
+    cursor = editor.textCursor()
+    cursor.mergeCharFormat(fmt)
+    editor.setTextCursor(cursor)
+    return True
+
+
+def toggle_text_style(ctl, texts, field, on):
+    """Gras / italique / souligné / majuscules : la partie choisie pendant l'édition, sinon toute la boîte."""
+    from PySide6.QtGui import QFont, QTextCharFormat
+    editor = text_selection(ctl)
+    if editor is not None and field in ("bold", "italic", "underline"):
+        current = editor.textCursor().charFormat()
+        fmt = QTextCharFormat()
+        if field == "bold":
+            fmt.setFontWeight(QFont.Normal if current.fontWeight() > QFont.Normal else QFont.Bold)
+        elif field == "italic":
+            fmt.setFontItalic(not current.fontItalic())
+        else:
+            fmt.setFontUnderline(not current.fontUnderline())
+        style_selection(editor, fmt)
+        return
+    doc.change(ctl.scene, texts, lambda i: i.data.update({field: not on}), "Style du texte")
+
+
 def color_menu(ctl, anchor, items, key, label, allow_none=False, after=None):
     """Palette + « Autre couleur… » (sélecteur des réglages, aperçu en direct, une étape)."""
     from settings_menu import menu_row
@@ -37,6 +73,13 @@ def color_menu(ctl, anchor, items, key, label, allow_none=False, after=None):
 
     def pick(color):
         menu.close()
+        editor = text_selection(ctl) if key == "color" else None
+        if editor is not None:                                  # couleur d'une partie du texte
+            from PySide6.QtGui import QTextCharFormat
+            fmt = QTextCharFormat()
+            fmt.setForeground(QColor(color))
+            style_selection(editor, fmt)
+            return
         doc.change(ctl.scene, items, lambda i: (i.data.update({key: color}), after and after(i)), label)
     grid.picked.connect(pick)
     menu_row(menu, label, grid)
@@ -495,6 +538,13 @@ def font_menu(ctl, anchor, texts):
 
     def chosen(family):
         menu.close()
+        editor = text_selection(ctl)
+        if editor is not None:                                  # police d'une partie du texte
+            from PySide6.QtGui import QTextCharFormat
+            fmt = QTextCharFormat()
+            fmt.setFontFamilies([family])
+            style_selection(editor, fmt)
+            return
         doc.change(ctl.scene, texts, lambda i: i.data.update(font_family=family), "Police")
     picker.chosen.connect(chosen)
     menu_row(menu, "", picker)
@@ -510,12 +560,20 @@ def size_menu(ctl, anchor, texts):
     slider.valueChanged.connect(lambda v: _live(ctl, "design_font_size", texts,
                                                 lambda i: i.data.update(font_size=float(v)), "Taille du texte"))
     menu_row(menu, "Taille", slider)
+    def set_size(size):
+        editor = text_selection(ctl)
+        if editor is not None:                                  # taille d'une partie du texte
+            from PySide6.QtGui import QTextCharFormat, QTextFormat
+            fmt = QTextCharFormat()
+            fmt.setProperty(QTextFormat.FontPixelSize, int(size))
+            style_selection(editor, fmt)
+            return
+        doc.change(ctl.scene, texts, lambda i: i.data.update(font_size=float(size)), "Taille du texte")
     for size in (12, 16, 24, 32, 48, 64, 96, 128, 200):
         action = menu.addAction(f"{size}")
         action.setCheckable(True)
         action.setChecked(abs(current - size) < 0.01)
-        action.triggered.connect(lambda _c=False, s=size: doc.change(
-            ctl.scene, texts, lambda i: i.data.update(font_size=float(s)), "Taille du texte"))
+        action.triggered.connect(lambda _c=False, s=size: set_size(s))
     _popup(ctl, menu, anchor)
 
 

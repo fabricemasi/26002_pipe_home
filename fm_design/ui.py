@@ -16,7 +16,7 @@ from fm_board.ui import _bar, _GlyphButton, _menu, _panel, _TextButton
 from . import design_model as dm, document as doc
 from .menus import (_popup, _reset_crop, adjust_menu, align_menu, color_menu, export_menu, fill_menu,
                     flip_menu, font_menu, mask_menu, position_menu, resize_menu, shadow_menu, shape_kind_menu,
-                    size_menu, slider_menu, stroke_menu, text_effects_menu)
+                    size_menu, slider_menu, stroke_menu, text_effects_menu, toggle_text_style)
 from .items import DesignImageItem, DesignShapeItem, DesignTextItem
 
 TABS = [("templates", "design_templates", "Modèles et formats"), ("elements", "design_elements", "Éléments"),
@@ -432,8 +432,10 @@ def build_context_bar(chrome, ctl):
     add = chrome.context_layout.addWidget
     sel = ctl.selection()
 
+    # Boutons SANS focus : un clic ne termine pas l'édition d'un texte (ses menus s'appliquent à la partie choisie).
     def glyph(kind, tip, slot, on=False):
         button = _GlyphButton(kind, tip, bar, 32)
+        button.setFocusPolicy(Qt.NoFocus)
         button.set_on(on)
         button.clicked.connect(lambda _c=False, b=button: slot(b))
         add(button)
@@ -441,12 +443,14 @@ def build_context_bar(chrome, ctl):
 
     def text_button(text, tip, slot, width=0):
         button = _TextButton(text, tip, bar, width)
+        button.setFocusPolicy(Qt.NoFocus)
         button.clicked.connect(lambda _c=False, b=button: slot(b))
         add(button)
         return button
 
     def swatch(color, tip, slot):
         button = _GlyphButton("swatch", tip, bar, 32)
+        button.setFocusPolicy(Qt.NoFocus)
         button.set_swatch(color or "#ffffff")
         button.clicked.connect(lambda _c=False, b=button: slot(b))
         add(button)
@@ -494,9 +498,7 @@ def build_context_bar(chrome, ctl):
                                      ("underline", "design_underline", "Souligné (Ctrl+U)"),
                                      ("uppercase", "design_upper", "Majuscules (Ctrl+Maj+K)")):
                 on = all(i.data.get(field) for i in texts)
-                glyph(kind, tip, lambda _b, f=field, o=on: doc.change(ctl.scene, texts,
-                                                                       lambda i: i.data.update({f: not o}), tip),
-                      on)
+                glyph(kind, tip, lambda _b, f=field, o=on: toggle_text_style(ctl, texts, f, o), on)
             glyph("align", "Alignement du texte", lambda b: align_menu(ctl, b, texts))
             glyph("design_spacing", "Espacement des lettres, interligne", lambda b: _popup(ctl, slider_menu(
                 ctl, b, texts, [("letter_spacing", "Lettres", -200, 800, 1.0, ""),

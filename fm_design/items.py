@@ -16,7 +16,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (QBrush, QColor, QFont, QImage, QLinearGradient, QPainter, QPainterPath,
                            QPainterPathStroker, QPen, QPixmap, QPolygonF, QRadialGradient, QTextBlockFormat,
                            QTextCharFormat, QTextCursor, QTextFormat, QTextOption)
-from PySide6.QtWidgets import QGraphicsItem, QGraphicsObject
+from PySide6.QtWidgets import QGraphicsItem, QGraphicsObject, QGraphicsTextItem
 
 from fm_miro.items import ITEM_CLASSES, BoardItem, _Text, asset_pixmap, pen_style, shape_path, text_font
 from . import design_model as dm
@@ -430,7 +430,14 @@ class DesignShapeItem(DesignElement):
 
 
 class _DesignText(_Text):
-    """Texte en cours d'édition : Ctrl+B / I / U et Ctrl+Maj+> / < stylent la PARTIE choisie du texte."""
+    """Texte en cours d'édition : Ctrl+B / I / U et Ctrl+Maj+> / < stylent la PARTIE choisie du texte ; un menu de
+    la barre contextuelle (couleur, police, taille) n'interrompt pas l'édition (il s'applique à la partie choisie)."""
+
+    def focusOutEvent(self, event):
+        if event.reason() == Qt.PopupFocusReason and self.editing():
+            QGraphicsTextItem.focusOutEvent(self, event)       # menu ouvert : l'édition continue
+            return
+        super().focusOutEvent(event)
 
     def keyPressEvent(self, event):
         mods, key = event.modifiers(), event.key()
@@ -477,6 +484,11 @@ def spans_of(document) -> list[dict]:
                 span["underline"] = fmt.fontUnderline()
             if fmt.hasProperty(QTextFormat.FontPixelSize):
                 span["size"] = float(fmt.intProperty(QTextFormat.FontPixelSize))
+            if fmt.hasProperty(QTextFormat.ForegroundBrush):
+                color = fmt.foreground().color()
+                span["color"] = color.name(QColor.HexArgb if color.alpha() < 255 else QColor.HexRgb)
+            if fmt.hasProperty(QTextFormat.FontFamilies) and fmt.fontFamilies():
+                span["family"] = str(fmt.fontFamilies()[0])
             if span:
                 start, end = fragment.position(), fragment.position() + fragment.length()
                 last = out[-1] if out else None
@@ -508,6 +520,11 @@ def apply_spans(document, spans: list[dict]):
             fmt.setFontUnderline(span["underline"])
         if "size" in span:
             fmt.setProperty(QTextFormat.FontPixelSize, max(4, int(round(span["size"]))))
+        if "color" in span:
+            fmt.setForeground(QColor(span["color"]))
+        if "family" in span:
+            from fm_miro.items import resolve_family
+            fmt.setFontFamilies([resolve_family(span["family"])])
         cursor.mergeCharFormat(fmt)
 
 

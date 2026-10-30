@@ -147,8 +147,8 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 | Modèles locaux (8), formats (12), combinaisons de polices, bibliothèque d'images locale | Terminée | Pages |
 | Export PNG / JPEG / PDF multipage / SVG, échelle, qualité, fond transparent | Terminée | Rendu |
 | Validation graphique en vraie fenêtre Windows (pas seulement hors écran) | À faire | — |
-| Texte multistyle : gras / italique / souligné / taille sur une PARTIE du texte (pendant l'édition : Ctrl+B / I / U, Ctrl+Maj+> / <), enregistré en `spans`, mis à l'échelle avec la boîte | Partielle | Texte |
-| Couleur et police d'une partie du texte (les menus de la barre terminent l'édition : à prévoir sans perte de focus), listes à puces | À faire | Texte |
+| Texte multistyle : gras / italique / souligné / taille / couleur / police sur une PARTIE du texte (pendant l'édition : raccourcis, ou barre contextuelle : boutons sans focus, menus qui gardent l'édition — `_DesignText.focusOutEvent` ignore `PopupFocusReason`), enregistré en `spans`, mis à l'échelle avec la boîte | Terminée | Texte |
+| Couleur « Autre couleur… » d'une partie (le sélecteur des réglages n'est pas un menu : il termine l'édition), listes à puces | À faire | Texte |
 | Grilles de photos (6 mises en page), cadres vides en forme, dépôt / bibliothèque = remplir le cadre (cadrage couvrant), « Remplacer l'image… » | Terminée | Images |
 | Repères de page (clic droit sur la page : ajouter ; Ctrl + glisser : déplacer ; clic droit dessus : retirer ; aimantants), marges affichées (5 % du petit côté) | Terminée | Pages |
 | Règles graduées (Maj+R, unités de la page courante ; tirer depuis une règle = nouveau repère), aide des raccourcis (? ou clic droit) | Terminée | Pages |
