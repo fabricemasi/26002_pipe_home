@@ -77,6 +77,7 @@ def add_page(scene, width: float, height: float, after=None, values: dict | None
     current = pages(scene)
     before = _states(scene, current)
     data = model.new_item(dm.PAGE, w=float(width), h=float(height))
+    data["background"] = dm.LOOK["page_bg"]               # Réglages > Design > Nouveau design (un modèle garde le sien)
     data.update(values or {})
     if not current:
         at = origin or QPointF(0, 0)

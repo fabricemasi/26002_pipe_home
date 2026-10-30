@@ -1075,6 +1075,8 @@ from fm_markdown.settings_defaults import MARKDOWN_DEFAULTS  # noqa: E402
 DEFAULT_SETTINGS.update(MARKDOWN_DEFAULTS)
 from fm_tableur.settings_defaults import TABLEUR_DEFAULTS  # noqa: E402
 DEFAULT_SETTINGS.update(TABLEUR_DEFAULTS)
+from fm_design.settings_defaults import DESIGN_DEFAULTS  # noqa: E402
+DEFAULT_SETTINGS.update(DESIGN_DEFAULTS)
 
 # Module vidéo : défauts dans son paquet (fm_video/settings_defaults.py, source unique).
 from fm_video.settings_defaults import VIDEO_DEFAULTS  # noqa: E402

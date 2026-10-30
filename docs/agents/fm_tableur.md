@@ -35,6 +35,8 @@ Cœur SANS Qt (testable seul) :
 | Catalogue des fonctions (« Insérer une fonction ») | `functions.py` + `fonctions_verifiees.txt` | `catalog` |
 | Formules en français à l'écran (`=SOMME(A1;B2)`, virgule décimale), anglais dans le classeur | `formula_lang.py` | `to_local`, `to_english`, `FR` |
 | Défauts des réglages `tableur_*` (fusionnés dans `DEFAULT_SETTINGS` par `settings_store`) | `settings_defaults.py` | `TABLEUR_DEFAULTS` |
+| Réglages (onglet « Tableur » de « Réglages : Board » : Ouverture, Nouveaux classeurs, Saisie, Formules et nombres, Couleurs) | `settings.py` | `TABLEUR_TAB`, `TABLEUR_TREE` |
+| Police et mode de calcul des NOUVEAUX classeurs (posés par `BoardPane.apply_settings` ; un fichier ouvert garde les siens) | `document.py` ; `io_native.from_dict` (classeur vide -> `new_workbook`) | `NEW_BOOK`, `set_new_book_defaults` |
 
 Qt :
 
@@ -208,10 +210,9 @@ englobant (une région `QRegion` pour la sélection) ; texte : `QStaticText` + p
 
 1. FAIT : classeur de l'explorateur en mode Standard (voir Décisions).
 2. FAIT : formules en français (`formula_lang.py`).
-3. FAIT (section « Tableur » de Réglages : Board > Module MRO, `fm_tableur/settings.py`, appliquée en direct) :
-   ouverture au double-clic, langue des formules, séparateurs, ordre des dates, noms des jours, Entrée. Reste :
-   couleurs du contenu (`LOOK` : clés `tableur_<couleur>` déjà lues par `GridWidget.apply_settings`), police /
-   tailles par défaut, mode de calcul par défaut.
+3. FAIT (onglet « Tableur » de Réglages : Board, `fm_tableur/settings.py`, appliqué en direct ; avant : section
+   de l'onglet Module MRO) : ouverture au double-clic, langue des formules, séparateurs, ordre des dates, noms des
+   jours, Entrée, couleurs du contenu, police / taille et mode de calcul des nouveaux classeurs (« » = Calibri).
 4. EN PARTIE : 7 fonctions ajoutées (`extra_functions.py`, matrice : 385 / 423 présentes) ; restent les
    fonctions obligataires (COUP*, PRICE*, ODD*…), LAMBDA appliquée, BYROW / MAP…, REGEX*, AREAS.
 5. FAIT : graphiques d'un fichier Excel relus ; tableaux structurés (voir Décisions).
@@ -230,5 +231,6 @@ englobant (une région `QRegion` pour la sélection) ; texte : `QStaticText` + p
 - Fonctions obligataires : écartées pour l'instant par l'utilisateur (2026-10-30).
 - 2026-10-30 — FAIT : filtres des tableaux (`filters.py`), bandes sur lignes visibles.
 - 2026-10-30 — FAIT : styles Clair / Foncé des tableaux, poignée de redimensionnement.
-- Prochaine action : police par défaut dans les réglages ; vérifier l'ouverture des fichiers exportés dans
+- 2026-10-30 — FAIT : onglet « Tableur » de Réglages : Board (police et calcul des nouveaux classeurs).
+- Prochaine action : vérifier l'ouverture des fichiers exportés dans
   Microsoft Excel (non disponible ici).

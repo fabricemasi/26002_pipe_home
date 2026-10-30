@@ -2,12 +2,12 @@
 `MRO_TREE`. Données seulement (aucun widget) : la fenêtre générique `settings_window_v2.SettingsWindowV2(module="board")`
 les construit. Les lignes « Menus contextuels » du board sont des COPIES de celles de l'appli (`board_<clé>` +
 interrupteur d'override) : faites par settings_window_v2 (elles dépendent des menus de l'appli), seuls leurs titres
-(`BOARD_MENU_GROUPS`) sont ici. Défauts : `settings_defaults.py`. Onglet CAD : `fm_cad/settings.py`.
+(`BOARD_MENU_GROUPS`) sont ici. Défauts : `settings_defaults.py`. Onglets CAD, Design, Tableur : `fm_cad/settings.py`,
+`fm_design/settings.py`, `fm_tableur/settings.py`.
 Carte : docs/agents/fm_board.md."""
 from __future__ import annotations
 
 from settings_catalog import CATALOG, Node, Spec, _ctx_font, _shadow_spec
-import fm_tableur.settings  # noqa: E402,F401 - lignes « MRO : Tableur » (module Tableur)
 
 MRO_TAB = "Module MRO"
 BOARD_MENU_GROUPS = (("Menu", "Menu contextuel : Menu"), ("Lignes", "Menu contextuel : Lignes"),
@@ -115,5 +115,4 @@ MRO_TREE = (
     Node("Barres d'outils", "MRO : Barres d'outils"),
     Node("Menus contextuels", children=tuple(Node(t, f"MRO : {g}") for t, g in BOARD_MENU_GROUPS)),
     Node("Icônes", "MRO : Icones"),
-    Node("Tableur", "MRO : Tableur"),
 )

@@ -9,7 +9,7 @@ Cellule = liste courte [ligne, colonne, valeur, formule, style] (éléments fina
 from __future__ import annotations
 
 from . import values as V
-from .document import Axis, Cell, Sheet, StyleTable, Workbook
+from .document import Axis, Cell, Sheet, StyleTable, Workbook, new_workbook
 
 FORMAT = "fm_tableur"
 VERSION = 1
@@ -173,10 +173,9 @@ def to_dict(book: Workbook, active: int = 0) -> dict:
 
 def from_dict(raw) -> tuple[Workbook, int]:
     """Classeur (et feuille active) d'un dictionnaire natif ; un classeur vide d'une feuille si `raw` est vide."""
-    book = Workbook()
     if not isinstance(raw, dict) or not raw.get("sheets"):
-        book.add_sheet()
-        return book, 0
+        return new_workbook(), 0                  # nouveau classeur : police et calcul des réglages
+    book = Workbook()
     book.styles = StyleTable.from_list(raw.get("styles"))
     book.names = {str(k): str(v) for k, v in (raw.get("names") or {}).items()}
     book.calc_mode = "manual" if raw.get("calc_mode") == "manual" else "auto"

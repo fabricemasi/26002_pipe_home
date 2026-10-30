@@ -16,10 +16,9 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, QVariantAnimation
 from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import QWidget
 
-from . import render
+from . import design_model as dm, render
 
-TRANSITION_MS = 450
-ANIMATION_MS = 600
+# Durées d'une transition et d'une animation : Réglages > Design > Présentation (`design_model.LOOK`).
 UNIT_MS = 450                  # « un par un » : arrivée d'un élément ; les suivants partent tous les `cascade_step`
 
 
@@ -128,7 +127,7 @@ class PresentationWindow(QWidget):
             elif kind == "none":
                 start, length = 0.0, 0.0
             else:
-                start, length = 0.0, ANIMATION_MS
+                start, length = 0.0, dm.LOOK["animation_ms"]
             out.append((kind, start, length))
             end = max(end, start + length)
         self._plans[index] = (out, end)
@@ -165,7 +164,7 @@ class PresentationWindow(QWidget):
         """(durée de la transition, début de l'animation des éléments, durée totale) en ms pour arriver sur `index`."""
         page = self.pages[index]
         data = page.data
-        transition = TRANSITION_MS if data.get("transition", "none") != "none" else 0
+        transition = dm.LOOK["transition_ms"] if data.get("transition", "none") != "none" else 0
         plan = self.plan(index)
         if plan is not None:
             delay = transition // 2
@@ -173,7 +172,7 @@ class PresentationWindow(QWidget):
         if data.get("animation", "none") == "none":
             return transition, transition, transition
         delay = transition // 2
-        return transition, delay, delay + ANIMATION_MS
+        return transition, delay, delay + dm.LOOK["animation_ms"]
 
     def _play(self, previous: int | None):
         self.anim.stop()
@@ -226,7 +225,7 @@ class PresentationWindow(QWidget):
         if ms is not None and ms < _total and self.plan(self.index) is not None:
             self._paint_units(painter, page, ms - delay, opacity, dx, scale)
             return
-        a = 1.0 if ms is None or animation in ("none", "cascade") else _ease((ms - delay) / ANIMATION_MS)
+        a = 1.0 if ms is None or animation in ("none", "cascade") else _ease((ms - delay) / dm.LOOK["animation_ms"])
         layers = self._layer_pair(self.index) if a < 1.0 else None
         if layers is None:
             self._draw(painter, self._image(self.index), opacity, dx, 0.0, scale)

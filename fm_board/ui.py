@@ -1204,6 +1204,11 @@ class BoardPane(QWidget):
                 self._settings["board_cad_gpu"] = False          # OpenGL indisponible : rendu par lots du processeur
         if self.cad is not None:
             self.cad.apply_settings(self._settings)
+        from fm_design import design_model                         # Reglages > Design (deja importe par model)
+        from fm_tableur import document as tableur_document       # Reglages > Tableur > Nouveaux classeurs
+        tableur_document.set_new_book_defaults(self._settings)
+        if design_model.apply_settings(self._settings) and self.design is not None:
+            self.design.apply_settings()
         if self.tableur is not None:
             self.tableur.apply_settings(self._settings)
 

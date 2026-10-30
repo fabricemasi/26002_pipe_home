@@ -755,7 +755,7 @@ class AnimationTest(DesignTestCase):
             settle()
             plan, end = window.plan(0)
             self.assertEqual([k for k, _s, _l in plan], ["none", "pop"])
-            self.assertEqual(window.durations(0)[2], present.ANIMATION_MS)
+            self.assertEqual(window.durations(0)[2], present.dm.LOOK["animation_ms"])
             W, H = window.width(), window.height()
             k = min(W / 400, H / 300)
             left, top = (W - 400 * k) / 2, (H - 300 * k) / 2
@@ -1528,6 +1528,45 @@ class DataVisTest(DesignTestCase):
         bad = model.normalize_item({"id": "c", "type": "design_chart", "values": [1, 2],
                                     "more_series": [[5], "x", [1, 2, 3]], "series_names": ["a", "b", "c", "d"]})
         self.assertEqual((bad["more_series"], bad["series_names"]), ([[5.0, 0.0], [1.0, 2.0]], ["a", "b", "c"]))
+
+
+
+class SettingsTest(DesignTestCase):
+    """Réglages > Design (clés `board_design_*`) : déclarés, appliqués EN DIRECT par le board, lus à la création."""
+
+    def tearDown(self):
+        dm.apply_settings(None)                                # LOOK est global : défauts pour les tests suivants
+        super().tearDown()
+
+    def test_rows_declared_and_applied(self):
+        import settings_store
+        from fm_design.settings import DESIGN_TREE
+        from settings_catalog import CATALOG
+        specs = [spec for node in DESIGN_TREE for spec in CATALOG[node.group]]
+        for spec in specs:                                     # déclarée (sinon ignorée), même défaut des deux côtés
+            self.assertEqual(spec.default, settings_store.DEFAULT_SETTINGS[spec.key], spec.key)
+        self.assertEqual({s.key for s in specs}, {k for k in settings_store.DEFAULT_SETTINGS
+                                                  if k.startswith("board_design_") and k != "board_design_brand"})
+        self.pane.apply_settings({**self.pane._settings, "board_design_page_format": "presentation",
+                                  "board_design_page_bg": "#102030", "board_design_heading_size": 120,
+                                  "board_design_text_color": "#ff0000", "board_design_shape_fill": "#00ff00",
+                                  "board_design_accent": "@inconnue", "board_design_nudge_big": 25,
+                                  "board_design_handle_size": "x"})
+        self.assertEqual(dm.LOOK["handle_size"], 9)            # valeur invalide : défaut
+        page = self.ctl.ensure_page()
+        self.assertEqual((page.size(), page.data["format"], page.data["background"]),
+                         ((1920.0, 1080.0), "presentation", "#102030"))
+        text = self.ctl.add_text("heading", edit=False)
+        self.assertEqual((text.data["font_size"], text.data["color"]), (120.0, "#ff0000"))
+        shape = self.ctl.add_shape("rect")
+        self.assertEqual(shape.data["fill"], "#00ff00")
+        x = shape.pos().x()
+        self.key(Qt.Key_Right, Qt.ShiftModifier)
+        self.assertEqual(shape.pos().x(), x + 25)
+        image = QImage(64, 64, QImage.Format_ARGB32)           # l'overlay peint sans erreur avec ces réglages
+        painter = QPainter(image)
+        self.ctl.overlay.paint(painter, None)
+        painter.end()
 
 
 if __name__ == "__main__":

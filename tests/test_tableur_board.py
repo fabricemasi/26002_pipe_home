@@ -282,12 +282,26 @@ class ExplorerFileTest(BoardCase):
 class SettingsTest(BoardCase):
     def test_rows_declared_and_applied_live(self):
         import settings_store
-        from fm_board.settings import MRO_TREE
+        from fm_tableur.settings import TABLEUR_TREE
         from settings_catalog import CATALOG
-        keys = {spec.key for spec in CATALOG["MRO : Tableur"]}
+        keys = {spec.key for node in TABLEUR_TREE for spec in CATALOG[node.group]}
         self.assertIn("tableur_formula_lang", keys)
+        self.assertIn("tableur_font_family", keys)
         self.assertTrue(keys <= set(settings_store.DEFAULT_SETTINGS))       # clés déclarées (sinon ignorées)
-        self.assertIn("MRO : Tableur", [getattr(n, "group", None) for n in MRO_TREE])
+        for key in keys:                                                    # défauts identiques des deux côtés
+            spec = next(s for node in TABLEUR_TREE for s in CATALOG[node.group] if s.key == key)
+            self.assertEqual(spec.default, settings_store.DEFAULT_SETTINGS[key], key)
+        from fm_tableur import document
+        self.pane.apply_settings({**self.pane._settings, "tableur_font_family": "Arial", "tableur_font_size": 14,
+                                  "tableur_calc_mode": "manual"})
+        try:
+            fresh = self.ctl.new_sheet().session.book                   # nouveau classeur : réglages
+            self.assertEqual((fresh.default_font, fresh.calc_mode), (("Arial", 14.0), "manual"))
+        finally:
+            self.pane.apply_settings({**self.pane._settings, "tableur_font_family": "", "tableur_font_size": 11,
+                                      "tableur_calc_mode": "auto"})
+        self.assertEqual((document.new_workbook().default_font, document.new_workbook().calc_mode),
+                         (("Calibri", 11.0), "auto"))
         item = self.ctl.new_sheet()
         session = item.session
         from fm_tableur.commands import SetCells

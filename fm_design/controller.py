@@ -22,7 +22,7 @@ from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QPolygonF
 from PySide6.QtWidgets import QGraphicsView
 
-from . import document as doc
+from . import design_model as dm, document as doc
 from .commands import CommandMixin
 from .gestures import GestureMixin
 from .datavis import DesignChartItem, DesignTableItem
@@ -144,6 +144,15 @@ class DesignController(GestureMixin, CommandMixin, QObject):
                 page.snapshot = None
                 page.update()
         self.scene.update()
+
+    def apply_settings(self):
+        """Réglages > Design changés (`design_model.LOOK`, déjà posé) : dessin temporaire et barres repeints
+        (couleur de sélection, poignées, repères) ; rien n'est recréé."""
+        self.refresh()
+        for widget in (self.ui.rail, self.ui.panel, self.ui.context, self.ui.pagebar):
+            widget.update()
+        for thumb in self.ui._thumbs:
+            thumb.update()
 
     def refresh(self):
         """Overlay redessiné une fois par passage de boucle (les signaux arrivent par rafales)."""
@@ -295,9 +304,10 @@ class DesignController(GestureMixin, CommandMixin, QObject):
         return out
 
     def _handle_at(self, view_pos) -> str | None:
+        hit = max(HIT_PX, dm.LOOK["handle_size"] / 2 + 4)          # suit la taille des poignées (Réglages > Design)
         for name, point, _angle in self.handles():
             v = self.view.mapFromScene(point)
-            if abs(v.x() - view_pos.x()) <= HIT_PX and abs(v.y() - view_pos.y()) <= HIT_PX:
+            if abs(v.x() - view_pos.x()) <= hit and abs(v.y() - view_pos.y()) <= hit:
                 return name
         return None
 
@@ -639,7 +649,7 @@ class DesignController(GestureMixin, CommandMixin, QObject):
                 return True
             movable = [i for i in sel if not i.locked()]
             if movable:
-                step = 10 if shift else 1
+                step = dm.LOOK["nudge_big"] if shift else dm.LOOK["nudge"]      # Réglages > Design > Clavier
                 dx = {Qt.Key_Left: -step, Qt.Key_Right: step}.get(key, 0)
                 dy = {Qt.Key_Up: -step, Qt.Key_Down: step}.get(key, 0)
                 before = scene.snapshot([i.item_id for i in movable])

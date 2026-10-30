@@ -1,6 +1,6 @@
 """Défauts des réglages du module Tableur (clés `tableur_*`) : source unique, fusionnés dans DEFAULT_SETTINGS par
-`settings_store`. Aucun import de l'appli. Lus par `grid.GridWidget.apply_settings` (et le double-clic de
-l'explorateur)."""
+`settings_store`. Aucun import de l'appli. Lus par `grid.GridWidget.apply_settings`, `document.set_new_book_defaults`
+(et le double-clic de l'explorateur)."""
 from typing import Any
 
 TABLEUR_DEFAULTS: dict[str, Any] = {
@@ -16,6 +16,11 @@ TABLEUR_DEFAULTS: dict[str, Any] = {
     # Langue des formules À L'ÉCRAN (« fr » : =SOMME(A1;B2), virgule décimale ; « en » : =SUM(A1,B2)). Le classeur
     # garde toujours la syntaxe anglaise d'Excel ; les noms anglais restent acceptés à la saisie.
     "tableur_formula_lang": "fr",
+    # Nouveaux classeurs (Board) : police par défaut (« » = Calibri, celle d'Excel), sa taille (points), mode de calcul
+    # (« auto » / « manual »). Un classeur garde les siens une fois créé ; un fichier ouvert garde ceux du fichier.
+    "tableur_font_family": "",
+    "tableur_font_size": 11,
+    "tableur_calc_mode": "auto",
     # Entrée valide puis déplace : « down », « right », « up », « left », « none ».
     "tableur_enter_moves": "down",
     # Couleurs du CONTENU de la grille (aspect d'Excel par défaut, comme le contenu du Board suit Miro).

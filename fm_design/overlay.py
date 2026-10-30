@@ -11,7 +11,6 @@ from PySide6.QtWidgets import QGraphicsItem
 
 from . import design_model as dm
 
-HANDLE_PX = 9.0
 SIDE_PX = (16.0, 6.0)          # poignée de côté : pastille allongée
 ROTATE_PX = 26.0               # poignée de rotation : sous la sélection
 HIT_PX = 9.0
@@ -162,11 +161,11 @@ class DesignOverlay(QGraphicsItem):
         if preview is not None and current is not None:
             axis, pos = preview
             w, h = current.size()
-            painter.setPen(QPen(QColor(0, 190, 255, 230), 1.0 / zoom, Qt.DashLine))
+            painter.setPen(QPen(QColor(dm.LOOK["guide_color"]), 1.0 / zoom, Qt.DashLine))
             a, b = (QPointF(pos, 0), QPointF(pos, h)) if axis == "v" else (QPointF(0, pos), QPointF(w, pos))
             painter.drawLine(current.mapToScene(a), current.mapToScene(b))
         for line in c.guides:
-            pen = QPen(QColor("#ff2fd0"), 1.0 / zoom)
+            pen = QPen(QColor(dm.LOOK["snap_color"]), 1.0 / zoom)
             painter.setPen(pen)
             painter.drawLine(line)
         if c.marquee is not None:
@@ -183,14 +182,16 @@ class DesignOverlay(QGraphicsItem):
         font.setPointSizeF(max(0.5, 9.5 / zoom))
         painter.setFont(font)
         current = self.controller.current_page()
+        titles = dm.LOOK["page_titles"]                          # Réglages > Design > Sélection et repères
         for number, page in enumerate(self.controller.pages(), 1):
             if not page.isVisible():
                 continue
             r = page.mapRectToScene(page.content_rect())
-            label = dm.page_label(page.data, number) + (" — masquée" if page.data.get("hidden") else "")
-            painter.setPen(QColor(dm.ACCENT) if page is current and self.controller.active else QColor(90, 90, 90))
-            box = QRectF(r.left(), r.top() - 22 / zoom, r.width(), 18 / zoom)
-            painter.drawText(box, Qt.AlignLeft | Qt.AlignVCenter, label)
+            if titles:
+                label = dm.page_label(page.data, number) + (" — masquée" if page.data.get("hidden") else "")
+                painter.setPen(QColor(dm.ACCENT) if page is current and self.controller.active else QColor(90, 90, 90))
+                box = QRectF(r.left(), r.top() - 22 / zoom, r.width(), 18 / zoom)
+                painter.drawText(box, Qt.AlignLeft | Qt.AlignVCenter, label)
             self._paint_page_guides(painter, page, r, zoom)
             if page is current and self.controller.active:
                 painter.setPen(QPen(QColor(dm.ACCENT), 1.0 / zoom))
@@ -203,7 +204,7 @@ class DesignOverlay(QGraphicsItem):
             return
         guides = page.data.get("guides") or []
         if guides:
-            painter.setPen(QPen(QColor(0, 190, 255, 200), 1.0 / zoom))
+            painter.setPen(QPen(QColor(dm.LOOK["guide_color"]), 1.0 / zoom))
             for guide in guides:
                 pos = float(guide["pos"])
                 if guide["axis"] == "v":
@@ -212,7 +213,9 @@ class DesignOverlay(QGraphicsItem):
                     painter.drawLine(page.mapToScene(QPointF(0, pos)), page.mapToScene(QPointF(page.size()[0], pos)))
         if page.data.get("margins"):
             m = dm.margin_size(*page.size())
-            painter.setPen(QPen(QColor(0, 190, 255, 160), 1.0 / zoom, Qt.DashLine))
+            margin = QColor(dm.LOOK["guide_color"])
+            margin.setAlphaF(margin.alphaF() * 0.8)
+            painter.setPen(QPen(margin, 1.0 / zoom, Qt.DashLine))
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(r.adjusted(m, m, -m, -m))
 
@@ -240,7 +243,7 @@ class DesignOverlay(QGraphicsItem):
                 rect = QRectF(-w / 2 / zoom, -h / 2 / zoom, w / zoom, h / zoom)
                 painter.drawRoundedRect(rect, min(w, h) / 2 / zoom, min(w, h) / 2 / zoom)
             else:
-                r = HANDLE_PX / 2 / zoom
+                r = dm.LOOK["handle_size"] / 2 / zoom              # Réglages > Design
                 painter.drawEllipse(QPointF(0, 0), r, r)
             painter.restore()
 

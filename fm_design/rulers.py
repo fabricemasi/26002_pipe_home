@@ -12,7 +12,7 @@ from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
-from . import document as doc
+from . import design_model as dm, document as doc
 
 THICKNESS = 20
 
@@ -140,7 +140,7 @@ class Rulers:
         self.ctl = ctl
         self.top = Ruler(ctl, False, ctl.pane)
         self.left = Ruler(ctl, True, ctl.pane)
-        self.visible = False
+        self.visible = bool(dm.LOOK["rulers"])         # Réglages > Design > Sélection et repères
         view = ctl.view
         view.zoomChanged.connect(lambda _z: self.update())
         view.horizontalScrollBar().valueChanged.connect(lambda _v: self.update())

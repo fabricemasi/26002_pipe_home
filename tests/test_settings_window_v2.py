@@ -211,7 +211,8 @@ class WiringTest(WindowTestCase):
         Les identifiants d'onglets ne changent pas (cles retenues : ordre des titres, espaces)."""
         self.assertEqual([label for label, _t in v2.SCOPES], ["General"])
         self.assertEqual({m: [label for label, _t in s] for m, s in v2.MODULE_SCOPES.items()},
-                         {"video": [v2.VIDEO_TAB], "markdown": [v2.MARKDOWN_TAB], "board": [v2.MRO_TAB, v2.CAD_TAB],
+                         {"video": [v2.VIDEO_TAB], "markdown": [v2.MARKDOWN_TAB], "board": [v2.MRO_TAB, v2.CAD_TAB, v2.DESIGN_TAB,
+                                                                                    v2.TABLEUR_TAB],
                           "viewer": [v2.VIEWER_TAB], "theme": [v2.THEME_TAB]})       # theme : editeur fm_theme
         self.assertEqual(v2.MARKDOWN_TAB, "Markdown")
         self.assertEqual(v2.MRO_TAB, "Module MRO")
@@ -628,6 +629,25 @@ class CadTabAndIconTablesTest(WindowTestCase):
                          [f"ui_board_{kind}" for kind, _label in CAD_ICON_ROWS])
         self.assertNotIn("MRO : CAD", v2.CATALOG)
         self.assertNotIn("cad_line", [kind for kind, _label in __import__("fm_board.model", fromlist=["x"]).ICON_ROWS])
+
+    def test_design_and_tableur_tabs_build_and_read_back(self):
+        """Onglets « Design » et « Tableur » de Réglages : Board : chaque champ se construit et se relit à sa valeur
+        d'origine (clé déclarée dans DEFAULT_SETTINGS, même défaut)."""
+        import copy
+        self.assertEqual([label for label, _t in v2.MODULE_SCOPES["board"]][2:], [v2.DESIGN_TAB, v2.TABLEUR_TAB])
+        self.assertNotIn("MRO : Tableur", v2.CATALOG)
+        settings = copy.deepcopy(settings_store.DEFAULT_SETTINGS)
+        for tree in (v2.DESIGN_TREE, v2.TABLEUR_TREE):
+            for node in tree:
+                fields, record = {}, []
+                v2.build_group(node.group, v2.ScopeValues(settings, None), settings["colors"], fields, {}, [],
+                               record, lambda: None)
+                for spec, widget in record:
+                    if not isinstance(spec, v2.Spec):
+                        continue
+                    self.assertEqual(spec.default, settings_store.DEFAULT_SETTINGS[spec.key], spec.key)
+                    read = v2.FIELD_READERS.get(spec.kind, lambda sp, w: {sp.key: w.value()})(spec, widget)
+                    self.assertEqual(read[spec.key], spec.default, spec.key)
 
     def test_every_cad_toolbar_icon_is_in_the_icon_table(self):
         from fm_cad import cad_ui

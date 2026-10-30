@@ -19,8 +19,9 @@ class CommandMixin:
     def ensure_page(self) -> DesignPageItem:
         page = self.current_page()
         if page is None:
-            w, h = dm.FORMAT_SIZES["square"]
-            page = doc.add_page(self.scene, w, h, origin=self.view.view_center(), values={"format": "square"},
+            key = dm.LOOK["page_format"]                                   # Réglages > Design > Nouveau design
+            w, h = dm.FORMAT_SIZES[key]
+            page = doc.add_page(self.scene, w, h, origin=self.view.view_center(), values={"format": key},
                                 text="Nouveau design")
             self.set_current_page(page, show=True)
             self.pagesChanged.emit()
@@ -30,7 +31,7 @@ class CommandMixin:
         page = self.ensure_page()
         w, h = page.size()
         side = round(min(w, h) * 0.3, 2)
-        data = {"shape": shape, "w": side, "h": side}
+        data = {"shape": shape, "w": side, "h": side, "fill": dm.LOOK["shape_fill"]}
         if shape == "line":
             data.update(w=round(w * 0.4, 2), h=24.0, stroke_width=6.0, fill_type="none", stroke=dm.INK)
         data.update(values or {})
@@ -38,14 +39,18 @@ class CommandMixin:
         self._select([item])
         return item
 
-    TEXT_PRESETS = {"heading": ("Ajouter un titre", 96.0, True), "subheading": ("Ajouter un sous-titre", 56.0, True),
-                    "body": ("Ajouter un peu de texte", 32.0, False)}
+    # Tailles : Réglages > Design > Nouveaux éléments (`LOOK["<preset>_size"]`).
+    TEXT_PRESETS = {"heading": ("Ajouter un titre", True), "subheading": ("Ajouter un sous-titre", True),
+                    "body": ("Ajouter un peu de texte", False)}
 
     def add_text(self, preset: str = "body", values: dict | None = None, edit: bool = True):
         page = self.ensure_page()
-        text, size, bold = self.TEXT_PRESETS.get(preset, self.TEXT_PRESETS["body"])
+        preset = preset if preset in self.TEXT_PRESETS else "body"
+        text, bold = self.TEXT_PRESETS[preset]
+        size = float(dm.LOOK[f"{preset}_size"])
         w = round(min(page.size()[0] * 0.8, max(200.0, size * len(text) * 0.55)), 2)
-        data = {"text": text, "font_size": size, "bold": bold, "w": w, "h": size * 1.3}
+        data = {"text": text, "font_size": size, "bold": bold, "w": w, "h": size * 1.3,
+                "font_family": dm.LOOK["font"], "color": dm.LOOK["text_color"]}
         data.update(values or {})
         item = doc.add_element(self.scene, page, dm.TEXT, data, "Ajouter un texte")
         self._select([item])
@@ -323,14 +328,15 @@ class CommandMixin:
         w = round(min(page.size()[0] * 0.8, 200.0 * cols), 2)
         cells = [[f"Titre {c + 1}" for c in range(cols)]] + [["" for _c in range(cols)] for _r in range(rows - 1)]
         item = doc.add_element(self.scene, page, dm.TABLE, {"rows": rows, "cols": cols, "cells": cells, "w": w,
-                                                            "h": round(60.0 * rows, 2)}, "Ajouter un tableau")
+                                                            "h": round(60.0 * rows, 2), "font_family": dm.LOOK["font"]},
+                               "Ajouter un tableau")
         self._select([item])
         return item
 
     def add_chart(self, kind: str = "bar"):
         page = self.ensure_page()
         w = round(min(page.size()[0] * 0.7, 700.0), 2)
-        item = doc.add_element(self.scene, page, dm.CHART, {"chart": kind, "w": w, "h": round(w * 0.62, 2)},
-                               "Ajouter un graphique")
+        item = doc.add_element(self.scene, page, dm.CHART, {"chart": kind, "w": w, "h": round(w * 0.62, 2),
+                                                            "font_family": dm.LOOK["font"]}, "Ajouter un graphique")
         self._select([item])
         return item

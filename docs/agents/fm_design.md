@@ -36,6 +36,8 @@ Troisième module du board (après Miro et CAD), créé le 2026-10-29 à la dema
 | Modèles de conception (originaux) | `templates.py` | `TEMPLATES` |
 | Rendu hors écran : miniatures, export PNG / JPEG / PDF / SVG | `render.py` | `paint_page`, `export_pages` |
 | Glyphes des boutons | `glyphs.py` | `paint_design_glyph` (appelé par `fm_board.ui.paint_glyph`) |
+| Réglages (onglet « Design » de « Réglages : Board », clés `board_design_*`) : lignes et arbre ; défauts | `settings.py` ; `settings_defaults.py` | `DESIGN_TAB`, `DESIGN_TREE` ; `DESIGN_DEFAULTS` |
+| Réglages appliqués : `LOOK` (sans préfixe : `LOOK["accent"]`…) posé par `apply_settings`, appelé par `BoardPane.apply_settings` à chaque réglage `board_` ; vrai si changé -> `DesignController.apply_settings` repeint | `design_model.py` ; `controller.py` | `LOOK`, `apply_settings` |
 
 Points de branchement dans la coque (modifications MINIMALES, Miro et CAD inchangés) :
 - `fm_board/model.py` : `DEFAULTS` reçoit les types Design, `normalize_item` appelle `design_model.normalize_entity`,
@@ -221,3 +223,4 @@ zoom par la coque) ; la mesure en vraie fenêtre Windows n'a pas été faite (so
 | Espacement égal entre deux voisins pendant Ctrl + glisser (segments tracés), renommer un calque, export d'une plage de pages (« 1-3, 5 ») | Terminée | Gestes, Export |
 | Icônes réglables : lignes `design*` de `ICON_ROWS` (rail, barre des pages, dont « Présenter ») ; test : chaque bouton a sa ligne et lit `ui_board_<genre>` (fenêtre de réglages entière non regardée à l'œil) | Terminée | — |
 | Animations de présentation (« Animer ») : transition de page (fondu, glissement, zoom) et arrivée des éléments (fondu, montée, apparition, entrée latérale, « un par un » : ordre d'empilement, un groupe d'un coup, une petite image par élément `render.render_units`, préparée au repos : 42 ms à 300 éléments, 2,4 ms par image), par page ou toutes ; champs de page `transition`, `animation` | Terminée | Présentation |
+| Réglages du module (onglet « Design » de Réglages : Board, 2026-10-30) : nouveau design (format de la 1re page, fond des nouvelles pages), nouveaux éléments (police des textes / tableaux / graphiques, couleur et 3 tailles des textes, remplissage des formes), sélection et repères (couleur de sélection = `ACCENT`, taille des poignées et leur zone de clic, couleur des repères / marges et des guides d'alignement, titres des pages, règles à l'ouverture), flèches (pas, pas avec Maj), durées de transition / d'animation. Lus au moment de créer ou de peindre (`dm.LOOK`), jamais recopiés dans les éléments existants. Test : `SettingsTest` | Terminée | Réglages |

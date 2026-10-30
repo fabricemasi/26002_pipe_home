@@ -21,6 +21,38 @@ DESIGN_TYPES = (PAGE,) + ELEMENT_TYPES
 INK = "#1a1a1a"
 ACCENT = "#8b3dff"                     # couleur de sélection du module (violet, distinct du bleu de Miro)
 PAGE_GAP = 60.0                        # écart vertical entre deux pages (unités du board)
+
+# Réglages de l'appli (Réglages : Board > Design, clés `board_design_*`) : posés par `apply_settings` (appelé par
+# `BoardPane.apply_settings`), lus au moment de peindre ou de créer (aucun recalcul ailleurs). Défauts :
+# `settings_defaults.py`.
+from .settings_defaults import DESIGN_DEFAULTS as _SETTINGS_DEFAULTS  # noqa: E402
+LOOK: dict = {}
+
+
+def apply_settings(settings: dict | None) -> bool:
+    """Recopie les réglages `board_design_*` dans `LOOK` (et `ACCENT`) ; vrai si quelque chose a changé."""
+    global ACCENT
+    get = (settings or {}).get
+    look = {}
+    for key, default in _SETTINGS_DEFAULTS.items():
+        value = get(key, default)
+        if type(value) is not type(default) and not (isinstance(default, int) and isinstance(value, float)):
+            value = default
+        if isinstance(value, str) and value.startswith("@"):     # couleur de l'appli (« @skinN2 ») : résolue
+            try:
+                from app_style import resolve_color_ref
+                value = resolve_color_ref(value)
+            except Exception:                                   # noqa: BLE001 - référence inconnue : défaut
+                value = default
+        look[key[len("board_design_"):]] = value
+    if look["page_format"] not in FORMAT_SIZES:
+        look["page_format"] = _SETTINGS_DEFAULTS["board_design_page_format"]
+    if look == LOOK:
+        return False
+    LOOK.clear()
+    LOOK.update(look)
+    ACCENT = look["accent"] or ACCENT
+    return True
 MIN_SIZE = 4.0
 
 # Ombre portée commune (couleur #AARRGGBB, décalage et flou en unités du board).
@@ -426,3 +458,6 @@ def normalize_datavis(item: dict) -> dict:
         names = item.get("series_names") if isinstance(item.get("series_names"), list) else []
         item["series_names"] = [str(n) for n in names[:1 + len(item["more_series"])]]
     return item
+
+
+apply_settings(None)                   # défauts tant que l'appli n'a rien posé

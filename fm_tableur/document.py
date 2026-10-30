@@ -384,8 +384,26 @@ class Workbook:
                     yield sheet, key, cell
 
 
+# Nouveaux classeurs (Réglages : Board > Tableur > Nouveaux classeurs) : posé par `set_new_book_defaults`.
+NEW_BOOK = {"font": DEFAULT_FONT, "calc_mode": "auto"}
+
+
+def set_new_book_defaults(settings: dict | None) -> None:
+    """Police et mode de calcul des classeurs créés ensuite (clés `tableur_font_*`, `tableur_calc_mode`)."""
+    get = (settings or {}).get
+    family = str(get("tableur_font_family") or "").strip() or DEFAULT_FONT[0]
+    try:
+        size = max(1.0, min(409.0, float(get("tableur_font_size") or DEFAULT_FONT[1])))
+    except (TypeError, ValueError):
+        size = DEFAULT_FONT[1]
+    NEW_BOOK["font"] = (family, size)
+    NEW_BOOK["calc_mode"] = "manual" if get("tableur_calc_mode") == "manual" else "auto"
+
+
 def new_workbook(sheets: int = 1) -> Workbook:
     book = Workbook()
+    book.default_font = NEW_BOOK["font"]
+    book.calc_mode = NEW_BOOK["calc_mode"]
     for _ in range(max(1, sheets)):
         book.add_sheet()
     return book
