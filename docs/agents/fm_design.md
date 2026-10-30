@@ -160,6 +160,7 @@ avant) ; liste des pages gardée (`scene.design_pages`, tenue par les crochets d
 8 ms, déplacer 14 → 7 ms, zoom 32 → 26 ms / cran. Vérifié à l'écran (sonde `probe_trails.py`, capture de la
 fenêtre réelle puis peinture complète) : aucune trace laissée. Reste par clic : la barre contextuelle (boutons
 translucides, ~12 recréés, la vue repeinte sous eux) et l'envoi de la fenêtre à Windows.
+Après les tranches suivantes (masquer, notes, liens, animations par élément, styles de marque), même sonde : changer de sélection 15 ms (p95 34-41), sélectionner / désélectionner 8 ms, déplacer 7,7-8,4 ms, zoom 28 ms : inchangé au bruit près.
 Corrections : (1) `boundingRect` GARDÉ par élément (Qt le demande ~3 fois par élément et par image ; 108 000 appels
 Python pour 60 images) ; (2) contenu du panneau latéral OPAQUE (Qt retire les voisins opaques de la zone à
 peindre : les miniatures des modèles étaient repeintes à chaque image du board, ~5 ms) ; (3) miniatures des pages
