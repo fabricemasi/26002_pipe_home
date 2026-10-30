@@ -57,6 +57,7 @@ TOGGLES = {  # nom -> (cle de reglage, libelle, touche) ; « grid » : la grille
 }
 FKEYS = {Qt.Key_F3: "osnap", Qt.Key_F7: "grid", Qt.Key_F8: "ortho", Qt.Key_F9: "grid_snap",
          Qt.Key_F10: "polar", Qt.Key_F11: "otrack", Qt.Key_F12: "dyn"}
+GRIP_MODES = {"end", "mid"}          # points des poignees d'une ligne : l'aimant hors commande (sans OSNAP)
 DEFAULTS = {"board_cad_osnap": True, "board_cad_ortho": False,
             "board_cad_grid_snap": False, "board_cad_polar": False, "board_cad_otrack": False,
             "board_cad_dyn": True}
@@ -1226,7 +1227,7 @@ class CadController(QObject):
         self.res = None
         if self.window is None and self.command is None:
             self.hover_grip = self.grip_at(self.cursor_view)
-            if self.hover_grip is not None and self.hover_grip[0].kind == "cad_line" and self.engine.settings.osnap:   # l'aimant : poignees de LIGNES seulement
+            if self.hover_grip is not None and self.hover_grip[0].kind == "cad_line":   # l'aimant : poignees de LIGNES seulement
                 # Tant que la poignee est saisissable, le reticule reste aimante sur elle (demande de l'utilisateur :
                 # sinon il se decrochait en entrant dans la poignee d'une ligne selectionnee, qui passe avant l'aimant).
                 item, name, point = self.hover_grip
@@ -1238,13 +1239,16 @@ class CadController(QObject):
                 self.hover_snap = cad_snap.Resolution(point, "osnap", candidate, [candidate], label=candidate.label)
         if self.hover_grip is None and self.window is None:
             self.hover_item = self.pick(self.cursor_view)
-            if self.command is None and self.engine.settings.osnap:
+            if self.command is None:
                 # Hors commande aussi, le reticule s'aimante au point caracteristique approche (demande de
                 # l'utilisateur) : marqueur + aimant seulement ; le clic garde la selection a la place de la souris.
+                # Comme dans AutoCAD, l'aimant des POIGNEES ne depend ni d'OSNAP (F3) ni des modes coches (demande de
+                # l'utilisateur : « quand aucun accrochage objet n'est selectionne, le curseur s'aimante quand meme
+                # sur les handles »).
                 # Le 1er candidat AIMANTE (pas le 1er tout court) : a une extremite commune, le point de la ligne
                 # non selectionnee passait devant (doublon retire) et l'aimant ne prenait plus que dans la zone de la
                 # poignee (6 px au lieu de 10 : signale « la distance de detection est fausse sur un des 3 points »).
-                found = self.engine.candidates(self.cursor_doc, self.scale(), None, keep=self._magnetic)
+                found = self.engine.candidates(self.cursor_doc, self.scale(), None, GRIP_MODES, keep=self._magnetic)
                 candidate = next((c for c in found if self._magnetic(c)), None)
                 if candidate is not None:
                     self.hover_snap = cad_snap.Resolution(candidate.point, "osnap", candidate, [candidate],

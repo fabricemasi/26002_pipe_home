@@ -1300,9 +1300,18 @@ class IdleMagnetTest(CadBoardCase):
         self.assertEqual(self.ctl._cursor_plan(), (None, True))
         self.move((100, 60))                                                    # loin de tout : curseur libre
         self.assertIsNone(self.ctl.hover_snap)
-        self.ctl.apply_settings(dict(self.ctl.settings, board_cad_osnap=False))
+        # Comme dans AutoCAD : OSNAP coupe (F3) ou aucun mode coche, les poignees aimantent toujours le reticule.
+        self.ctl.apply_settings(dict(self.ctl.settings, board_cad_osnap=False, board_cad_osnap_end=False,
+                                     board_cad_osnap_mid=False))
+        for spot, grip in (((203, 3), (200.0, 0.0)), ((104, 3), (100.0, 0.0))):
+            self.move((100, 60))
+            self.move(spot)
+            self.assertIsNotNone(self.ctl.hover_snap, spot)
+            self.assertEqual(self.ctl.hover_snap.point, grip)
+        item.setSelected(False)
+        self.move((100, 60))
         self.move((203, 3))
-        self.assertIsNone(self.ctl.hover_snap)                                  # OSNAP coupe : pas d'aimant
+        self.assertIsNone(self.ctl.hover_snap)                                  # ligne non selectionnee : rien
 
     def test_only_the_handles_of_lines_attract_the_cursor_outside_commands(self):
         circle = self.ctl.create_entity("cad_circle", {"center": [0.0, 0.0], "radius": 50.0})
