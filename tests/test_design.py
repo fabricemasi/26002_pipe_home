@@ -839,5 +839,50 @@ class PrintTest(DesignTestCase):
         self.assertAlmostEqual(h1 - h0, extra, delta=1.0)
 
 
+class RichTextTest(DesignTestCase):
+    def test_bold_part_of_text_saved_undone_and_scaled(self):
+        from PySide6.QtGui import QTextCursor
+        self.page()
+        text = self.ctl.add_text("body", {"text": "Bonjour le monde", "bold": False}, edit=False)
+        index = self.scene.undo.index()
+        self.ctl.edit_text(text)
+        editor = text.text_item
+        cursor = editor.textCursor()
+        cursor.setPosition(8)
+        cursor.setPosition(10, QTextCursor.KeepAnchor)             # « le »
+        editor.setTextCursor(cursor)
+        QApplication.sendEvent(self.view, QKeyEvent(QEvent.KeyPress, Qt.Key_B, Qt.ControlModifier))
+        QApplication.sendEvent(self.view, QKeyEvent(QEvent.KeyPress, Qt.Key_Greater,
+                                                    Qt.ControlModifier | Qt.ShiftModifier))
+        self.assertEqual(text.data["bold"], False)                 # la boîte n'est pas en gras
+        self.view.finish_text_edit()
+        settle()
+        spans = text.to_dict()["spans"]
+        self.assertEqual(len(spans), 1)
+        self.assertEqual((spans[0]["start"], spans[0]["end"], spans[0]["bold"]), (8, 10, True))
+        self.assertGreater(spans[0]["size"], text.data["font_size"])
+        self.assertEqual(self.scene.undo.index(), index + 1)
+        # sauvegarde / réouverture
+        self.assertTrue(self.pane.save())
+        other = board_ui.BoardPane(self.host)
+        _PANES.append(other)
+        self.assertTrue(other.open(self.path))
+        again = other.scene.item(text.item_id)
+        self.assertEqual(again.to_dict()["spans"], spans)
+        # agrandir la boîte agrandit aussi la partie stylée
+        doc.scale_element(text, 2.0)
+        self.assertAlmostEqual(text.data["spans"][0]["size"], spans[0]["size"] * 2, delta=0.01)
+        text.apply(text.data)
+        # annuler l'édition : plus aucune partie stylée
+        self.scene.undo.setIndex(index)
+        self.assertEqual(text.to_dict()["spans"], [])
+
+    def test_spans_normalized(self):
+        item = model.normalize_item({"id": "t", "type": "design_text", "text": "abc",
+                                     "spans": [{"start": 2, "end": 1, "bold": True}, {"start": 0, "end": 2},
+                                               {"start": 0, "end": 2, "italic": True, "size": "x"}]})
+        self.assertEqual(item["spans"], [{"start": 0, "end": 2, "italic": True}])
+
+
 if __name__ == "__main__":
     unittest.main()

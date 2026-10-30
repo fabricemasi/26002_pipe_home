@@ -456,8 +456,9 @@ class DesignController(GestureMixin, CommandMixin, QObject):
 
     # ------------------------------------------------------------------ clavier
     def claims(self, event) -> bool:
-        if self.text_editing():
-            return False
+        if self.text_editing():                  # style d'une partie du texte : jamais pris par la fenêtre
+            return bool(event.modifiers() & Qt.ControlModifier) and event.key() in (
+                Qt.Key_B, Qt.Key_I, Qt.Key_U, Qt.Key_Greater, Qt.Key_Less, Qt.Key_Period, Qt.Key_Comma)
         key, mods = event.key(), event.modifiers()
         ctrl = bool(mods & Qt.ControlModifier)
         if key in (Qt.Key_Delete, Qt.Key_Backspace, Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down,

@@ -173,6 +173,8 @@ def scale_element(item, k: float) -> None:
     for key in ("font_size", "stroke_width", "radius"):
         if key in data:
             data[key] = round(float(data[key]) * k, 2)
+    if data.get("spans"):
+        data["spans"] = dm.scale_spans(data["spans"], k)
     shadow = data.get("shadow")
     if isinstance(shadow, dict):
         for key in ("dx", "dy", "blur"):

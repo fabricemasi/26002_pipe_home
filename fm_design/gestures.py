@@ -208,6 +208,7 @@ class GestureMixin:
             if corner:
                 k = max(w / w0, 0.02)
                 data["font_size"] = round(max(1.0, float(data0["font_size"]) * k), 2)
+                data["spans"] = dm.scale_spans(data0.get("spans") or [], k)
                 w = w0 * k
                 data["letter_spacing"] = data0.get("letter_spacing", 0.0)
             data["w"] = round(max(dm.MIN_SIZE, w), 2)
@@ -257,6 +258,8 @@ class GestureMixin:
             for key in ("font_size", "stroke_width", "radius"):
                 if key in item.data:
                     item.data[key] = round(float(g["data0"][item][key]) * k, 2)
+            if item.data.get("spans"):
+                item.data["spans"] = dm.scale_spans(g["data0"][item]["spans"], k)
             item.apply(item.data)
             c0 = g["center0"][item]
             c = QPointF(anchor.x() + (c0.x() - anchor.x()) * k, anchor.y() + (c0.y() - anchor.y()) * k)

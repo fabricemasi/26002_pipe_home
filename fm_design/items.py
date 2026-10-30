@@ -13,12 +13,12 @@ import math
 from collections import OrderedDict
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import (QBrush, QColor, QImage, QLinearGradient, QPainter, QPainterPath, QPainterPathStroker,
-                           QPen, QPixmap, QPolygonF, QRadialGradient, QTextBlockFormat, QTextCharFormat, QTextCursor,
-                           QTextOption, QFont)
+from PySide6.QtGui import (QBrush, QColor, QFont, QImage, QLinearGradient, QPainter, QPainterPath,
+                           QPainterPathStroker, QPen, QPixmap, QPolygonF, QRadialGradient, QTextBlockFormat,
+                           QTextCharFormat, QTextCursor, QTextFormat, QTextOption)
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsObject
 
-from fm_miro.items import ITEM_CLASSES, BoardItem, asset_pixmap, pen_style, shape_path, text_font
+from fm_miro.items import ITEM_CLASSES, BoardItem, _Text, asset_pixmap, pen_style, shape_path, text_font
 from . import design_model as dm
 
 PAGE_Z = -200000.0                     # sous les cadres de Miro (FRAME_Z = -100000)
@@ -429,9 +429,132 @@ class DesignShapeItem(DesignElement):
         return self.content_rect().adjusted(-e, -e, e, e)
 
 
+class _DesignText(_Text):
+    """Texte en cours d'édition : Ctrl+B / I / U et Ctrl+Maj+> / < stylent la PARTIE choisie du texte."""
+
+    def keyPressEvent(self, event):
+        mods, key = event.modifiers(), event.key()
+        cursor = self.textCursor()
+        if mods & Qt.ControlModifier and cursor.hasSelection():
+            current = cursor.charFormat()
+            fmt = QTextCharFormat()
+            shift = bool(mods & Qt.ShiftModifier)
+            if key == Qt.Key_B and not shift:
+                fmt.setFontWeight(QFont.Normal if current.fontWeight() > QFont.Normal else QFont.Bold)
+            elif key == Qt.Key_I and not shift:
+                fmt.setFontItalic(not current.fontItalic())
+            elif key == Qt.Key_U and not shift:
+                fmt.setFontUnderline(not current.fontUnderline())
+            elif shift and key in (Qt.Key_Greater, Qt.Key_Less, Qt.Key_Period, Qt.Key_Comma):
+                size = current.intProperty(QTextFormat.FontPixelSize) or self.font().pixelSize() or 24
+                k = 1.1 if key in (Qt.Key_Greater, Qt.Key_Period) else 1 / 1.1
+                fmt.setProperty(QTextFormat.FontPixelSize, max(4, int(round(size * k))))
+            else:
+                fmt = None
+            if fmt is not None:
+                cursor.mergeCharFormat(fmt)
+                self.setTextCursor(cursor)
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+
+def spans_of(document) -> list[dict]:
+    """Parties stylées d'un document (gras, italique, souligné, taille posés sur une partie), fusionnées."""
+    out = []
+    block = document.begin()
+    while block.isValid():
+        it = block.begin()
+        while not it.atEnd():
+            fragment = it.fragment()
+            fmt = fragment.charFormat()
+            span = {}
+            if fmt.hasProperty(QTextFormat.FontWeight):
+                span["bold"] = fmt.fontWeight() > QFont.Normal
+            if fmt.hasProperty(QTextFormat.FontItalic):
+                span["italic"] = fmt.fontItalic()
+            if fmt.hasProperty(QTextFormat.TextUnderlineStyle) or fmt.hasProperty(QTextFormat.FontUnderline):
+                span["underline"] = fmt.fontUnderline()
+            if fmt.hasProperty(QTextFormat.FontPixelSize):
+                span["size"] = float(fmt.intProperty(QTextFormat.FontPixelSize))
+            if span:
+                start, end = fragment.position(), fragment.position() + fragment.length()
+                last = out[-1] if out else None
+                if last is not None and last["end"] == start and {k: v for k, v in last.items()
+                                                                   if k not in ("start", "end")} == span:
+                    last["end"] = end
+                else:
+                    out.append({"start": start, "end": end, **span})
+            it += 1
+        block = block.next()
+    return out
+
+
+def apply_spans(document, spans: list[dict]):
+    length = max(0, document.characterCount() - 1)
+    for span in spans or []:
+        start, end = min(span["start"], length), min(span["end"], length)
+        if end <= start:
+            continue
+        cursor = QTextCursor(document)
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.KeepAnchor)
+        fmt = QTextCharFormat()
+        if "bold" in span:
+            fmt.setFontWeight(QFont.Bold if span["bold"] else QFont.Normal)
+        if "italic" in span:
+            fmt.setFontItalic(span["italic"])
+        if "underline" in span:
+            fmt.setFontUnderline(span["underline"])
+        if "size" in span:
+            fmt.setProperty(QTextFormat.FontPixelSize, max(4, int(round(span["size"]))))
+        cursor.mergeCharFormat(fmt)
+
+
 class DesignTextItem(DesignElement):
-    """Boîte de texte : largeur fixe, hauteur suivie du contenu ; un style pour tout le texte."""
+    """Boîte de texte : largeur fixe, hauteur suivie du contenu ; un style pour la boîte, et des parties stylées
+    (`spans`) posées pendant l'édition."""
     TEXT_KEY = "text"
+
+    def __init__(self, data: dict):
+        super().__init__(data)
+        # Texte d'édition propre au module (raccourcis de style d'une partie) à la place de celui du board.
+        old = self.text_item
+        old.document().contentsChanged.disconnect(self.text_changed)
+        old.setParentItem(None)
+        self.text_item = _DesignText(self)
+        self._spans_applied = None
+        self._place_from_data()
+
+    def _place_from_data(self):
+        super()._place_from_data()
+        item = self.text_item
+        if item is None or not isinstance(item, _DesignText):
+            return
+        spans = self.data.get("spans") or []
+        if spans_of(item.document()) != spans:
+            if self._spans_applied is not None or spans:
+                self._laying = True
+                try:
+                    item.setPlainText(str(self.data.get("text", "")))
+                    # setPlainText garde le format du curseur d'édition (une partie en gras s'étendait à tout le
+                    # texte) : formats remis à zéro, puis les parties stylées.
+                    cursor = QTextCursor(item.document())
+                    cursor.select(QTextCursor.Document)
+                    cursor.setCharFormat(QTextCharFormat())
+                    item.setTextCursor(QTextCursor(item.document()))
+                    apply_spans(item.document(), spans)
+                finally:
+                    self._laying = False
+                self._format_key = None
+                self.layout_text()
+            self._spans_applied = spans
+
+    def to_dict(self) -> dict:
+        data = super().to_dict()
+        if isinstance(self.text_item, _DesignText):
+            data["spans"] = spans_of(self.text_item.document())
+        return data
 
     def layout_text(self):
         item = self.text_item

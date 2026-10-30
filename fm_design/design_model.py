@@ -42,7 +42,10 @@ DEFAULTS: dict[str, dict] = {
     TEXT: {"w": 520.0, "h": 60.0, "text": "", "font_family": "", "font_size": 48.0, "color": INK, "bold": False,
            "italic": False, "underline": False, "strike": False, "uppercase": False, "align": "left",
            "line_height": 1.2, "letter_spacing": 0.0, "text_bg": "", "text_stroke": INK, "text_stroke_width": 0.0,
-           **STYLE_COMMON},
+           # Style d'une PARTIE du texte (posé pendant l'édition : Ctrl+B / I / U, Ctrl+Maj+> / <) :
+           # [{"start", "end" (caractères), "bold"?, "italic"?, "underline"?, "size"? (px)}] par-dessus le style de
+           # la boîte.
+           "spans": [], **STYLE_COMMON},
     # Image : `crop` = [x0, y0, x1, y1] partie VISIBLE de l'image source (fractions, non destructif) ; réglages
     # -100..100 ; `radius` arrondi des angles ; contour.
     # `mask` = forme du cadre (masque, « » = rectangle) : un nom de SHAPE_KINDS.
@@ -119,6 +122,7 @@ def normalize_entity(item: dict) -> dict:
             item[key] = min(100.0, max(-100.0, item[key]))
         item["blur"] = min(100.0, max(0.0, item["blur"]))
     if kind == TEXT:
+        item["spans"] = valid_spans(item.get("spans"))
         item["font_size"] = min(1600.0, max(1.0, item["font_size"]))
         item["line_height"] = min(5.0, max(0.5, item["line_height"]))
         if item["align"] not in ("left", "center", "right", "justify"):
@@ -128,6 +132,31 @@ def normalize_entity(item: dict) -> dict:
     if kind == SHAPE and item["fill_type"] not in FILL_TYPES:
         item["fill_type"] = "solid"
     return item
+
+
+def valid_spans(value) -> list[dict]:
+    out = []
+    for span in value if isinstance(value, list) else []:
+        try:
+            start, end = int(span["start"]), int(span["end"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if end <= start or start < 0:
+            continue
+        clean = {"start": start, "end": end}
+        for key in ("bold", "italic", "underline"):
+            if isinstance(span.get(key), bool):
+                clean[key] = span[key]
+        if isinstance(span.get("size"), (int, float)) and not isinstance(span.get("size"), bool) and span["size"] > 0:
+            clean["size"] = round(float(span["size"]), 2)
+        if len(clean) > 2:
+            out.append(clean)
+    return out
+
+
+def scale_spans(spans: list, k: float) -> list:
+    """Tailles des parties stylées multipliées (texte agrandi / réduit par une poignée de coin)."""
+    return [dict(span, size=round(span["size"] * k, 2)) if "size" in span else dict(span) for span in spans or []]
 
 
 def valid_guides(value) -> list[dict]:
