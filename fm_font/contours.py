@@ -444,10 +444,11 @@ def contour_to_quadratic(contour, max_err: float) -> None:
         end_point.type = "qcurve"
 
 
-def contour_to_cubic(contour) -> None:
-    """Quadratiques -> cubiques EXACTES (élévation de degré ; poignées implicites décomposées)."""
+def contour_to_cubic(contour, only=None) -> None:
+    """Quadratiques -> cubiques EXACTES (élévation de degré ; poignées implicites décomposées). `only` : objets
+    Point de FIN des seuls segments à convertir (coins arrondis : les deux segments du coin), sinon tous."""
     for start, offs, end_point, kind in segment_refs(contour):
-        if kind != "qcurve" or not offs:
+        if kind != "qcurve" or not offs or (only is not None and not any(end_point is p for p in only)):
             continue
         quads = quad_segments([(p.x, p.y) for p in (start, *offs, end_point)])
         new: list[Point] = []

@@ -342,6 +342,46 @@ class GeometryTest(unittest.TestCase):
         self.assertEqual(min(p.y for p in self.g.contours[1]), 0)               # la ligne du bas reste à y = 0
         self.assertEqual([p.type for p in self.g.contours[1] if p.type].count("curve"), 3)   # 2 arcs + la courbe
 
+    def test_round_corners_on_quadratic_segments(self):
+        # lentille TrueType : deux quadratiques en coin à (0, 0) et (400, 0), angle intérieur de 90°
+        lens = C.new_contour([(0, 0, "qcurve"), (200, 200, None), (400, 0, "qcurve"), (200, -200, None)])
+        self.g.contours.append(lens)
+        before = [(p.x, p.y, p.type) for p in lens]
+        self.assertFalse(geometry.round_corner(lens, 0, 5000))                # rayon trop grand : intact
+        self.assertEqual([(p.x, p.y, p.type) for p in lens], before)
+        self.assertEqual(geometry.round_corners(self.g, {(0, 0), (0, 2)}, 20), 2)
+        contour = self.g.contours[0]
+        segs = C.segments(contour)
+        self.assertEqual([s[3] for s in segs], ["curve"] * 4)                 # 2 arcs + 2 courbes raccourcies
+        center = (20 / math.sin(math.pi / 4), 0)
+        arc = next(s for s in segs if max(abs(x) for x, _y in C.segment_points(contour, s)) < 40)
+        self.assertAlmostEqual(math.dist(C.cubic_at(*C.segment_points(contour, arc), 0.5), center), 20, delta=0.1)
+        # la courbe du haut, convertie puis raccourcie, reste SUR la quadratique d'origine
+        dense = [C.quad_at((0, 0), (200, 200), (400, 0), k / 2000) for k in range(2001)]
+        top = next(s for s in segs if min(y for _x, y in C.segment_points(contour, s)) > 0
+                   and max(x for x, _y in C.segment_points(contour, s)) > 300)
+        for k in range(11):
+            q = C.cubic_at(*C.segment_points(contour, top), k / 10)
+            self.assertLess(min(math.dist(q, d) for d in dense), 0.5)
+        # coin ligne / quadratique à deux poignées (nœud implicite) : seul ce segment devient cubique
+        shape = C.new_contour([(0, 0, "line"), (400, 0, "line"), (400, 100, None), (350, 300, None),
+                               (200, 300, "qcurve"), (100, 300, None), (0, 100, "qcurve")])
+        self.g.contours.append(shape)
+        self.assertEqual(geometry.round_corners(self.g, {(1, 1)}, 30), 1)
+        kinds = [s[3] for s in C.segments(self.g.contours[1])]
+        self.assertEqual(kinds.count("qcurve"), 1)                            # l'autre quadratique, intacte
+        self.assertEqual(kinds.count("line"), 2)
+        self.assertEqual(kinds.count("curve"), 3)                             # arc + les 2 morceaux convertis
+        self.assertEqual(min(p.y for p in self.g.contours[1]), 0)
+        self.assertEqual((self.g.contours[1][0].x, self.g.contours[1][0].y), (0, 0))   # même point de départ
+        # contour d'une police TrueType importée (sens horaire) : plusieurs coins à la fois ; le nœud dont la courbe
+        # est continue (250, 300) est refusé SANS empêcher les suivants (mêmes objets Point remis en place)
+        imported = C.new_contour([(0, 0, "line"), (0, 100, "line"), (100, 300, None), (250, 300, "qcurve"),
+                                  (450, 300, None), (500, 100, None), (500, 0, "qcurve")])
+        self.g.contours.append(imported)
+        self.assertEqual(geometry.round_corners(self.g, {(2, 0), (2, 1), (2, 3), (2, 6)}, 25), 3)
+        self.assertNotIn("qcurve", [s[3] for s in C.segments(self.g.contours[2])])
+
     def test_pencil_fit_follows_points(self):
         pts = [(x, 200 * math.sin(x / 80)) for x in range(0, 500, 5)]
         contour = shapes.pencil_contour(pts, error=2.0, smoothing=0)

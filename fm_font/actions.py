@@ -126,8 +126,7 @@ def glyph_op(cv, op: str) -> None:
     cv.edit(labels[op], fn)
     if op == "corners":
         cv.statusMessage.emit(f"{rounded[0]} coin(s) arrondi(s)." if rounded and rounded[0] else
-                              "Aucun coin arrondi : nœuds lisses, segments quadratiques ou rayon plus long "
-                              "qu'un segment.")
+                              "Aucun coin arrondi : nœuds lisses ou rayon plus long qu'un segment.")
     if op in ("overlaps", "union", "difference", "intersection", "xor", "decompose", "simplify", "corners"):
         cv.clear_selection()
 

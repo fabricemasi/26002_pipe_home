@@ -11,7 +11,7 @@ Légende : TERMINÉ (fonctionne, sauvegardé si besoin, testé) / PARTIEL / NON 
 | Modèle, projet, sauvegarde atomique, réouverture, récupération | TERMINÉ | `ProjectTest` |
 | Glyphes : créer, supprimer (refus si composant), dupliquer, renommer partout, Unicode | TERMINÉ | modèle ; interface : voir plus bas |
 | Bézier (modèle) | TERMINÉ | `BezierTest` (division exacte, tolérance cu2qu testée à 0,25 / 1 / 4 u) |
-| Géométrie (modèle) : transformations, symétrie, booléens, chevauchements, simplification, arrondi des coordonnées, COINS ARRONDIS, alignement, mesures | TERMINÉ | `GeometryTest` ; coins arrondis entre lignes ET cubiques (segments raccourcis par division exacte, arc tangent ; rayon exact entre droites) ; pas entre quadratiques |
+| Géométrie (modèle) : transformations, symétrie, booléens, chevauchements, simplification, arrondi des coordonnées, COINS ARRONDIS, alignement, mesures | TERMINÉ | `GeometryTest` ; coins arrondis entre lignes, cubiques ET quadratiques (segments raccourcis par division exacte, arc tangent ; rayon exact entre droites ; 2026-10-31 : un segment quadratique du coin passe d'abord en cubique, élévation de degré exacte, le reste du contour reste quadratique ; échec = contour intact, MÊMES objets Point ; coins repérés par objet, 4 coins en 0,4 ms) |
 | Crayon, calligraphie (modèle) | TERMINÉ | pression = 3e valeur des échantillons |
 | Composants, ancres, accentués, cycles (modèle) | TERMINÉ | propagation structurelle testée |
 | Métriques, crénage, aide automatique (modèle) | TERMINÉ | suggestions jamais appliquées seules |

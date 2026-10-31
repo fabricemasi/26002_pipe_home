@@ -307,8 +307,10 @@ def round_corner(contour, index: int, radius: float) -> bool:
     """Remplace le nœud en COIN `index` par un arc de rayon `radius` tangent aux deux segments (lignes ou
     cubiques). Les segments sont raccourcis par division EXACTE (leur forme ne change pas) ; l'arc est une
     cubique tangente aux deux (rayon exact entre deux droites ; entre courbes, rayon de l'arc qui joint les deux
-    points de tangence situés à la distance du congé). False (rien modifié) : nœud lisse ou au bout d'un contour
-    ouvert, segment quadratique, rayon plus grand qu'un des segments."""
+    points de tangence situés à la distance du congé). Segment QUADRATIQUE (police TrueType importée) : les seuls
+    segments du coin passent d'abord en cubiques (élévation de degré exacte : même forme ; le reste du contour
+    reste quadratique, l'export TrueType les reconvertit). False (rien modifié) : nœud lisse ou au bout d'un
+    contour ouvert, rayon plus grand qu'un des segments."""
     pts = contour.points
     node = pts[index]
     if node.type is None or node.smooth:
@@ -316,6 +318,20 @@ def round_corner(contour, index: int, radius: float) -> bool:
     segs = C.segments(contour)
     inc = next((s for s in segs if s[2] == index), None)
     out = next((s for s in segs if s[0] == index), None)
+    if inc is not None and out is not None and "qcurve" in (inc[3], out[3]):
+        backup = [(p, p.x, p.y, p.type, p.smooth) for p in pts]   # les MÊMES objets (repérés par les appelants)
+        first = pts[0]
+        ends = [pts[s[2]] for s in (inc, out) if s[3] == "qcurve"]
+        C.contour_to_cubic(contour, only=ends)
+        index = next(i for i, q in enumerate(pts) if q is node)
+        if round_corner(contour, index, radius):
+            k = next((i for i, q in enumerate(pts) if q is first), 0)   # même point de départ qu'avant
+            pts[:] = pts[k:] + pts[:k]
+            return True
+        for p, x, y, kind, smooth in backup:                  # rien d'arrondi : le contour reste tel quel
+            p.x, p.y, p.type, p.smooth = x, y, kind, smooth
+        pts[:] = [p for p, *_ in backup]
+        return False
     if inc is None or out is None or inc[3] not in ("line", "curve") or out[3] not in ("line", "curve"):
         return False
     if (inc[3] == "curve" and len(inc[1]) != 2) or (out[3] == "curve" and len(out[1]) != 2):
@@ -381,14 +397,18 @@ def round_corner(contour, index: int, radius: float) -> bool:
 
 
 def round_corners(glyph, selection, radius: float) -> int:
-    """Arrondit les coins choisis (nœuds en coin, entre lignes et / ou cubiques). Renvoie le nombre arrondi."""
+    """Arrondit les coins choisis (nœuds en coin, entre lignes, cubiques et / ou quadratiques). Renvoie le nombre
+    arrondi."""
     done = 0
     by_contour: dict[int, list[int]] = {}
     for c, i in selection:
         by_contour.setdefault(c, []).append(i)
     for c, indexes in by_contour.items():
         contour = glyph.contours[c]
-        for i in sorted(indexes, reverse=True):              # de la fin : les indices restent valables
-            if i < len(contour) and round_corner(contour, i, radius):
+        # Nœuds repérés par OBJET : un segment quadratique converti ajoute des points (indices décalés).
+        nodes = [contour.points[i] for i in sorted(indexes, reverse=True) if i < len(contour)]
+        for node in nodes:
+            i = next((k for k, q in enumerate(contour.points) if q is node), None)
+            if i is not None and round_corner(contour, i, radius):
                 done += 1
     return done

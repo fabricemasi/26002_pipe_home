@@ -98,6 +98,6 @@ RIEN de la fenêtre principale (elle lui pose des `HOOKS`).
   1.1.0 ; aucune version de fontTools / ufo2ft / uharfbuzz changée.
 - Ce qui reste possible (aucune fonction de la mission n'est en attente) : PaintTransform / PaintComposite et
   dégradés à plus de deux couleurs (COLR v1) ; décompilation des lookups GSUB contextuels et des GPOS simples /
-  cursifs à l'import ; coins arrondis sur segments quadratiques ; avar2.
+  cursifs à l'import ; avar2.
 - Limites connues : rendu vérifié en offscreen seulement (pas d'écran ici) ; la tablette (pression) n'est testée
   que par la valeur transmise aux outils (`canvas.pressure`), pas avec un vrai stylet.
