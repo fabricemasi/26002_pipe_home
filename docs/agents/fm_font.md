@@ -31,7 +31,16 @@ RIEN de la fenêtre principale (elle lui pose des `HOOKS`).
 | Compilation / export (statique, WOFF, WOFF2, variable) | `compile.py` | `compile_static`, `compile_variable`, `export` |
 | Import TTF / OTF / WOFF / WOFF2 / UFO / Designspace / SVG | `importer.py` | `open_any`, `import_binary`, `import_svg` |
 | Diagnostic trois niveaux, FontBakery facultatif | `validation.py` | `diagnose`, `fontbakery_report` |
-| Mesures reproductibles | `bench.py` | `python -m fm_font.bench` |
+| Mesures reproductibles | `bench.py`, `bench_qt.py` | `python -m fm_font.bench [N] [--qt]` |
+| Défauts des réglages `typo_*` | `settings_defaults.py` | `TYPO_DEFAULTS` |
+| Rendu Qt : chemins des glyphes, cache invalidé finement (glyphe + composés qui l'utilisent) | `render.py` | `PathCache`, `glyph_path`, `QPathPen` |
+| Canvas : zoom, pan, règles, grille, métriques, rempli / contour / comparaison, nœuds, ancres, composants, repères, magnétisme | `canvas.py` | `GlyphCanvas` (`set_glyph`, `fit`, `zoom_at`, `pan`, `hit_*`, `snap`, `edit`, `changed_live`, `end_interaction`) |
+| Outils : sélection, plume, crayon, rectangle, ellipse, polygone, plume calligraphique, brosse, mesure, main | `tools.py` | `TOOLS`, `TOOL_KEYS` |
+| Grille des glyphes : recherche, filtres, manquants | `glyph_grid.py` | `GlyphGrid` |
+| Aperçu : ligne, paragraphe, cascade, masters ; crénage visuel ; HarfBuzz en fond | `preview.py` | `PreviewWidget`, `parse_text` |
+| Panneaux (briques des réglages) : glyphe, famille, crénage, masters ; pages Features et Diagnostic | `panels.py` | `GlyphPanel`, `FontPanel`, `KerningPanel`, `MastersPanel`, `FeaturesPage`, `DiagnosticsPage` |
+| Menus contextuels (canvas, grille) : opérations réelles | `actions.py` | `canvas_menu`, `grid_menu`, `node_type`, `contour_op`, `glyph_op` |
+| Espace de travail plein écran, fichiers, export, HOOKS | `pane.py` | `FontPane`, `HOOKS` |
 
 ## Décisions
 
@@ -77,7 +86,15 @@ Légende : TERMINÉ (fonctionne, sauvegardé si besoin, testé) / PARTIEL / NON 
 | Masters, interpolation, police variable (fvar / gvar / STAT, instances) | TERMINÉ (modèle) | avar : seulement si le Designspace a des `map` |
 | Import TTF / OTF / WOFF / WOFF2 / SVG | TERMINÉ | features GSUB non reprises (message) |
 | Diagnostic trois niveaux | TERMINÉ | FontBakery non installé |
-| Interface Qt | NON COMMENCÉ | prochaine étape |
+| Interface : espace de travail, pages, barre, état « modifié », fermeture prudente | TERMINÉ | `test_fm_font_pane` |
+| Grille : recherche (nom, caractère, U+), filtres, manquants (création au double-clic), menus | TERMINÉ | virtualisée |
+| Éditeur : canvas, zoom / pan, règles + repères, grille, métriques, rempli / contour / comparaison | TERMINÉ | `test_fm_font_canvas` |
+| Outils : sélection (points, segments, contours, cadre), plume, crayon, rectangle, ellipse, polygone / étoile, calligraphie, brosse, mesure, main | TERMINÉ | gestes simulés testés |
+| Saisie numérique précise (coordonnées, chasse, approches, Unicode, nom ; métriques de famille) | TERMINÉ | tableaux des réglages |
+| Aperçu : ligne, paragraphe, cascade, masters ; crénage visuel (Alt + flèches, Ctrl + glisser) ; HarfBuzz + features | TERMINÉ | compilation de fond |
+| Éditeur de features : erreurs lisibles, génération, application | TERMINÉ | |
+| Diagnostic (page) + FontBakery facultatif | TERMINÉ | FontBakery non installé ici |
+| Masters dans l'interface : ajout (copie compatible), choix, comparaison, compatibilité | TERMINÉ | instances : par l'export variable |
 
 ## Mesures (2026-10-30, `python -m fm_font.bench 1000`, dossier temporaire local)
 
@@ -89,6 +106,28 @@ Légende : TERMINÉ (fonctionne, sauvegardé si besoin, testé) / PARTIEL / NON 
 | Enregistrer 1000 glyphes (UFO atomique) / ouvrir | 1 180 / 515 ms |
 | Compiler TTF / OTF 1000 glyphes | ~2 100 ms chacun (toujours hors du fil de l'interface) |
 | Diagnostic 1000 glyphes | 330 ms -> 90 ms (sens des contours sans copie du glyphe) |
+
+### Mesures Qt (`python -m fm_font.bench 200 --qt`, offscreen, 1200 x 900, glyphe de 400 points plein écran)
+
+| Parcours | Avant | Après |
+|---|---|---|
+| Un pas de glisser (déplacer + invalider + peindre) | 73 ms | 13 ms |
+| Zoom (un cran + peinture) | 39 ms | 8,5 ms |
+| Pan (un pas + peinture) | 14 ms | 6 ms |
+| Chemin du glyphe refait (invalidation) | 0,7 ms | 0,7 ms |
+| Grille : filtrer 1000 glyphes / peindre un écran | 1 / 14 ms | |
+| Aperçu : ligne de 40 glyphes / un cran de crénage | 1,1 / 1,3 ms | |
+| Ouverture de l'espace de travail (fenêtre de réglages déjà chargée) | 180 ms | |
+
+Ce qui a coûté (cProfile) : le REMPLISSAGE ANTICRÉNELÉ (28 ms, proportionnel à la surface) et le TRAIT
+ANTICRÉNELÉ DE COURBES par Qt (37 ms). Remèdes : contours tracés en polylignes aplaties dans l'espace écran
+(`GlyphCanvas._stroke`, 2 ms), remplissage sans anticrénelage PENDANT un geste seulement (`interacting`, net au
+relâché et 160 ms après le dernier cran de molette), fond + grille + métriques en image gardée (`_background`),
+nœuds regroupés par aspect (`drawLines` / `drawRects`), stylo d'1 px entier.
+
+Piège des tests : `QTest.qWait` GARDE le verrou Python avec PySide 6.11 ; un fil de fond (compilation de
+l'aperçu HarfBuzz) n'avance pas pendant l'attente. Attendre avec `time.sleep` + `processEvents`
+(`PaneTest.flush`). L'appli réelle (`app.exec`) libère le verrou.
 
 ## PASSATION
 
