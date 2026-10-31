@@ -15,10 +15,13 @@ niveau de grille le plus fin affiche), en deplacement comme en redimensionnement
 from __future__ import annotations
 
 import copy
+import gc
 import json
 import math
+import threading
+import time
 
-from PySide6.QtCore import QLineF, QPointF, QRect, QRectF, Qt, Signal
+from PySide6.QtCore import QLineF, QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QImage, QPaintEngine, QPainter, QPen, QPixmap, QTransform, QUndoStack
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene
 
@@ -100,9 +103,39 @@ def grid_alpha(spacing_px: float, start: float = 12.0, full: float = 60.0) -> fl
     return t * t * (3 - 2 * t)
 
 
+# Chargement PAR TRANCHES d'un gros board ou dessin importe (demande de l'utilisateur : « ca rame enormement » a
+# l'ouverture d'un DWG de 40 000 lignes, ~16 s d'interface figee) : au-dela de LOAD_PROGRESSIVE_MIN elements, ils
+# sont crees par tranches de LOAD_SLICE_S, l'interface reste vivante entre deux tranches.
+LOAD_PROGRESSIVE_MIN = 2000
+LOAD_SLICE_S = 0.03
+# Passes COMPLETES du ramasse-miettes (generation 2) suspendues pendant ce chargement : elles parcourent tous les
+# objets, 40 -> 130 ms chacune a mesure que les elements s'accumulent (mesure : 5 a-coups sur 40 000 lignes).
+# Aussi pendant la LECTURE d'un dessin (fil de fond) : une passe complete y bloque aussi l'interface (verrou Python).
+_GC_HELD: set = set()                       # demandes en cours (id d'une scene, nom d'une lecture)
+_GC_THRESHOLDS = None
+_GC_LOCK = threading.Lock()
+
+
+def hold_gc(key, on: bool):
+    """Suspend (`on`) ou rend les passes completes du ramasse-miettes pour `key` ; rendues quand plus aucune
+    demande n'est en cours."""
+    global _GC_THRESHOLDS
+    with _GC_LOCK:
+        if on and key not in _GC_HELD:
+            if not _GC_HELD:
+                _GC_THRESHOLDS = gc.get_threshold()
+                gc.set_threshold(_GC_THRESHOLDS[0], _GC_THRESHOLDS[1], 1_000_000)
+            _GC_HELD.add(key)
+        elif not on and key in _GC_HELD:
+            _GC_HELD.discard(key)
+            if not _GC_HELD and _GC_THRESHOLDS is not None:
+                gc.set_threshold(*_GC_THRESHOLDS)
+
+
 class BoardScene(QGraphicsScene):
     contentChanged = Signal()
     pageChanged = Signal()
+    loadProgress = Signal(int, int)                 # elements crees, total (chargement par tranches)
 
     def __init__(self, board_path=None, look: dict | None = None, parent=None):
         super().__init__(parent)
@@ -133,6 +166,8 @@ class BoardScene(QGraphicsScene):
         self._zoomers: list | None = None           # cadres et fleches (zone dependant du zoom), voir set_zoom
         self._foreign: list[dict] = []
         self._extra: dict = {}
+        self._load_job: dict | None = None          # chargement par tranches en cours (load_data)
+        self.bulk_loading = False                   # vrai pendant ce chargement : lignes CAD regroupees a la fin
         self._pending = None
         self._live = None
         self._move_before = None
@@ -501,7 +536,13 @@ class BoardScene(QGraphicsScene):
                       "Avancer" if step > 0 else "Reculer")
 
     # -- fichier --
-    def load_data(self, data: dict):
+    def load_data(self, data: dict, progressive: bool = False):
+        """Remplace le contenu par `data`. `progressive` (ouverture dans le board) : au-dela de
+        LOAD_PROGRESSIVE_MIN elements, la suite est creee par tranches (`loadProgress`, `loading()`) ; les lignes
+        CAD ne sont regroupees en lots (et peintes) qu'a la fin, une fois."""
+        self._load_job = None                                   # un chargement precedent s'arrete
+        self.bulk_loading = False
+        hold_gc(id(self), False)
         self.undo.clear()
         self.commands.clear()
         self._live = None
@@ -512,10 +553,52 @@ class BoardScene(QGraphicsScene):
                        if k not in ("format", "version", "page", "view", "items", "foreign")}
         self._version = int(data.get("version", model.VERSION) or model.VERSION)
         self.set_page(data.get("page") or {}, record=False)
-        for raw in data.get("items", []):
+        raw_items = list(data.get("items", []))
+        if progressive and len(raw_items) > LOAD_PROGRESSIVE_MIN:
+            self.undo.setClean()
+            self.bulk_loading = True
+            self._load_job = {"items": raw_items, "next": 0}
+            self._bulk_cad_tail = True                          # tout ce qui est charge jusqu'ici : lignes CAD
+            hold_gc(id(self), True)
+            self.destroyed.connect(lambda _o=None, key=id(self): hold_gc(key, False))     # scene fermee avant la fin
+            self._load_slice(self._load_job)
+            return
+        for raw in raw_items:
             self._add(raw)
         self.refresh_links()
         self.undo.setClean()
+
+    def loading(self) -> bool:
+        """Chargement par tranches en cours (`load_data(progressive=True)`)."""
+        return self._load_job is not None
+
+    def _load_slice(self, job: dict):
+        if job is not self._load_job:
+            return                                              # remplace par un autre chargement
+        items, index = job["items"], job["next"]
+        deadline = time.perf_counter() + LOAD_SLICE_S
+        added = []
+        while index < len(items):
+            added.append(self._add(items[index]))
+            index += 1
+            if not index % 64 and time.perf_counter() >= deadline:
+                break
+        job["next"] = index
+        layer = getattr(self, "cad_layer", None)
+        if layer is not None:
+            layer.bulk_append(added)            # lignes CAD : peintes au fur et a mesure (listes de dessin completees)
+        if index < len(items):
+            self.loadProgress.emit(index, len(items))
+            QTimer.singleShot(0, self, lambda: self._load_slice(job))
+            return
+        self._load_job = None
+        self.bulk_loading = False
+        hold_gc(id(self), False)
+        layer = getattr(self, "cad_layer", None)
+        if layer is not None:
+            layer.bulk_loaded()
+        self.refresh_links()
+        self.loadProgress.emit(index, len(items))
 
     def to_data(self, view: dict | None = None) -> dict:
         board = model.empty_board()
@@ -526,6 +609,9 @@ class BoardScene(QGraphicsScene):
             board["view"] = view
         items = sorted(self._items.values(), key=lambda i: (i.kind != "frame", i.kind == "comment", i.zValue()))
         board["items"] = [item.to_dict() for item in items] + copy.deepcopy(self._foreign)
+        job = self._load_job
+        if job is not None:                                     # jamais un board tronque (enregistrement pendant
+            board["items"] += copy.deepcopy(job["items"][job["next"]:])     # le chargement par tranches)
         return board
 
     def content_rect(self) -> QRectF:

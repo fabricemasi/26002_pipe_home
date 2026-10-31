@@ -2330,7 +2330,7 @@ class BoardPane(QWidget):
             self.cad.last_point = self.cad.last_line_end = None
         self.path, self._mtime, self.source = path, mtime, None
         self.scene.board_path = path
-        self.scene.load_data(data)
+        self.scene.load_data(data, progressive=True)            # gros board : par tranches (BoardScene)
         self._saved_view = data.get("view") or {}
         self._saved_assets = model.referenced_assets(data)
         self._name.setText(path.stem)
@@ -2339,7 +2339,7 @@ class BoardPane(QWidget):
         QTimer.singleShot(0, lambda: self._sweep_orphans(mtime))
         return True
 
-    def open_import(self, data: dict, source: Path) -> bool:
+    def open_import(self, data: dict, source: Path, normalized: bool = False) -> bool:
         """Dessin DXF / DWG lu par `cad_import` (hors du fil de l'interface) : board en MEMOIRE, le dessin d'origine
         n'est jamais reecrit. Modifie, il est propose en `.mro` a cote a la fermeture (`confirm_leave`) ; images non
         disponibles tant qu'il n'est pas enregistre (pas de dossier d'images)."""
@@ -2348,7 +2348,8 @@ class BoardPane(QWidget):
             self.cad.last_point = self.cad.last_line_end = None
         self.path, self._mtime, self.source = None, None, Path(source)
         self.scene.board_path = None
-        self.scene.load_data(model.normalize(data))
+        # `normalized` : deja fait dans le fil de lecture (PipelineBrowser._open_cad_drawing ; ~1 s a 40 000 lignes).
+        self.scene.load_data(data if normalized else model.normalize(data), progressive=True)   # par tranches
         self._saved_view = data.get("view") or {}
         self._saved_assets = set()
         self._name.setText(self.source.name)

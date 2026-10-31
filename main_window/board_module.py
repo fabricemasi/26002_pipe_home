@@ -88,13 +88,20 @@ class BoardModuleMixin:
         self.path_label.setText(f"Lecture de {path.name}…")
 
         def work():
+            from fm_board import model
+            from fm_board.scene import hold_gc
+            key = ("lecture", id(relay))
+            hold_gc(key, True)                      # passes completes du ramasse-miettes : a-coups de l'interface
             try:
                 data, report = cad_import.read_drawing(path)
+                data = model.normalize(data)        # ici, pas sur le fil de l'interface (~1 s a 40 000 lignes)
                 relay.done.emit(data, report, None)
             except cad_import.DrawingError as exc:
                 relay.done.emit(None, None, str(exc))
             except Exception as exc:                        # noqa: BLE001 - fichier inattendu : message
                 relay.done.emit(None, None, f"{type(exc).__name__} : {exc}")
+            finally:
+                hold_gc(key, False)
         threading.Thread(target=work, name="lecture DXF", daemon=True).start()
 
     def _cad_drawing_read(self, relay, path: Path, data, report, error):
@@ -106,10 +113,13 @@ class BoardModuleMixin:
         if error is not None:
             self.path_label.setText(f"{path.name} : {error}")
             return
-        if self._open_board(path, imported=data):
-            self.path_label.setText(cad_import.describe(report))
+        note = self._board_load_note = cad_import.describe(report)  # remontre une fois tout charge (par tranches)
+        if self._open_board(path, imported=data, normalized=True):
+            self.path_label.setText(note)
+        if self._board is None or not self._board.scene.loading():
+            self.__dict__.pop("_board_load_note", None)
 
-    def _open_board(self, path: Path, imported: dict | None = None) -> bool:
+    def _open_board(self, path: Path, imported: dict | None = None, normalized: bool = False) -> bool:
         """Le board recouvre les colonnes (comme l'editeur de texte) ; ses boutons dans le cadre « Board » de la
         barre de navigation. Un autre board ouvert est d'abord enregistre et ferme. `imported` : dessin DXF / DWG
         deja lu (`_open_cad_drawing`), ouvert en memoire."""
@@ -136,10 +146,12 @@ class BoardModuleMixin:
             if not self._close_board():
                 return False
         pane = BoardPane(self.scroll.viewport(), ui_state.APPLIED_SETTINGS or {})
-        if not (pane.open_import(imported, path) if imported is not None else pane.open(path)):
+        if not (pane.open_import(imported, path, normalized) if imported is not None else pane.open(path)):
             pane.deleteLater()
             return False
         self._board = pane
+        pane.scene.loadProgress.connect(lambda done, total, name=Path(path).name:
+                                        self._board_load_progress(name, done, total))
         pane.closeRequested.connect(self._close_board)
         pane.stateChanged.connect(self._layout_board_buttons)
         pane.dirtyChanged.connect(lambda _d: self._layout_board_buttons())
@@ -148,6 +160,16 @@ class BoardModuleMixin:
         self._sync_collapse_button()
         self.path_label.setText(str(path))
         return True
+
+    def _board_load_progress(self, name: str, done: int, total: int):
+        """Gros board / dessin charge par tranches (`BoardScene.load_data`) : avancement dans la barre du bas,
+        puis le compte rendu de l'import (DXF / DWG) ou le chemin."""
+        if done < total:
+            self.path_label.setText(f"Chargement de {name} : {done * 100 // total} % ({done} / {total} éléments)…")
+            return
+        note = self.__dict__.pop("_board_load_note", None)
+        board = self._board
+        self.path_label.setText(note or str(getattr(board, "path", None) or getattr(board, "source", "") or name))
 
     def _close_board(self) -> bool:
         """Retour aux colonnes (le board est enregistre, avec sa vue). False = annule."""

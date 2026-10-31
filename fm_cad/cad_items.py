@@ -41,6 +41,7 @@ from PySide6.QtWidgets import QGraphicsItem, QStyle
 
 from . import cad_geometry as geo
 from . import cad_dims, cad_hatch, cad_model, cad_shapes, cad_text
+from fm_miro import items as _items
 from fm_miro.items import ITEM_CLASSES, BoardItem
 
 GRIP_PX = 8                 # poignees (grips), pixels d'ecran ; reglable (board_cad_grip_size)
@@ -384,11 +385,16 @@ class CadLineItem(BoardItem):
         self.update()
 
     def itemChange(self, change, value):
-        if change == QGraphicsItem.ItemSelectedChange and value and any(cad_module_look(self.scene())):
+        if change in _items.QUIET_CHANGES:              # drapeaux, curseur... : rien a faire (creation ~10 fois)
+            return value
+        if change is _items.SELECTED_CHANGE and value and any(cad_module_look(self.scene())):
             return False                                # module CAD grise ou masque : jamais selectionne
-        if change == QGraphicsItem.ItemSceneHasChanged and value is not None and getattr(value, "cad_gpu", False):
-            self.setFlag(QGraphicsItem.ItemHasNoContents, True)     # rendu GPU : la scene ne le peint pas
-        if change == QGraphicsItem.ItemSceneChange:
+        if change is _items.SCENE_HAS_CHANGED and value is not None and (
+                getattr(value, "cad_gpu", False) or getattr(value, "bulk_loading", False)):
+            # Rendu GPU : la scene ne le peint pas. Chargement par tranches : peint par son lot, forme a la fin
+            # (`CadLayer.bulk_loaded`) ; seule, chaque ligne se peindrait une a une (~0,1 ms chacune a chaque image).
+            self.setFlag(QGraphicsItem.ItemHasNoContents, True)
+        if change is _items.SCENE_CHANGE:
             old = self.scene()
             if old is not None and value is not old:
                 if self._batch is not None:
@@ -397,22 +403,22 @@ class CadLineItem(BoardItem):
                 if layer is not None:
                     layer.structure_changed()
                     layer.note_geometry(self, removed=True)    # quitte la scene : retire du dessin GPU
-        elif change == QGraphicsItem.ItemSceneHasChanged:
+        elif change is _items.SCENE_HAS_CHANGED:
             self._props = None
             self.sync()
             if value is not None:
                 layer = CadLayer.of(value)
                 layer.structure_changed()
                 layer.note_geometry(self)
-        elif change == QGraphicsItem.ItemZValueHasChanged:
+        elif change is _items.ZVALUE_HAS_CHANGED:
             if self._batch is not None:
                 self._batch.drop(self)              # se peint seule a sa nouvelle hauteur jusqu'au regroupement
-        elif change == QGraphicsItem.ItemPositionHasChanged:
+        elif change is _items.POSITION_HAS_CHANGED:
             self._scene_geom = {}
             self._touch()
-        elif change == QGraphicsItem.ItemVisibleHasChanged:
+        elif change is _items.VISIBLE_HAS_CHANGED:
             self._touch(restyle=True)
-        elif change == QGraphicsItem.ItemSelectedHasChanged:
+        elif change is _items.SELECTED_HAS_CHANGED:
             if self._batch is not None:
                 self._batch.selection_changed(self)
         return super().itemChange(change, value)
@@ -1460,7 +1466,8 @@ class CadBatch(QGraphicsItem):
                 if item._batch is not None:
                     item._batch.drop(item, release=False)
                 item._batch = self
-                item.setFlag(QGraphicsItem.ItemHasNoContents, True)
+                if not item.flags() & QGraphicsItem.ItemHasNoContents:
+                    item.setFlag(QGraphicsItem.ItemHasNoContents, True)
         self.members = list(members)
         self.selected = {item for item in members if item.isSelected()}
         if members:
@@ -1476,7 +1483,8 @@ class CadBatch(QGraphicsItem):
             if item._batch is not None and item._batch is not self:
                 item._batch.drop(item, release=False)
             item._batch = self
-            item.setFlag(QGraphicsItem.ItemHasNoContents, True)
+            if not item.flags() & QGraphicsItem.ItemHasNoContents:     # deja pose (chargement par tranches)
+                item.setFlag(QGraphicsItem.ItemHasNoContents, True)
             self.members.append(item)
             if item.isSelected():
                 self.selected.add(item)
@@ -1750,11 +1758,44 @@ class CadLayer:
             batch.update()
 
     def structure_changed(self):
+        if getattr(self.scene, "bulk_loading", False):
+            return                              # chargement par tranches : un seul regroupement, a la fin
         try:
             if not self._timer.isActive():
                 self._timer.start()
         except RuntimeError:
             pass                                # scene en cours de destruction
+
+    def bulk_append(self, items: list):
+        """Tranche du chargement par tranches : ses lignes s'ajoutent au bout du dernier lot (`CadBatch._append` :
+        seules elles entrent dans les listes de dessin ; sinon, tout construire a la 1re peinture figeait ~1 s a
+        40 000 lignes). Un autre element du board ou une hauteur plus basse coupe l'ordre : regroupement complet a
+        la fin (`bulk_loaded`)."""
+        scene = self.scene
+        if self.gpu is not None or not self.enabled or not getattr(scene, "_bulk_cad_tail", False) or not items:
+            return
+        batch = self.batches[-1] if self.batches else None
+        if (any(not isinstance(item, CadLineItem) for item in items)
+                or self._timer.isActive()                       # regroupement complet deja demande
+                or (batch is not None and batch.members and items[0].zValue() < batch.members[-1].zValue())
+                or any(b.zValue() > items[0].zValue() for b in self.batches[:-1])):
+            scene._bulk_cad_tail = False
+            return
+        if batch is None:
+            batch = CadBatch()
+            scene.addItem(batch)
+            self.batches.append(batch)
+        batch._append(items)
+
+    def bulk_loaded(self):
+        """Fin du chargement par tranches (`BoardScene.load_data`) : les lignes, arrivees sans se peindre, sont
+        regroupees en lots ; sans lots ni GPU (regroupement coupe), elles reprennent leur peinture ordinaire."""
+        if self.gpu is None and not self.enabled:
+            for item in getattr(self.scene, "_items", {}).values():
+                if isinstance(item, CadLineItem):
+                    item.setFlag(QGraphicsItem.ItemHasNoContents, False)
+        if not getattr(self.scene, "_bulk_cad_tail", False) or self.gpu is not None or not self.enabled:
+            self.rebuild()                      # lots deja a jour sinon (bulk_append)
 
     def rebuild(self):
         scene = self.scene

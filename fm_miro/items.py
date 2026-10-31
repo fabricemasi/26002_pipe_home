@@ -126,6 +126,38 @@ class _Text(QGraphicsTextItem):
         super().keyPressEvent(event)
 
 
+_ATOMIC = frozenset({str, float, int, bool, type(None)})
+
+
+def clone_data(value):
+    """`copy.deepcopy` des valeurs d'un element (dict / list / scalaires, comme le JSON du board), ~4 fois plus
+    rapide : a l'ouverture d'un gros dessin, les copies generiques coutaient ~1 s pour 40 000 lignes. Autre type :
+    `copy.deepcopy`."""
+    kind = type(value)
+    if kind is dict:
+        return {k: v if type(v) in _ATOMIC else clone_data(v) for k, v in value.items()}
+    if kind is list:
+        return [v if type(v) in _ATOMIC else clone_data(v) for v in value]
+    if kind in _ATOMIC:
+        return value
+    return copy.deepcopy(value)
+
+
+# Changements Qt notifies a `itemChange`, en constantes : lire `QGraphicsItem.ItemXxx` passe par le descripteur des
+# enums Python (~1 µs par lecture, plusieurs par appel) ; la creation d'une ligne CAD en recoit une dizaine.
+_GIC = QGraphicsItem.GraphicsItemChange
+SELECTED_CHANGE = _GIC.ItemSelectedChange
+SELECTED_HAS_CHANGED = _GIC.ItemSelectedHasChanged
+POSITION_HAS_CHANGED = _GIC.ItemPositionHasChanged
+ZVALUE_HAS_CHANGED = _GIC.ItemZValueHasChanged
+SCENE_CHANGE = _GIC.ItemSceneChange
+SCENE_HAS_CHANGED = _GIC.ItemSceneHasChanged
+VISIBLE_HAS_CHANGED = _GIC.ItemVisibleHasChanged
+# Sans effet pour les elements du board : rendus tels quels, sans passer par le reste de `itemChange`.
+QUIET_CHANGES = (_GIC.ItemFlagsChange, _GIC.ItemFlagsHaveChanged, _GIC.ItemCursorChange,
+                 _GIC.ItemCursorHasChanged, _GIC.ItemToolTipChange, _GIC.ItemToolTipHasChanged)
+
+
 class BoardItem(QGraphicsObject):
     """Base commune : identifiant, valeurs, selection et poignees, rotation, verrou, notification des
     deplacements."""
@@ -137,7 +169,7 @@ class BoardItem(QGraphicsObject):
 
     def __init__(self, data: dict):
         super().__init__()
-        self.data = copy.deepcopy(data)
+        self.data = clone_data(data)
         self.item_id = self.data["id"]
         self.kind = self.data["type"]
         self.setFlags(QGraphicsItem.ItemIsSelectable | QGraphicsItem.ItemIsMovable
@@ -374,18 +406,18 @@ class BoardItem(QGraphicsObject):
         pass
 
     def itemChange(self, change, value):
-        if change == QGraphicsItem.ItemSelectedChange:
+        if change in QUIET_CHANGES:
+            return value
+        if change is SELECTED_CHANGE:
             self.prepareGeometryChange()
-        elif change == QGraphicsItem.ItemPositionHasChanged:
+        elif change is POSITION_HAS_CHANGED:
             scene = self.scene()
             if scene is not None and hasattr(scene, "item_moved"):
                 scene.item_moved(self)
-        elif change in (QGraphicsItem.ItemZValueHasChanged, QGraphicsItem.ItemSceneChange,
-                        QGraphicsItem.ItemSceneHasChanged):
+        elif change is ZVALUE_HAS_CHANGED or change is SCENE_CHANGE or change is SCENE_HAS_CHANGED:
             # Lignes CAD peintes par lots (cad_items.CadLayer) : un element qui change de hauteur, arrive ou
             # part peut couper ou rejoindre un lot.
-            layer = getattr(value if change == QGraphicsItem.ItemSceneHasChanged else self.scene(), "cad_layer",
-                            None)
+            layer = getattr(value if change is SCENE_HAS_CHANGED else self.scene(), "cad_layer", None)
             if layer is not None:
                 layer.structure_changed()
         return super().itemChange(change, value)
