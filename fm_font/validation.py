@@ -1,11 +1,15 @@
 """Diagnostic du projet (sans Qt), trois niveaux : BLOQUANT (l'export s'arrête), AVERTISSEMENT (la police se
 compile mais un logiciel risque de mal l'afficher), SUGGESTION (qualité professionnelle). FontBakery, s'il est
-installé, se lance à part sur la police compilée (`fontbakery_report`)."""
+installé, se lance à part sur la police compilée (`run_fontbakery`, dans un fil : ~4 s), ses résultats rangés dans
+les mêmes niveaux (FAIL -> avertissement, WARN -> suggestion)."""
 from __future__ import annotations
 
+import json
 import re
-import shutil
 import subprocess
+import sys
+import tempfile
+from pathlib import Path
 
 from . import contours as C
 from . import components, features, glyph_info, interpolation, kerning
@@ -160,14 +164,48 @@ def _missing_extremum(pts) -> bool:
 
 
 def fontbakery_available() -> bool:
-    return shutil.which("fontbakery") is not None
+    import importlib.util
+    return importlib.util.find_spec("fontbakery") is not None
 
 
-def fontbakery_report(font_path: str, timeout: int = 300) -> str:
-    """Lance FontBakery (profil universel) sur une police compilée, s'il est installé."""
-    exe = shutil.which("fontbakery")
-    if exe is None:
-        return "FontBakery n'est pas installé (pip install fontbakery) : diagnostic intégré seulement."
-    result = subprocess.run([exe, "check-universal", "--succinct", font_path], capture_output=True, text=True,
-                            timeout=timeout, encoding="utf-8", errors="replace")
-    return result.stdout + result.stderr
+_FB_LEVELS = {"FATAL": WARNING, "ERROR": WARNING, "FAIL": WARNING, "WARN": SUGGESTION}
+_FB_ORDER = ("FATAL", "ERROR", "FAIL", "WARN", "INFO", "SKIP", "PASS")
+
+
+def parse_fontbakery(report: dict) -> list[Diagnostic]:
+    """Diagnostics tirés du rapport JSON de FontBakery (contrôles FAIL / WARN / ERROR seulement)."""
+    out = []
+    for section in report.get("sections", []):
+        for check in section.get("checks", []):
+            statuses = [log.get("status") for log in check.get("logs", [])]
+            worst = min(statuses, key=lambda s: _FB_ORDER.index(s) if s in _FB_ORDER else 99, default=None)
+            if worst not in _FB_LEVELS:
+                continue
+            detail = next((log.get("message", {}) for log in check.get("logs", []) if log.get("status") == worst),
+                          {})
+            message = detail.get("message", "") if isinstance(detail, dict) else str(detail)
+            first = " ".join(message.split())[:220]
+            out.append(Diagnostic(_FB_LEVELS[worst], f"FontBakery {worst} — {check.get('description', '')}"
+                                                     + (f" : {first}" if first else "")))
+    order = {BLOCKING: 0, WARNING: 1, SUGGESTION: 2}
+    out.sort(key=lambda d: order[d.level])
+    return out
+
+
+def run_fontbakery(font_path, timeout: int = 300) -> list[Diagnostic]:
+    """FontBakery (profil universel) sur une police compilée, dans un processus à part (interpréteur courant :
+    pas besoin de `fontbakery` dans le PATH). À appeler hors du fil de l'interface (~4 s)."""
+    if not fontbakery_available():
+        return [Diagnostic(WARNING, "FontBakery n'est pas installé (pip install fontbakery) : diagnostic intégré "
+                                    "seulement.")]
+    with tempfile.TemporaryDirectory(prefix="fmfont_fb_") as folder:
+        report = Path(folder) / "rapport.json"
+        result = subprocess.run([sys.executable, "-m", "fontbakery", "check-universal", "-l", "WARN", "--json",
+                                 str(report), str(font_path)], capture_output=True, text=True, timeout=timeout,
+                                encoding="utf-8", errors="replace",
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if not report.is_file():
+            last = (result.stderr or result.stdout).strip().splitlines()[-1:] or ["sans message"]
+            return [Diagnostic(WARNING, f"FontBakery n'a pas produit de rapport : {last[0]}")]
+        found = parse_fontbakery(json.loads(report.read_text(encoding="utf-8")))
+    return found or [Diagnostic(SUGGESTION, "FontBakery : aucun FAIL ni WARN.")]

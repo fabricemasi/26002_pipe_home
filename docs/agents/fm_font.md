@@ -41,7 +41,7 @@ RIEN de la fenêtre principale (elle lui pose des `HOOKS`).
 | Axes de variation : édition, CARTES (avar), positions des masters, instances multi-axes (saisie texte) | `axes.py` | `set_axes`, `parse_axes`, `format_axes`, `set_master_location`, `parse_location`, `parse_instances`, `format_instances`, `design_ranges` |
 | Compilation / export (statique, WOFF, WOFF2, variable) | `compile.py` | `compile_static`, `compile_variable`, `export` |
 | Import TTF / OTF / WOFF / WOFF2 / UFO / Designspace / SVG | `importer.py` | `open_any`, `import_binary`, `import_svg` |
-| Diagnostic trois niveaux, FontBakery facultatif | `validation.py` | `diagnose`, `fontbakery_report` |
+| Diagnostic trois niveaux, FontBakery facultatif (rapport JSON rangé dans les mêmes niveaux) | `validation.py` | `diagnose`, `run_fontbakery`, `parse_fontbakery` |
 | Mesures reproductibles | `bench.py`, `bench_qt.py` | `python -m fm_font.bench [N] [--qt]` |
 | Défauts des réglages `typo_*` | `settings_defaults.py` | `TYPO_DEFAULTS` |
 | Rendu Qt : chemins des glyphes, cache invalidé finement (glyphe + composés qui l'utilisent) | `render.py` | `PathCache`, `glyph_path`, `QPathPen` |
@@ -65,8 +65,10 @@ RIEN de la fenêtre principale (elle lui pose des `HOOKS`).
   fontTools 4.66 (MIT, compilateur feaLib / varLib, cu2qu), ufoLib2 0.19 (Apache-2.0, modèle UFO 3),
   ufo2ft 3.10 (MIT, compilateur UFO -> OTF / TTF / variable, feature writers kern / mark),
   uharfbuzz 0.57 (Apache-2.0, HarfBuzz), skia-pathops 0.9 (BSD-3, booléens), brotli (MIT, WOFF2).
-  ÉCARTÉS : fontmake (simple surcouche CLI d'ufo2ft), FontBakery (très nombreuses dépendances, lancé s'il est
-  installé : `validation.fontbakery_report`), booleanOperations direct (pathops plus robuste ; ufo2ft le tire).
+  FACULTATIFS (importés seulement à l'usage) : afdko 5.0 (Apache-2.0, otfautohint : hinting CFF), FontBakery 1.1
+  (Apache-2.0, ~25 dépendances ; lancé par `python -m fontbakery` dans un processus à part, depuis un fil).
+  ÉCARTÉS : fontmake (simple surcouche CLI d'ufo2ft), booleanOperations direct (pathops plus robuste ; ufo2ft le
+  tire).
   Aucun compilateur OpenType ni moteur de mise en forme réécrit.
 - **Modèle = objets ufoLib2** (UFO 3 natif) enveloppés par `FontProject` : rien à traduire à l'enregistrement,
   données inconnues préservées (lib, data/, images/ ; testé). Ouverture NON paresseuse (`lazy=False`) : la
@@ -137,7 +139,7 @@ Légende : TERMINÉ (fonctionne, sauvegardé si besoin, testé) / PARTIEL / NON 
 | Compilation OTF / TTF / WOFF / WOFF2, vérifiée fontTools + HarfBuzz (crénage, liga, mark, mkmk) | TERMINÉ | `CompileTest` |
 | Masters, interpolation, police variable (fvar / gvar / STAT / avar, instances) | TERMINÉ | `test_fm_font_axes` (avar relue par fontTools, chasse vérifiée par HarfBuzz) |
 | Import TTF / OTF / WOFF / WOFF2 / SVG | TERMINÉ | features GSUB non reprises (message) |
-| Diagnostic trois niveaux | TERMINÉ | FontBakery non installé |
+| Diagnostic trois niveaux | TERMINÉ | FontBakery installé dans `.venv` (FAIL -> avertissement, WARN -> suggestion) |
 | Interface : espace de travail, pages, barre, état « modifié », fermeture prudente | TERMINÉ | `test_fm_font_pane` |
 | Grille : recherche (nom, caractère, U+), filtres, manquants (création au double-clic), menus | TERMINÉ | virtualisée |
 | Éditeur : canvas, zoom / pan, règles + repères, grille, métriques, rempli / contour / comparaison | TERMINÉ | `test_fm_font_canvas` |
@@ -145,7 +147,7 @@ Légende : TERMINÉ (fonctionne, sauvegardé si besoin, testé) / PARTIEL / NON 
 | Saisie numérique précise (coordonnées, chasse, approches, Unicode, nom ; métriques de famille) | TERMINÉ | tableaux des réglages |
 | Aperçu : ligne, paragraphe, cascade, masters ; crénage visuel (Alt + flèches, Ctrl + glisser) ; HarfBuzz + features | TERMINÉ | compilation de fond |
 | Éditeur de features : erreurs lisibles, génération, application | TERMINÉ | |
-| Diagnostic (page) + FontBakery facultatif | TERMINÉ | FontBakery non installé ici |
+| Diagnostic (page) + FontBakery facultatif | TERMINÉ | FontBakery dans un FIL (~4,5 s ; l'interface n'attend pas), résultats dans le tableau ; vrai passage : test `--lent` |
 | Masters dans l'interface : ajout (copie compatible), choix, comparaison, compatibilité | TERMINÉ | |
 | Instances nommées (éditeur dans le panneau Masters ; fvar de la police variable ; exports statiques interpolés) | TERMINÉ | `InstancesTest`, `test_fm_font_axes` ; plusieurs axes (« Bold Condensed wght=700 wdth=75 ») |
 | Polices couleur COLR v0 / v1 / CPAL (palette, calques en aplat ou dégradé linéaire / radial ; panneaux ; couleurs peintes dans l'aperçu) | TERMINÉ | `test_fm_font_color` (tables relues par fontTools, pixels de l'aperçu) ; dégradés à deux couleurs, sans transformation ni composition (PaintTransform / PaintComposite) |

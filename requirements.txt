@@ -45,3 +45,5 @@ brotli
 ttfautohint-py
 # Hinting PostScript automatique (export « OpenType CFF hinté ») : otfautohint d'afdko (Apache-2.0), facultatif.
 afdko
+# Contrôle qualité FontBakery (page Diagnostic du module fm_font, Apache-2.0), facultatif.
+fontbakery

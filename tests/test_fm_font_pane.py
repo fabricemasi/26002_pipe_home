@@ -191,6 +191,34 @@ class PaneTest(WindowTestCase):
         self.assertTrue(any(d.level == "bloquant" and d.glyph == "A" for d in found))
         p.diagnostics_page.glyphRequested.emit("A")
         self.assertEqual(p.current_name, "A")
+        # rapport FontBakery (JSON) -> niveaux du diagnostic, sans lancer FontBakery
+        from fm_font import validation
+        report = {"sections": [{"checks": [
+            {"description": "Contrôle A", "logs": [{"status": "PASS", "message": {"message": "ok"}}]},
+            {"description": "Contrôle B", "logs": [{"status": "WARN", "message": {"message": "un  détail\nlong"}}]},
+            {"description": "Contrôle C", "logs": [{"status": "INFO"}, {"status": "FAIL", "message": "brut"}]}]}]}
+        found = validation.parse_fontbakery(report)
+        self.assertEqual([(d.level, d.message) for d in found],
+                         [("avertissement", "FontBakery FAIL — Contrôle C : brut"),
+                          ("suggestion", "FontBakery WARN — Contrôle B : un détail long")])
+        p.diagnostics_page._show(found, "FontBakery : ")
+        self.assertIn("FontBakery : 0 bloquant(s), 1 avertissement(s)", p.diagnostics_page.counts.text())
+
+    @unittest.skipUnless(__import__("importlib.util").util.find_spec("fontbakery"), "FontBakery absent")
+    def test_fontbakery_runs_in_background(self):
+        from _lent import ACTIFS
+        if not ACTIFS:
+            self.skipTest("test lent (~5 s) : python tests/run.py fm_font --lent")
+        p = self.pane
+        self.create("A")
+        p.project.font["A"].contours.append(shapes.rectangle(0, 0, 400, 700))
+        t = time.perf_counter()
+        thread = p.diagnostics_page.fontbakery()
+        self.assertLess(time.perf_counter() - t, 0.5)                    # l'interface n'attend pas
+        self.assertIn("en cours", p.diagnostics_page.counts.text())
+        thread.join(120)
+        self.flush(0.1)
+        self.assertIn("FontBakery : ", p.diagnostics_page.counts.text())
 
     def test_save_reopen_import_export_and_close(self):
         p = self.pane

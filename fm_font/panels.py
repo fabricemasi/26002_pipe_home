@@ -6,7 +6,7 @@ Chaque tableau est construit UNE fois ; ensuite seules les valeurs sont posées 
 propriétés du CAD (refaire un tableau coûte ~70 ms, poser une valeur ~0,05 ms)."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget
 
@@ -408,6 +408,10 @@ class FeaturesPage(QWidget):
         return code
 
 
+class _Relay(QObject):
+    done = Signal(object)                                   # résultat d'un fil de fond, rendu au fil de l'interface
+
+
 class DiagnosticsPage(QWidget):
     """Diagnostic en trois niveaux ; clic sur une ligne qui nomme un glyphe = l'ouvrir."""
     glyphRequested = Signal(str)
@@ -433,16 +437,20 @@ class DiagnosticsPage(QWidget):
 
     def run(self) -> list:
         self.found = validation.diagnose(self.pane.project, variable=len(self.pane.project.masters) > 1)
-        n = {lvl: sum(1 for d in self.found if d.level == lvl) for lvl in
+        self._show(self.found)
+        return self.found
+
+    def _show(self, found, prefix: str = "") -> None:
+        n = {lvl: sum(1 for d in found if d.level == lvl) for lvl in
              (validation.BLOCKING, validation.WARNING, validation.SUGGESTION)}
-        self.counts.setText(f"  {n[validation.BLOCKING]} bloquant(s), {n[validation.WARNING]} avertissement(s), "
-                            f"{n[validation.SUGGESTION]} suggestion(s)")
+        self.counts.setText(f"  {prefix}{n[validation.BLOCKING]} bloquant(s), {n[validation.WARNING]} "
+                            f"avertissement(s), {n[validation.SUGGESTION]} suggestion(s)")
         if self.table is not None:
             self.table.hide()
             self.table.deleteLater()
         from fm_theme.cells import build_cells_table
         rows = []
-        for d in self.found[:150]:
+        for d in found[:150]:
             text = _label(str(d), "value")
             text.setWordWrap(True)
             if d.glyph:
@@ -454,18 +462,38 @@ class DiagnosticsPage(QWidget):
                      (_label("Aucun problème trouvé.", "value"), "left", "center")]]
         self.table, _head, _cells = build_cells_table([("Niveau", 110), ("Message", 0)], rows)
         self.body.addWidget(self.table)
-        return self.found
 
-    def fontbakery(self) -> None:
+    def fontbakery(self):
+        """Compile le master courant et lance FontBakery dans un FIL (instantané du projet ici, quelques ms) : les
+        résultats arrivent dans le tableau. Renvoie le fil (None si FontBakery manque ou tourne déjà)."""
         if not validation.fontbakery_available():
             self.counts.setText("  FontBakery n'est pas installé (pip install fontbakery).")
-            return
+            return None
+        if getattr(self, "_fb_thread", None) is not None and self._fb_thread.is_alive():
+            return None
+        import subprocess
         import tempfile
+        import threading
         from pathlib import Path
-        from .compile import compile_static, to_bytes
-        path = Path(tempfile.mkdtemp(prefix="fmfont_fb_")) / "verif.ttf"
-        path.write_bytes(to_bytes(compile_static(self.pane.canvas.font, "ttf")))
-        self.counts.setText("  " + validation.fontbakery_report(str(path))[-400:])
+        from .autosave import project_from_snapshot, snapshot
+        from .compile import CompileError, compile_static, to_bytes
+        snap, master = snapshot(self.pane.project), self.pane.canvas.master
+        relay = self._fb_relay = _Relay()
+        relay.done.connect(lambda found: self._show(found, "FontBakery : "))
+        self.counts.setText("  FontBakery en cours (quelques secondes)…")
+
+        def work():
+            try:
+                with tempfile.TemporaryDirectory(prefix="fmfont_fb_") as folder:
+                    path = Path(folder) / "verif.ttf"
+                    path.write_bytes(to_bytes(compile_static(project_from_snapshot(snap).masters[master].font,
+                                                             "ttf")))
+                    relay.done.emit(validation.run_fontbakery(path))
+            except (CompileError, OSError, subprocess.SubprocessError) as exc:
+                relay.done.emit([validation.Diagnostic(validation.BLOCKING, f"FontBakery impossible : {exc}")])
+        self._fb_thread = threading.Thread(target=work, name="fm_font FontBakery", daemon=True)
+        self._fb_thread.start()
+        return self._fb_thread
 
 
 class MastersPanel(QWidget):
