@@ -111,6 +111,10 @@ class GlyphPanel(QWidget):
             ("layers", "Calques couleur", True, self._layers),
             ("info", "Contenu", False, None),
         ])
+        self.table.fields["layers"].setToolTip(
+            "Glyphe couleur (COLR) : « A.rouge:0, A.bleu:lin(0,1), A.o:rad(2,0) ».\nglyphe:indice = aplat de la "
+            "palette ; lin(a,b[,angle]) = dégradé linéaire de la couleur a à b (90 = de bas en haut) ; rad(a,b) = "
+            "dégradé radial (COLR v1). Visible dans l'aperçu.")
         layout.addWidget(self.table.frame)
         layout.addStretch(1)
 
@@ -162,7 +166,7 @@ class GlyphPanel(QWidget):
         self.refresh()
 
     def _layers(self, value):
-        """COLR : « A.rouge:0, A.bleu:1 » (glyphe:indice dans la palette de la famille) ; vide = aucun calque."""
+        """COLR : « A.rouge:0, A.bleu:lin(0,1) » (aplat ou dégradé de la palette de la famille) ; vide = aucun."""
         try:
             color.set_layers(self.pane.project, self._glyph_name(), color.parse_layers(value))
         except color.ColorError as exc:

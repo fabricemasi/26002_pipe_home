@@ -16,9 +16,10 @@ import re
 import threading
 
 from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QTransform
+from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QRadialGradient, QTransform
 from PySide6.QtWidgets import QWidget
 
+from . import color as colr
 from . import kerning
 
 MODES = ("ligne", "paragraphe", "cascade", "masters")
@@ -234,12 +235,39 @@ class PreviewWidget(QWidget):
             p.drawText(QPointF(ox, self.height() - 6), f"{left} | {right} : {value:g}{where}")
 
     def _paint_glyph(self, p, name, x, baseline, s, fill, master=None):
+        master = self.master if master is None else master
         p.save()
         p.setTransform(QTransform(s, 0, 0, -s, x, baseline), True)
         p.setPen(Qt.NoPen)
-        p.setBrush(fill)
-        p.drawPath(self.cache.path(self.master if master is None else master, name))
+        font = self.project.masters[master].font
+        layers = colr.layers(font, name) if colr.PALETTES_KEY in font.lib else []
+        if layers:                                          # glyphe couleur (COLR v0 / v1) : calques peints
+            palette = font.lib[colr.PALETTES_KEY][0]
+            for layer, paint in layers:
+                if layer in font:
+                    path = self.cache.path(master, layer)
+                    p.setBrush(self._brush(palette, paint, path, fill))
+                    p.drawPath(path)
+        else:
+            p.setBrush(fill)
+            p.drawPath(self.cache.path(master, name))
         p.restore()
+
+    @staticmethod
+    def _brush(palette, paint, path, fill):
+        def qcolor(index):
+            return QColor.fromRgbF(*palette[index]) if 0 <= index < len(palette) else fill
+        if not isinstance(paint, tuple):
+            return qcolor(paint)
+        r = path.boundingRect()
+        geo = colr.gradient_geometry((r.left(), r.top(), r.right(), r.bottom()), paint)
+        if paint[0] == "lin":
+            gradient = QLinearGradient(geo["x0"], geo["y0"], geo["x1"], geo["y1"])
+        else:
+            gradient = QRadialGradient(geo["x0"], geo["y0"], geo["r1"])
+        gradient.setColorAt(0, qcolor(paint[1]))
+        gradient.setColorAt(1, qcolor(paint[2]))
+        return gradient
 
     # -- crénage interactif --
 

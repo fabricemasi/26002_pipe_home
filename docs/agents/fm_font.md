@@ -52,7 +52,7 @@ RIEN de la fenêtre principale (elle lui pose des `HOOKS`).
 | Panneaux (briques des réglages) : glyphe, famille, crénage, masters ; pages Features et Diagnostic | `panels.py` | `GlyphPanel`, `FontPanel`, `KerningPanel`, `MastersPanel`, `FeaturesPage`, `DiagnosticsPage` |
 | Menus contextuels (canvas, grille) : opérations réelles | `actions.py` | `canvas_menu`, `grid_menu`, `node_type`, `contour_op`, `glyph_op` |
 | Espace de travail plein écran, fichiers, export (dont instances statiques), HOOKS | `pane.py` | `FontPane`, `HOOKS`, `instance_locations` |
-| Polices couleur COLR v0 / CPAL (palette, calques ; clés lib d'ufo2ft) | `color.py` | `set_palette`, `set_layers`, `parse_palette`, `parse_layers` |
+| Polices couleur COLR v0 / v1 (aplats, dégradés linéaires / radiaux) / CPAL (clés lib d'ufo2ft) ; rendu dans l'aperçu | `color.py`, `preview.py` | `set_palette`, `set_layers`, `parse_palette`, `parse_layers`, `compile_layers`, `gradient_geometry` |
 | Hinting TrueType (ttfautohint, repli « symbole ») | `hinting.py` | `autohint`, `available` |
 | Sauvegarde de SECOURS (travail non enregistré, proposée à la réouverture) | `autosave.py` | `Autosaver` (`write`, `find`, `restore`, `discard`), `snapshot` |
 | Réglages `typo_*` dans le catalogue (fenêtre « Réglages : Typographie ») | `settings.py` | `TYPO_TAB`, `TYPO_TREE` |
@@ -103,7 +103,9 @@ RIEN de la fenêtre principale (elle lui pose des `HOOKS`).
 - **Import** : une police compilée importée n'est PAS « modifiée » tant qu'on n'y touche pas (rien à perdre) ;
   « Enregistrer » demande où écrire la source ; l'export refuse le chemin d'origine.
 - **Couleur** : COLR v0 / CPAL par les clés de lib d'ufo2ft (`com.github.googlei18n.ufo2ft.colorPalettes`,
-  `.colorLayers`) ; un calque = un glyphe ordinaire. COLR v1 (dégradés) non fait.
+  `.colorLayers`) ; un calque = un glyphe ordinaire. COLR v1 : la DESCRIPTION du dégradé (`fm_font.colorLayers`)
+  fait foi ; la peinture v1 de la clé d'ufo2ft est recalculée à chaque compilation sur la boîte actuelle du
+  calque (`color.compile_layers`), jamais un dégradé décalé après un redessin.
 - **Secours** : `%LOCALAPPDATA%/fm_font/secours/<clé>/` (clé = empreinte du chemin ; `FM_FONT_AUTOSAVE_DIR` dans
   les tests, jamais le vrai dossier). Sur le fil de l'interface seulement l'instantané en tuples (6,5 ms pour
   1000 glyphes ; un `deepcopy` coûtait 177 ms) ; reconstruction + écriture dans un fil. `secours.json` écrit en
@@ -144,7 +146,7 @@ Légende : TERMINÉ (fonctionne, sauvegardé si besoin, testé) / PARTIEL / NON 
 | Diagnostic (page) + FontBakery facultatif | TERMINÉ | FontBakery non installé ici |
 | Masters dans l'interface : ajout (copie compatible), choix, comparaison, compatibilité | TERMINÉ | |
 | Instances nommées (éditeur dans le panneau Masters ; fvar de la police variable ; exports statiques interpolés) | TERMINÉ | `InstancesTest`, `test_fm_font_axes` ; plusieurs axes (« Bold Condensed wght=700 wdth=75 ») |
-| Polices couleur COLR v0 / CPAL (palette, calques ; panneaux) | TERMINÉ | `test_fm_font_color` ; COLR v1 NON COMMENCÉ |
+| Polices couleur COLR v0 / v1 / CPAL (palette, calques en aplat ou dégradé linéaire / radial ; panneaux ; couleurs peintes dans l'aperçu) | TERMINÉ | `test_fm_font_color` (tables relues par fontTools, pixels de l'aperçu) ; dégradés à deux couleurs, sans transformation ni composition (PaintTransform / PaintComposite) |
 | Hinting TrueType (ttfautohint) : export TTF / WOFF2 hinté | TERMINÉ | CFF non hinté |
 | Classes de crénage depuis la grille (gauche, droite, retirer) | TERMINÉ | |
 | Branchement fenêtre principale (double-clic, plein cadre, modes exclusifs, fermeture) | TERMINÉ | `test_fm_font_integration` |

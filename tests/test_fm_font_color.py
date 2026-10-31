@@ -57,6 +57,47 @@ class ColorHintingTest(unittest.TestCase):
         p.undo.undo()
         self.assertEqual(color.layers(p.font, "A"), [])
 
+    def test_colr_v1_gradients_follow_the_drawing(self):
+        p = _project()
+        color.set_palette(p, color.parse_palette("#ff0000 #0000ff #00ff00"))
+        pairs = color.parse_layers("A.rouge:0, A.bleu:lin(0,1), V:lin(1,2,0), o:rad(2,0)")
+        self.assertEqual(pairs[1], ("A.bleu", ("lin", 0, 1, 90.0)))
+        with self.assertRaises(color.ColorError):
+            color.parse_layers("A.bleu:lin(0)")
+        with self.assertRaises(color.ColorError):
+            color.set_layers(p, "A", [("A.bleu", ("lin", 0, 7, 90.0))])          # couleur hors palette
+        color.set_layers(p, "A", pairs)
+        self.assertEqual(color.format_layers(color.layers(p.font, "A")),
+                         "A.rouge:0, A.bleu:lin(0,1), V:lin(1,2,0), o:rad(2,0)")
+        path = self.tmp / "Degrades.ufo"
+        p.save(path)
+        q = FontProject.open(path)                                       # description gardée dans la lib
+        self.assertEqual(color.layers(q.font, "A"), pairs)
+        # le dessin du calque change APRÈS la pose du dégradé : la compilation suit le nouveau dessin
+        q.font["A.bleu"].contours[0].points[2].y = 900
+        q.font["A.bleu"].contours[0].points[3].y = 900
+        out = self.tmp / "Degrades.ttf"
+        export(q, out)
+        tt = TTFont(out)
+        colr = tt["COLR"]
+        self.assertEqual(colr.version, 1)
+        layers = colr.table.LayerList.Paint
+        self.assertEqual([(l.Glyph, l.Paint.Format) for l in layers],
+                         [("A.rouge", 2), ("A.bleu", 4), ("V", 4), ("o", 6)])
+        lin = layers[1].Paint
+        self.assertEqual((lin.x0, lin.y0, lin.x1, lin.y1), (250, 0, 250, 900))   # bas -> haut, boîte redessinée
+        self.assertEqual([s.PaletteIndex for s in lin.ColorLine.ColorStop], [0, 1])
+        horizontal = layers[2].Paint
+        self.assertEqual((horizontal.y0, horizontal.y1), (350, 350))
+        self.assertEqual(layers[3].Paint.r1, round(((500 - 40) ** 2 + 520 ** 2) ** 0.5 / 2))
+        self.assertIn("CPAL", tt)
+        self.assertEqual(q.font.lib[color.LAYERS_KEY]["A"]["Layers"][1]["Paint"]["y1"], 700)  # lib remise après
+        color.set_layers(p, "A", color.parse_layers("A.rouge:0"))         # retour à l'aplat : COLR v0
+        self.assertNotIn("A", p.font.lib.get(color.GRADIENTS_KEY, {}))
+        self.assertEqual(p.font.lib[color.LAYERS_KEY]["A"], [["A.rouge", 0]])
+        p.undo.undo()
+        self.assertEqual(color.layers(p.font, "A"), pairs)
+
     @unittest.skipUnless(hinting.available(), "ttfautohint absent")
     def test_hinted_ttf_export(self):
         p = _project()
@@ -84,6 +125,37 @@ class ColorHintingTest(unittest.TestCase):
         del C_.points[0]
         with self.assertRaises(CompileError):
             export(p, self.tmp / "x.otf", "otf", instance={"Weight": 500})
+
+
+class ColorPreviewTest(unittest.TestCase):
+    def test_preview_paints_palette_colors_and_gradient(self):
+        from PySide6.QtWidgets import QApplication
+        from fm_font.preview import PreviewWidget
+        from fm_font.render import PathCache
+        QApplication.instance() or QApplication([])
+        p = _project()
+        p.add_glyph("B")
+        p.font["B"].width = 500
+        color.set_palette(p, color.parse_palette("#ff0000 #0000ff"))
+        color.set_layers(p, "A", color.parse_layers("A.rouge:0"))
+        color.set_layers(p, "B", color.parse_layers("A.bleu:lin(0,1)"))
+        p.font["A"].width = 500
+        preview = PreviewWidget(p, PathCache(p), {"typo_canvas_bg": "#ffffff", "typo_preview_size": 100})
+        preview.resize(400, 200)
+        preview.text = "AB"
+        image = preview.grab().toImage()
+        baseline = 16 + 80                                                # marge + ascendante × 0,1
+
+        def rgb(x_units, y_units, advance=0):
+            c = image.pixelColor(round(16 + (advance + x_units) * 0.1), round(baseline - y_units * 0.1))
+            return c.red(), c.green(), c.blue()
+        self.assertEqual(rgb(250, 350), (255, 0, 0))                      # A : aplat rouge (couleur 0)
+        low, high = rgb(250, 30, 500), rgb(250, 670, 500)                 # B : dégradé rouge (bas) -> bleu (haut)
+        self.assertGreater(low[0], 200)
+        self.assertLess(low[2], 60)
+        self.assertGreater(high[2], 200)
+        self.assertLess(high[0], 60)
+        preview.deleteLater()
 
 
 class InstancesTest(unittest.TestCase):

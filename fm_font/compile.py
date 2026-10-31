@@ -25,12 +25,14 @@ def _ufo2ft():
 
 def compile_static(font, fmt: str = "ttf", remove_overlaps: bool = True) -> TTFont:
     """Police statique d'un UFO. `fmt` : otf / ttf / woff / woff2 (WOFF = enveloppe du TTF)."""
+    from .color import compile_layers
     ufo2ft = _ufo2ft()
     try:
-        if fmt == "otf":
-            tt = ufo2ft.compileOTF(font, removeOverlaps=remove_overlaps, optimizeCFF=1)
-        else:
-            tt = ufo2ft.compileTTF(font, removeOverlaps=remove_overlaps, reverseDirection=True)
+        with compile_layers(font):                        # dégradés COLR v1 recalculés sur le dessin actuel
+            if fmt == "otf":
+                tt = ufo2ft.compileOTF(font, removeOverlaps=remove_overlaps, optimizeCFF=1)
+            else:
+                tt = ufo2ft.compileTTF(font, removeOverlaps=remove_overlaps, reverseDirection=True)
     except Exception as exc:
         raise CompileError(_readable(exc)) from exc
     if fmt in ("woff", "woff2"):
@@ -52,8 +54,10 @@ def compile_variable(project, fmt: str = "ttf") -> TTFont:
         source.font = master.font
     if not doc.instances:
         _default_instances(project, doc)
+    from .color import compile_layers
     try:
-        tt = _ufo2ft().compileVariableTTF(doc, optimizeGvar=True)
+        with compile_layers(*(m.font for m in project.masters)):
+            tt = _ufo2ft().compileVariableTTF(doc, optimizeGvar=True)
     except Exception as exc:
         raise CompileError(_readable(exc)) from exc
     if fmt == "woff2":
