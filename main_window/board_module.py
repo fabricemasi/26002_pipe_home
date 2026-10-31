@@ -75,7 +75,10 @@ class BoardModuleMixin:
         l'interface (`fm_cad.cad_import`, conversion ODA pour un DWG : plusieurs secondes possibles), puis ouvert
         comme un board en memoire (le dessin d'origine n'est jamais reecrit ; voir `BoardPane.open_import`)."""
         import threading
+        import fm_cad.cad_export
         from fm_cad import cad_import
+        from previews import _oda_file_converter
+        fm_cad.cad_export.ODA_PROVIDER = _oda_file_converter     # avant la lecture : meme recherche que les apercus
         path = Path(path)
         if self._board is not None and self._board.source == path:
             return

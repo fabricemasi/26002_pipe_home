@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -284,6 +285,10 @@ def export_dxf(scene, path, units: str = "mm") -> Path:
 
 
 def oda_converter() -> str | None:
+    """Chemin d'ODA File Converter, ou None : `ODA_PROVIDER` (posé par la fenêtre principale), variable
+    ODA_FILE_CONVERTER, PATH, puis l'installation standard (`Program Files/ODA/ODAFileConverter <version>`, la plus
+    récente). Bug corrigé (2026-10-31) : sans cette dernière recherche, le 1er DWG ouvert, lu AVANT que le board ne pose
+    `ODA_PROVIDER`, disait ODA « introuvable » alors qu'il était installé."""
     if ODA_PROVIDER is not None:
         try:
             found = ODA_PROVIDER()
@@ -294,7 +299,20 @@ def oda_converter() -> str | None:
     configured = os.environ.get("ODA_FILE_CONVERTER")
     if configured and Path(configured).is_file():
         return configured
-    return shutil.which("ODAFileConverter") or shutil.which("ODAFileConverter.exe")
+    found = shutil.which("ODAFileConverter") or shutil.which("ODAFileConverter.exe")
+    if found:
+        return found
+    roots = dict.fromkeys((Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "ODA",
+                           Path(r"C:\Program Files\ODA")))
+    for root in roots:
+        try:
+            candidates = list(root.glob("*/ODAFileConverter.exe"))
+        except OSError:
+            continue
+        if candidates:                                      # version la plus récente (27.10 après 27.9)
+            version = lambda exe: [int(n) for n in re.findall(r"\d+", exe.parent.name)]
+            return str(max(candidates, key=version))
+    return None
 
 
 @contextlib.contextmanager
