@@ -53,7 +53,7 @@ RIEN de la fenêtre principale (elle lui pose des `HOOKS`).
 | Panneaux (briques des réglages) : glyphe, famille, crénage, masters ; pages Features et Diagnostic | `panels.py` | `GlyphPanel`, `FontPanel`, `KerningPanel`, `MastersPanel`, `FeaturesPage`, `DiagnosticsPage` |
 | Menus contextuels (canvas, grille) : opérations réelles | `actions.py` | `canvas_menu`, `grid_menu`, `node_type`, `contour_op`, `glyph_op` |
 | Espace de travail plein écran, fichiers, export (dont instances statiques), HOOKS | `pane.py` | `FontPane`, `HOOKS`, `instance_locations` |
-| Polices couleur COLR v0 / v1 (aplats, dégradés linéaires / radiaux) / CPAL (clés lib d'ufo2ft) ; rendu dans l'aperçu | `color.py`, `preview.py` | `set_palette`, `set_layers`, `parse_palette`, `parse_layers`, `compile_layers`, `gradient_geometry` |
+| Polices couleur COLR v0 / v1 (aplats, dégradés linéaires / radiaux) / CPAL (clés lib d'ufo2ft) ; rendu dans l'aperçu et en fond de l'éditeur (`render.color_brush`) | `color.py`, `render.py`, `preview.py`, `canvas.py` | `set_palette`, `set_layers`, `parse_palette`, `parse_layers`, `compile_layers`, `gradient_geometry` |
 | Hinting TrueType (ttfautohint, repli « symbole ») et PostScript / CFF (otfautohint d'afdko ; zones et fûts déduits) | `hinting.py` | `autohint`, `autohint_cff`, `blue_zones`, `stems`, `with_ps_hinting_info` |
 | Sauvegarde de SECOURS (travail non enregistré, proposée à la réouverture) | `autosave.py` | `Autosaver` (`write`, `find`, `restore`, `discard`), `snapshot` |
 | Réglages `typo_*` dans le catalogue (fenêtre « Réglages : Typographie ») | `settings.py` | `TYPO_TAB`, `TYPO_TREE` |
@@ -151,7 +151,7 @@ Légende : TERMINÉ (fonctionne, sauvegardé si besoin, testé) / PARTIEL / NON 
 | Diagnostic (page) + FontBakery facultatif | TERMINÉ | FontBakery dans un FIL (~4,5 s ; l'interface n'attend pas), résultats dans le tableau ; vrai passage : test `--lent` |
 | Masters dans l'interface : ajout (copie compatible), choix, comparaison, compatibilité | TERMINÉ | |
 | Instances nommées (éditeur dans le panneau Masters ; fvar de la police variable ; exports statiques interpolés) | TERMINÉ | `InstancesTest`, `test_fm_font_axes` ; plusieurs axes (« Bold Condensed wght=700 wdth=75 ») |
-| Polices couleur COLR v0 / v1 / CPAL (palette, calques en aplat ou dégradé linéaire / radial ; panneaux ; couleurs peintes dans l'aperçu) | TERMINÉ | `test_fm_font_color` (tables relues par fontTools, pixels de l'aperçu) ; dégradés à deux couleurs, sans transformation ni composition (PaintTransform / PaintComposite) |
+| Polices couleur COLR v0 / v1 / CPAL (palette, calques en aplat ou dégradé linéaire / radial ; panneaux ; couleurs peintes dans l'aperçu et, atténuées, derrière le glyphe dans l'éditeur) | TERMINÉ | `test_fm_font_color` (tables relues par fontTools, pixels de l'aperçu) ; dégradés à deux couleurs, sans transformation ni composition (PaintTransform / PaintComposite) |
 | Hinting TrueType (ttfautohint) : export TTF / WOFF2 hinté ; hinting PostScript (otfautohint) : export OTF hinté | TERMINÉ | `test_fm_font_color` (hstem / vstem, BlueValues, StdVW / StdHW relus) ; zones et fûts DÉDUITS si la famille n'en a pas (la source n'est pas modifiée) |
 | Classes de crénage depuis la grille (gauche, droite, retirer) | TERMINÉ | |
 | Branchement fenêtre principale (double-clic, plein cadre, modes exclusifs, fermeture) | TERMINÉ | `test_fm_font_integration` |

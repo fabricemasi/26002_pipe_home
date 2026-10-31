@@ -14,6 +14,7 @@ from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen, Q
 from PySide6.QtWidgets import QWidget
 
 from . import contours as C
+from .render import color_brush, color_layers
 from .settings_defaults import TYPO_DEFAULTS
 
 RULER = 18                                            # épaisseur des règles (px)
@@ -314,6 +315,20 @@ class GlyphCanvas(QWidget):
             p.setPen(QPen(self._colors["compare"], 1))
             p.setBrush(Qt.NoBrush)
             self._stroke(p, self.cache.path(self.compare_master, self.name), view)
+        layers = color_layers(self.font, self.name)
+        if layers:                                          # glyphe couleur : ses calques en fond, atténués
+            from .color import PALETTES_KEY
+            palette = self.font.lib[PALETTES_KEY][0]
+            p.save()
+            p.setRenderHint(QPainter.Antialiasing, not self.interacting)
+            p.setTransform(view, True)
+            p.setPen(Qt.NoPen)
+            for layer, paint in layers:
+                if layer in self.font:
+                    path = self.cache.path(self.master, layer)
+                    p.setBrush(color_brush(palette, paint, path, self._colors["fill"], alpha=110))
+                    p.drawPath(path)
+            p.restore()
         display = self.settings["typo_display"]
         if display in ("fill", "both"):
             # Remplissage anticrénelé : coût proportionnel à la surface (28 ms plein écran) ; PENDANT un geste

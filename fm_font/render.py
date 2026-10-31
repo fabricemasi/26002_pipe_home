@@ -8,7 +8,34 @@ from __future__ import annotations
 
 from fontTools.pens.basePen import BasePen
 from PySide6.QtCore import QPointF, Qt
-from PySide6.QtGui import QPainterPath
+from PySide6.QtGui import QColor, QLinearGradient, QPainterPath, QRadialGradient
+
+from . import color as colr
+
+
+def color_layers(font, name: str) -> list:
+    """Calques couleur (COLR) de `name` si la famille a une palette, sinon []."""
+    return colr.layers(font, name) if colr.PALETTES_KEY in font.lib else []
+
+
+def color_brush(palette, paint, path: QPainterPath, fill, alpha: int = 255):
+    """Pinceau d'un calque couleur, en unités de la police : aplat (indice de palette) ou dégradé (COLR v1) sur
+    la boîte du chemin du calque. Indice hors palette (ex. 0xFFFF, couleur du texte) : `fill`."""
+    def qcolor(index):
+        c = QColor.fromRgbF(*palette[index]) if 0 <= index < len(palette) else QColor(fill)
+        c.setAlpha(round(c.alpha() * alpha / 255))
+        return c
+    if not isinstance(paint, tuple):
+        return qcolor(paint)
+    r = path.boundingRect()
+    geo = colr.gradient_geometry((r.left(), r.top(), r.right(), r.bottom()), paint)
+    if paint[0] == "lin":
+        gradient = QLinearGradient(geo["x0"], geo["y0"], geo["x1"], geo["y1"])
+    else:
+        gradient = QRadialGradient(geo["x0"], geo["y0"], geo["r1"])
+    gradient.setColorAt(0, qcolor(paint[1]))
+    gradient.setColorAt(1, qcolor(paint[2]))
+    return gradient
 
 
 class QPathPen(BasePen):

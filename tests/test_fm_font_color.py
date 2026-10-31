@@ -186,6 +186,27 @@ class ColorPreviewTest(unittest.TestCase):
         self.assertLess(high[0], 60)
         preview.deleteLater()
 
+    def test_canvas_shows_color_layers_behind_the_glyph(self):
+        from PySide6.QtCore import QPointF
+        from PySide6.QtWidgets import QApplication
+        from fm_font.canvas import GlyphCanvas
+        from fm_font.render import PathCache
+        QApplication.instance() or QApplication([])
+        p = _project()
+        p.add_glyph("B")
+        color.set_palette(p, color.parse_palette("#ff0000 #0000ff"))
+        color.set_layers(p, "B", color.parse_layers("A.rouge:0"))
+        cv = GlyphCanvas(p, PathCache(p), {"typo_snap_distance": 0, "typo_show_rulers": False,
+                                           "typo_canvas_bg": "#ffffff", "typo_show_grid": False})
+        cv.resize(600, 500)
+        cv.set_glyph("B")
+        cv.scale, cv.origin = 0.5, QPointF(100, 450)
+        q = cv.to_widget(250, 350)                                        # milieu du calque rouge (50..450 x 0..700)
+        c = cv.grab().toImage().pixelColor(round(q.x()), round(q.y()))
+        self.assertGreater(c.red(), c.blue() + 60)                        # teinte rouge atténuée
+        self.assertGreater(c.red(), c.green() + 60)
+        cv.deleteLater()
+
 
 class InstancesTest(unittest.TestCase):
     def test_named_instances_saved_and_in_variable_font(self):
