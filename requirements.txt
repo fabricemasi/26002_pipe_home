@@ -30,3 +30,13 @@ python-vlc
 # derniere valeur connue (signale) ; sans openpyxl, pas d'import / export Excel (CSV toujours disponible).
 formualizer==0.13.0
 openpyxl
+# Module typographique (paquet fm_font/) : sources UFO 3 (ufoLib2, Apache-2.0), compilation OTF / TTF / variable
+# (ufo2ft, MIT, sur fontTools, MIT ; tire cffsubr, fontMath, booleanOperations), mise en forme HarfBuzz pour vérifier
+# features et crénage (uharfbuzz, Apache-2.0), booléens et suppression des chevauchements (skia-pathops, BSD-3),
+# WOFF2 (brotli, MIT). Sans eux, le module dit ce qui manque.
+fonttools
+ufoLib2
+ufo2ft
+uharfbuzz
+skia-pathops
+brotli

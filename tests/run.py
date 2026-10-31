@@ -46,6 +46,7 @@ MODULES = {
                  "test_software_launch.py", "test_software_menu.py", "test_type_reorder.py",
                  "test_inspector_resize.py"],
     "fm_theme": ["test_theme_*.py"],
+    "fm_font": ["test_fm_font*.py"],
 }
 # Noms des docs actuelles (docs/agents/<nom>.md) acceptés aussi.
 ALIAS = {"video": "fm_video", "markdown": "fm_markdown", "visionneuse": "fm_visionneuse",

@@ -74,6 +74,7 @@ Le détail de chaque module (choix de l'utilisateur, pièges, mesures, tests) es
 - `docs/agents/fm_design.md` : module Design du board (`fm_design/`, à la manière de Canva : pages, formes, textes, images, modèles, export) ; plan de travail et mesures en fin de doc.
 - `docs/agents/fm_video.md` : module vidéo (`fm_video/`, ex `video/`).
 - `docs/agents/fm_tableur.md` : module Tableur du board (`fm_tableur/`, à la manière d'Excel : moteur de calcul formualizer, grille, Excel / CSV, graphiques, mode Standard) ; matrice des fonctions `docs/agents/fm_tableur_fonctions.md`.
+- `docs/agents/fm_font.md` : module typographique (`fm_font/`, éditeur de polices façon FontLab / Glyphs : sources UFO 3 + Designspace, Bézier, composants, métriques, crénage, features, compilation OTF / TTF / WOFF / variable, diagnostic) ; carte, état des fonctions, mesures, PASSATION.
 - `docs/agents/reglages.md` : fenêtre de réglages v2 et ses briques (tableaux, toggles, presets, menus contextuels, fenêtres additionnelles, « Changement de style à la volée », « Override settings », couleurs, cheminement / barre de navigation, préchargement), gabarits de lignes, réutilisation dans d'autres applis.
 - `docs/agents/fm_theme.md` : PROJET (non codé) de séparation en deux entités, fm_theme (aspect : variantes d'éléments, presets) et fm_browser (tout le reste) ; ordre de migration, questions ouvertes.
 
