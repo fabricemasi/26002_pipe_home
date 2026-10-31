@@ -34,7 +34,8 @@ HOOKS: dict = {
 }
 
 PAGES = ("Glyphes", "Éditeur", "Aperçu", "Features", "Diagnostic")
-EXPORT_FORMATS = (("otf", "OpenType CFF (.otf)"), ("ttf", "TrueType (.ttf)"), ("woff", "WOFF (.woff)"),
+EXPORT_FORMATS = (("otf", "OpenType CFF (.otf)"), ("otf-hinted", "OpenType CFF hinté, otfautohint (.otf)"),
+                  ("ttf", "TrueType (.ttf)"), ("woff", "WOFF (.woff)"),
                   ("woff2", "WOFF2 (.woff2)"), ("ttf-hinted", "TrueType hinté, ttfautohint (.ttf)"),
                   ("woff2-hinted", "WOFF2 hinté (.woff2)"), ("variable-ttf", "Police variable TrueType (.ttf)"),
                   ("variable-woff2", "Police variable WOFF2 (.woff2)"))

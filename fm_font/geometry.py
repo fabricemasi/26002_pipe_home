@@ -257,7 +257,11 @@ def intersections_with_line(glyph, a, b, steps: int = 32, polys=None) -> list[tu
             if hit is not None:
                 hits.append(hit)
     hits.sort(key=lambda h: math.dist(h, a))
-    return hits
+    unique = []                                              # sommet de la polyligne : touché par ses deux côtés
+    for h in hits:
+        if not unique or math.dist(h, unique[-1]) > 1e-6:
+            unique.append(h)
+    return unique
 
 
 def _segment_intersection(a, b, c, d):

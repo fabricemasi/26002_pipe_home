@@ -10,7 +10,7 @@ from pathlib import Path
 from fontTools.designspaceLib import InstanceDescriptor
 from fontTools.ttLib import TTFont
 
-FORMATS = ("otf", "ttf", "woff", "woff2", "ttf-hinted", "woff-hinted", "woff2-hinted", "variable-ttf",
+FORMATS = ("otf", "ttf", "woff", "woff2", "otf-hinted", "ttf-hinted", "woff-hinted", "woff2-hinted", "variable-ttf",
            "variable-woff2")
 
 
@@ -85,7 +85,8 @@ def to_bytes(tt: TTFont) -> bytes:
 def export(project, path, fmt: str | None = None, master: int = 0, check: bool = True,
            instance: dict | None = None, instance_name: str = "Instance") -> list:
     """Compile et écrit `path` (format d'après l'extension si `fmt` est None). Écriture atomique (fichier
-    temporaire puis remplacement). `*-hinted` : TrueType hinté par ttfautohint. `instance` : position dans
+    temporaire puis remplacement). `otf-hinted` : CFF hinté par otfautohint ; autres `*-hinted` : TrueType hinté
+    par ttfautohint. `instance` : position dans
     l'espace de variation ({axe: valeur}) d'une instance STATIQUE interpolée (masters compatibles exigés).
     Renvoie les diagnostics non bloquants."""
     path = Path(path)
@@ -115,7 +116,15 @@ def export(project, path, fmt: str | None = None, master: int = 0, check: bool =
             except InterpolationError as exc:
                 raise CompileError(f"Instance impossible : {exc}") from exc
         base = fmt.replace("-hinted", "")
-        if fmt.endswith("-hinted"):
+        if fmt == "otf-hinted":
+            from .hinting import HintingError, autohint_cff, with_ps_hinting_info
+            try:
+                with with_ps_hinting_info(font):
+                    otf = to_bytes(compile_static(font, "otf"))
+                tt = TTFont(io.BytesIO(autohint_cff(otf)))
+            except HintingError as exc:
+                raise CompileError(str(exc)) from exc
+        elif fmt.endswith("-hinted"):
             from .hinting import HintingError, autohint
             try:
                 hinted = autohint(to_bytes(compile_static(font, "ttf")))

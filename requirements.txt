@@ -43,3 +43,5 @@ brotli
 # Hinting TrueType automatique (export « TrueType hinté ») : ttfautohint-py (MIT, binaire ttfautohint FreeType / GPLv2
 # inclus pour Windows). Facultatif.
 ttfautohint-py
+# Hinting PostScript automatique (export « OpenType CFF hinté ») : otfautohint d'afdko (Apache-2.0), facultatif.
+afdko

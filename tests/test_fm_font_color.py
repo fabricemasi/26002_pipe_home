@@ -110,6 +110,35 @@ class ColorHintingTest(unittest.TestCase):
         export(p, out2, "woff2-hinted")
         self.assertEqual(TTFont(out2).flavor, "woff2")
 
+    @unittest.skipUnless(hinting.cff_available(), "afdko (otfautohint) absent")
+    def test_hinted_cff_export(self):
+        from fm_font import contours as C
+        p = _project()
+        p.add_glyph("l")
+        p.font["l"].width = 300
+        p.font["l"].contours.append(shapes.rectangle(110, 0, 196, 800))  # fût de 86
+        p.add_glyph("O")
+        outer = shapes.ellipse(40, -10, 660, 710)
+        inner = shapes.ellipse(110, 62, 590, 638)                       # traverses de 72 en haut et en bas
+        C.reverse(inner)
+        p.font["O"].contours += [outer, inner]
+        p.font["O"].width = 700
+        p.font.renameGlyph("o", "o.old")                                 # « o » plein du jeu d'essai : écarté
+        p.font.renameGlyph("O", "o")
+        self.assertEqual(hinting.stems(p.font), (86, 72))
+        out = self.tmp / "Hint.otf"
+        export(p, out, "otf-hinted")
+        top = TTFont(out)["CFF "].cff.topDictIndex[0]
+        private = top.Private
+        self.assertEqual(private.BlueValues[:2], [-12, 0])
+        self.assertIn(500, private.BlueValues)                           # hauteur d'x
+        self.assertEqual((private.StdVW, private.StdHW), (86, 72))
+        program = top.CharStrings["l"]
+        program.decompile()
+        self.assertIn("vstem", [op for op in program.program if isinstance(op, str)])
+        self.assertIsNone(p.font.info.postscriptBlueValues)              # source inchangée
+        self.assertIsNone(p.font.info.postscriptStemSnapV)
+
     def test_static_instance_export(self):
         p = _project(("Regular", "Bold"))
         out = self.tmp / "Mid.otf"
