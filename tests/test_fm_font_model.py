@@ -568,10 +568,45 @@ class CompileTest(unittest.TestCase):
         self.assertEqual(geometry.glyph_bounds(q.font["H"]), (60, 0, 540, 700))
         self.assertEqual(kerning.lookup(q.font, "A", "V")[0], -70)
         self.assertEqual(kerning.lookup(q.font, "A", "o")[0], -15)
-        self.assertTrue(any("Features" in m for m in q.messages))
-        # réenregistré en source : UFO valide, recompilable
+        self.assertTrue(any("Features reprises : liga" in m for m in q.messages))
+        self.assertIn("sub f i by f_i;", q.font.features.text)
+        self.assertEqual({a.name for a in q.font["acutecomb"].anchors}, {"_top"})           # marque
+        self.assertIn("top", {a.name for a in q.font["o"].anchors})                          # base
+        # réenregistré en source : UFO valide, recompilable, MÊME mise en forme (liga, mark) par HarfBuzz
         q.save(self.tmp / "Import.ufo")
-        compile_static(FontProject.open(self.tmp / "Import.ufo").font, "ttf")
+        again = compile_static(FontProject.open(self.tmp / "Import.ufo").font, "ttf")
+        from fm_font.compile import to_bytes
+        before, after = Shaper(to_bytes(tt)), Shaper(to_bytes(again))
+        for text in ("fi", "ó", "ó́", "AV"):
+            self.assertEqual(after.shape(text), before.shape(text), text)
+
+    def test_import_gsub_types_and_contextual_message(self):
+        p = self._ready()
+        for name in ("a", "a.alt1", "a.alt2", "a.sc", "f_f_i", "ij", "i", "j"):
+            if name not in p.font:
+                p.add_glyph(name)
+                p.font[name].contours.append(shapes.rectangle(50, 0, 450, 500))
+        features.set_features(p, p.font.features.text + """
+feature salt { sub a from [a.alt1 a.alt2]; } salt;
+feature smcp { lookupflag IgnoreMarks; sub a by a.sc; } smcp;
+feature ccmp { sub ij by i j; } ccmp;
+feature dlig { sub f f i by f_f_i; } dlig;
+feature calt { sub a' f by a.alt1; } calt;
+""")
+        out = self.tmp / "Types.ttf"
+        tt = compile_static(p.font, "ttf")
+        tt.save(out)
+        q = import_binary(out)
+        text = q.font.features.text
+        for rule in ("sub a from [a.alt1 a.alt2];", "lookupflag IgnoreMarks;", "sub ij by i j;",
+                     "sub f f i by f_f_i;", "feature smcp {"):
+            self.assertIn(rule, text)
+        self.assertTrue(any("1 lookup(s) GSUB contextuel(s)" in m for m in q.messages))
+        from fm_font.compile import to_bytes
+        before, after = Shaper(to_bytes(tt)), Shaper(to_bytes(compile_static(q.font, "ttf")))
+        for text, feats in (("a", {"smcp": True}), ("a", {"salt": True}), ("ffi", {"dlig": True}), ("ij", None)):
+            self.assertEqual(after.names(text, feats), before.names(text, feats), (text, feats))
+        self.assertEqual(after.names("a", {"smcp": True}), ["a.sc"])
 
     def test_import_svg(self):
         svg = self.tmp / "carre.svg"

@@ -30,9 +30,11 @@ def compile_static(font, fmt: str = "ttf", remove_overlaps: bool = True) -> TTFo
     try:
         with compile_layers(font):                        # dégradés COLR v1 recalculés sur le dessin actuel
             if fmt == "otf":
-                tt = ufo2ft.compileOTF(font, removeOverlaps=remove_overlaps, optimizeCFF=1)
-            else:
-                tt = ufo2ft.compileTTF(font, removeOverlaps=remove_overlaps, reverseDirection=True)
+                tt = ufo2ft.compileOTF(font, removeOverlaps=remove_overlaps, optimizeCFF=1,
+                                       overlapsBackend="pathops")
+            else:                                         # pathops : accepte aussi les quadratiques (TTF importé)
+                tt = ufo2ft.compileTTF(font, removeOverlaps=remove_overlaps, reverseDirection=True,
+                                       overlapsBackend="pathops")
     except Exception as exc:
         raise CompileError(_readable(exc)) from exc
     if fmt in ("woff", "woff2"):

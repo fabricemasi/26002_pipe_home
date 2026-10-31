@@ -41,6 +41,7 @@ RIEN de la fenêtre principale (elle lui pose des `HOOKS`).
 | Axes de variation : édition, CARTES (avar), positions des masters, instances multi-axes (saisie texte) | `axes.py` | `set_axes`, `parse_axes`, `format_axes`, `set_master_location`, `parse_location`, `parse_instances`, `format_instances`, `design_ranges` |
 | Compilation / export (statique, WOFF, WOFF2, variable) | `compile.py` | `compile_static`, `compile_variable`, `export` |
 | Import TTF / OTF / WOFF / WOFF2 / UFO / Designspace / SVG | `importer.py` | `open_any`, `import_binary`, `import_svg` |
+| Reprise des features d'une police compilée : GSUB -> .fea (types 1, 2, 3, 4, 7), marques GPOS -> ancres | `feature_import.py` | `gsub_to_fea`, `gpos_marks_to_anchors` |
 | Diagnostic trois niveaux, FontBakery facultatif (rapport JSON rangé dans les mêmes niveaux) | `validation.py` | `diagnose`, `run_fontbakery`, `parse_fontbakery` |
 | Mesures reproductibles | `bench.py`, `bench_qt.py` | `python -m fm_font.bench [N] [--qt]` |
 | Défauts des réglages `typo_*` | `settings_defaults.py` | `TYPO_DEFAULTS` |
@@ -138,7 +139,7 @@ Légende : TERMINÉ (fonctionne, sauvegardé si besoin, testé) / PARTIEL / NON 
 | Features : vérification, génération liga / dlig / smcp / c2sc / onum / lnum / tnum / pnum / case / salt / ssXX | TERMINÉ (modèle) | frac : génération sommaire |
 | Compilation OTF / TTF / WOFF / WOFF2, vérifiée fontTools + HarfBuzz (crénage, liga, mark, mkmk) | TERMINÉ | `CompileTest` |
 | Masters, interpolation, police variable (fvar / gvar / STAT / avar, instances) | TERMINÉ | `test_fm_font_axes` (avar relue par fontTools, chasse vérifiée par HarfBuzz) |
-| Import TTF / OTF / WOFF / WOFF2 / SVG | TERMINÉ | features GSUB non reprises (message) |
+| Import TTF / OTF / WOFF / WOFF2 / SVG, features comprises | TERMINÉ | GSUB simples / multiples / alternatives / ligatures repris en .fea, marques (MarkBase / MarkMark) en ancres ; même mise en forme HarfBuzz après réexport (testé) ; NON repris, avec message : lookups contextuels, GPOS simples / cursifs / MarkLig |
 | Diagnostic trois niveaux | TERMINÉ | FontBakery installé dans `.venv` (FAIL -> avertissement, WARN -> suggestion) |
 | Interface : espace de travail, pages, barre, état « modifié », fermeture prudente | TERMINÉ | `test_fm_font_pane` |
 | Grille : recherche (nom, caractère, U+), filtres, manquants (création au double-clic), menus | TERMINÉ | virtualisée |
@@ -169,7 +170,7 @@ Légende : TERMINÉ (fonctionne, sauvegardé si besoin, testé) / PARTIEL / NON 
 | Instantané d'annulation / restauration du glyphe de 400 points | 0,06 / 0,10 ms |
 | Créer 1000 glyphes | 20 ms |
 | Enregistrer 1000 glyphes (UFO atomique) / ouvrir | 1 180 / 515 ms |
-| Compiler TTF / OTF 1000 glyphes | ~2 100 ms chacun (toujours hors du fil de l'interface) |
+| Compiler TTF / OTF 1000 glyphes | ~2 100 ms -> 344 / 182 ms (chevauchements par skia-pathops au lieu de booleanOperations ; toujours hors du fil de l'interface) |
 | Diagnostic 1000 glyphes | 330 ms -> 90 ms (sens des contours sans copie du glyphe) |
 | Compatibilité de 2 masters (1000 glyphes) / interpoler un glyphe | 6 / 0,3 ms |
 | Instance complète interpolée (1000 glyphes) / police variable (1000 glyphes, 2 masters) | 330 / 460 ms |

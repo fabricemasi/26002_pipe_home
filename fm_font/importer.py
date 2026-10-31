@@ -3,8 +3,10 @@ JAMAIS réécrit : `project.source` le garde, `project.path` reste None), UFO / 
 SVG -> contours d'un glyphe.
 
 Repris d'une police compilée : contours (et composants TrueType), chasses, Unicode, noms, métriques verticales,
-angle d'italique, crénage GPOS (paires simples et classes) ou table kern. NON repris (dit à l'utilisateur dans
-`project.messages`) : features GSUB / GPOS autres que le crénage (pas de décompilateur .fea fiable), hinting."""
+angle d'italique, crénage GPOS (paires simples et classes) ou table kern, features GSUB non contextuelles (texte
+.fea, `feature_import.gsub_to_fea`), ancres des marques (MarkBase / MarkMark -> ancres, `gpos_marks_to_anchors`).
+NON repris (dit à l'utilisateur dans `project.messages`) : lookups GSUB contextuels, GPOS hors crénage et marques
+(ajustements simples, cursif, MarkLig, contextuels), hinting."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -81,9 +83,22 @@ def import_binary(path) -> FontProject:
     project.masters.append(Master(font, style, {}, None))
     project.source = path
     project.messages += tt_messages
-    if "GSUB" in tt or ("GPOS" in tt and _has_other_gpos(tt)):
-        project.messages.append("Features OpenType (GSUB / GPOS hors crénage) non reprises : réécrivez-les dans "
-                                "l'éditeur de features.")
+    from .feature_import import gpos_marks_to_anchors, gsub_to_fea
+    text, missing, kept = gsub_to_fea(tt)
+    if text:
+        font.features.text = text
+        from .features import check
+        errors = check(text, list(font.keys()))
+        project.messages.append(f"Features reprises : {', '.join(kept)}."
+                                + (f" À revoir dans l'éditeur de features : {errors[0]}" if errors else ""))
+    if missing:
+        project.messages.append(f"{missing} lookup(s) GSUB contextuel(s) non repris : réécrivez-les dans l'éditeur "
+                                "de features.")
+    anchors = gpos_marks_to_anchors(tt, font)
+    if anchors:
+        project.messages.append(f"{anchors} ancre(s) reprise(s) des marques (mark / mkmk régénérés à l'export).")
+    if "GPOS" in tt and _has_other_gpos(tt):
+        project.messages.append("Positionnements GPOS autres que le crénage et les marques non repris.")
     # Rien n'est perdu à fermer un import non modifié (l'original reste intact) : pas « modifié ».
     return project
 
@@ -161,7 +176,8 @@ def _group(font, prefix: str, glyphs) -> str:
 
 def _has_other_gpos(tt) -> bool:
     gpos = tt["GPOS"].table
-    return bool(gpos.FeatureList) and any(r.FeatureTag != "kern" for r in gpos.FeatureList.FeatureRecord)
+    return bool(gpos.FeatureList) and any(r.FeatureTag not in ("kern", "mark", "mkmk")
+                                          for r in gpos.FeatureList.FeatureRecord)
 
 
 def import_svg(path, glyph, upm: int, ascender: float, fit_height: float | None = None) -> None:
