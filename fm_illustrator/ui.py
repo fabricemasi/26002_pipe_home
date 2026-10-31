@@ -10,8 +10,8 @@ from PySide6.QtCore import QObject, QPointF, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QFileDialog, QInputDialog, QWidget
 
-from fm_board.ui import _bar, _GlyphButton, _menu, _slider, _TextButton
-from . import model
+from fm_board.ui import _bar, _GlyphButton, _menu, _panel, _slider, _SwatchGrid, _TextButton
+from . import model, paint
 
 TOOL_GROUPS = [
     [("select", "ill_select"), ("direct", "ill_direct")],
@@ -19,7 +19,8 @@ TOOL_GROUPS = [
      ("convert", "ill_convert")],
     [("rect", "ill_rect"), ("ellipse", "ill_ellipse"), ("polygon", "ill_polygon"), ("star", "ill_star"),
      ("line", "ill_line"), ("pencil", "ill_pencil")],
-    [("artboard", "ill_artboard"), ("eyedropper", "ill_eyedropper"), ("hand", "ill_hand"), ("zoom", "ill_zoom")],
+    [("gradient", "ill_gradient"), ("eyedropper", "ill_eyedropper")],
+    [("artboard", "ill_artboard"), ("hand", "ill_hand"), ("zoom", "ill_zoom")],
 ]
 STROKE_WIDTHS = [0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 15.0, 20.0, 30.0, 50.0]
 
@@ -60,6 +61,18 @@ class FillStroke(QWidget):
                     p.setPen(QPen(QColor(color), 6))
                     p.drawRect(rect.adjusted(3, 3, -3, -3))
                     p.setPen(QPen(QColor("#9a9a9a"), 1))
+                    p.setBrush(QColor("#2b2b2b"))
+                    p.drawRect(rect.adjusted(7, 7, -7, -7))
+            gradient = values.get(f"{which}_gradient")
+            if gradient:
+                from PySide6.QtGui import QLinearGradient
+                g = QLinearGradient(rect.topLeft(), rect.topRight())
+                for offset, c in gradient["stops"]:
+                    g.setColorAt(offset, QColor(c))
+                p.setPen(QPen(QColor("#9a9a9a"), 1))
+                p.setBrush(g)
+                p.drawRect(rect if which == "fill" else rect.adjusted(0, 0, 0, 0))
+                if which == "stroke":
                     p.setBrush(QColor("#2b2b2b"))
                     p.drawRect(rect.adjusted(7, 7, -7, -7))
             if not color:
@@ -131,8 +144,32 @@ class IllustratorChrome(QObject):
         self.board_button.clicked.connect(lambda: self.artboard_menu(self.board_button))
         self.export_button = _GlyphButton("ill_export", "Exporter / importer en SVG", self.control, 30)
         self.export_button.clicked.connect(lambda: self.export_menu(self.export_button))
-        for widget in (self.object_button, self.board_button, self.export_button):
+        self.pathfinder_button = _GlyphButton("ill_pathfinder", "Pathfinder (modes de forme, division…)",
+                                              self.control, 30)
+        self.pathfinder_button.clicked.connect(lambda: self.pathfinder_menu(self.pathfinder_button))
+        self.layers_button = _GlyphButton("ill_layers", "Calques", self.control, 30)
+        self.layers_button.clicked.connect(self.toggle_layers)
+        for widget in (self.object_button, self.pathfinder_button, self.board_button, self.layers_button,
+                       self.export_button):
             bar.addWidget(widget)
+        from settings_theme import _text_label
+        from .layers import LayersPanel
+        self.layers, layers = _panel(pane, True)
+        layers.setContentsMargins(10, 10, 10, 10)
+        layers.setSpacing(6)
+        head = QWidget(self.layers)
+        from PySide6.QtWidgets import QHBoxLayout
+        row = QHBoxLayout(head)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(_text_label("Calques", "card_title"), 1)
+        add = _GlyphButton("plus", "Nouveau calque", head, 26)
+        add.clicked.connect(ctl.new_layer)
+        row.addWidget(add)
+        layers.addWidget(head)
+        self.layer_list = LayersPanel(ctl, self.layers)
+        layers.addWidget(self.layer_list)
+        self.layers.hide()
+        self.layers_open = False
         self._sync_timer = QTimer(self)
         self._sync_timer.setSingleShot(True)
         self._sync_timer.setInterval(0)
@@ -144,12 +181,26 @@ class IllustratorChrome(QObject):
     def show(self):
         self.tools.show()
         self.control.show()
+        self.layers.setVisible(self.layers_open)
         self.sync()
         self.place()
 
     def hide(self):
         self.tools.hide()
         self.control.hide()
+        self.layers.hide()
+
+    def toggle_layers(self):
+        self.layers_open = not self.layers_open
+        self.layers.setVisible(self.layers_open)
+        self.sync_layers()
+        self.place()
+
+    def sync_layers(self):
+        if self.layers_open:
+            self.layer_list.sync()
+            self.layers.layout().activate()
+            self.layers.resize(self.layers.sizeHint())
 
     def place(self):
         margin = 16
@@ -160,6 +211,10 @@ class IllustratorChrome(QObject):
         self.tools.move(margin, max(margin + 50, (self.pane.height() - self.tools.height()) // 2))
         top = self.pane.title_area().bottom() + 8
         self.control.move(max(margin, (self.pane.width() - self.control.width()) // 2), top)
+        if self.layers.isVisible():
+            self.layers.resize(self.layers.sizeHint())
+            self.layers.move(self.pane.width() - self.layers.width() - margin, top + self.control.height() + 8)
+            self.layers.raise_()
 
     # -- état --
     def current_values(self) -> dict:
@@ -189,6 +244,9 @@ class IllustratorChrome(QObject):
         self.opacity.setValue(round(float(values.get("opacity", 1.0)) * 100))
         self.opacity.blockSignals(False)
         self.fill_stroke.update()
+        self.layers_button.set_on(self.layers_open)
+        if self.layers_open:
+            self.layer_list.update()
         self.place()
 
     # -- menus --
@@ -197,10 +255,33 @@ class IllustratorChrome(QObject):
         ctl = self.ctl
         current = self.current_values().get(which) or "#000000"
         label = "Fond" if which == "fill" else "Contour"
+        from settings_menu import menu_row
         menu = _menu(self.pane, f"ill_{which}")
+        grid = _SwatchGrid(paint.SWATCHES, current, 10)
+        grid.picked.connect(lambda c: (menu.close(), ctl.set_style(which, c, label)))
+        menu_row(menu, "Nuancier", grid)
+        used = ctl.document_colors()
+        if used:
+            mine = _SwatchGrid(used, current, 10)
+            mine.picked.connect(lambda c: (menu.close(), ctl.set_style(which, c, label)))
+            menu_row(menu, "Du document", mine)
         menu.addAction("Aucun (/)").triggered.connect(lambda: ctl.set_style(which, "", label))
-        menu.addAction("Noir").triggered.connect(lambda: ctl.set_style(which, "#000000", label))
-        menu.addAction("Blanc").triggered.connect(lambda: ctl.set_style(which, "#ffffff", label))
+        gradient = self.current_values().get(f"{which}_gradient")
+        menu.addSeparator()
+        menu.addAction("Dégradé linéaire").triggered.connect(lambda: ctl.set_style(
+            f"{which}_gradient", self._gradient_kind(gradient, "linear", current), "Dégradé"))
+        menu.addAction("Dégradé radial").triggered.connect(lambda: ctl.set_style(
+            f"{which}_gradient", self._gradient_kind(gradient, "radial", current), "Dégradé"))
+        if gradient:
+            for index, text in ((0, "Couleur de départ du dégradé…"), (-1, "Couleur de fin du dégradé…")):
+                menu.addAction(text).triggered.connect(lambda _c=False, i=index: QTimer.singleShot(
+                    0, lambda: self._gradient_stop(which, gradient, i, anchor)))
+            menu.addAction("Inverser le dégradé").triggered.connect(lambda: ctl.set_style(
+                f"{which}_gradient", dict(gradient, stops=[[1.0 - p, c] for p, c in reversed(gradient["stops"])]),
+                "Inverser le dégradé"))
+            menu.addAction("Sans dégradé").triggered.connect(
+                lambda: ctl.set_style(which, gradient["stops"][0][1], label))
+        menu.addSeparator()
 
         def custom():
             popup = _ColorPickerPopup(current if len(current) == 7 else "#000000", label, self.pane)
@@ -221,6 +302,49 @@ class IllustratorChrome(QObject):
             popup.cancelled.connect(cancel)
             popup.show_near(anchor if isinstance(anchor, QWidget) else self.pane)
         menu.addAction("Couleur…").triggered.connect(lambda: QTimer.singleShot(0, custom))
+        _popup(menu, anchor)
+
+    @staticmethod
+    def _gradient_kind(current_gradient, kind: str, color: str) -> dict:
+        if current_gradient:
+            g = paint.new_gradient(kind)
+            g["stops"] = [list(s) for s in current_gradient["stops"]]
+            return g
+        return paint.new_gradient(kind, "#ffffff", "#000000")
+
+    def _gradient_stop(self, which: str, gradient: dict, index: int, anchor):
+        from settings_widgets import _ColorPickerPopup
+        ctl = self.ctl
+        start = gradient["stops"][index][1]
+
+        def with_color(c):
+            g = dict(gradient, stops=[list(s) for s in gradient["stops"]])
+            g["stops"][index][1] = c
+            return g
+        popup = _ColorPickerPopup(start if len(start) == 7 else "#" + start[3:], "Couleur du dégradé", self.pane)
+        popup.colorChanged.connect(lambda c: ctl.live_style(f"{which}_gradient", with_color(c), "Dégradé"))
+        popup.committed.connect(lambda c: (ctl.live_style(f"{which}_gradient", with_color(c), "Dégradé"),
+                                           ctl.scene.commit_live()))
+        popup.cancelled.connect(lambda: (ctl.scene.commit_live(), ctl.selection() and ctl.scene.undo.undo()))
+        popup.show_near(anchor if isinstance(anchor, QWidget) else self.pane)
+
+    def pathfinder_menu(self, anchor):
+        ctl = self.ctl
+        menu = _menu(self.pane, "ill_pathfinder")
+        count = len(ctl.selection())
+        for mode in ("unite", "minus_front", "intersect", "exclude"):
+            action = menu.addAction(f"Mode de forme : {ctl.PATHFINDER[mode]}")
+            action.setEnabled(count > 1)
+            action.triggered.connect(lambda _c=False, m=mode: ctl.pathfinder(m))
+        menu.addSeparator()
+        for mode in ("divide", "trim", "merge", "crop", "minus_back"):
+            action = menu.addAction(ctl.PATHFINDER[mode])
+            action.setEnabled(count > 1)
+            action.triggered.connect(lambda _c=False, m=mode: ctl.pathfinder(m))
+        menu.addSeparator()
+        action = menu.addAction("Vectoriser le contour")
+        action.setEnabled(count > 0)
+        action.triggered.connect(ctl.outline_stroke)
         _popup(menu, anchor)
 
     def width_menu(self):

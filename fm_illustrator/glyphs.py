@@ -98,6 +98,21 @@ def paint_ill_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
         painter.drawLine(QPointF(c.x() + s * 0.4, c.y() - s * 0.5), QPointF(c.x(), c.y() - s * 0.9))
         painter.drawPolyline(QPolygonF([QPointF(c.x() - s * 0.8, c.y()), QPointF(c.x() - s * 0.8, c.y() + s * 0.8),
                                         QPointF(c.x() + s * 0.8, c.y() + s * 0.8), QPointF(c.x() + s * 0.8, c.y())]))
+    elif kind == "ill_gradient":
+        r = QRectF(c.x() - s * 0.85, c.y() - s * 0.6, s * 1.7, s * 1.2)
+        painter.drawRect(r)
+        for i in range(1, 4):
+            x = r.left() + r.width() * i / 4
+            painter.drawLine(QPointF(x, r.top()), QPointF(x, r.bottom()))
+    elif kind == "ill_layers":
+        for dy in (-0.45, 0.0, 0.45):
+            painter.drawPolygon(QPolygonF([QPointF(c.x(), c.y() + (dy - 0.35) * s),
+                                           QPointF(c.x() + 0.85 * s, c.y() + dy * s),
+                                           QPointF(c.x(), c.y() + (dy + 0.35) * s),
+                                           QPointF(c.x() - 0.85 * s, c.y() + dy * s)]))
+    elif kind == "ill_pathfinder":
+        painter.drawRect(QRectF(c.x() - s * 0.85, c.y() - s * 0.85, s * 1.1, s * 1.1))
+        painter.drawRect(QRectF(c.x() - s * 0.25, c.y() - s * 0.25, s * 1.1, s * 1.1))
     elif kind == "ill_swap":
         painter.drawArc(QRectF(c.x() - s * 0.7, c.y() - s * 0.7, s * 1.4, s * 1.4), 0, 90 * 16)
         painter.drawLine(QPointF(c.x() + s * 0.7, c.y()), QPointF(c.x() + s * 0.45, c.y() - s * 0.25))

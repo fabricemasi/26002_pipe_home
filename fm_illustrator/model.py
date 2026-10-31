@@ -4,21 +4,24 @@ lecture d'un fichier.
 
 Un document Illustrator = les éléments `ill_*` du board :
 - `ill_artboard` : plan de travail (zone d'export ; les objets n'en sont PAS enfants, comme dans Illustrator) ;
+- `ill_layer` : calque (nom, ordre `index`, couleur, masqué, contenu verrouillé ; voir `layers.py`) ;
 - `ill_path` : tracé vectoriel. `subpaths` = liste de sous-tracés {"closed", "nodes"} ; un nœud =
   [ax, ay, ix, iy, ox, oy, lisse] : point d'ancrage, poignée d'ENTRÉE, poignée de SORTIE (coordonnées ABSOLUES
   dans le repère de l'élément, dont l'origine est (x, y) ; poignée = ancrage -> pas de poignée), lisse = 1 si les
   deux poignées restent alignées. Les transformations (échelle, rotation…) sont appliquées aux nœuds (comme
   Illustrator) : `rotation` reste 0 ; un déplacement ne change que (x, y).
-`group` = identifiant de groupe (vide = seul) : un clic de l'outil Sélection choisit tout le groupe.
+`group` = identifiant de groupe (vide = seul) : un clic de l'outil Sélection choisit tout le groupe ; `layer` =
+identifiant du calque (vide = le plus bas) ; `fill_gradient` / `stroke_gradient` = dégradé (`paint.py`) ou None.
 Un champ inconnu reste dans l'élément (règle du `.mro`)."""
 from __future__ import annotations
 
 import copy
 
 ARTBOARD = "ill_artboard"
+LAYER = "ill_layer"
 PATH = "ill_path"
 OBJECT_TYPES = (PATH,)
-ILL_TYPES = (ARTBOARD,) + OBJECT_TYPES
+ILL_TYPES = (ARTBOARD, LAYER) + OBJECT_TYPES
 
 ACCENT = "#2f7cf6"                     # couleur de sélection du module (bleu d'Illustrator, calque 1)
 DEFAULT_FILL = "#ffffff"               # couleurs par défaut d'Illustrator (D) : fond blanc, contour noir 1 pt
@@ -40,9 +43,10 @@ ARTBOARD_FORMATS = [
 
 DEFAULTS = {
     ARTBOARD: {"w": 210 * MM, "h": 297 * MM, "name": "Plan de travail 1", "index": 0, "fill": "#ffffff"},
+    LAYER: {"name": "Calque 1", "index": 0.0, "color": ACCENT, "hidden": False, "content_locked": False},
     PATH: {"subpaths": [], "fill": DEFAULT_FILL, "stroke": DEFAULT_STROKE, "stroke_width": 1.0, "opacity": 1.0,
            "cap": "butt", "join": "miter", "miter": 10.0, "dash": [], "fill_rule": "nonzero",
-           "group": "", "name": "", "hidden": False},
+           "group": "", "name": "", "hidden": False, "layer": "", "fill_gradient": None, "stroke_gradient": None},
 }
 
 
@@ -99,7 +103,11 @@ def normalize_entity(item: dict) -> dict:
     if defaults is None:
         return item
     for key, default in defaults.items():
-        item[key] = _coerce(item.get(key, default), default)
+        if default is not None:                         # dégradés (None par défaut) : vérifiés plus bas
+            item[key] = _coerce(item.get(key, default), default)
+    if kind == LAYER:
+        item["color"] = valid_color(item["color"], ACCENT) or ACCENT
+        return item
     if kind == ARTBOARD:
         item["w"] = max(1.0, item["w"])
         item["h"] = max(1.0, item["h"])
@@ -116,6 +124,9 @@ def normalize_entity(item: dict) -> dict:
             item[key] = allowed[0]
     item["dash"] = [max(0.0, float(v)) for v in item["dash"]
                     if isinstance(v, (int, float)) and not isinstance(v, bool)][:6]
+    from .paint import valid_gradient
+    item["fill_gradient"] = valid_gradient(item.get("fill_gradient"))
+    item["stroke_gradient"] = valid_gradient(item.get("stroke_gradient"))
     return item
 
 
@@ -129,7 +140,8 @@ def new_entity(kind: str, **values) -> dict:
 def style_of(data: dict) -> dict:
     """Attributs de peinture d'un tracé (pipette, styles par défaut des nouveaux objets)."""
     return {k: copy.deepcopy(data[k]) for k in ("fill", "stroke", "stroke_width", "opacity", "cap", "join", "miter",
-                                                "dash", "fill_rule") if k in data}
+                                                "dash", "fill_rule", "fill_gradient", "stroke_gradient")
+            if k in data}
 
 
 DEFAULT_STYLE = style_of(DEFAULTS[PATH])

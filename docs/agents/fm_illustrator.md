@@ -5,24 +5,28 @@ Cinquième module du board (après Miro, CAD, Design, Tableur), commencé le 202
 Board »). Activé par le bouton « Illustrator » du sélecteur de modules (`BoardPane.set_module("illustrator")`).
 Tout est LOCAL ; aucun code, icône ni ressource d'Adobe. **Aucune compatibilité `.ai` n'est annoncée** (non faite).
 
-**Tests** : `python tests/run.py fm_illustrator` (`tests/test_illustrator.py`, ~3 s) ; `fm_board` les inclut.
+**Tests** : `python tests/run.py fm_illustrator` (`tests/test_illustrator*.py`, ~5 s) ; `fm_board` les inclut.
 **Mesures** : `python tools/bench_illustrator.py [N]` (offscreen, 2400 × 1300, N tracés ; défaut 2 000).
 
 ## Carte : fonctionnalité -> fichiers (à ouvrir directement)
 
-Couches : chaque fichier n'importe que ceux qui le précèdent. `model`, `bezier`, `svg` n'importent PAS Qt.
+Couches : chaque fichier n'importe que ceux qui le précèdent. `model`, `bezier`, `paint`, `pathfinder`, `svg`
+n'importent PAS Qt.
 
 | Fonctionnalité | Fichier | Points d'entrée |
 |---|---|---|
 | Types du `.mro` (`ill_artboard`, `ill_path`), défauts, formats de plans, normalisation, style | `model.py` | `DEFAULTS`, `normalize_entity`, `new_entity`, `style_of`, `ARTBOARD_FORMATS`, `PT`, `MM` |
 | Bézier : nœuds, segments, cadres exacts, point le plus proche, insertion / suppression / conversion, joindre, inverser, matrices affines, formes, `d` SVG | `bezier.py` | `node`, `segments`, `bounds`, `nearest`, `insert_node`, `set_handle`, `smooth_node`, `join`, `transform`, `rotate`, `scale`, `rect`, `ellipse`, `polygon`, `star`, `from_cubics`, `svg_d` |
-| Export / import SVG | `svg.py` | `export_svg`, `path_element`, `import_svg`, `parse_d`, `arc_to_cubics`, `parse_transform`, `parse_color` |
-| Éléments de la scène (plan de travail, tracé), chemin Qt gardé, zone cliquable | `items.py` | `IllArtboardItem`, `IllPathItem` (`sync`, `hit_path`, `contains_scene_point`, `geometry_rect`), `notify_moved`, `qpath` |
-| Activation, événements, sélection, commandes (style, grouper, disposition, verrou, masquer, joindre, tracé transparent, pipette, plans, export / import) | `controller.py` | `IllustratorController` |
+| Dégradés (modèle en fractions de la boîte, outil Dégradé, SVG), nuancier par défaut | `paint.py` | `valid_gradient`, `new_gradient`, `absolute`, `set_from_drag`, `svg_gradient`, `SWATCHES` |
+| Pathfinder (skia-pathops) : modes de forme, division, découpe, fusion, recadrage, soustraction arrière, vectoriser le contour | `pathfinder.py` | `combine`, `divide`, `trim`, `merge`, `crop`, `outline_stroke`, `to_path`, `from_path` |
+| Calques : accès, bandes de hauteur, panneau | `layers.py` | `layers`, `layer_of`, `top_z`, `members`, `LayersPanel` |
+| Export / import SVG (dégradés compris) | `svg.py` | `export_svg`, `path_element`, `import_svg`, `parse_d`, `arc_to_cubics`, `parse_transform`, `parse_color` |
+| Éléments de la scène (plan de travail, calque, tracé), chemin et pinceaux Qt gardés, zone cliquable | `items.py` | `IllArtboardItem`, `IllLayerItem`, `IllPathItem` (`sync`, `apply_visibility`, `hit_path`, `contains_scene_point`, `geometry_rect`), `notify_moved`, `qpath`, `gradient_brush` |
+| Activation, événements, sélection, commandes (style, grouper, disposition dans le calque, verrou, masquer, joindre, tracé transparent, pipette, plans, calques, Pathfinder, vectoriser le contour, export / import) | `controller.py` | `IllustratorController` |
 | Gestes partagés (déplacer, transformer, cadre de sélection), Sélection, Sélection directe | `tools.py` | `MoveGesture`, `TransformGesture`, `marquee_select`, `SelectTool`, `DirectTool`, `TOOL_KEYS` |
-| Plume, points (ajout / suppression / conversion), formes, crayon, plan de travail, main, zoom, pipette | `tools_draw.py` | `PenTool`, `ShapeTool`…, `PencilTool`, `ArtboardTool`, `make_tools` |
+| Plume, points (ajout / suppression / conversion), formes, crayon, plan de travail, main, zoom, pipette, dégradé (G) | `tools_draw.py` | `PenTool`, `ShapeTool`…, `PencilTool`, `ArtboardTool`, `make_tools` |
 | Dessin temporaire (sélection, poignées, cadre, ligne élastique, noms des plans, bulle) | `overlay.py` | `IllOverlay` |
-| Barre d'outils (gauche), témoin fond / contour, barre de contrôle (haut), menus couleur / épaisseur / plans / export | `ui.py` | `IllustratorChrome`, `FillStroke` |
+| Barre d'outils (gauche), témoin fond / contour, barre de contrôle (haut), menus couleur (nuancier, dégradé) / épaisseur / Pathfinder / plans / export, panneau Calques | `ui.py` | `IllustratorChrome`, `FillStroke` |
 | Menu Objet / clic droit | `menus.py` | `fill_object_menu`, `open_context_menu` |
 | Glyphes des boutons | `glyphs.py` | `paint_ill_glyph` (appelé par `fm_board.ui.paint_glyph`) |
 
@@ -57,6 +61,18 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
   `_GlyphButton`, `_TextButton`, `_menu`, `_slider`, `_ColorPickerPopup`). Les contours UFO de fm_font ne sont PAS
   réutilisés (autre modèle de points : couplage artificiel).
 - Couleurs : « #rrggbb » ou « #aarrggbb », vide = aucun. Épaisseur en unités du board (1 pt = 4/3), affichée en pt.
+- **Dégradés** (`fill_gradient` / `stroke_gradient`, None = couleur unie) : points en FRACTIONS de la boîte de la
+  géométrie (suivent déplacement et mise à l'échelle ; une rotation ne tourne pas le dégradé : limite connue). Une
+  couleur unie choisie retire le dégradé ; un dégradé garde sa 1re couleur dans `fill` (lecteurs plus anciens).
+- **Calques** = éléments `ill_layer` (annulation fine) ; `layer` sur chaque objet (vide = le plus bas). Ordre de
+  dessin par BANDES de hauteur (`layers.BAND` × (index + 1)) : objet neuf en haut de son calque, disposition
+  (Ctrl+] …) dans le calque, ordre des calques changé = objets re-rangés (une étape). Le 1er objet d'un dessin crée
+  « Calque 1 » dans la MÊME étape d'annulation (`_pending_layer`). Supprimer un calque supprime ses objets.
+  Masqué / verrouillé = affichage et clic seulement (valeurs des objets inchangées).
+- **Pathfinder** : style du plus haut (Soustraction : du plus bas) ; Division / Découpe / Fusion / Recadrage :
+  morceaux groupés, chacun au style de son objet ; Découpe, Fusion, Recadrage retirent les contours (connaissance
+  générale d'Illustrator, non vérifiée cette session ; Division garde les contours). Mode « Contour » du panneau :
+  non fait. Réunion / Exclusion : une seule simplification de tous les contours (règle winding / pair-impair).
 
 ## Illustrator : ce qui est repris, et à quel degré
 
@@ -84,6 +100,9 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
 | Ligne élastique de la plume | 24 ms : zone de la sélection repeinte à chaque mouvement | 7 ms : seules les zones qui changent (`overlay._state_key`) |
 | Enregistrement automatique (2 000 tracés) | ~1,2 s sur le fil de l'interface | ~0,17 s : `IllItem.to_dict` en `clone_data` (86 -> 17 ms), JSON compact au-delà de 2 000 éléments (179 -> 67 ms) |
 | Image entière | 20 ms | 16 ms |
+| Pathfinder Réunion de 200 ellipses | 99 ms (réunions deux à deux) | 18 ms (une passe) |
+| Pathfinder Exclusion de 200 ellipses | 4,1 s (XOR deux à deux) | 69 ms (une passe pair-impair) |
+| Division de 20 objets (98 zones) / Découpe | 44 ms / 5 ms | — |
 Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 
 ## État fonctionnel
@@ -96,12 +115,16 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 | Sélection, cadre, Ctrl + glisser, copie, poignées d'échelle / rotation, flèches | Terminé (pas de repères commentés / magnétisme) | `ToolsTest` |
 | Plume, ajout / suppression / conversion de points, sélection directe, segments tirés | Terminé | `test_pen…`, `test_direct…` |
 | Crayon (ajustement Bézier) | Terminé | `test_pencil_fits_bezier` |
-| Fond / contour (couleur, aucun, X, Maj+X, D, /), épaisseur, extrémités, angles, tirets, opacité, pipette | Partiel (pas de nuancier ni de panneau Contour complet) | `test_keyboard…` |
+| Fond / contour (couleur, aucun, X, Maj+X, D, /), épaisseur, extrémités, angles, tirets, opacité, pipette | Partiel (pas de panneau Contour complet : profils, alignement du contour) | `test_keyboard…` |
+| Nuancier (couleurs de base + du document) | Partiel (pas de nuances globales ni de bibliothèques) | `test_gradient_tool…` |
+| Dégradés linéaire / radial (menu, couleurs de départ / fin, inverser, outil G, SVG aller-retour) | Partiel (2 couleurs éditables ; pas d'éditeur d'arrêts multiples, pas de dégradé de forme libre) | `PaintModelTest`, `GradientAndPathfinderTest` |
+| Calques (panneau, nouveau, masquer, verrouiller, ordre Ctrl + glisser, renommer, déplacer la sélection, supprimer) | Partiel (pas de sous-calques ni de liste des objets) | `LayersTest` |
+| Pathfinder (4 modes de forme, Division, Découpe, Fusion, Recadrage, Soustraction arrière) + Vectoriser le contour | Terminé (sauf mode Contour) | `PathfinderModelTest`, `GradientAndPathfinderTest` |
 | Grouper, disposition, verrouiller, masquer, joindre, tracé transparent, symétries, rotation 90° | Terminé | `CommandsTest` |
 | Mode Tracés (Ctrl+Y) | Terminé (affichage) | — |
 | Enregistrement / réouverture (`.mro`) | Terminé | `test_save_and_reopen` |
 | Export SVG (plan, tous, dessin, sélection), import SVG (fichier, glisser-déposer) | Terminé pour les tracés (pas de dégradés, texte, images, masques) | `SvgTest`, `test_export_and_import…` |
-| Dégradés, nuancier, calques, Pathfinder, Shape Builder, texte, pinceaux / largeur, masques, Aspect / effets, images, vectorisation, PDF, outils avancés, réglages du module | Non commencé | — |
+| Shape Builder, texte, pinceaux / largeur variable, masques, Aspect / effets, images, vectorisation, PDF, outils avancés, réglages du module | Non commencé | — |
 
 ## PASSATION (2026-10-31)
 
@@ -113,9 +136,9 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
   test_software_launch, test_table_split, test_viewer_buttons, test_viewer_filter.
 - Les tests du board affichent des « TypeError: Unknown return type » à la destruction des panneaux (signaux
   `canUndoChanged` du board) : déjà présents dans `test_design`, sans effet sur les résultats.
-- Prochaine tranche conseillée (ordre de la mission) : 6 couleurs / dégradés + nuancier (fond = dict
-  `{"type": "linear", stops…}` à côté de la couleur unie, rendu `QLinearGradient`, export `<linearGradient>`),
-  7 calques (`ill_layer` = élément du `.mro`, `layer` sur chaque objet, panneau avec les briques des réglages),
-  8 Pathfinder (skia-pathops, déjà dans `requirements.txt` : convertir les sous-tracés en `pathops.Path`).
+- Tranches 6-8 (dégradés, nuancier, calques, Pathfinder) : commit suivant (voir `git log -- fm_illustrator`).
+- Prochaine tranche conseillée : 9 Shape Builder (Maj+M) sur `pathfinder.divide` : zones calculées à l'entrée de
+  l'outil sur la sélection, survol = zone en surbrillance, glisser = réunir les zones traversées, Alt = les
+  supprimer ; puis 10 texte (`ill_text` : texte de point / captif / sur tracé, police par les briques du board).
 - Pistes de fluidité restantes : enregistrement JSON hors du fil de l'interface (coque, tous modules) ; clic de
   plume (création d'élément).

@@ -2,10 +2,12 @@
 
 Export : un fichier par plan de travail (viewBox = le plan, unités du board = px CSS), ou l'ensemble des objets ;
 chaque tracé = un `<path>` (fond, contour, épaisseur, extrémités, jointures, tirets, règle de remplissage, opacité),
-groupes = `<g>`. Ce qui n'a pas d'équivalent SVG n'existe pas encore dans le module.
+groupes = `<g>`, dégradés = `<linearGradient>` / `<radialGradient>` (userSpaceOnUse) dans `<defs>`.
 Import : `<path>` (M L H V C S Q T A Z, absolus et relatifs), `<rect>` (coins arrondis), `<circle>`, `<ellipse>`,
 `<line>`, `<polyline>`, `<polygon>`, `<g>` ; attributs et `style` en ligne ; `transform` (matrix, translate, scale,
-rotate, skewX, skewY) appliqué aux nœuds. Non lus : CSS de `<style>`, `<use>`, dégradés, texte, images, masques."""
+rotate, skewX, skewY) appliqué aux nœuds ; dégradés `url(#id)` (objectBoundingBox ou userSpaceOnUse, `href` vers
+les arrêts d'un autre dégradé ; `gradientTransform` ignoré). Non lus : CSS de `<style>`, `<use>`, texte, images,
+masques."""
 from __future__ import annotations
 
 import math
@@ -13,7 +15,7 @@ import re
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape, quoteattr
 
-from . import bezier as bz, model
+from . import bezier as bz, model, paint
 
 SVG_NS = "http://www.w3.org/2000/svg"
 
@@ -28,12 +30,18 @@ def _paint(color: str) -> tuple[str, float]:
     return color, 1.0
 
 
-def path_element(data: dict, dx: float = 0.0, dy: float = 0.0) -> str:
+def path_element(data: dict, dx: float = 0.0, dy: float = 0.0, refs: dict | None = None) -> str:
+    """`<path>` ; `refs` = {"fill" / "stroke": "url(#id)"} pour un dégradé."""
     d = bz.svg_d(data.get("subpaths") or [], data.get("x", 0.0) + dx, data.get("y", 0.0) + dy)
     if not d:
         return ""
+    refs = refs or {}
     fill, fill_op = _paint(data.get("fill", ""))
     stroke, stroke_op = _paint(data.get("stroke", ""))
+    if refs.get("fill"):
+        fill, fill_op = refs["fill"], 1.0
+    if refs.get("stroke") and stroke != "none":
+        stroke, stroke_op = refs["stroke"], 1.0
     attrs = [f'd="{d}"', f'fill="{fill}"']
     if fill != "none" and fill_op < 1.0:
         attrs.append(f'fill-opacity="{bz._num(fill_op)}"')
@@ -85,8 +93,19 @@ def export_svg(objects: list[dict], area: tuple[float, float, float, float] | No
         color, op = _paint(background)
         extra = f' fill-opacity="{bz._num(op)}"' if op < 1 else ""
         lines.append(f'<rect width="{bz._num(w)}" height="{bz._num(h)}" fill="{color}"{extra}/>')
+    defs, refs_of = [], {}
+    for n, data in enumerate(objects):
+        box = bz.bounds(data.get("subpaths") or [])
+        for which in ("fill", "stroke"):
+            g = data.get(f"{which}_gradient")
+            if g and box is not None and (which == "fill" or data.get("stroke")):
+                gid = f"degrade{len(defs) + 1}"
+                defs.append(paint.svg_gradient(g, box, gid, data.get("x", 0.0) - x, data.get("y", 0.0) - y))
+                refs_of.setdefault(n, {})[which] = f"url(#{gid})"
+    if defs:
+        lines.append("<defs>" + "".join(defs) + "</defs>")
     group = None
-    for data in objects:
+    for n, data in enumerate(objects):
         if data.get("hidden"):
             continue
         g = data.get("group") or ""
@@ -96,7 +115,7 @@ def export_svg(objects: list[dict], area: tuple[float, float, float, float] | No
             if g:
                 lines.append("<g>")
             group = g
-        element = path_element(data, -x, -y)
+        element = path_element(data, -x, -y, refs_of.get(n))
         if element:
             lines.append(element)
     if group:
@@ -336,7 +355,8 @@ def parse_color(text, current="#000000") -> str | None:
 def _styles(el, inherited: dict) -> dict:
     style = dict(inherited)
     for key in ("fill", "stroke", "stroke-width", "opacity", "fill-opacity", "stroke-opacity", "stroke-linecap",
-                "stroke-linejoin", "stroke-miterlimit", "stroke-dasharray", "fill-rule", "display"):
+                "stroke-linejoin", "stroke-miterlimit", "stroke-dasharray", "fill-rule", "display", "stop-color",
+                "stop-opacity", "offset"):
         if el.get(key) is not None:
             style[key] = el.get(key)
     for part in (el.get("style") or "").split(";"):
@@ -380,12 +400,72 @@ def _shape_subpaths(tag: str, el) -> list:
     return []
 
 
+def _gradients(root) -> dict:
+    """{id: (élément, arrêts)} des dégradés du document (arrêts hérités par `href`)."""
+    found = {}
+    for el in root.iter():
+        tag = el.tag.split("}", 1)[-1] if isinstance(el.tag, str) else ""
+        if tag in ("linearGradient", "radialGradient") and el.get("id"):
+            stops = []
+            for stop in el:
+                if (stop.tag.split("}", 1)[-1] if isinstance(stop.tag, str) else "") != "stop":
+                    continue
+                st = _styles(stop, {})
+                color = parse_color(st.get("stop-color", "#000000")) or "#000000"
+                op = _length(st.get("stop-opacity"), 1.0)
+                if op < 1.0:
+                    color = f"#{max(0, min(255, round(op * 255))):02x}{color[1:]}"
+                offset = st.get("offset", stop.get("offset", "0"))
+                value = _length(offset, 0.0) / (100.0 if "%" in str(offset) else 1.0)
+                stops.append([value, color])
+            found[el.get("id")] = (tag, el, stops)
+    for gid, (tag, el, stops) in list(found.items()):
+        ref = (el.get("{http://www.w3.org/1999/xlink}href") or el.get("href") or "").lstrip("#")
+        if not stops and ref in found:
+            found[gid] = (tag, el, found[ref][2])
+    return found
+
+
+def _gradient_of(value, gradients: dict, box) -> dict | None:
+    m = re.match(r"\s*url\(\s*#([^)\s]+)\s*\)", value or "")
+    if not m or m.group(1) not in gradients or box is None:
+        return None
+    tag, el, stops = gradients[m.group(1)]
+    x0, y0, x1, y1 = box
+    w, h = max(x1 - x0, 1e-9), max(y1 - y0, 1e-9)
+    user = el.get("gradientUnits") == "userSpaceOnUse"
+
+    def fx(key, default):
+        v = el.get(key)
+        if v is None:
+            return default
+        n = _length(v, default) / (100.0 if "%" in v else 1.0)
+        return (n - x0) / w if user else n
+
+    def fy(key, default):
+        v = el.get(key)
+        if v is None:
+            return default
+        n = _length(v, default) / (100.0 if "%" in v else 1.0)
+        return (n - y0) / h if user else n
+    if tag == "linearGradient":
+        raw = {"type": "linear", "stops": stops, "x1": fx("x1", 0.0), "y1": fy("y1", 0.0), "x2": fx("x2", 1.0),
+               "y2": fy("y2", 0.0)}
+    else:
+        r = _length(el.get("r"), 0.5)
+        if user:
+            r = r / (math.hypot(w, h) / math.sqrt(2))
+        raw = {"type": "radial", "stops": stops, "cx": fx("cx", 0.5), "cy": fy("cy", 0.5), "r": r}
+    return paint.valid_gradient(raw)
+
+
 def import_svg(text: str) -> list[dict]:
     """Valeurs d'éléments `ill_path` (coordonnées du SVG, origine 0) depuis un document SVG ; un `<g>` qui contient
     plusieurs objets devient un groupe."""
     root = ET.fromstring(text)
     out: list[dict] = []
     counter = [0]
+    gradients = _gradients(root)
 
     def tag_of(el):
         return el.tag.split("}", 1)[-1] if isinstance(el.tag, str) else ""
@@ -414,8 +494,16 @@ def import_svg(text: str) -> list[dict]:
         subs = _shape_subpaths(tag, el)
         if not subs:
             return
+        box = bz.bounds(subs)
+        fill_g = _gradient_of(style.get("fill"), gradients, box)
+        stroke_g = _gradient_of(style.get("stroke"), gradients, box)
         bz.transform(subs, m)
-        out.append(_entity(subs, style, group, m, tag))
+        entity = _entity(subs, style, group, m, tag)
+        if fill_g:
+            entity.update(fill_gradient=fill_g, fill=fill_g["stops"][0][1])
+        if stroke_g:
+            entity.update(stroke_gradient=stroke_g, stroke=stroke_g["stops"][0][1])
+        out.append(entity)
 
     walk(root, bz.IDENTITY, {}, "")
     return out
@@ -424,7 +512,7 @@ def import_svg(text: str) -> list[dict]:
 def _entity(subs, style, group, matrix, tag) -> dict:
     fill = parse_color(style.get("fill", "#000000"))
     if fill is None:
-        fill = "#000000"
+        fill = "" if str(style.get("fill", "")).startswith("url(") else "#000000"
     if tag in ("line", "polyline") and "fill" not in style:
         fill = "" if tag == "line" else fill
     stroke = parse_color(style.get("stroke", "none"))

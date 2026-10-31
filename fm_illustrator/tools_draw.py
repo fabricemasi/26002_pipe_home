@@ -693,8 +693,69 @@ class EyedropperTool(Tool):
         return Qt.PointingHandCursor
 
 
+class GradientTool(Tool):
+    """Glisser sur les objets choisis (ou sur l'objet sous la souris) : direction d'un dégradé linéaire, ou centre et
+    rayon d'un radial ; un objet sans dégradé en reçoit un (blanc -> noir, comme Illustrator). Une étape."""
+    name, label = "gradient", "Dégradé (G)"
+
+    def __init__(self, ctl):
+        super().__init__(ctl)
+        self.start = None
+        self.items = None
+
+    def press(self, pos, mods):
+        ctl = self.ctl
+        items = ctl.selection()
+        hit = ctl.object_at(pos)
+        if hit is not None and hit not in items:
+            ctl.select([hit])
+            items = [hit]
+        if not items:
+            return
+        self.start = pos
+        self.items = items
+        ctl.scene.begin_change(items)
+
+    def drag(self, pos, mods):
+        if self.start is None:
+            return
+        from . import paint
+        end = _constrain45(self.start, pos) if mods & Qt.ShiftModifier else pos
+        for item in self.items:
+            box = bz.bounds(item.data["subpaths"])
+            if box is None:
+                continue
+            g = item.data.get("fill_gradient") or paint.new_gradient("linear")
+            ox, oy = item.data["x"], item.data["y"]
+            item.data["fill_gradient"] = paint.set_from_drag(g, box, (self.start.x() - ox, self.start.y() - oy),
+                                                             (end.x() - ox, end.y() - oy))
+            item.sync()
+            item.update()
+        self.ctl.preview = ("polyline", [(self.start.x(), self.start.y()), (end.x(), end.y())])
+
+    def release(self, pos, mods):
+        if self.start is None:
+            return
+        self.ctl.preview = None
+        self.ctl.scene.end_change("Dégradé")
+        self.start = None
+        self.items = None
+        self.ctl.stateChanged.emit()
+
+    def cancel(self):
+        if self.start is not None:
+            self.ctl.scene.end_change("Dégradé")
+        self.start = None
+        self.items = None
+        self.ctl.preview = None
+
+    def cursor(self):
+        return Qt.CrossCursor
+
+
 TOOL_CLASSES = [SelectTool, DirectTool, PenTool, AddAnchorTool, DeleteAnchorTool, ConvertTool, RectTool, EllipseTool,
-                PolygonTool, StarTool, LineTool, PencilTool, ArtboardTool, HandTool, ZoomTool, EyedropperTool]
+                PolygonTool, StarTool, LineTool, PencilTool, ArtboardTool, HandTool, ZoomTool, EyedropperTool,
+                GradientTool]
 
 
 def make_tools(ctl) -> dict:

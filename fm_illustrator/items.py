@@ -9,7 +9,8 @@ recherche une fois par zoom ; chaque élément est gardé en image à l'écran (
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPainterPathStroker, QPen
+from PySide6.QtGui import (QBrush, QColor, QLinearGradient, QPainter, QPainterPath, QPainterPathStroker, QPen,
+                           QRadialGradient)
 from PySide6.QtWidgets import QGraphicsItem
 
 from fm_miro.items import ITEM_CLASSES, POSITION_HAS_CHANGED, BoardItem, CommentItem, ConnectorItem, clone_data
@@ -43,9 +44,24 @@ def qpath(subpaths, fill_rule: str = "nonzero") -> QPainterPath:
     return path
 
 
-def stroke_pen(data: dict) -> QPen:
+def gradient_brush(g: dict, box: QRectF) -> QBrush:
+    """Pinceau d'un dégradé (`paint.py`) posé sur la boîte de la géométrie."""
+    from . import paint
+    a = paint.absolute(g, (box.left(), box.top(), box.right(), box.bottom()))
+    if g["type"] == "linear":
+        gradient = QLinearGradient(a["x1"], a["y1"], a["x2"], a["y2"])
+    else:
+        gradient = QRadialGradient(a["cx"], a["cy"], a["r"])
+    for offset, color in g["stops"]:
+        gradient.setColorAt(offset, qcolor(color))
+    return QBrush(gradient)
+
+
+def stroke_pen(data: dict, box: QRectF | None = None) -> QPen:
     width = float(data.get("stroke_width", 1.0))
     pen = QPen(qcolor(data.get("stroke", "")), width)
+    if data.get("stroke_gradient") and box is not None:
+        pen.setBrush(gradient_brush(data["stroke_gradient"], box))
     pen.setCapStyle(CAPS.get(data.get("cap"), Qt.FlatCap))
     pen.setJoinStyle(JOINS.get(data.get("join"), Qt.MiterJoin))
     pen.setMiterLimit(float(data.get("miter", 10.0)))
@@ -176,6 +192,53 @@ class IllArtboardItem(IllItem):
         painter.drawRect(rect)
 
 
+class IllLayerItem(IllItem):
+    """Calque : sans dessin ni zone ; tenu dans `scene.ill_layers` ; changer ses valeurs (masqué, verrouillé,
+    annulation) remet ses objets à jour."""
+
+    def __init__(self, data: dict):
+        super().__init__(data)
+        self.setFlag(QGraphicsItem.ItemIsSelectable, False)
+        self.setFlag(QGraphicsItem.ItemHasNoContents, True)
+
+    def size(self) -> tuple[float, float]:
+        return 0.0, 0.0
+
+    def content_rect(self) -> QRectF:
+        return QRectF()
+
+    def boundingRect(self) -> QRectF:
+        return QRectF()
+
+    def paint(self, painter, option, widget=None):
+        pass
+
+    def added_to_scene(self, scene):
+        if not hasattr(scene, "ill_layers"):
+            scene.ill_layers = {}
+        scene.ill_layers[self.item_id] = self
+        self._sync_members(scene)
+
+    def removing_from_scene(self, scene):
+        getattr(scene, "ill_layers", {}).pop(self.item_id, None)
+
+    def dependent_ids(self, scene) -> set:
+        """Supprimer un calque supprime ses objets (même étape), comme Illustrator."""
+        from .layers import layer_of
+        return {i.item_id for i in scene.board_items() if isinstance(i, IllPathItem) and layer_of(scene, i) is self}
+
+    def sync(self):
+        scene = self.scene()
+        if scene is not None:
+            self._sync_members(scene)
+
+    def _sync_members(self, scene):
+        from .layers import layer_of
+        for item in scene.board_items():           # visibilité seulement : les chemins ne sont pas refaits
+            if isinstance(item, IllPathItem) and layer_of(scene, item) is self:
+                item.apply_visibility()
+
+
 class IllPathItem(IllItem):
     """Tracé : fond et contour peints depuis le chemin gardé (`self.path`)."""
 
@@ -188,9 +251,23 @@ class IllPathItem(IllItem):
         box = bz.bounds(self.data.get("subpaths") or [])
         self._box = QRectF() if box is None else QRectF(box[0], box[1], box[2] - box[0], box[3] - box[1])
         self._hit = None
+        fill_g = self.data.get("fill_gradient")
+        self._fill_brush = gradient_brush(fill_g, self._box) if fill_g else (
+            QBrush(qcolor(self.data["fill"])) if self.data.get("fill") else None)
+        self._pen = stroke_pen(self.data, self._box) if self.data.get("stroke") and \
+            float(self.data.get("stroke_width", 0.0)) > 0 else None
+        self.apply_visibility()
+
+    def apply_visibility(self):
+        """Masqué (objet, calque, module) et opacité, sans refaire le chemin."""
         scene = self.scene()
+        layer = None
+        if scene is not None and getattr(scene, "ill_layers", None):
+            from .layers import layer_of
+            layer = layer_of(scene, self)
         hidden = bool(self.data.get("hidden")) or (scene is not None and hasattr(scene, "module_hidden")
-                                                   and scene.module_hidden(self.MODULE))
+                                                   and scene.module_hidden(self.MODULE)) or \
+            bool(layer is not None and layer.data.get("hidden"))
         self.setVisible(not hidden)
         self.setOpacity(scene.item_opacity(self) if scene is not None and hasattr(scene, "item_opacity")
                         else float(self.data.get("opacity", 1.0)))
@@ -250,12 +327,12 @@ class IllPathItem(IllItem):
             painter.setBrush(Qt.NoBrush)
             painter.drawPath(self.path)
             return
-        fill = self.data.get("fill")
-        if fill:
-            painter.fillPath(self.path, QBrush(qcolor(fill)))
-        if self.data.get("stroke") and float(self.data.get("stroke_width", 0.0)) > 0:
-            painter.strokePath(self.path, stroke_pen(self.data))
+        if self._fill_brush is not None:
+            painter.fillPath(self.path, self._fill_brush)
+        if self._pen is not None:
+            painter.strokePath(self.path, self._pen)
 
 
 ITEM_CLASSES[model.ARTBOARD] = IllArtboardItem
 ITEM_CLASSES[model.PATH] = IllPathItem
+ITEM_CLASSES[model.LAYER] = IllLayerItem
