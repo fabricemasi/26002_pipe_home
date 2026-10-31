@@ -12,7 +12,12 @@ multimasters) et `python -m fm_font.bench 1000 --qt` (canvas, grille, aperçu ; 
 de navigation (icône « A » + nœud, kind `"font"`, `btn_font` ; grisé tant que la sélection, y compris dans IN / OVER /
 OUT / LOGICIELS, n'est pas une source `.ufo` (dossier) / `.designspace` ou une police `.ttf` / `.otf` / `.woff(2)`,
 voir `_sync_mode_buttons` ; module ouvert = le bouton le ferme, `_toggle_font`), menu d'une ligne « Ouvrir dans le
-module typographique » (`font_target`), ou menu d'une colonne « Créer un projet typographique ». Pages : Glyphes (Ctrl+1), Éditeur (Ctrl+2, double-clic sur un
+module typographique » (`font_target`), ou menu d'une colonne « Créer un projet typographique ». Module ouvert :
+cadre « Typographie » de la barre (comme « Vidéo » / « Board », `titlebar.font_group`, `_layout_font_buttons`) :
+annuler, rétablir (grisés selon la pile, libellé de l'étape en infobulle), enregistrer (fond accent si modifié),
+exporter (menu des formats), engrenage = fenêtre « Réglages : Typographie », fermer ; le module ne les répète pas
+dans sa barre du haut (`HOOKS["navbar_frame"]`) ; le cadre n'est refait que sur `FontPane.stateChanged` (annuler /
+rétablir / modifié ont changé : 0,2 ms), jamais à chaque geste. Pages : Glyphes (Ctrl+1), Éditeur (Ctrl+2, double-clic sur un
 glyphe), Aperçu (Ctrl+3), Features (Ctrl+4, Ctrl+Entrée = appliquer), Diagnostic (Ctrl+5). Outils : V sélection,
 P plume, B crayon, R rectangle, E ellipse, Y polygone (Alt = étoile), C plume calligraphique, W brosse, M mesure,
 K couteau (Maj = 45°), H main ; Espace tenu / bouton du milieu = déplacer la vue ; molette = zoom ; flèches = déplacer (Maj ×10) ;

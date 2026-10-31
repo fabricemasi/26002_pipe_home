@@ -4,7 +4,10 @@ ou le menu d'une ligne « Ouvrir dans le module typographique » (source .ufo / 
 colonne, hooks, réglages. Carte du module : docs/agents/fm_font.md ; de la fenêtre : docs/agents/fm_browser.md."""
 from pathlib import Path
 
+from PySide6.QtCore import Qt
+
 import ui_state
+from app_style import C, role_color, scaled
 from settings_store import load_settings
 
 
@@ -24,6 +27,7 @@ class FontModuleMixin:
             "settings": lambda: ui_state.APPLIED_SETTINGS or load_settings(),
             "status": self.path_label.setText,
             "open_settings": lambda: self.open_module_settings("font"),
+            "navbar_frame": True,
         })
 
     def _toggle_font(self):
@@ -60,6 +64,7 @@ class FontModuleMixin:
             from fm_font.pane import FontPane
             pane = FontPane(self.scroll.viewport())
             pane.closeRequested.connect(self._close_font)
+            pane.stateChanged.connect(self._layout_font_buttons)
             self._font = pane
         if path is not None and not pane.open_path(path):
             if pane.project.path is None and not pane.project.is_dirty():
@@ -67,6 +72,7 @@ class FontModuleMixin:
             return False
         pane.show()
         pane.raise_()
+        self._layout_font_buttons()
         # Colonnes VRAIMENT masquées sous le module (comme la vidéo) : rien ne les repeint pendant l'édition.
         host = self.scroll.widget()
         if host is not None and host.isVisible():
@@ -94,6 +100,7 @@ class FontModuleMixin:
         if pane is None:
             return
         self._font = None
+        self.titlebar.font_group().hide()
         if getattr(self, "_font_hid_columns", False):
             self._font_hid_columns = False
             host = self.scroll.widget()
@@ -106,3 +113,57 @@ class FontModuleMixin:
         column, _path = self._selected_path()
         if column is not None:
             column.list.setFocus()
+
+    def _layout_font_buttons(self):
+        """Boutons du cadre « Typographie » de la barre (comme « Vidéo » / « Board ») : annuler, rétablir,
+        enregistrer (accent si modifié), exporter, réglages du module, fermer. Rappelé seulement quand annuler /
+        rétablir / « modifié » changent (`FontPane.stateChanged`), jamais à chaque geste."""
+        from preview_column import IconButton, style_focus_button
+        pane = getattr(self, "_font", None)
+        group = self.titlebar.font_group()
+        if pane is None:
+            group.hide()
+            return
+        buttons = self.__dict__.setdefault("_font_buttons", [])
+        if not buttons:
+            for kind, tip, slot in (
+                    ("undo", "Annuler (Ctrl+Z)", lambda: self._font and self._font.project.undo.undo()),
+                    ("redo", "Rétablir (Ctrl+Y)", lambda: self._font and self._font.project.undo.redo()),
+                    ("save", "Enregistrer la source (Ctrl+S)", lambda: self._font and self._font.save()),
+                    ("export", "Exporter une police (OTF, TTF, WOFF, WOFF2, variable)…", None),
+                    ("gear", "Réglages du module typographique", lambda: self.open_module_settings("font")),
+                    ("close", "Fermer le module typographique (Échap depuis la grille)",
+                     lambda: self._font and self._font.request_close())):
+                button = IconButton(kind, role_color("buttons", "#c4cacf"), C["text"], parent=group)
+                button.setCursor(Qt.ArrowCursor)
+                button.setFlat(True)
+                button.setToolTip(tip)
+                if slot is None:
+                    button.clicked.connect(lambda _c=False, b=button: self._font and self._font.export_menu(b))
+                else:
+                    button.clicked.connect(slot)
+                button._font_kind = kind
+                buttons.append(button)
+        undo = pane.project.undo
+        origin = group.content_origin()
+        x, height = origin.x(), 0
+        for button in buttons:
+            style_focus_button(button)
+            kind = button._font_kind
+            if kind == "undo":
+                self._set_button_usable(button, undo.can_undo())
+                button.setToolTip(f"Annuler : {undo.undo_label()} (Ctrl+Z)" if undo.can_undo() else "Annuler")
+            elif kind == "redo":
+                self._set_button_usable(button, undo.can_redo())
+                button.setToolTip(f"Rétablir : {undo.redo_label()} (Ctrl+Y)" if undo.can_redo() else "Rétablir")
+            elif kind == "save":
+                button.set_alert(self._mode_on_color() if pane.project.is_dirty() else None)
+            button.move(x, origin.y())
+            button.show()
+            x += button.width() + scaled(6, 0)
+            height = max(height, button.height())
+        group.restyle()
+        group.fit(x - scaled(6, 0), height)
+        group.show()
+        group.raise_()
+        self.titlebar.place_viewer_group()

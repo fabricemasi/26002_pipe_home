@@ -579,11 +579,21 @@ class TitleBar(QWidget):
             group.hide()
         return group
 
+    def font_group(self) -> "_ViewerGroup":
+        """Cadre « Typographie » (module fm_font/) : memes habillage et place que « Visionneuse »."""
+        group = getattr(self, "_font_group", None)
+        if group is None:
+            group = self._font_group = _ViewerGroup(self, "Typographie")
+            group.hide()
+        return group
+
     def place_viewer_group(self):
-        """Cadres « Visionneuse » / « Éditeur » / « Board » / « Vidéo » : a la suite des outils (apres
-        le dernier bouton de la barre), centres dans la hauteur de la rangee des outils, decales de leur margin."""
+        """Cadres « Visionneuse » / « Éditeur » / « Board » / « Vidéo » / « Typographie » : a la suite des outils
+        (apres le dernier bouton de la barre), centres dans la hauteur de la rangee des outils, decales de leur
+        margin."""
         for group in (getattr(self, "_viewer_group", None), getattr(self, "_editor_group", None),
-                      getattr(self, "_board_group", None), getattr(self, "_video_group", None)):
+                      getattr(self, "_board_group", None), getattr(self, "_video_group", None),
+                      getattr(self, "_font_group", None)):
             if group is not None and not group.isHidden():
                 self._place_group(group)
 

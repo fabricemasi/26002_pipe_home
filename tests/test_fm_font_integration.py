@@ -21,17 +21,35 @@ import ui_state  # noqa: E402
 from fm_font import pane as pane_mod  # noqa: E402
 from fm_font.compile import compile_static  # noqa: E402
 from fm_font.document import FontProject  # noqa: E402
+from main_window.chrome import ChromeMixin  # noqa: E402
 from main_window.font_module import FontModuleMixin  # noqa: E402
 
 app = QApplication.instance() or QApplication([])
 
 
-class _Host(FontModuleMixin):
+class _TitleBar(QWidget):
+    """Barre de navigation réduite à ses cadres de module."""
+
+    def font_group(self):
+        from main_window.title_bar import _ViewerGroup
+        group = getattr(self, "_font_group", None)
+        if group is None:
+            group = self._font_group = _ViewerGroup(self, "Typographie")
+            group.hide()
+        return group
+
+    def place_viewer_group(self):
+        pass
+
+
+class _Host(FontModuleMixin, ChromeMixin):
     """Fenêtre principale réduite à ce que le mixin utilise."""
 
     def __init__(self):
         self.window = track(QWidget())
         self.window.resize(1200, 800)
+        self.titlebar = _TitleBar(self.window)
+        self.titlebar.resize(1200, 40)
         self.scroll = QScrollArea(self.window)
         self.scroll.resize(1200, 800)
         self.scroll.setWidget(QWidget())
@@ -135,7 +153,7 @@ class IntegrationTest(WindowTestCase):
         from main_window.chrome import ChromeMixin
         from preview_column import IconButton
 
-        class _Bar(ChromeMixin, _Host):
+        class _Bar(_Host):
             def __init__(self):
                 super().__init__()
                 self.selected = None
@@ -173,6 +191,36 @@ class IntegrationTest(WindowTestCase):
             bar.btn_font.click()                                            # projet intact : fermé sans question
         self.assertIsNone(bar._font)
         self.assertFalse(bar.btn_font.isEnabled())
+
+    def test_navbar_frame_buttons_follow_the_project(self):
+        """Cadre « Typographie » de la barre (comme « Vidéo » / « Board ») : annuler / rétablir grisés selon la
+        pile, enregistrer en accent si modifié, réglages du module, fermer ; le module ne les répète pas."""
+        host = _Host()
+        self.assertTrue(host._open_font(self.ufo))
+        pane = host._font
+        group = host.titlebar.font_group()
+        self.assertTrue(group.isVisible())
+        kinds = [b._font_kind for b in host._font_buttons]
+        self.assertEqual(kinds, ["undo", "redo", "save", "export", "gear", "close"])
+        undo, redo, save = host._font_buttons[:3]
+        self.assertFalse(undo.isEnabled())
+        self.assertFalse(pane.close_button.isVisible())                    # pas répété dans le module
+        self.assertFalse(pane.undo_button.isVisible())
+        pane.project.edit_glyph("A", "Largeur", lambda g: setattr(g, "width", 640))
+        app.processEvents()
+        pane._refresh_views()                                              # (minuterie de 30 ms)
+        self.assertTrue(undo.isEnabled())
+        self.assertIn("Largeur", undo.toolTip())
+        self.assertIsNotNone(save._alert)
+        undo.click()
+        pane._refresh_views()
+        self.assertTrue(redo.isEnabled())
+        host._font_buttons[4].click()
+        self.assertEqual(host.opened_settings, "font")
+        with mock.patch.object(pane_mod, "confirm", side_effect=AssertionError("aucune question attendue")):
+            host._font_buttons[5].click()                                  # revenu à l'état enregistré
+        self.assertIsNone(host._font)
+        self.assertFalse(group.isVisible())
 
     def test_double_click_never_opens_the_module(self):
         """Demande de l'utilisateur : le module s'ouvre par le menu d'une ligne ou le bouton de la barre, jamais au

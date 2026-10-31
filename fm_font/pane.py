@@ -31,6 +31,9 @@ HOOKS: dict = {
     "status": lambda text: None,            # barre d'état de la fenêtre
     "open_settings": None,                  # fenêtre « Réglages : Typographie »
     "autosave_dir": None,                   # dossier des sauvegardes de secours (None : autosave.default_dir)
+    # Vrai : la fenêtre principale montre annuler / rétablir / enregistrer / exporter / réglages / fermer dans le
+    # cadre « Typographie » de sa barre de navigation ; le module ne les répète pas dans sa barre du haut.
+    "navbar_frame": False,
 }
 
 PAGES = ("Glyphes", "Éditeur", "Aperçu", "Features", "Diagnostic")
@@ -62,6 +65,7 @@ def _settings() -> dict:
 class FontPane(QWidget):
     closeRequested = Signal()
     dirtyChanged = Signal(bool)
+    stateChanged = Signal()           # annuler / rétablir possibles ou « modifié » ont changé (cadre de la barre)
 
     def __init__(self, parent=None, project: FontProject | None = None):
         super().__init__(parent)
@@ -75,6 +79,7 @@ class FontPane(QWidget):
         self.cache = PathCache(self.project)
         self.current_name: str | None = None
         self._last_dirty = False
+        self._last_state = None
         from .autosave import Autosaver
         self.autosaver = Autosaver(HOOKS.get("autosave_dir"))
         self._autosaved_revision = None
@@ -133,15 +138,25 @@ class FontPane(QWidget):
         top.addWidget(button("Nouveau", "Nouveau projet (famille vide)", self.new_project))
         top.addWidget(button("Ouvrir…", "Ouvrir une source (.ufo, .designspace) ou importer une police "
                                         "(.ttf, .otf, .woff, .woff2)", self.open_dialog))
-        top.addWidget(button("Enregistrer", "Enregistrer la source (Ctrl+S)", self.save))
+        self.save_button = button("Enregistrer", "Enregistrer la source (Ctrl+S)", self.save)
+        top.addWidget(self.save_button)
         top.addWidget(button("Enregistrer sous…", "Enregistrer la source ailleurs (.designspace ou .ufo)",
                              self.save_as_dialog))
         self.export_button = button("Exporter…", "Compiler une police (OTF, TTF, WOFF, WOFF2, variable)",
                                     self.export_menu)
         top.addWidget(self.export_button)
+        self.settings_button = None
         if HOOKS.get("open_settings"):
-            top.addWidget(button("Réglages", "Réglages du module typographique", lambda: HOOKS["open_settings"]()))
-        top.addWidget(button("Fermer", "Fermer le module (Échap depuis la grille)", self.request_close))
+            self.settings_button = button("Réglages", "Réglages du module typographique",
+                                          lambda: HOOKS["open_settings"]())
+            top.addWidget(self.settings_button)
+        self.close_button = button("Fermer", "Fermer le module (Échap depuis la grille)", self.request_close)
+        top.addWidget(self.close_button)
+        if HOOKS.get("navbar_frame"):                       # déjà dans le cadre « Typographie » de la barre
+            for b in (self.undo_button, self.redo_button, self.save_button, self.export_button,
+                      self.settings_button, self.close_button):
+                if b is not None:
+                    b.hide()
         root.addLayout(top)
 
         split = QSplitter(Qt.Horizontal, self)
@@ -336,6 +351,10 @@ class FontPane(QWidget):
         if dirty != self._last_dirty:
             self._last_dirty = dirty
             self.dirtyChanged.emit(dirty)
+        state = (p.undo.can_undo(), p.undo.can_redo(), dirty)
+        if state != self._last_state:
+            self._last_state = state
+            self.stateChanged.emit()
 
     def status(self, text: str) -> None:
         self.status_label.setText(text)
@@ -494,7 +513,7 @@ class FontPane(QWidget):
     def _toggle_exception(self) -> None:
         self.preview.exception = self.exception_button.isChecked()
 
-    def export_menu(self) -> None:
+    def export_menu(self, anchor=None) -> None:
         from fm_theme.menu import Menu
         menu = Menu(self)
         for fmt, label in EXPORT_FORMATS:
@@ -509,7 +528,7 @@ class FontPane(QWidget):
             for label, location in self.instance_locations():
                 sub.addAction(label).triggered.connect(
                     lambda _c=False, n=label, loc=location: self.export_dialog("otf", instance=(n, loc)))
-        self._popup(menu, self.export_button)
+        self._popup(menu, anchor if anchor is not None else self.export_button)
 
     def instance_locations(self) -> list[tuple[str, dict]]:
         p = self.project
