@@ -31,7 +31,7 @@ class ShapeBuilderTool(Tool):
     # -- zones --
     def _ensure_regions(self):
         ctl = self.ctl
-        items = ctl.selection()
+        items = ctl.shapes()
         key = (tuple(i.item_id for i in items), ctl.scene.undo.index())
         if key == self._key:
             return

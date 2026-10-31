@@ -758,6 +758,63 @@ TOOL_CLASSES = [SelectTool, DirectTool, PenTool, AddAnchorTool, DeleteAnchorTool
                 GradientTool]
 
 
+class TypeTool(Tool):
+    """Texte (T) : clic = texte de point ; glisser = texte captif (cadre) ; clic sur un tracé OUVERT = texte
+    curviligne (le tracé devient le tracé de base, comme Illustrator) ; clic sur un texte = l'éditer."""
+    name, label = "type", "Texte (T ; sur un tracé ouvert : texte curviligne)"
+
+    def __init__(self, ctl):
+        super().__init__(ctl)
+        self.start = None
+
+    def press(self, pos, mods):
+        self.start = pos
+
+    def drag(self, pos, mods):
+        if self.start is None:
+            return
+        rect = QRectF(self.start, pos).normalized()
+        if rect.width() > self.ctl.tolerance(DRAG_PX) or rect.height() > self.ctl.tolerance(DRAG_PX):
+            self.ctl.marquee = rect
+            self.ctl.tip = (pos, f"L {rect.width():.1f}  H {rect.height():.1f}")
+
+    def release(self, pos, mods):
+        ctl = self.ctl
+        start, self.start = self.start, None
+        rect, ctl.marquee = ctl.marquee, None
+        ctl.tip = None
+        if start is None:
+            return
+        if rect is not None:
+            item = ctl.new_text(rect.topLeft(), mode="area", w=round(rect.width(), 3), h=round(rect.height(), 3))
+            ctl.begin_text_edit(item, None, new=True)
+            return
+        hit = ctl.object_at(pos)
+        if hit is not None and hasattr(hit, "layout_box"):
+            ctl.begin_text_edit(hit, pos)
+            return
+        if hit is not None and any(not s["closed"] and len(s["nodes"]) > 1 for s in hit.data["subpaths"]):
+            sub = next(s for s in hit.data["subpaths"] if not s["closed"] and len(s["nodes"]) > 1)
+            item = ctl.new_text(QPointF(hit.data["x"], hit.data["y"]), mode="path",
+                                subpaths=bz.copy_subpaths([sub]))
+            hit.setVisible(False)                        # remplacé à la fin de l'édition (une étape)
+            ctl.begin_text_edit(item, None, new=True, replaced=hit)
+            return
+        item = ctl.new_text(pos)
+        ctl.begin_text_edit(item, None, new=True)
+
+    def cancel(self):
+        self.start = None
+        self.ctl.marquee = None
+        self.ctl.tip = None
+
+    def busy(self) -> bool:
+        return self.start is not None
+
+    def cursor(self):
+        return Qt.IBeamCursor
+
+
 def make_tools(ctl) -> dict:
     from .shape_builder import ShapeBuilderTool
-    return {cls.name: cls(ctl) for cls in TOOL_CLASSES + [ShapeBuilderTool]}
+    return {cls.name: cls(ctl) for cls in TOOL_CLASSES + [ShapeBuilderTool, TypeTool]}

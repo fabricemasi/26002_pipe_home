@@ -118,7 +118,10 @@ class IllOverlay(QGraphicsItem):
         if ctl.hover is not None and ctl.hover.scene() is not None and not ctl.hover.isSelected():
             painter.setPen(QPen(accent, 1.5 / z))
             painter.setBrush(Qt.NoBrush)
-            painter.drawPath(ctl.hover.path.translated(ctl.hover.pos()))
+            if hasattr(ctl.hover, "outline_polygon"):
+                painter.drawPolygon(ctl.hover.outline_polygon())
+            else:
+                painter.drawPath(ctl.hover.path.translated(ctl.hover.pos()))
         items = ctl.selection()
         if items:
             self._paint_selection(painter, z, accent, items)
@@ -162,6 +165,22 @@ class IllOverlay(QGraphicsItem):
         painter.setPen(QPen(accent, 1.0 / z))
         painter.setBrush(Qt.NoBrush)
         for item in items:
+            if hasattr(item, "outline_polygon"):            # texte : son cadre (tourné avec lui)
+                painter.drawPolygon(item.outline_polygon())
+                if item.data.get("mode") == "path" and item.data.get("subpaths"):
+                    from .items import qpath
+                    painter.drawPath(qpath(item.data["subpaths"]).translated(item.pos()))
+                if item.overflow():                         # texte qui dépasse : « + » rouge (comme Illustrator)
+                    corner = item.mapToScene(item.layout_box().bottomRight())
+                    s = 5.0 / z
+                    painter.save()
+                    painter.setPen(QPen(QColor("#e0281e"), 1.2 / z))
+                    painter.setBrush(QColor("#ffffff"))
+                    painter.drawRect(QRectF(corner.x() - s, corner.y() - s, 2 * s, 2 * s))
+                    painter.drawLine(QPointF(corner.x() - s * 0.6, corner.y()), QPointF(corner.x() + s * 0.6, corner.y()))
+                    painter.drawLine(QPointF(corner.x(), corner.y() - s * 0.6), QPointF(corner.x(), corner.y() + s * 0.6))
+                    painter.restore()
+                continue
             painter.drawPath(item.path.translated(item.pos()))
         total = sum(len(s["nodes"]) for i in items for s in i.data["subpaths"])
         direct = ctl.tool in ("direct", "convert", "pen", "add_anchor", "delete_anchor")

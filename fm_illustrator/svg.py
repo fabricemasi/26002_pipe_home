@@ -75,7 +75,7 @@ def _xml_id(name: str) -> str:
 
 
 def export_svg(objects: list[dict], area: tuple[float, float, float, float] | None = None,
-               background: str = "", title: str = "") -> str:
+               background: str = "", title: str = "", text_svg=None) -> str:
     """Document SVG des `objects` (dicts `ill_path`, déjà dans l'ordre de dessin). `area` = (x, y, l, h) : zone
     exportée (un plan de travail), origine du SVG en son coin ; None = cadre de tous les objets."""
     if area is None:
@@ -115,7 +115,10 @@ def export_svg(objects: list[dict], area: tuple[float, float, float, float] | No
             if g:
                 lines.append("<g>")
             group = g
-        element = path_element(data, -x, -y, refs_of.get(n))
+        if data.get("type") == model.TEXT:              # texte : `text.svg_text` (mise en page Qt), fourni
+            element = text_svg(data, -x, -y) if text_svg is not None else ""
+        else:
+            element = path_element(data, -x, -y, refs_of.get(n))
         if element:
             lines.append(element)
     if group:
@@ -125,6 +128,12 @@ def export_svg(objects: list[dict], area: tuple[float, float, float, float] | No
 
 
 def _object_bounds(data: dict):
+    if data.get("type") == model.TEXT and data.get("mode") != "path":     # estimation sans Qt (import, cadre)
+        size = float(data.get("font_size", 16.0))
+        lines = str(data.get("text", "")).split("\n")
+        x, y = data.get("x", 0.0), data.get("y", 0.0)
+        w = max(len(line) for line in lines) * size * 0.55
+        return x, y - size, x + w, y + size * float(data.get("leading", 1.2)) * (len(lines) - 1) + size * 0.3
     box = bz.bounds(data.get("subpaths") or [])
     if box is None:
         return None
@@ -356,7 +365,7 @@ def _styles(el, inherited: dict) -> dict:
     style = dict(inherited)
     for key in ("fill", "stroke", "stroke-width", "opacity", "fill-opacity", "stroke-opacity", "stroke-linecap",
                 "stroke-linejoin", "stroke-miterlimit", "stroke-dasharray", "fill-rule", "display", "stop-color",
-                "stop-opacity", "offset"):
+                "stop-opacity", "offset", "font-size", "font-family", "font-weight", "font-style"):
         if el.get(key) is not None:
             style[key] = el.get(key)
     for part in (el.get("style") or "").split(";"):
@@ -491,6 +500,11 @@ def import_svg(text: str) -> list[dict]:
             for child in children:
                 walk(child, m, passed, sub_group)
             return
+        if tag == "text":
+            entity = _text_entity(el, style, m, group)
+            if entity is not None:
+                out.append(entity)
+            return
         subs = _shape_subpaths(tag, el)
         if not subs:
             return
@@ -507,6 +521,38 @@ def import_svg(text: str) -> list[dict]:
 
     walk(root, bz.IDENTITY, {}, "")
     return out
+
+
+def _text_entity(el, style, matrix, group) -> dict | None:
+    """`<text>` -> texte de point : lignes = texte direct puis chaque `<tspan>` (un `<tspan>` avec y ou dy = nouvelle
+    ligne) ; position = x, y du texte (ou du 1er `<tspan>`) ; rotation et échelle de la matrice gardées."""
+    lines = [(el.text or "")]
+    x, y = el.get("x"), el.get("y")
+    for span in el:
+        if (span.tag.split("}", 1)[-1] if isinstance(span.tag, str) else "") != "tspan":
+            continue
+        if x is None and span.get("x") is not None:
+            x, y = span.get("x"), span.get("y")
+        if (span.get("y") is not None or span.get("dy") is not None) and lines[-1].strip():
+            lines.append(span.text or "")
+        else:
+            lines[-1] += span.text or ""
+        lines[-1] += span.tail or ""
+    text = "\n".join(line.strip("\n") for line in lines).strip("\n")
+    if not text.strip():
+        return None
+    px, py = bz.apply(matrix, _length(x), _length(y))
+    scale = math.sqrt(abs(matrix[0] * matrix[3] - matrix[1] * matrix[2])) or 1.0
+    fill = parse_color(style.get("fill", "#000000"))
+    family = (style.get("font-family") or "").split(",")[0].strip().strip("'\"")
+    data = model.new_entity(model.TEXT, text=text, font_size=_length(style.get("font-size"), 16.0) * scale,
+                            font_family=family, fill="#000000" if fill is None else fill,
+                            bold=str(style.get("font-weight", "")) in ("bold", "700", "800", "900"),
+                            italic=style.get("font-style") == "italic", group=group,
+                            rotation=math.degrees(math.atan2(matrix[1], matrix[0])),
+                            opacity=_length(style.get("opacity"), 1.0) * _length(style.get("opacity-parent"), 1.0))
+    data.update({"type": model.TEXT, "x": px, "y": py})
+    return model.normalize_entity(data)
 
 
 def _entity(subs, style, group, matrix, tag) -> dict:

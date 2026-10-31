@@ -17,6 +17,7 @@ TOOL_GROUPS = [
     [("select", "ill_select"), ("direct", "ill_direct")],
     [("pen", "ill_pen"), ("add_anchor", "ill_add_anchor"), ("delete_anchor", "ill_delete_anchor"),
      ("convert", "ill_convert")],
+    [("type", "ill_text")],
     [("rect", "ill_rect"), ("ellipse", "ill_ellipse"), ("polygon", "ill_polygon"), ("star", "ill_star"),
      ("line", "ill_line"), ("pencil", "ill_pencil")],
     [("shape_builder", "ill_shape_builder"), ("gradient", "ill_gradient"), ("eyedropper", "ill_eyedropper")],
@@ -144,6 +145,17 @@ class IllustratorChrome(QObject):
         self.board_button.clicked.connect(lambda: self.artboard_menu(self.board_button))
         self.export_button = _GlyphButton("ill_export", "Exporter / importer en SVG", self.control, 30)
         self.export_button.clicked.connect(lambda: self.export_menu(self.export_button))
+        # Texte choisi : police, taille, paragraphe (montrés seulement quand la sélection contient un texte).
+        self.font_button = _TextButton("Police", "Police", self.control, 120)
+        self.font_button.clicked.connect(lambda: self.font_menu(self.font_button))
+        self.size_button = _TextButton("12 pt", "Corps (taille du texte)", self.control, 66)
+        self.size_button.clicked.connect(lambda: self.size_menu(self.size_button))
+        self.paragraph_button = _TextButton("Paragraphe", "Alignement, interligne, approche, style",
+                                            self.control)
+        self.paragraph_button.clicked.connect(lambda: self.paragraph_menu(self.paragraph_button))
+        for widget in (self.font_button, self.size_button, self.paragraph_button):
+            bar.addWidget(widget)
+            widget.hide()
         self.pathfinder_button = _GlyphButton("ill_pathfinder", "Pathfinder (modes de forme, division…)",
                                               self.control, 30)
         self.pathfinder_button.clicked.connect(lambda: self.pathfinder_menu(self.pathfinder_button))
@@ -243,6 +255,15 @@ class IllustratorChrome(QObject):
         self.opacity.blockSignals(True)
         self.opacity.setValue(round(float(values.get("opacity", 1.0)) * 100))
         self.opacity.blockSignals(False)
+        texts = ctl.texts()
+        for widget in (self.font_button, self.size_button, self.paragraph_button):
+            widget.setVisible(bool(texts))
+        if texts:
+            from .text import base_font
+            first = texts[-1].data
+            self.font_button.setText(base_font(first).family()[:18])
+            self.size_button.setText(f"{round(float(first['font_size']) / model.PT, 1):g} pt")
+            self.title.setText("Texte" if len(items) == 1 else self.title.text())
         self.fill_stroke.update()
         self.layers_button.set_on(self.layers_open)
         if self.layers_open:
@@ -346,6 +367,74 @@ class IllustratorChrome(QObject):
         action.setEnabled(count > 0)
         action.triggered.connect(ctl.outline_stroke)
         _popup(menu, anchor)
+
+    def font_menu(self, anchor):
+        from fm_board.ui import FontPicker
+        from settings_menu import menu_row
+        from .text import base_font
+        ctl = self.ctl
+        texts = ctl.texts()
+        if not texts:
+            return
+        menu = _menu(self.pane, "ill_font")
+        picker = FontPicker(base_font(texts[-1].data).family())
+
+        def chosen(family):
+            menu.close()
+            ctl.set_text_attr("font_family", family, "Police")
+        picker.chosen.connect(chosen)
+        menu_row(menu, "", picker)
+        menu.aboutToShow.connect(picker.filter.setFocus)
+        _popup(menu, anchor)
+
+    def size_menu(self, anchor):
+        ctl = self.ctl
+        menu = _menu(self.pane, "ill_font_size")
+        for pt in (6, 8, 9, 10, 11, 12, 14, 18, 24, 30, 36, 48, 60, 72, 96, 144):
+            menu.addAction(f"{pt} pt").triggered.connect(
+                lambda _c=False, v=pt: ctl.set_text_attr("font_size", round(v * model.PT, 4), "Corps"))
+        menu.addSeparator()
+        menu.addAction("Autre corps…").triggered.connect(lambda: QTimer.singleShot(0, lambda: self._ask_number(
+            "font_size", "Corps (pt) :", model.PT, 0.5, 4000.0, "Corps")))
+        _popup(menu, anchor)
+
+    def paragraph_menu(self, anchor):
+        ctl = self.ctl
+        texts = ctl.texts()
+        if not texts:
+            return
+        menu = _menu(self.pane, "ill_paragraph")
+        for key, label in (("left", "Aligné à gauche"), ("center", "Centré"), ("right", "Aligné à droite"),
+                           ("justify", "Justifié")):
+            menu.addAction(label).triggered.connect(
+                lambda _c=False, k=key: ctl.set_text_attr("align", k, "Alignement"))
+        menu.addSeparator()
+        first = texts[-1].data
+        menu.addAction("Gras" + (" ✓" if first.get("bold") else "")).triggered.connect(
+            lambda: ctl.set_text_attr("bold", not first.get("bold"), "Gras"))
+        menu.addAction("Italique" + (" ✓" if first.get("italic") else "")).triggered.connect(
+            lambda: ctl.set_text_attr("italic", not first.get("italic"), "Italique"))
+        menu.addSeparator()
+        menu.addAction("Interligne…").triggered.connect(lambda: QTimer.singleShot(0, lambda: self._ask_number(
+            "leading", "Interligne (× le corps) :", 1.0, 0.3, 10.0, "Interligne")))
+        menu.addAction("Approche…").triggered.connect(lambda: QTimer.singleShot(0, lambda: self._ask_number(
+            "tracking", "Approche (millièmes de cadratin) :", 1.0, -1000.0, 5000.0, "Approche")))
+        if first.get("mode") == "path":
+            menu.addAction("Départ sur le tracé…").triggered.connect(lambda: QTimer.singleShot(
+                0, lambda: self._ask_number("path_offset", "Départ (% de la longueur) :", 0.01, 0.0, 100.0,
+                                            "Départ du texte")))
+        menu.addSeparator()
+        menu.addAction("Créer les contours (Ctrl+Maj+O)").triggered.connect(ctl.outline_text)
+        _popup(menu, anchor)
+
+    def _ask_number(self, key: str, label: str, unit: float, low: float, high: float, text: str):
+        texts = self.ctl.texts()
+        if not texts:
+            return
+        current = float(texts[-1].data.get(key, 0.0)) / unit
+        value, ok = QInputDialog.getDouble(self.pane, "Texte", label, current, low, high, 3)
+        if ok:
+            self.ctl.set_text_attr(key, round(value * unit, 5), text)
 
     def width_menu(self):
         ctl = self.ctl

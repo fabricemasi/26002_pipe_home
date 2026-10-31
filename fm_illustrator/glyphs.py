@@ -98,6 +98,10 @@ def paint_ill_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
         painter.drawLine(QPointF(c.x() + s * 0.4, c.y() - s * 0.5), QPointF(c.x(), c.y() - s * 0.9))
         painter.drawPolyline(QPolygonF([QPointF(c.x() - s * 0.8, c.y()), QPointF(c.x() - s * 0.8, c.y() + s * 0.8),
                                         QPointF(c.x() + s * 0.8, c.y() + s * 0.8), QPointF(c.x() + s * 0.8, c.y())]))
+    elif kind == "ill_text":
+        painter.drawLine(QPointF(c.x() - s * 0.7, c.y() - s * 0.75), QPointF(c.x() + s * 0.7, c.y() - s * 0.75))
+        painter.drawLine(QPointF(c.x(), c.y() - s * 0.75), QPointF(c.x(), c.y() + s * 0.8))
+        painter.drawLine(QPointF(c.x() - s * 0.25, c.y() + s * 0.8), QPointF(c.x() + s * 0.25, c.y() + s * 0.8))
     elif kind == "ill_shape_builder":
         painter.drawEllipse(QPointF(c.x() - s * 0.3, c.y() + s * 0.1), s * 0.5, s * 0.5)
         painter.drawEllipse(QPointF(c.x() + s * 0.3, c.y() + s * 0.1), s * 0.5, s * 0.5)

@@ -4,7 +4,8 @@ release / hover / clés / curseur).
 
 Raccourcis d'Illustrator (sources et degré de vérification : `docs/agents/fm_illustrator.md`) : V Sélection,
 A Sélection directe, P Plume, + / - ajout / suppression de point, Maj+C Conversion de point, M Rectangle,
-L Ellipse, \\ Segment de droite, N Crayon, Maj+O Plan de travail, H Main, Z Zoom, I Pipette, G Dégradé ; Polygone et Étoile
+L Ellipse, \\ Segment de droite, N Crayon, Maj+O Plan de travail, H Main, Z Zoom, I Pipette, G Dégradé,
+T Texte, Maj+M Shape Builder ; Polygone et Étoile
 n'ont pas de lettre dans Illustrator (Y y est la Baguette magique : laissée libre).
 
 Règle de l'appli : déplacer des ÉLÉMENTS = Ctrl + glisser ; les gestes de géométrie (poignées, points) sans Ctrl."""
@@ -32,7 +33,7 @@ TOOL_KEYS = {(Qt.Key_V, False): "select", (Qt.Key_A, False): "direct", (Qt.Key_P
              (Qt.Key_Backslash, False): "line",
              (Qt.Key_N, False): "pencil", (Qt.Key_O, True): "artboard", (Qt.Key_H, False): "hand",
              (Qt.Key_Z, False): "zoom", (Qt.Key_I, False): "eyedropper", (Qt.Key_G, False): "gradient",
-             (Qt.Key_M, True): "shape_builder"}
+             (Qt.Key_M, True): "shape_builder", (Qt.Key_T, False): "type"}
 
 
 def _constrain45(origin: QPointF, pos: QPointF) -> QPointF:
@@ -215,9 +216,9 @@ class TransformGesture:
         for item in self.items:
             item.resetTransform()
             item.setCacheMode(QGraphicsItem.DeviceCoordinateCache)
-            bz.transform(item.data["subpaths"], self.local(item, self.current))
+            item.bake(self.local(item, self.current))
             item.prepareGeometryChange()
-            item.sync()
+            item._place_from_data()
             item.update()
         notify_moved(self.ctl.scene, self.items)
         self.ctl.scene.end_change("Rotation" if self.handle == "rotate" else "Mise à l'échelle")
@@ -366,10 +367,14 @@ class SelectTool(Tool):
             ctl.sync_cursor()
 
     def double_click(self, pos, mods) -> bool:
-        """Double-clic sur un objet : Sélection directe de ses points (comme entrer dans le tracé)."""
+        """Double-clic sur un objet : Sélection directe de ses points (comme entrer dans le tracé) ; sur un texte :
+        l'éditer sur place."""
         item = self.ctl.object_at(pos)
         if item is None:
             return False
+        if hasattr(item, "layout_box"):
+            self.ctl.begin_text_edit(item, pos)
+            return True
         self.ctl.set_tool("direct")
         self.ctl.select([item])
         return True

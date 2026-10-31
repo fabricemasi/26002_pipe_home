@@ -12,6 +12,11 @@ Un document Illustrator = les éléments `ill_*` du board :
   Illustrator) : `rotation` reste 0 ; un déplacement ne change que (x, y).
 `group` = identifiant de groupe (vide = seul) : un clic de l'outil Sélection choisit tout le groupe ; `layer` =
 identifiant du calque (vide = le plus bas) ; `fill_gradient` / `stroke_gradient` = dégradé (`paint.py`) ou None.
+- `ill_text` : texte (`text.py`), mêmes attributs de peinture qu'un tracé. `mode` : « point » (origine (x, y) = ligne
+  de base du 1er trait, comme Illustrator et SVG), « area » (texte captif : cadre `w` × `h`, origine = son coin haut
+  gauche, retour à la ligne automatique), « path » (texte curviligne : `subpaths` = tracé de base, `path_offset` =
+  départ en fraction de sa longueur). `font_size` en unités du board (affichée en pt), `leading` = interligne en
+  multiple de la taille, `tracking` = approche en millièmes de cadratin, `rotation` en degrés (point et captif).
 Un champ inconnu reste dans l'élément (règle du `.mro`)."""
 from __future__ import annotations
 
@@ -20,7 +25,8 @@ import copy
 ARTBOARD = "ill_artboard"
 LAYER = "ill_layer"
 PATH = "ill_path"
-OBJECT_TYPES = (PATH,)
+TEXT = "ill_text"
+OBJECT_TYPES = (PATH, TEXT)
 ILL_TYPES = (ARTBOARD, LAYER) + OBJECT_TYPES
 
 ACCENT = "#2f7cf6"                     # couleur de sélection du module (bleu d'Illustrator, calque 1)
@@ -30,6 +36,8 @@ PT = 96.0 / 72.0                       # 1 pt = 1,333 unité du board (1 unité 
 MM = 96.0 / 25.4
 
 CAPS = ("butt", "round", "square")
+TEXT_MODES = ("point", "area", "path")
+TEXT_ALIGNS = ("left", "center", "right", "justify")
 JOINS = ("miter", "round", "bevel")
 FILL_RULES = ("nonzero", "evenodd")
 
@@ -44,6 +52,11 @@ ARTBOARD_FORMATS = [
 DEFAULTS = {
     ARTBOARD: {"w": 210 * MM, "h": 297 * MM, "name": "Plan de travail 1", "index": 0, "fill": "#ffffff"},
     LAYER: {"name": "Calque 1", "index": 0.0, "color": ACCENT, "hidden": False, "content_locked": False},
+    TEXT: {"text": "", "mode": "point", "font_family": "", "font_size": 16.0, "bold": False, "italic": False,
+           "align": "left", "leading": 1.2, "tracking": 0.0, "w": 200.0, "h": 100.0, "path_offset": 0.0,
+           "subpaths": [], "fill": "#000000", "stroke": "", "stroke_width": 1.0, "opacity": 1.0,
+           "cap": "butt", "join": "miter", "miter": 10.0, "dash": [], "fill_rule": "nonzero",
+           "group": "", "name": "", "hidden": False, "layer": "", "fill_gradient": None, "stroke_gradient": None},
     PATH: {"subpaths": [], "fill": DEFAULT_FILL, "stroke": DEFAULT_STROKE, "stroke_width": 1.0, "opacity": 1.0,
            "cap": "butt", "join": "miter", "miter": 10.0, "dash": [], "fill_rule": "nonzero",
            "group": "", "name": "", "hidden": False, "layer": "", "fill_gradient": None, "stroke_gradient": None},
@@ -113,6 +126,15 @@ def normalize_entity(item: dict) -> dict:
         item["h"] = max(1.0, item["h"])
         item["fill"] = valid_color(item["fill"], "#ffffff")
         return item
+    if kind == TEXT:
+        item["mode"] = item["mode"] if item["mode"] in TEXT_MODES else "point"
+        item["align"] = item["align"] if item["align"] in TEXT_ALIGNS else "left"
+        item["font_size"] = min(5000.0, max(0.5, item["font_size"]))
+        item["leading"] = min(10.0, max(0.3, item["leading"]))
+        item["tracking"] = min(5000.0, max(-1000.0, item["tracking"]))
+        item["w"] = max(1.0, item["w"])
+        item["h"] = max(1.0, item["h"])
+        item["path_offset"] = min(1.0, max(0.0, item["path_offset"]))
     item["subpaths"] = valid_subpaths(item["subpaths"])
     item["fill"] = valid_color(item["fill"], DEFAULT_FILL)
     item["stroke"] = valid_color(item["stroke"], DEFAULT_STROKE)

@@ -20,12 +20,13 @@ n'importent PAS Qt.
 | Dégradés (modèle en fractions de la boîte, outil Dégradé, SVG), nuancier par défaut | `paint.py` | `valid_gradient`, `new_gradient`, `absolute`, `set_from_drag`, `svg_gradient`, `SWATCHES` |
 | Pathfinder (skia-pathops) : modes de forme, division, découpe, fusion, recadrage, soustraction arrière, vectoriser le contour | `pathfinder.py` | `combine`, `divide`, `trim`, `merge`, `crop`, `outline_stroke`, `to_path`, `from_path` |
 | Shape Builder (Maj+M) : zones de la sélection, survol hachuré, glisser = réunir, Alt = supprimer | `shape_builder.py` | `ShapeBuilderTool` (`apply`, `region_at`) |
+| Texte (Qt) : mise en page point / captif / curviligne (police de base 100 px), chemin des lettres, créer les contours, SVG `<text>` / `<textPath>`, éditeur sur place | `text.py` | `layout`, `base_font`, `outline_subpaths`, `svg_text`, `TextEditor` |
 | Calques : accès, bandes de hauteur, panneau | `layers.py` | `layers`, `layer_of`, `top_z`, `members`, `LayersPanel` |
 | Export / import SVG (dégradés compris) | `svg.py` | `export_svg`, `path_element`, `import_svg`, `parse_d`, `arc_to_cubics`, `parse_transform`, `parse_color` |
 | Éléments de la scène (plan de travail, calque, tracé), chemin et pinceaux Qt gardés, zone cliquable | `items.py` | `IllArtboardItem`, `IllLayerItem`, `IllPathItem` (`sync`, `apply_visibility`, `hit_path`, `contains_scene_point`, `geometry_rect`), `notify_moved`, `qpath`, `gradient_brush` |
 | Activation, événements, sélection, commandes (style, grouper, disposition dans le calque, verrou, masquer, joindre, tracé transparent, pipette, plans, calques, Pathfinder, vectoriser le contour, export / import) | `controller.py` | `IllustratorController` |
 | Gestes partagés (déplacer, transformer, cadre de sélection), Sélection, Sélection directe | `tools.py` | `MoveGesture`, `TransformGesture`, `marquee_select`, `SelectTool`, `DirectTool`, `TOOL_KEYS` |
-| Plume, points (ajout / suppression / conversion), formes, crayon, plan de travail, main, zoom, pipette, dégradé (G) | `tools_draw.py` | `PenTool`, `ShapeTool`…, `PencilTool`, `ArtboardTool`, `make_tools` |
+| Plume, points (ajout / suppression / conversion), formes, crayon, plan de travail, main, zoom, pipette, dégradé (G), texte (T) | `tools_draw.py` | `PenTool`, `ShapeTool`…, `PencilTool`, `ArtboardTool`, `make_tools` |
 | Dessin temporaire (sélection, poignées, cadre, ligne élastique, noms des plans, bulle) | `overlay.py` | `IllOverlay` |
 | Barre d'outils (gauche), témoin fond / contour, barre de contrôle (haut), menus couleur (nuancier, dégradé) / épaisseur / Pathfinder / plans / export, panneau Calques | `ui.py` | `IllustratorChrome`, `FillStroke` |
 | Menu Objet / clic droit | `menus.py` | `fill_object_menu`, `open_context_menu` |
@@ -70,6 +71,20 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
   (Ctrl+] …) dans le calque, ordre des calques changé = objets re-rangés (une étape). Le 1er objet d'un dessin crée
   « Calque 1 » dans la MÊME étape d'annulation (`_pending_layer`). Supprimer un calque supprime ses objets.
   Masqué / verrouillé = affichage et clic seulement (valeurs des objets inchangées).
+- **Texte** (`ill_text`, 2026-10-31) : point (origine = ligne de base du 1er trait, comme Illustrator et SVG :
+  l'import / export SVG se passe de Qt pour la position), captif (cadre `w` × `h`, retour à la ligne aux espaces,
+  justifié, « + » rouge si le texte dépasse), curviligne (clic de l'outil Texte sur un tracé OUVERT : le tracé
+  devient le tracé de base, dans la MÊME étape que le texte ; un tracé fermé n'est pas transformé en zone de texte :
+  non fait). Rendu = chemin des lettres (police de base 100 px mise à l'échelle : indépendant du DPI), donc fond,
+  contour et dégradés comme un tracé. Édition sur place = `QGraphicsTextItem` ENFANT de l'élément (la vue le
+  reconnaît par `editing()` / `owner`, comme les textes de Miro) ; les clics dans l'éditeur lui sont confiés
+  (`controller._forward`), un clic ailleurs ou Échap termine (une étape ; texte neuf vide = rien). Pendant l'édition,
+  le texte curviligne est montré droit (comme le texte courbé de Design). Mise à l'échelle : point = corps × l'échelle,
+  captif = cadre redimensionné (corps inchangé), curviligne = tracé de base transformé ; rotation gardée dans
+  `rotation` (point, captif). Les opérations de géométrie (Pathfinder, joindre, tracé transparent, Shape Builder,
+  vectoriser le contour) ignorent les textes : Ctrl+Maj+O (Créer les contours) d'abord, comme Illustrator. Un seul
+  style par texte (pas de styles de caractères par partie). Tests : `QT_QPA_FONTDIR` = `C:\Windows\Fonts`
+  (l'offscreen n'a sinon aucune police : des carrés).
 - **Pathfinder** : style du plus haut (Soustraction : du plus bas) ; Division / Découpe / Fusion / Recadrage :
   morceaux groupés, chacun au style de son objet ; Découpe, Fusion, Recadrage retirent les contours (connaissance
   générale d'Illustrator, non vérifiée cette session ; Division garde les contours). Mode « Contour » du panneau :
@@ -81,7 +96,8 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
   helpx.adobe.com/illustrator/using/default-keyboard-shortcuts.html a répondu 403) : V Sélection, A Sélection
   directe, P Plume, Y = Baguette magique (d'où : Polygone / Étoile SANS lettre ici).
 - CONNAISSANCE GÉNÉRALE, NON VÉRIFIÉE cette session : + / - points, Maj+C conversion, M rectangle, L ellipse,
-  \ segment, N crayon, Maj+O plan de travail, H, Z, I ; Ctrl+G / Ctrl+Maj+G, Ctrl+2 / Ctrl+Alt+2, Ctrl+3 /
+  \ segment, N crayon, Maj+O plan de travail, H, Z, I, G dégradé, T texte, Maj+M Shape Builder,
+  Ctrl+Maj+O créer les contours ; Ctrl+G / Ctrl+Maj+G, Ctrl+2 / Ctrl+Alt+2, Ctrl+3 /
   Ctrl+Alt+3, Ctrl+J, Ctrl+8 / Ctrl+Alt+Maj+8, Ctrl+Y, Ctrl+] / [ (+ Maj), X / Maj+X / D / « / » ; plume (clic =
   angle, glisser = lisse, Alt = casser, clic sur le 1er point = fermer, Ctrl + clic = terminer) ; Sélection directe
   (Suppr ouvre le tracé). Clavier AZERTY : Ctrl+é / Ctrl+" / Ctrl+_ acceptés pour 2 / 3 / 8.
@@ -104,6 +120,7 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
 | Pathfinder Réunion de 200 ellipses | 99 ms (réunions deux à deux) | 18 ms (une passe) |
 | Pathfinder Exclusion de 200 ellipses | 4,1 s (XOR deux à deux) | 69 ms (une passe pair-impair) |
 | Division de 20 objets (98 zones) / Découpe | 44 ms / 5 ms | — |
+| Mise en page d'un texte (à la validation, à l'annulation, pas pendant la frappe) : point 11 lettres / curviligne 200 lettres / captif 300 mots | — / — / 40 ms (un `addText` par mot) | 0,3 ms / 17 ms / 19 ms (36 ms justifié) |
 Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 
 ## État fonctionnel
@@ -126,7 +143,8 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 | Enregistrement / réouverture (`.mro`) | Terminé | `test_save_and_reopen` |
 | Export SVG (plan, tous, dessin, sélection), import SVG (fichier, glisser-déposer) | Terminé pour les tracés (pas de dégradés, texte, images, masques) | `SvgTest`, `test_export_and_import…` |
 | Shape Builder (zones, réunir, supprimer, survol) | Terminé (pas de mode « boucle fermée » ni d'option de couleur du nuancier) | `ShapeBuilderTest` |
-| Texte (point, captif, sur tracé), pinceaux / largeur variable, masques d'écrêtage / d'opacité, Aspect / effets, images placées, vectorisation, export PDF, outils avancés (dégradé de forme, filet, déformation…), réglages du module (Réglages : Board), repères commentés / magnétisme | Non commencé | — |
+| Texte : point, captif (retour à la ligne, justifié, débordement), curviligne, édition sur place, police / corps / gras / italique / alignement / interligne / approche / départ sur le tracé, créer les contours, SVG aller-retour | Partiel (un style par texte ; pas de zone de texte dans une forme quelconque, de chaînage de cadres, de styles de paragraphe, de glyphes OpenType) | `test_illustrator_text.py` |
+| Pinceaux / largeur variable, masques d'écrêtage / d'opacité, Aspect / effets, images placées, vectorisation, export PDF, outils avancés (dégradé de forme, filet, déformation…), réglages du module (Réglages : Board), repères commentés / magnétisme | Non commencé | — |
 
 ## PASSATION (2026-10-31)
 
@@ -144,11 +162,10 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 - Tranches 6-8 (dégradés, nuancier, calques, Pathfinder) : commit suivant (voir `git log -- fm_illustrator`).
 - Tranche 9 (Shape Builder) : commit suivant. Zones calculées une fois par sélection (clé : identifiants + étape
   d'annulation), ~44 ms pour 20 objets / 98 zones, puis survol = `QPainterPath.contains` par zone.
-- POINT DE REPRISE : tranche 10, texte. Proposition : élément `ill_text` (types « point » / « area » / « path »,
-  `text`, police / taille / interlignage / approche par les briques du board : `fm_board.ui.FontPicker`), rendu par
-  `QTextLayout` gardé dans `sync`, édition sur place comme `fm_miro.items._Text`, texte sur tracé = glyphes posés le
-  long de `bezier.flatten` (comme `fm_design/text_curve.py`), vectorisation du texte = `QPainterPath.addText` ->
-  nœuds. Puis 12 masques (groupe d'écrêtage : `clip` sur le groupe, `QGraphicsItem.ItemClipsChildrenToShape`
+- Tranche 10 (texte) : commit suivant.
+- POINT DE REPRISE : tranche 11 (pinceaux, largeur variable : profil de largeur le long du tracé, contour
+  vectorisé par `pathfinder.outline_stroke` puis déformé) ou 12 masques (groupe d'écrêtage : `clip` sur le groupe,
+  `QGraphicsItem.ItemClipsChildrenToShape`
   impossible sans parenté : peindre via `QPainter.setClipPath` dans l'élément, export `<clipPath>`), 14 images
   (`asset` du board, `_bring_asset`), 16 PDF (`QPdfWriter` + `paint_path`, vectoriel).
 - Pistes de fluidité restantes : enregistrement JSON hors du fil de l'interface (coque, tous modules) ; clic de

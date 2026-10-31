@@ -246,10 +246,18 @@ class IllPathItem(IllItem):
     _box = QRectF()
     _hit = None                                         # (zoom et tolérance, chemin de recherche du contour)
 
-    def sync(self):
+    def _build_geometry(self):
         self.path = qpath(self.data.get("subpaths") or [], self.data.get("fill_rule", "nonzero"))
         box = bz.bounds(self.data.get("subpaths") or [])
         self._box = QRectF() if box is None else QRectF(box[0], box[1], box[2] - box[0], box[3] - box[1])
+
+    def bake(self, m):
+        """Matrice (repère de la scène décalé de la place de l'élément) appliquée aux nœuds : fin d'un geste de
+        transformation, symétrie, rotation."""
+        bz.transform(self.data["subpaths"], m)
+
+    def sync(self):
+        self._build_geometry()
         self._hit = None
         fill_g = self.data.get("fill_gradient")
         self._fill_brush = gradient_brush(fill_g, self._box) if fill_g else (
@@ -333,6 +341,76 @@ class IllPathItem(IllItem):
             painter.strokePath(self.path, self._pen)
 
 
+class IllTextItem(IllPathItem):
+    """Texte (`text.py`) : le chemin des lettres est peint comme un tracé (fond, contour, dégradés) ; zone cliquable =
+    son cadre ; rotation propre (`rotation`, point et captif) ; ne se peint pas pendant l'édition sur place."""
+    editing = False
+    _layout = None
+
+    def _build_geometry(self):
+        from .text import layout
+        self._layout = layout(self.data)
+        self.path = self._layout.path
+        self._box = QRectF(self._layout.box)
+
+    def layout_box(self) -> QRectF:
+        return QRectF(self._box)
+
+    def overflow(self) -> bool:
+        return bool(self._layout is not None and self._layout.overflow)
+
+    def _apply_rotation(self):
+        angle = float(self.data.get("rotation", 0.0)) if self.data.get("mode") != "path" else 0.0
+        self.setTransformOriginPoint(0.0, 0.0)
+        if self.rotation() != angle:
+            self.setRotation(angle)
+
+    def geometry_rect(self) -> QRectF:
+        return self.mapRectToScene(self._box)
+
+    def outline_polygon(self):
+        return self.mapToScene(self._box)
+
+    def hit_path(self, tolerance_px: float = 4.0) -> QPainterPath:
+        t = tolerance_px / self._zoom()
+        path = QPainterPath()
+        path.addRect(self._box.adjusted(-t, -t, t, t))
+        return path
+
+    def contains_scene_point(self, scene_pos: QPointF, tolerance_px: float = 4.0) -> bool:
+        return self.hit_path(tolerance_px).contains(self.mapFromScene(scene_pos))
+
+    def paint_content(self, painter: QPainter):
+        if not self.editing:
+            super().paint_content(painter)
+
+    def bake(self, m):
+        """Point : taille × l'échelle moyenne, origine déplacée, rotation ajoutée ; captif : cadre redimensionné (la
+        taille reste) ; sur tracé : tracé de base transformé, taille × l'échelle. Une symétrie ne retourne pas les
+        lettres (seule la place suit)."""
+        import math
+        a, b, c, d, _e, _f = m
+        det = abs(a * d - b * c)
+        data = self.data
+        if data.get("mode") == "path" and data.get("subpaths"):
+            bz.transform(data["subpaths"], m)
+            data["font_size"] = max(0.5, data["font_size"] * math.sqrt(det))
+            return
+        ox, oy = bz.apply(m, 0.0, 0.0)
+        data["x"] = round(data["x"] + ox, 3)
+        data["y"] = round(data["y"] + oy, 3)
+        sx, sy = math.hypot(a, b), math.hypot(c, d)
+        if data.get("mode") == "area":
+            data["w"] = max(1.0, data["w"] * sx)
+            data["h"] = max(1.0, data["h"] * sy)
+        else:
+            data["font_size"] = max(0.5, data["font_size"] * math.sqrt(sx * sy))
+        if a * d - b * c > 0:
+            angle = math.degrees(math.atan2(b, a))
+            data["rotation"] = round((float(data.get("rotation", 0.0)) + angle + 180.0) % 360.0 - 180.0, 4)
+
+
 ITEM_CLASSES[model.ARTBOARD] = IllArtboardItem
+ITEM_CLASSES[model.TEXT] = IllTextItem
 ITEM_CLASSES[model.PATH] = IllPathItem
 ITEM_CLASSES[model.LAYER] = IllLayerItem

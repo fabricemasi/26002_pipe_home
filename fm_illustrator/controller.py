@@ -10,12 +10,12 @@ la boîte, points d'ancrage, poignées de Bézier) n'est pas un déplacement d'�
 Une étape d'annulation par geste ou par commande (annulation du board)."""
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtWidgets import QGraphicsView
 
 from fm_board import model as board_model
 from . import bezier as bz, layers as lay, model
-from .items import IllArtboardItem, IllItem, IllLayerItem, IllPathItem
+from .items import IllArtboardItem, IllItem, IllLayerItem, IllPathItem, IllTextItem
 from .overlay import IllOverlay
 from .tools import TOOL_KEYS
 from .tools_draw import make_tools
@@ -40,6 +40,9 @@ class IllustratorController(QObject):
         self.artboard_id = ""                      # plan de travail choisi (outil Plan de travail)
         self.layer_id = ""                         # calque courant (les objets neufs y vont)
         self._pending_layer = None                 # calque créé avec le 1er objet (même étape d'annulation)
+        self.editor = None                         # texte édité sur place (text.TextEditor)
+        self._edit = None                          # (élément, avant, neuf, tracé remplacé) de l'édition en cours
+        self._forward = False                      # geste de souris confié à l'éditeur de texte (Qt)
         self.hover = None                          # objet survolé (contour accent)
         self.marquee: QRectF | None = None
         self.preview = None                        # dessin temporaire de l'outil (ligne élastique de la plume…)
@@ -75,6 +78,7 @@ class IllustratorController(QObject):
     def deactivate(self):
         if not self.active:
             return
+        self.end_text_edit()
         self.current_tool().cancel()
         self.active = False
         self.view.setViewportUpdateMode(getattr(self, "_update_mode", QGraphicsView.FullViewportUpdate))
@@ -91,7 +95,118 @@ class IllustratorController(QObject):
 
     def busy(self) -> bool:
         """Échap a quelque chose à annuler ici (geste, tracé en cours, sélection) ; sinon le board décide (fermer)."""
-        return bool(self.current_tool().busy() or self.selection() or self.artboard_id or self.marquee is not None)
+        return bool(self.editor is not None or self.current_tool().busy() or self.selection() or self.artboard_id
+                    or self.marquee is not None)
+
+    def shapes(self) -> list[IllPathItem]:
+        """Sélection sans les textes : opérations de géométrie (Pathfinder, joindre, tracé transparent…), qui
+        demandent des contours (Ctrl+Maj+O), comme dans Illustrator."""
+        return [i for i in self.selection() if not isinstance(i, IllTextItem)]
+
+    def texts(self) -> list[IllTextItem]:
+        return [i for i in self.selection() if isinstance(i, IllTextItem)]
+
+    # -- texte (text.py) --
+    def new_text(self, origin: QPointF, **values) -> IllTextItem:
+        """Texte créé SANS étape d'annulation : l'édition qui suit l'enregistre (vide = retiré)."""
+        layer = self.ensure_layer()
+        style = {k: v for k, v in self.style.items() if k in model.DEFAULTS[model.TEXT]}
+        style["fill"] = style.get("fill") or "#000000"
+        if style["fill"] == model.DEFAULT_FILL and self.style.get("stroke"):
+            style["fill"] = "#000000"                      # style par défaut (fond blanc) : texte noir, lisible
+        style.update(stroke="", stroke_gradient=None)
+        if "fill" in values and "fill_gradient" not in values:
+            style["fill_gradient"] = None                  # couleur demandée : pas le dégradé du style courant
+        style.update(values)
+        data = board_model.new_item(model.TEXT, x=round(origin.x(), 3), y=round(origin.y(), 3), **style)
+        data["layer"] = layer.item_id
+        data["z"] = lay.top_z(self.scene, layer, self.objects())
+        return self.scene._add(data)
+
+    def begin_text_edit(self, item: IllTextItem, at: QPointF | None = None, new: bool = False, replaced=None):
+        from .text import TextEditor
+        self.end_text_edit()
+        before = None if new else self.scene.snapshot([item.item_id])
+        self._edit = (item, before, new, replaced)
+        item.editing = True
+        item.update()
+        self.select([item])
+        self.editor = TextEditor(self, item)
+        self.editor.setFocus(Qt.MouseFocusReason)
+        self.editor.place_cursor(at)
+        self.refresh()
+        self.stateChanged.emit()
+
+    def end_text_edit(self):
+        """Fin de l'édition : une étape (texte neuf : création ; tracé remplacé par un texte curviligne : les deux)."""
+        editor, self.editor = self.editor, None
+        edit, self._edit = self._edit, None
+        if editor is None or edit is None:
+            return
+        item, before, new, replaced = edit
+        text = editor.toPlainText()
+        editor.owner = None
+        editor.setVisible(False)
+        # Retiré de la scène au passage suivant de la boucle : cette fonction est aussi appelée depuis le
+        # focusOutEvent de l'éditeur (le retirer pendant son propre événement ferait planter Qt).
+        QTimer.singleShot(0, lambda e=editor: e.scene() is not None and e.scene().removeItem(e))
+        item.editing = False
+        if item.scene() is None:
+            return
+        if new and not text.strip():
+            self.discard(item)
+            if replaced is not None:
+                replaced.setVisible(True)
+            self.refresh()
+            return
+        item.prepareGeometryChange()
+        item.data["text"] = text
+        item.sync()
+        item.update()
+        if new:
+            ids = [item.item_id]
+            layer, self._pending_layer = self._pending_layer, None
+            if layer is not None and layer.scene() is not None:
+                ids.insert(0, layer.item_id)
+            before = {i: None for i in ids}
+            if replaced is not None:
+                before[replaced.item_id] = replaced.to_dict()
+                self.scene._remove(replaced.item_id)
+            after = self.scene.snapshot(ids)
+            if replaced is not None:
+                after[replaced.item_id] = None
+            self.scene.push(before, after, "Texte")
+        else:
+            self.scene.push(before, self.scene.snapshot([item.item_id]), "Modifier le texte")
+        self.refresh()
+        self.stateChanged.emit()
+
+    def set_text_attr(self, key: str, value, text: str = "Texte"):
+        items = self.texts()
+        if items:
+            self.change(items, lambda i: i.data.update({key: value}), text)
+
+    def outline_text(self) -> list:
+        """Créer les contours (Ctrl+Maj+O) : chaque texte choisi devient un tracé (lettres en sous-tracés, même
+        style, même place) ; le texte n'est plus modifiable (comme Illustrator)."""
+        from PySide6.QtGui import QTransform
+        from .text import outline_subpaths
+        items = self.texts()
+        if not items:
+            return []
+        added = []
+        for item in items:
+            transform = QTransform().rotate(item.rotation()) if item.rotation() else QTransform()
+            subs = outline_subpaths(transform.map(item.path))
+            if not subs:
+                continue
+            data = board_model.new_item(model.PATH, **{k: v for k, v in item.to_dict().items()
+                                                     if k in model.DEFAULTS[model.PATH] and k != "subpaths"})
+            data.update(x=item.data["x"], y=item.data["y"], z=item.zValue(), subpaths=subs, fill_rule="nonzero")
+            added.append(data)
+        new = self.scene.replace_items(items, added, "Créer les contours")
+        self.select(new)
+        return new
 
     # ------------------------------------------------------------------ éléments
     def objects(self) -> list[IllPathItem]:
@@ -412,8 +527,7 @@ class IllustratorController(QObject):
 
         def apply(item):
             px, py = item.data["x"], item.data["y"]
-            local = bz.multiply(bz.multiply(bz.translate(px, py), matrix), bz.translate(-px, -py))
-            bz.transform(item.data["subpaths"], local)
+            item.bake(bz.multiply(bz.multiply(bz.translate(px, py), matrix), bz.translate(-px, -py)))
         self.change(items, apply, text)
 
     def flip(self, horizontal: bool):
@@ -491,7 +605,7 @@ class IllustratorController(QObject):
         retirent les contours."""
         from . import pathfinder as pf
         from .tools_draw import place_origin
-        items = self.selection()
+        items = self.shapes()
         if len(items) < 2:
             return []
         shapes = [(self.scene_subpaths(i), i.data.get("fill_rule", "nonzero")) for i in items]
@@ -530,7 +644,7 @@ class IllustratorController(QObject):
         objet qui a aussi un fond garde son fond dessous (les deux groupés)."""
         from . import pathfinder as pf
         from .tools_draw import place_origin
-        items = [i for i in self.selection() if i.data.get("stroke") and float(i.data.get("stroke_width", 0)) > 0]
+        items = [i for i in self.shapes() if i.data.get("stroke") and float(i.data.get("stroke_width", 0)) > 0]
         if not items:
             return []
         added = []
@@ -584,7 +698,7 @@ class IllustratorController(QObject):
     def join_selection(self):
         """Joindre (Ctrl+J) : relie les deux extrémités ouvertes les plus proches de la sélection (deux tracés
         ouverts, ou un tracé ouvert qui se ferme)."""
-        items = [i for i in self.selection() if any(not s["closed"] for s in i.data["subpaths"])]
+        items = [i for i in self.shapes() if any(not s["closed"] for s in i.data["subpaths"])]
         if len(items) == 1:
             def close(item):
                 for sub in item.data["subpaths"]:
@@ -633,7 +747,7 @@ class IllustratorController(QObject):
     def make_compound(self, compound: bool):
         """Tracé transparent (Ctrl+8) : les sous-tracés des objets choisis en UN objet (style du plus haut), règle
         pair-impair ; Ctrl+Alt+Maj+8 = défaire en un objet par sous-tracé."""
-        items = self.selection()
+        items = self.shapes()
         if compound and len(items) > 1:
             top = items[-1]
             subs = []
@@ -741,13 +855,14 @@ class IllustratorController(QObject):
     def export_svg(self, path, board: IllArtboardItem | None = None, only_selection: bool = False):
         from pathlib import Path
         from . import svg
+        from .text import svg_text
         if board is not None:
             r = board.scene_rect()
             area = (r.x(), r.y(), r.width(), r.height())
             text = svg.export_svg(self.export_data(r, only_selection), area,
-                                  background="", title=str(board.data.get("name", "")))
+                                  background="", title=str(board.data.get("name", "")), text_svg=svg_text)
         else:
-            text = svg.export_svg(self.export_data(None, only_selection))
+            text = svg.export_svg(self.export_data(None, only_selection), text_svg=svg_text)
         target = Path(path)
         part = target.with_name(target.name + ".part")
         part.write_text(text, encoding="utf-8")
@@ -774,7 +889,7 @@ class IllustratorController(QObject):
             if e.get("group"):
                 e["group"] = groups.setdefault(e["group"], board_model.new_id())
             data = board_model.new_item(model.PATH, **{k: v for k, v in e.items() if k not in ("id", "type")})
-            data["x"], data["y"], data["z"] = dx, dy, z
+            data["x"], data["y"], data["z"] = e.get("x", 0.0) + dx, e.get("y", 0.0) + dy, z
             data["layer"] = layer.item_id
             z += 1
             added.append(data)
@@ -791,6 +906,7 @@ class IllustratorController(QObject):
             return
         if name != self.tool:
             self.current_tool().cancel()
+            self.end_text_edit()
         self.tool = name
         if name != "direct":
             self.anchors.clear()
@@ -802,7 +918,18 @@ class IllustratorController(QObject):
         self.stateChanged.emit()
 
     # ------------------------------------------------------------------ événements (appelés par BoardView)
+    def _in_editor(self, event) -> bool:
+        editor = self.editor
+        return editor is not None and editor.sceneBoundingRect().adjusted(-4, -4, 4, 4).contains(
+            self.scene_pos(event))
+
     def mouse_press(self, event) -> bool:
+        if self.editor is not None:
+            if self._in_editor(event):                      # curseur, sélection du texte : Qt (l'éditeur)
+                self._forward = True
+                QGraphicsView.mousePressEvent(self.view, event)
+                return True
+            self.end_text_edit()
         if event.button() == Qt.RightButton:
             self.current_tool().cancel()
             from .menus import open_context_menu
@@ -816,6 +943,9 @@ class IllustratorController(QObject):
         return True
 
     def mouse_move(self, event) -> bool:
+        if self._forward:
+            QGraphicsView.mouseMoveEvent(self.view, event)
+            return True
         tool = self.current_tool()
         if event.buttons() & Qt.LeftButton:
             tool.drag(self.scene_pos(event), event.modifiers())
@@ -825,6 +955,10 @@ class IllustratorController(QObject):
         return True
 
     def mouse_release(self, event) -> bool:
+        if self._forward:
+            self._forward = False
+            QGraphicsView.mouseReleaseEvent(self.view, event)
+            return True
         if event.button() != Qt.LeftButton:
             return event.button() == Qt.RightButton
         self.current_tool().release(self.scene_pos(event), event.modifiers())
@@ -835,6 +969,9 @@ class IllustratorController(QObject):
     def mouse_double_click(self, event) -> bool:
         if event.button() != Qt.LeftButton:
             return False
+        if self.editor is not None and self._in_editor(event):
+            QGraphicsView.mouseDoubleClickEvent(self.view, event)       # double-clic : un mot choisi
+            return True
         return self.current_tool().double_click(self.scene_pos(event), event.modifiers())
 
     def sync_cursor(self) -> bool:
@@ -847,12 +984,15 @@ class IllustratorController(QObject):
         """Raccourcis gardés en mode Illustrator (la fenêtre principale ne les reçoit pas)."""
         key, mods = event.key(), event.modifiers()
         ctrl = bool(mods & Qt.ControlModifier)
+        if self.editor is not None:
+            return True                                     # texte en édition : toutes ses touches (Ctrl+Z, C, V…)
         if key in (Qt.Key_Delete, Qt.Key_Backspace, Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down,
                    Qt.Key_Return, Qt.Key_Enter, Qt.Key_Slash, Qt.Key_Plus, Qt.Key_Minus, Qt.Key_Equal,
                    Qt.Key_Backslash):
             return True
         if ctrl and key in (Qt.Key_G, Qt.Key_J, Qt.Key_Y, Qt.Key_A, Qt.Key_2, Qt.Key_3, Qt.Key_8, Qt.Key_BracketLeft,
-                            Qt.Key_BracketRight, Qt.Key_At, Qt.Key_Eacute, Qt.Key_QuoteDbl, Qt.Key_Underscore):
+                            Qt.Key_BracketRight, Qt.Key_At, Qt.Key_Eacute, Qt.Key_QuoteDbl, Qt.Key_Underscore,
+                            Qt.Key_O):
             return True
         return not ctrl and Qt.Key_A <= key <= Qt.Key_Z
 
@@ -909,6 +1049,8 @@ class IllustratorController(QObject):
             self.join_selection()
         elif key == Qt.Key_Y:
             self.toggle_outline()
+        elif key == Qt.Key_O and shift:
+            self.outline_text()
         elif key == Qt.Key_A:
             if shift:
                 self.clear_selection()
