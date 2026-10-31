@@ -27,6 +27,7 @@ class GlyphCanvas(QWidget):
     toolChanged = Signal(str)
     statusMessage = Signal(str)
     contextRequested = Signal(QPointF, QPointF)       # position globale, position dans le canvas
+    backRequested = Signal()                          # Échap sans rien de sélectionné : retour à la planche
 
     def __init__(self, project, cache, settings: dict | None = None, parent=None):
         super().__init__(parent)
@@ -660,8 +661,13 @@ class GlyphCanvas(QWidget):
             self.delete_selection()
             return
         if key == Qt.Key_Escape:
-            self.clear_selection()
-            self.update()
+            # Échap vide d'abord la sélection ; sans sélection, retour à la planche des glyphes (demande de
+            # l'utilisateur : « revenir dans le mode planche » depuis une lettre).
+            if self.selection or self.selected_components or self.selected_anchors:
+                self.clear_selection()
+                self.update()
+            else:
+                self.backRequested.emit()
             return
         super().keyPressEvent(event)
 

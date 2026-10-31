@@ -75,6 +75,32 @@ class PaneTest(WindowTestCase):
         self.assertIn("B", p.project.font)
         self.assertEqual(p.project.undo.undo_label(), "Créer 93 glyphes")
 
+    def test_escape_from_a_letter_returns_to_the_grid(self):
+        """Demande de l'utilisateur : depuis une lettre, revenir à la planche. Échap vide d'abord la sélection,
+        puis ramène à la planche (page « Glyphes »), la lettre quittée restant choisie."""
+        p = self.pane
+        self.create("H")
+        p.show_glyph("H")
+        cv = p.canvas
+        cv.set_tool("rect")
+        a, b = cv.to_widget(100, 0), cv.to_widget(500, 700)
+        QTest.mousePress(cv, Qt.LeftButton, Qt.NoModifier, a.toPoint())
+        QTest.mouseMove(cv, b.toPoint())
+        QTest.mouseRelease(cv, Qt.LeftButton, Qt.NoModifier, b.toPoint())
+        cv.set_tool("select")
+        cv.set_selection({(ci, pi) for ci, c in enumerate(p.project.font["H"].contours) for pi in range(len(c))})
+        pages = []
+        p.pageChanged.connect(pages.append)
+        self.assertTrue(cv.selection)
+        QTest.keyClick(cv, Qt.Key_Escape)
+        self.assertFalse(cv.selection)                                     # 1er Échap : la sélection
+        self.assertEqual(p.current_page(), "Éditeur")
+        QTest.keyClick(cv, Qt.Key_Escape)
+        self.assertEqual(p.current_page(), "Glyphes")                      # 2e : la planche
+        self.assertEqual(pages, ["Glyphes"])
+        self.assertEqual(p.grid.current, "H")
+        self.assertIn("Échap", p.page_buttons["Glyphes"].toolTip())
+
     def test_editor_draw_then_panel_precise_input(self):
         p = self.pane
         self.create("H")

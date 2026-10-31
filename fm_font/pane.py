@@ -66,6 +66,7 @@ class FontPane(QWidget):
     closeRequested = Signal()
     dirtyChanged = Signal(bool)
     stateChanged = Signal()           # annuler / rétablir possibles ou « modifié » ont changé (cadre de la barre)
+    pageChanged = Signal(str)         # page montrée (planche « Glyphes », « Éditeur »…) : bouton planche de la barre
 
     def __init__(self, parent=None, project: FontProject | None = None):
         super().__init__(parent)
@@ -123,7 +124,9 @@ class FontPane(QWidget):
         top.addWidget(self.title, 1)
         self.page_buttons = {}
         for page in PAGES:
-            b = button(page, f"Page {page}", lambda p=page: self.show_page(p))
+            tip = ("Planche des glyphes (Ctrl+1 ; Échap depuis une lettre)" if page == "Glyphes"
+                   else f"Page {page} (Ctrl+{PAGES.index(page) + 1})")
+            b = button(page, tip, lambda p=page: self.show_page(p))
             b.setCheckable(True)
             self.page_buttons[page] = b
             top.addWidget(b)
@@ -273,6 +276,7 @@ class FontPane(QWidget):
         self.canvas.statusMessage.connect(self.status)
         self.canvas.toolChanged.connect(self._sync_tools)
         self.canvas.contextRequested.connect(lambda g, l: actions.canvas_menu(self, g.toPoint(), l))
+        self.canvas.backRequested.connect(lambda: self.show_page("Glyphes"))
         self.preview.statusMessage.connect(self.status)
         self.preview.pairChanged.connect(lambda _p: self.kerning_panel.refresh())
         for keys, slot in (("Ctrl+Z", lambda: self.project.undo.undo()), ("Ctrl+Y", lambda: self.project.undo.redo()),
@@ -365,14 +369,21 @@ class FontPane(QWidget):
 
     # -- pages --
 
+    def current_page(self) -> str:
+        return PAGES[self.pages.currentIndex()]
+
     def show_page(self, page: str) -> None:
         index = PAGES.index(page)
         self.pages.setCurrentIndex(index)
         for name, b in self.page_buttons.items():
             b.setChecked(name == page)
         self.tool_strip.setVisible(page == "Éditeur")
+        if page != "Éditeur":
+            self.pageChanged.emit(page)
         if page == "Glyphes":
             self.grid.refresh()
+            if self.current_name is not None:
+                self.grid.ensure_visible(self.current_name)    # la lettre quittée reste en vue
             self.grid.setFocus()
         elif page == "Éditeur":
             if self.current_name is None:
@@ -381,6 +392,7 @@ class FontPane(QWidget):
                     self.show_glyph(names[0])
                     return
             self.canvas.setFocus()
+            self.pageChanged.emit(page)
         elif page == "Aperçu":
             self.preview.setFocus()
             if self.preview.use_hb:
@@ -401,6 +413,7 @@ class FontPane(QWidget):
         self.tool_strip.setVisible(True)
         self.canvas.set_glyph(name)
         self.canvas.setFocus()
+        self.pageChanged.emit("Éditeur")
         self.glyph_panel.refresh()
         self.kerning_panel.refresh()
 

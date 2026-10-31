@@ -202,8 +202,8 @@ class IntegrationTest(WindowTestCase):
         group = host.titlebar.font_group()
         self.assertTrue(group.isVisible())
         kinds = [b._font_kind for b in host._font_buttons]
-        self.assertEqual(kinds, ["undo", "redo", "save", "export", "gear", "close"])
-        undo, redo, save = host._font_buttons[:3]
+        self.assertEqual(kinds, ["gallery", "undo", "redo", "save", "export", "gear", "close"])
+        gallery, undo, redo, save = host._font_buttons[:4]
         self.assertFalse(undo.isEnabled())
         self.assertFalse(pane.close_button.isVisible())                    # pas répété dans le module
         self.assertFalse(pane.undo_button.isVisible())
@@ -216,10 +216,18 @@ class IntegrationTest(WindowTestCase):
         undo.click()
         pane._refresh_views()
         self.assertTrue(redo.isEnabled())
-        host._font_buttons[4].click()
+        host._font_buttons[5].click()
         self.assertEqual(host.opened_settings, "font")
+        # Bouton planche (comme celui de la visionneuse) : planche <-> lettre, icône selon la page.
+        self.assertEqual(gallery._kind, "single_image")                    # planche montrée : vers la lettre
+        gallery.click()
+        self.assertEqual(pane.current_page(), "Éditeur")
+        self.assertEqual(gallery._kind, "gallery")
+        self.assertIn("planche", gallery.toolTip())
+        gallery.click()
+        self.assertEqual(pane.current_page(), "Glyphes")
         with mock.patch.object(pane_mod, "confirm", side_effect=AssertionError("aucune question attendue")):
-            host._font_buttons[5].click()                                  # revenu à l'état enregistré
+            host._font_buttons[6].click()                                  # revenu à l'état enregistré
         self.assertIsNone(host._font)
         self.assertFalse(group.isVisible())
 

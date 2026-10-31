@@ -14,10 +14,13 @@ OUT / LOGICIELS, n'est pas une source `.ufo` (dossier) / `.designspace` ou une p
 voir `_sync_mode_buttons` ; module ouvert = le bouton le ferme, `_toggle_font`), menu d'une ligne, de la pellicule, de la planche ou de
 l'image du focus « Ouvrir dans le module typographique » (table commune `main_window/module_targets.py`, `font_target`), ou menu d'une colonne « Créer un projet typographique ». Module ouvert :
 cadre « Typographie » de la barre (comme « Vidéo » / « Board », `titlebar.font_group`, `_layout_font_buttons`) :
-annuler, rétablir (grisés selon la pile, libellé de l'étape en infobulle), enregistrer (fond accent si modifié),
+planche / lettre (icône `gallery` <-> `single_image` comme la visionneuse, `_toggle_font_gallery`), annuler, rétablir (grisés selon la pile, libellé de l'étape en infobulle), enregistrer (fond accent si modifié),
 exporter (menu des formats), engrenage = fenêtre « Réglages : Typographie », fermer ; le module ne les répète pas
 dans sa barre du haut (`HOOKS["navbar_frame"]`) ; le cadre n'est refait que sur `FontPane.stateChanged` (annuler /
-rétablir / modifié ont changé : 0,2 ms), jamais à chaque geste. Pages : Glyphes (Ctrl+1), Éditeur (Ctrl+2, double-clic sur un
+rétablir / modifié ont changé : 0,2 ms) ou `pageChanged`, jamais à chaque geste. RETOUR À LA PLANCHE depuis une
+lettre (demande de l'utilisateur 2026-10-31) : Échap dans le canvas vide d'abord la sélection, puis revient à la
+planche (`GlyphCanvas.backRequested`, la lettre quittée reste choisie et en vue) ; Échap sur la planche ferme le
+module (comme avant). Pages : Glyphes (Ctrl+1), Éditeur (Ctrl+2, double-clic sur un
 glyphe), Aperçu (Ctrl+3), Features (Ctrl+4, Ctrl+Entrée = appliquer), Diagnostic (Ctrl+5). Outils : V sélection,
 P plume, B crayon, R rectangle, E ellipse, Y polygone (Alt = étoile), C plume calligraphique, W brosse, M mesure,
 K couteau (Maj = 45°), H main ; Espace tenu / bouton du milieu = déplacer la vue ; molette = zoom ; flèches = déplacer (Maj ×10) ;

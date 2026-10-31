@@ -63,6 +63,7 @@ class FontModuleMixin:
             pane = FontPane(self.scroll.viewport())
             pane.closeRequested.connect(self._close_font)
             pane.stateChanged.connect(self._layout_font_buttons)
+            pane.pageChanged.connect(lambda _page: self._layout_font_buttons())
             self._font = pane
         if path is not None and not pane.open_path(path):
             if pane.project.path is None and not pane.project.is_dirty():
@@ -113,9 +114,10 @@ class FontModuleMixin:
             column.list.setFocus()
 
     def _layout_font_buttons(self):
-        """Boutons du cadre « Typographie » de la barre (comme « Vidéo » / « Board ») : annuler, rétablir,
-        enregistrer (accent si modifié), exporter, réglages du module, fermer. Rappelé seulement quand annuler /
-        rétablir / « modifié » changent (`FontPane.stateChanged`), jamais à chaque geste."""
+        """Boutons du cadre « Typographie » de la barre (comme « Vidéo » / « Board ») : planche / lettre (comme
+        le bouton planche de la visionneuse), annuler, rétablir, enregistrer (accent si modifié), exporter, réglages
+        du module, fermer. Rappelé seulement quand annuler / rétablir / « modifié » ou la page changent
+        (`FontPane.stateChanged`, `pageChanged`), jamais à chaque geste."""
         from preview_column import IconButton, style_focus_button
         pane = getattr(self, "_font", None)
         group = self.titlebar.font_group()
@@ -125,6 +127,7 @@ class FontModuleMixin:
         buttons = self.__dict__.setdefault("_font_buttons", [])
         if not buttons:
             for kind, tip, slot in (
+                    ("gallery", "Planche des glyphes", self._toggle_font_gallery),
                     ("undo", "Annuler (Ctrl+Z)", lambda: self._font and self._font.project.undo.undo()),
                     ("redo", "Rétablir (Ctrl+Y)", lambda: self._font and self._font.project.undo.redo()),
                     ("save", "Enregistrer la source (Ctrl+S)", lambda: self._font and self._font.save()),
@@ -148,7 +151,12 @@ class FontModuleMixin:
         for button in buttons:
             style_focus_button(button)
             kind = button._font_kind
-            if kind == "undo":
+            if kind == "gallery":
+                on_grid = pane.current_page() == "Glyphes"
+                button.set_kind("single_image" if on_grid else "gallery")
+                button.setToolTip("Ouvrir la lettre choisie (Ctrl+2)" if on_grid
+                                  else "Revenir à la planche des glyphes (Échap, Ctrl+1)")
+            elif kind == "undo":
                 self._set_button_usable(button, undo.can_undo())
                 button.setToolTip(f"Annuler : {undo.undo_label()} (Ctrl+Z)" if undo.can_undo() else "Annuler")
             elif kind == "redo":
@@ -165,3 +173,10 @@ class FontModuleMixin:
         group.show()
         group.raise_()
         self.titlebar.place_viewer_group()
+
+    def _toggle_font_gallery(self):
+        """Bouton planche du cadre « Typographie » : lettre ouverte = retour à la planche des glyphes ; planche
+        montrée = la lettre choisie (ou la première)."""
+        pane = getattr(self, "_font", None)
+        if pane is not None:
+            pane.show_page("Éditeur" if pane.current_page() == "Glyphes" else "Glyphes")
