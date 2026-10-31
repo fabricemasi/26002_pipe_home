@@ -12,7 +12,7 @@ multimasters) et `python -m fm_font.bench 1000 --qt` (canvas, grille, aperçu ; 
 d'une colonne « Créer un projet typographique ». Pages : Glyphes (Ctrl+1), Éditeur (Ctrl+2, double-clic sur un
 glyphe), Aperçu (Ctrl+3), Features (Ctrl+4, Ctrl+Entrée = appliquer), Diagnostic (Ctrl+5). Outils : V sélection,
 P plume, B crayon, R rectangle, E ellipse, Y polygone (Alt = étoile), C plume calligraphique, W brosse, M mesure,
-H main ; Espace tenu / bouton du milieu = déplacer la vue ; molette = zoom ; flèches = déplacer (Maj ×10) ;
+K couteau (Maj = 45°), H main ; Espace tenu / bouton du milieu = déplacer la vue ; molette = zoom ; flèches = déplacer (Maj ×10) ;
 Suppr ; double-clic sur un nœud = lisse / coin ; clic droit = opérations (nœuds, contours, tracés, transformer,
 aligner, composants, ancres). Clic sur une règle = repère. Ctrl+Z / Ctrl+Y, Ctrl+S.
 
@@ -31,6 +31,7 @@ RIEN de la fenêtre principale (elle lui pose des `HOOKS`).
 | Géométrie : transformations, symétrie, booléens, chevauchements, simplification, arrondi, alignement, mesures | `geometry.py` | `move_points`, `transform_glyph`, `mirror`, `boolean`, `remove_overlaps`, `simplify`, `round_coordinates`, `align`, `distribute`, `measure`, `intersections_with_line` |
 | Formes et crayon (ajustement de Schneider) | `shapes.py` | `rectangle`, `ellipse`, `polygon`, `pencil_contour`, `fit_cubic` |
 | Calligraphie : plume à angle, brosse, pression, lissage, contours éditables | `calligraphy.py` | `outline` |
+| Couteau : coupe exacte le long d'un segment (contours fermés, contre-formes reliées, contours ouverts) | `knife.py` | `cut` |
 | Métriques : approches, chasse, centrage, chaînes de contrôle | `metrics.py` | `left_margin`, `set_left_margin`, `set_right_margin`, `set_width`, `CONTROL_STRINGS` |
 | Crénage : paires, classes, exceptions, aide automatique | `kerning.py` | `lookup`, `target_pair`, `set_value`, `set_group`, `is_exception`, `suggest` |
 | Composants, ancres, accentués, cycles | `components.py` | `add_component`, `decompose`, `find_cycles`, `would_cycle`, `set_anchor`, `build_accented` |
@@ -45,7 +46,7 @@ RIEN de la fenêtre principale (elle lui pose des `HOOKS`).
 | Défauts des réglages `typo_*` | `settings_defaults.py` | `TYPO_DEFAULTS` |
 | Rendu Qt : chemins des glyphes, cache invalidé finement (glyphe + composés qui l'utilisent) | `render.py` | `PathCache`, `glyph_path`, `QPathPen` |
 | Canvas : zoom, pan, règles, grille, métriques, rempli / contour / comparaison, nœuds, ancres, composants, repères, magnétisme | `canvas.py` | `GlyphCanvas` (`set_glyph`, `fit`, `zoom_at`, `pan`, `hit_*`, `snap`, `edit`, `changed_live`, `end_interaction`) |
-| Outils : sélection, plume, crayon, rectangle, ellipse, polygone, plume calligraphique, brosse, mesure, main | `tools.py` | `TOOLS`, `TOOL_KEYS` |
+| Outils : sélection, plume, crayon, rectangle, ellipse, polygone, plume calligraphique, brosse, mesure, couteau, main | `tools.py` | `TOOLS`, `TOOL_KEYS` |
 | Grille des glyphes : recherche, filtres, manquants | `glyph_grid.py` | `GlyphGrid` |
 | Aperçu : ligne, paragraphe, cascade, masters ; crénage visuel ; HarfBuzz en fond | `preview.py` | `PreviewWidget`, `parse_text` |
 | Panneaux (briques des réglages) : glyphe, famille, crénage, masters ; pages Features et Diagnostic | `panels.py` | `GlyphPanel`, `FontPanel`, `KerningPanel`, `MastersPanel`, `FeaturesPage`, `DiagnosticsPage` |
@@ -136,7 +137,7 @@ Légende : TERMINÉ (fonctionne, sauvegardé si besoin, testé) / PARTIEL / NON 
 | Interface : espace de travail, pages, barre, état « modifié », fermeture prudente | TERMINÉ | `test_fm_font_pane` |
 | Grille : recherche (nom, caractère, U+), filtres, manquants (création au double-clic), menus | TERMINÉ | virtualisée |
 | Éditeur : canvas, zoom / pan, règles + repères, grille, métriques, rempli / contour / comparaison | TERMINÉ | `test_fm_font_canvas` |
-| Outils : sélection (points, segments, contours, cadre), plume, crayon, rectangle, ellipse, polygone / étoile, calligraphie, brosse, mesure, main | TERMINÉ | gestes simulés testés |
+| Outils : sélection (points, segments, contours, cadre), plume, crayon, rectangle, ellipse, polygone / étoile, calligraphie, brosse, mesure, couteau, main | TERMINÉ | gestes simulés testés ; couteau : `test_fm_font_knife` (aire conservée, « o » -> deux C) |
 | Saisie numérique précise (coordonnées, chasse, approches, Unicode, nom ; métriques de famille) | TERMINÉ | tableaux des réglages |
 | Aperçu : ligne, paragraphe, cascade, masters ; crénage visuel (Alt + flèches, Ctrl + glisser) ; HarfBuzz + features | TERMINÉ | compilation de fond |
 | Éditeur de features : erreurs lisibles, génération, application | TERMINÉ | |
@@ -178,6 +179,7 @@ Légende : TERMINÉ (fonctionne, sauvegardé si besoin, testé) / PARTIEL / NON 
 | Chemin du glyphe refait (invalidation) | 0,7 ms | 0,7 ms |
 | Grille : filtrer 1000 glyphes / peindre un écran | 1 / 14 ms | |
 | Aperçu : ligne de 40 glyphes / un cran de crénage | 1,1 / 1,3 ms | |
+| Couteau sur le glyphe de 400 points : aperçu par mouvement (contours aplatis gardés pendant le geste) / coupe | 5,5 -> 2,3 ms / 33 ms | |
 | Ouverture de l'espace de travail (fenêtre de réglages déjà chargée) | 180 ms | |
 
 Ce qui a coûté (cProfile) : le REMPLISSAGE ANTICRÉNELÉ (28 ms, proportionnel à la surface) et le TRAIT

@@ -238,13 +238,20 @@ def contour_length(contour, steps: int = 32) -> float:
     return sum(math.dist(a, b) for a, b in zip(poly, poly[1:]))
 
 
-def intersections_with_line(glyph, a, b, steps: int = 32) -> list[tuple[float, float]]:
-    """Points où le segment [a, b] coupe les contours (outil de mesure : épaisseurs des fûts)."""
-    hits = []
+def flattened(glyph, steps: int = 32) -> list[list[tuple[float, float]]]:
+    """Contours aplatis (fermés : premier point répété). À garder pendant un geste : le glyphe ne change pas."""
+    polys = []
     for contour in glyph.contours:
         poly = C.flatten_contour(contour, steps)
-        if C.is_closed(contour):
-            poly = poly + poly[:1]
+        polys.append(poly + poly[:1] if C.is_closed(contour) else poly)
+    return polys
+
+
+def intersections_with_line(glyph, a, b, steps: int = 32, polys=None) -> list[tuple[float, float]]:
+    """Points où le segment [a, b] coupe les contours (mesure : épaisseurs des fûts ; aperçu du couteau).
+    `polys` : contours déjà aplatis (`flattened`), pour ne pas les refaire à chaque mouvement de la souris."""
+    hits = []
+    for poly in polys if polys is not None else flattened(glyph, steps):
         for p, q in zip(poly, poly[1:]):
             hit = _segment_intersection(a, b, p, q)
             if hit is not None:

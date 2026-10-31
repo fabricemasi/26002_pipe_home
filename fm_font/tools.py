@@ -12,7 +12,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPainterPath, QPen, QPolygonF
 from ufoLib2.objects import Contour, Point
 
-from . import calligraphy, geometry, shapes
+from . import calligraphy, geometry, knife, shapes
 from . import contours as C
 
 DRAG_THRESHOLD = 3
@@ -604,12 +604,13 @@ class MeasureTool(Tool):
     def press(self, pos, mods):
         self.a = self.b = self.canvas.to_font(pos)
         self.hits = []
+        self.polys = geometry.flattened(self.canvas.glyph) if self.canvas.glyph is not None else []
 
     def move(self, pos, mods):
         if self.a is None:
             return
         self.b = self.canvas.to_font(pos)
-        self.hits = geometry.intersections_with_line(self.canvas.glyph, self.a, self.b)
+        self.hits = geometry.intersections_with_line(None, self.a, self.b, polys=self.polys)
         self.canvas.update()
 
     def release(self, pos, mods):
@@ -637,6 +638,59 @@ class MeasureTool(Tool):
             painter.drawEllipse(cv.to_widget(*h), 3, 3)
 
 
+class KnifeTool(Tool):
+    ident, label, tip = "knife", "Couteau", "Couteau : glisser à travers une forme pour la couper (Maj : 45°) (K)"
+    cursor = Qt.CrossCursor
+
+    def __init__(self, canvas):
+        super().__init__(canvas)
+        self.a = self.b = None
+        self.hits = []
+
+    def press(self, pos, mods):
+        self.a = self.b = self.canvas.to_font(pos)
+        self.hits = []
+        self.polys = geometry.flattened(self.canvas.glyph) if self.canvas.glyph is not None else []
+
+    def move(self, pos, mods):
+        if self.a is None:
+            return
+        x, y = self.canvas.to_font(pos)
+        if mods & Qt.ShiftModifier:                         # contrainte à 45°
+            dx, dy = x - self.a[0], y - self.a[1]
+            angle = round(math.atan2(dy, dx) / (math.pi / 4)) * (math.pi / 4)
+            length = math.hypot(dx, dy)
+            x, y = self.a[0] + length * math.cos(angle), self.a[1] + length * math.sin(angle)
+        self.b = (x, y)
+        self.hits = geometry.intersections_with_line(None, self.a, self.b, polys=self.polys)   # aperçu
+        self.canvas.update()
+
+    def release(self, pos, mods):
+        cv = self.canvas
+        a, b, self.a, self.b, self.hits = self.a, self.b, None, None, []
+        if a is None or b is None or math.dist(a, b) * cv.scale < 3:
+            cv.update()
+            return
+        result = []
+        cv.edit(self.label, lambda glyph: result.append(knife.cut(glyph, a, b)))
+        cv.statusMessage.emit(f"Couteau : {result[0]} coupe(s)." if result and result[0] else
+                              "Couteau : le trait ne traverse aucune forme.")
+        cv.update()
+
+    def cancel(self):
+        self.a = self.b = None
+        self.hits = []
+
+    def paint(self, painter):
+        if self.a is None or self.b is None:
+            return
+        cv = self.canvas
+        painter.setPen(QPen(cv._colors["selection"], 1, Qt.DashLine))
+        painter.drawLine(cv.to_widget(*self.a), cv.to_widget(*self.b))
+        for h in self.hits:
+            painter.drawEllipse(cv.to_widget(*h), 3, 3)
+
+
 class HandTool(Tool):
     ident, label, tip = "hand", "Main", "Déplacer la vue (H ; Espace tenu ou bouton du milieu partout)"
     cursor = Qt.OpenHandCursor
@@ -650,6 +704,7 @@ class HandTool(Tool):
 
 
 TOOLS = {cls.ident: cls for cls in (SelectTool, PenTool, PencilTool, RectTool, EllipseTool, PolygonTool,
-                                  CalligraphyTool, BrushTool, MeasureTool, HandTool)}
+                                  CalligraphyTool, BrushTool, MeasureTool, KnifeTool, HandTool)}
 TOOL_KEYS = {Qt.Key_V: "select", Qt.Key_P: "pen", Qt.Key_B: "pencil", Qt.Key_R: "rect", Qt.Key_E: "ellipse",
-             Qt.Key_Y: "polygon", Qt.Key_C: "nib", Qt.Key_W: "brush", Qt.Key_M: "measure", Qt.Key_H: "hand"}
+             Qt.Key_Y: "polygon", Qt.Key_C: "nib", Qt.Key_W: "brush", Qt.Key_M: "measure", Qt.Key_K: "knife",
+             Qt.Key_H: "hand"}
