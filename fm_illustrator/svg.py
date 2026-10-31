@@ -32,9 +32,17 @@ def _paint(color: str) -> tuple[str, float]:
 
 def path_element(data: dict, dx: float = 0.0, dy: float = 0.0, refs: dict | None = None) -> str:
     """`<path>` ; `refs` = {"fill" / "stroke": "url(#id)"} pour un dégradé."""
-    d = bz.svg_d(data.get("subpaths") or [], data.get("x", 0.0) + dx, data.get("y", 0.0) + dy)
+    from . import appearance
+    d = bz.svg_d(appearance.render_subpaths(data), data.get("x", 0.0) + dx, data.get("y", 0.0) + dy)
     if not d:
         return ""
+    under = []                                          # contours supplémentaires (aspect) : sous l'objet
+    for stroke in data.get("extra_strokes") or []:
+        color, op = _paint(stroke["color"])
+        op *= float(stroke.get("opacity", 1.0))
+        extra = f' stroke-opacity="{bz._num(op)}"' if op < 1 else ""
+        under.append(f'<path d="{d}" fill="none" stroke="{color}" stroke-width="{bz._num(stroke["width"])}"'
+                     f'{extra}/>')
     refs = refs or {}
     fill, fill_op = _paint(data.get("fill", ""))
     stroke, stroke_op = _paint(data.get("stroke", ""))
@@ -66,7 +74,11 @@ def path_element(data: dict, dx: float = 0.0, dy: float = 0.0, refs: dict | None
         attrs.append(f'opacity="{bz._num(opacity)}"')
     if data.get("name"):
         attrs.append(f"id={quoteattr(_xml_id(data['name']))}")
-    return f"<path {' '.join(attrs)}/>"
+    element = "".join(under) + f"<path {' '.join(attrs)}/>"
+    fid = (refs or {}).get("filter")
+    if fid:
+        return f'<g filter="url(#{fid})">{element}</g>'
+    return f"<g>{element}</g>" if under else element
 
 
 def _xml_id(name: str) -> str:
@@ -102,6 +114,12 @@ def export_svg(objects: list[dict], area: tuple[float, float, float, float] | No
                 gid = f"degrade{len(defs) + 1}"
                 defs.append(paint.svg_gradient(g, box, gid, data.get("x", 0.0) - x, data.get("y", 0.0) - y))
                 refs_of.setdefault(n, {})[which] = f"url(#{gid})"
+    from . import appearance
+    for n, data in enumerate(objects):
+        if data.get("type") != model.TEXT and appearance.has_raster(data):
+            fid = f"effets{n + 1}"
+            defs.append(appearance.svg_filter(data, fid))
+            refs_of.setdefault(n, {})["filter"] = fid
     wrap = {}                                           # groupe masqué -> attribut du <g>
     for n, data in enumerate(objects):
         kind, g = data.get("mask"), data.get("group") or ""

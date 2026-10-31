@@ -159,10 +159,13 @@ class IllustratorChrome(QObject):
         self.pathfinder_button = _GlyphButton("ill_pathfinder", "Pathfinder (modes de forme, division…)",
                                               self.control, 30)
         self.pathfinder_button.clicked.connect(lambda: self.pathfinder_menu(self.pathfinder_button))
+        self.effects_button = _GlyphButton("ill_fx", "Effets et aspect (ombre, lueur, flou, décalage, arrondis, "
+                                           "contours supplémentaires)", self.control, 30)
+        self.effects_button.clicked.connect(lambda: self._effects(self.effects_button))
         self.layers_button = _GlyphButton("ill_layers", "Calques", self.control, 30)
         self.layers_button.clicked.connect(self.toggle_layers)
-        for widget in (self.object_button, self.pathfinder_button, self.board_button, self.layers_button,
-                       self.export_button):
+        for widget in (self.object_button, self.pathfinder_button, self.effects_button, self.board_button,
+                       self.layers_button, self.export_button):
             bar.addWidget(widget)
         from settings_theme import _text_label
         from .layers import LayersPanel
@@ -201,6 +204,10 @@ class IllustratorChrome(QObject):
         self.tools.hide()
         self.control.hide()
         self.layers.hide()
+
+    def _effects(self, anchor):
+        from .appearance_ui import effects_menu
+        effects_menu(self.ctl, anchor)
 
     def toggle_layers(self):
         self.layers_open = not self.layers_open

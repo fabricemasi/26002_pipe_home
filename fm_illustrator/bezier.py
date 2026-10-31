@@ -497,3 +497,46 @@ def svg_d(subpaths, dx: float = 0.0, dy: float = 0.0) -> str:
         if sub.get("closed"):
             out.append("Z")
     return "".join(out)
+
+
+# ---------------------------------------------------------------- arrondis (effet « round »)
+def round_corners(subpaths, radius: float) -> list:
+    """Angles entre deux segments DROITS remplacés par un arc (cubique) de rayon `radius`, borné à la moitié du plus
+    court des deux segments ; les angles courbes ou lisses restent. Nouvelle liste (les nœuds d'origine intacts)."""
+    out = []
+    for sub in subpaths:
+        nodes = sub["nodes"]
+        count = len(nodes)
+        closed = bool(sub.get("closed"))
+        new = []
+        for i, n in enumerate(nodes):
+            has_prev = closed or i > 0
+            has_next = closed or i < count - 1
+            if count < 3 or not (has_prev and has_next) or has_in(n) or has_out(n):
+                new.append(list(n))
+                continue
+            p, q = nodes[i - 1], nodes[(i + 1) % count]
+            if has_out(p) or has_in(q):                 # segment voisin courbe : angle gardé
+                new.append(list(n))
+                continue
+            a = (n[0], n[1])
+            d1, d2 = math.dist(a, (p[0], p[1])), math.dist(a, (q[0], q[1]))
+            if d1 < EPS or d2 < EPS:
+                new.append(list(n))
+                continue
+            u = ((p[0] - a[0]) / d1, (p[1] - a[1]) / d1)
+            v = ((q[0] - a[0]) / d2, (q[1] - a[1]) / d2)
+            cos = max(-1.0, min(1.0, u[0] * v[0] + u[1] * v[1]))
+            angle = math.acos(cos)                      # angle intérieur
+            if angle < 1e-3 or abs(math.pi - angle) < 1e-3:
+                new.append(list(n))
+                continue
+            t = min(radius / math.tan(angle / 2), d1 / 2, d2 / 2)     # distance du sommet aux points de tangence
+            r = t * math.tan(angle / 2)
+            k = 4.0 / 3.0 * math.tan((math.pi - angle) / 4) * r       # poignées d'un arc de cercle en cubique
+            s = (a[0] + u[0] * t, a[1] + u[1] * t)
+            e = (a[0] + v[0] * t, a[1] + v[1] * t)
+            new.append(node(s[0], s[1], None, None, s[0] - u[0] * k, s[1] - u[1] * k))
+            new.append(node(e[0], e[1], e[0] - v[0] * k, e[1] - v[1] * k))
+        out.append({"closed": closed, "nodes": new})
+    return out

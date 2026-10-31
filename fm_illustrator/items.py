@@ -14,7 +14,7 @@ from PySide6.QtGui import (QBrush, QColor, QImage, QLinearGradient, QPainter, QP
 from PySide6.QtWidgets import QGraphicsItem
 
 from fm_miro.items import ITEM_CLASSES, POSITION_HAS_CHANGED, BoardItem, CommentItem, ConnectorItem, clone_data
-from . import bezier as bz, model
+from . import appearance, bezier as bz, model
 
 ARTBOARD_Z = -300000.0                 # sous les pages Design (-200000) et les cadres de Miro (-100000)
 CAPS = {"butt": Qt.FlatCap, "round": Qt.RoundCap, "square": Qt.SquareCap}
@@ -319,6 +319,13 @@ class IllPathItem(IllItem):
             if old is not None:
                 self.setCacheMode(QGraphicsItem.NoCache)
         self._apply_mask_cache()
+        self.draw_path = self._effect_path()
+        self._extra_pens = [(QPen(qcolor(s["color"]), s["width"], Qt.SolidLine, CAPS.get(self.data.get("cap"),
+                                                                                  Qt.FlatCap),
+                                  JOINS.get(self.data.get("join"), Qt.MiterJoin)), s["opacity"])
+                            for s in self.data.get("extra_strokes") or [] if s["width"] > 0]
+        self._raster = appearance.has_raster(self.data)
+        self._fx_generation = getattr(self, "_fx_generation", 0) + 1     # image d'effets gardée : périmée
         self._hit = None
         fill_g = self.data.get("fill_gradient")
         self._fill_brush = gradient_brush(fill_g, self._box) if fill_g else (
@@ -355,11 +362,19 @@ class IllPathItem(IllItem):
         """Cadre de la géométrie dans la scène (sans l'épaisseur du contour) : boîte de sélection d'Illustrator."""
         return self._box.translated(self.pos())
 
+    def _effect_path(self) -> QPainterPath:
+        """Chemin DESSINÉ : effets vectoriels (décalage, arrondis) appliqués ; sinon le chemin de l'objet."""
+        if not appearance.active(self.data, appearance.VECTOR):
+            return self.path
+        return qpath(appearance.render_subpaths(self.data), self.data.get("fill_rule", "nonzero"))
+
     def paint_margin(self) -> QRectF:
         w = float(self.data.get("stroke_width", 0.0)) if self.data.get("stroke") else 0.0
         m = w * max(1.0, float(self.data.get("miter", 10.0)) / 2) if self.data.get("join") == "miter" else w
-        m = max(m, w) / 2 + 1.0
-        return self._box.adjusted(-m, -m, m, m)
+        m = max(m, w) / 2 + 1.0 + appearance.margin(self.data)
+        drawn = getattr(self, "draw_path", None)
+        box = self._box if drawn is None or drawn is self.path else self._box.united(drawn.boundingRect())
+        return box.adjusted(-m, -m, m, m)
 
     def shape(self) -> QPainterPath:
         return self.hit_path()
@@ -374,9 +389,10 @@ class IllPathItem(IllItem):
         stroker.setWidth(max(width, 0.0) + 2 * tolerance_px / zoom)
         stroker.setCapStyle(Qt.RoundCap)
         stroker.setJoinStyle(Qt.RoundJoin)
-        hit = stroker.createStroke(self.path)
+        drawn = getattr(self, "draw_path", self.path)
+        hit = stroker.createStroke(drawn)
         if self.data.get("fill"):
-            hit = hit.united(self.path)
+            hit = hit.united(drawn)
         self._hit = ((zoom, tolerance_px), hit)
         return hit
 
@@ -449,17 +465,35 @@ class IllPathItem(IllItem):
         painter.drawImage(device.topLeft(), art)
         painter.restore()
 
+    draw_path = QPainterPath()
+    _extra_pens: list = []
+    _raster = False
+
     def paint_path(self, painter: QPainter, outline: bool = False):
-        """Fond puis contour (ordre d'Illustrator par défaut) ; `outline` = mode Tracés (Ctrl+Y) : filet noir fin."""
+        """Aspect : contours supplémentaires, fond puis contour (ordre d'Illustrator par défaut), puis effets tramés ;
+        `outline` = mode Tracés (Ctrl+Y) : filet noir fin de la géométrie."""
         if outline:
             painter.setPen(QPen(QColor("#000000"), 0))
             painter.setBrush(Qt.NoBrush)
             painter.drawPath(self.path)
             return
+        if self._raster:
+            from .effects import paint_with_effects
+            paint_with_effects(self, painter, self._paint_vector)
+        else:
+            self._paint_vector(painter)
+
+    def _paint_vector(self, painter: QPainter):
+        path = self.draw_path
+        for pen, opacity in self._extra_pens:
+            painter.save()
+            painter.setOpacity(painter.opacity() * opacity)
+            painter.strokePath(path, pen)
+            painter.restore()
         if self._fill_brush is not None:
-            painter.fillPath(self.path, self._fill_brush)
+            painter.fillPath(path, self._fill_brush)
         if self._pen is not None:
-            painter.strokePath(self.path, self._pen)
+            painter.strokePath(path, self._pen)
 
 
 class IllTextItem(IllPathItem):
@@ -476,6 +510,9 @@ class IllTextItem(IllPathItem):
 
     def layout_box(self) -> QRectF:
         return QRectF(self._box)
+
+    def _effect_path(self) -> QPainterPath:
+        return self.path                                # effets vectoriels : pas sur un texte (Créer les contours)
 
     def overflow(self) -> bool:
         return bool(self._layout is not None and self._layout.overflow)

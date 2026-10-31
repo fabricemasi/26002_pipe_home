@@ -186,6 +186,96 @@ class IllustratorController(QObject):
         if items:
             self.change(items, lambda i: i.data.update({key: value}), text)
 
+    # -- aspect et effets (appearance.py) --
+    def add_effect(self, kind: str):
+        from . import appearance as ap
+        items = [i for i in self.selection() if ap.effect(i.data, kind) is None]
+        if items:
+            self.change(items, lambda i: i.data.update(effects=ap.valid_effects(
+                list(i.data.get("effects") or []) + [ap.new_effect(kind)])), f"Effet : {ap.LABELS[kind]}")
+
+    def set_effect(self, kind: str, key: str, value):
+        """Curseur / couleur d'un effet, EN DIRECT (une étape par geste) ; tous les objets choisis qui l'ont."""
+        from . import appearance as ap
+        items = [i for i in self.selection() if ap.effect(i.data, kind) is not None]
+
+        def change(item):
+            effects = [dict(e) for e in item.data["effects"]]
+            for e in effects:
+                if e["type"] == kind:
+                    e[key] = value
+            item.data["effects"] = ap.valid_effects(effects)
+        if items:
+            self.scene.live_change(f"ill_fx:{kind}:{key}", items, change, f"Effet : {ap.LABELS[kind]}")
+
+    def toggle_effect(self, kind: str):
+        from . import appearance as ap
+        items = [i for i in self.selection() if ap.effect(i.data, kind) is not None]
+
+        def change(item):
+            item.data["effects"] = [dict(e, on=not e.get("on", True)) if e["type"] == kind else e
+                                    for e in item.data["effects"]]
+        self.change(items, change, "Activer / désactiver l'effet")
+
+    def remove_effect(self, kind: str):
+        items = [i for i in self.selection() if any(e["type"] == kind for e in i.data.get("effects") or [])]
+        self.change(items, lambda i: i.data.update(effects=[e for e in i.data["effects"] if e["type"] != kind]),
+                    "Supprimer l'effet")
+
+    def add_extra_stroke(self):
+        from . import appearance as ap
+        items = [i for i in self.selection() if len(i.data.get("extra_strokes") or []) < ap.MAX_STROKES]
+
+        def change(item):
+            base = dict(ap.STROKE_DEFAULT)
+            base["width"] = round(float(item.data.get("stroke_width", 1.0)) * 4 + 4, 3)
+            item.data["extra_strokes"] = list(item.data.get("extra_strokes") or []) + [base]
+        self.change(items, change, "Ajouter un contour")
+
+    def set_extra_stroke(self, index: int, key: str, value):
+        items = [i for i in self.selection() if len(i.data.get("extra_strokes") or []) > index]
+
+        def change(item):
+            strokes = [dict(s) for s in item.data["extra_strokes"]]
+            strokes[index][key] = value
+            item.data["extra_strokes"] = strokes
+        if items:
+            self.scene.live_change(f"ill_stroke:{index}:{key}", items, change, "Contour supplémentaire")
+
+    def remove_extra_stroke(self, index: int):
+        items = [i for i in self.selection() if len(i.data.get("extra_strokes") or []) > index]
+        self.change(items, lambda i: i.data.update(
+            extra_strokes=[s for n, s in enumerate(i.data["extra_strokes"]) if n != index]), "Supprimer le contour")
+
+    def expand_appearance(self) -> list:
+        """Décomposer l'aspect : effets vectoriels appliqués aux nœuds, contours supplémentaires devenus des tracés
+        (surfaces, sous l'objet, groupés avec lui) ; les effets tramés restent des effets (ils n'ont pas de forme
+        vectorielle : Illustrator les pixellise, non repris). Une étape."""
+        from . import appearance as ap, pathfinder as pf
+        items = [i for i in self.shapes() if ap.active(i.data, ap.VECTOR) or i.data.get("extra_strokes")]
+        if not items:
+            return []
+        added = []
+        for item in items:
+            data = item.to_dict()
+            subs = ap.render_subpaths(data)
+            group = board_model.new_id() if data.get("extra_strokes") else data.get("group", "")
+            z = item.zValue()
+            for n, stroke in enumerate(data.get("extra_strokes") or []):
+                outline = pf.outline_stroke(subs, stroke["width"], data.get("cap", "butt"), data.get("join", "miter"),
+                                            float(data.get("miter", 10.0)))
+                if outline:
+                    added.append(board_model.new_item(
+                        model.PATH, x=data["x"], y=data["y"], z=z - 0.5 + n * 0.01, subpaths=outline,
+                        fill=stroke["color"], stroke="", opacity=stroke["opacity"] * float(data.get("opacity", 1.0)),
+                        layer=data.get("layer", ""), group=group))
+            data.update(id=board_model.new_id(), subpaths=subs, extra_strokes=[], group=group,
+                        effects=[e for e in data.get("effects") or [] if e["type"] in ap.RASTER])
+            added.append(data)
+        new = self.scene.replace_items(items, added, "Décomposer l'aspect")
+        self.select(new)
+        return new
+
     # -- masques (Objet > Masque d'écrêtage ; panneau Transparence > Créer un masque) --
     def make_mask(self, kind: str = "clip"):
         """L'objet le plus HAUT de la sélection devient le masque des autres (un groupe, une étape). Écrêtage : le

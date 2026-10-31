@@ -12,6 +12,7 @@ Un document Illustrator = les éléments `ill_*` du board :
   Illustrator) : `rotation` reste 0 ; un déplacement ne change que (x, y).
 `group` = identifiant de groupe (vide = seul) : un clic de l'outil Sélection choisit tout le groupe ; `layer` =
 identifiant du calque (vide = le plus bas) ; `fill_gradient` / `stroke_gradient` = dégradé (`paint.py`) ou None ;
+`effects` / `extra_strokes` = aspect (effets non destructifs, contours supplémentaires : `appearance.py`) ;
 `mask` = « clip » / « opacity » : cet objet est le MASQUE de son groupe (écrêtage : sa forme découpe les autres
 objets du groupe, lui-même sans peinture ; opacité : sa luminance règle leur opacité, `mask_invert` = inversée).
 - `ill_text` : texte (`text.py`), mêmes attributs de peinture qu'un tracé. `mode` : « point » (origine (x, y) = ligne
@@ -60,11 +61,11 @@ DEFAULTS = {
            "subpaths": [], "fill": "#000000", "stroke": "", "stroke_width": 1.0, "opacity": 1.0,
            "cap": "butt", "join": "miter", "miter": 10.0, "dash": [], "fill_rule": "nonzero",
            "group": "", "name": "", "hidden": False, "layer": "", "fill_gradient": None, "stroke_gradient": None,
-           "mask": "", "mask_invert": False},
+           "mask": "", "mask_invert": False, "effects": [], "extra_strokes": []},
     PATH: {"subpaths": [], "fill": DEFAULT_FILL, "stroke": DEFAULT_STROKE, "stroke_width": 1.0, "opacity": 1.0,
            "cap": "butt", "join": "miter", "miter": 10.0, "dash": [], "fill_rule": "nonzero",
            "group": "", "name": "", "hidden": False, "layer": "", "fill_gradient": None, "stroke_gradient": None,
-           "mask": "", "mask_invert": False},
+           "mask": "", "mask_invert": False, "effects": [], "extra_strokes": []},
 }
 
 
@@ -142,6 +143,9 @@ def normalize_entity(item: dict) -> dict:
         item["path_offset"] = min(1.0, max(0.0, item["path_offset"]))
     if item["mask"] not in MASKS or not item.get("group"):
         item["mask"] = ""
+    from .appearance import valid_effects, valid_strokes
+    item["effects"] = valid_effects(item["effects"])
+    item["extra_strokes"] = valid_strokes(item["extra_strokes"])
     item["subpaths"] = valid_subpaths(item["subpaths"])
     item["fill"] = valid_color(item["fill"], DEFAULT_FILL)
     item["stroke"] = valid_color(item["stroke"], DEFAULT_STROKE)
@@ -169,7 +173,8 @@ def new_entity(kind: str, **values) -> dict:
 def style_of(data: dict) -> dict:
     """Attributs de peinture d'un tracé (pipette, styles par défaut des nouveaux objets)."""
     return {k: copy.deepcopy(data[k]) for k in ("fill", "stroke", "stroke_width", "opacity", "cap", "join", "miter",
-                                                "dash", "fill_rule", "fill_gradient", "stroke_gradient")
+                                                "dash", "fill_rule", "fill_gradient", "stroke_gradient", "effects",
+                                                "extra_strokes")
             if k in data}
 
 

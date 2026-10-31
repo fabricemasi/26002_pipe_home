@@ -30,6 +30,7 @@ def fill_object_menu(ctl, menu):
     menu.addSeparator()
     add("Joindre (Ctrl+J)", ctl.join_selection, has)
     add("Vectoriser le contour", ctl.outline_stroke, has)
+    add("Décomposer l'aspect", ctl.expand_appearance, has)
     add("Créer un tracé transparent (Ctrl+8)", lambda: ctl.make_compound(True), len(items) > 1)
     add("Défaire le tracé transparent (Ctrl+Alt+Maj+8)", lambda: ctl.make_compound(False),
         any(len(i.data["subpaths"]) > 1 for i in items))

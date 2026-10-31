@@ -251,3 +251,27 @@ def outline_stroke(subpaths, width: float, cap: str = "butt", join: str = "miter
     path.convertConicsToQuads()                         # extrémités / angles arrondis : coniques de Skia
     path.simplify(fix_winding=True)
     return from_path(path)
+
+
+def offset_subpaths(subpaths, distance: float, fill_rule: str = "nonzero") -> list[dict]:
+    """Décalage du tracé (effet) : la surface agrandie (distance > 0) ou réduite (< 0) de |distance|, angles en
+    onglet ; par le trait de largeur 2 |distance| réuni à la surface ou ôté d'elle."""
+    shape = to_path(subpaths, fill_rule)
+    shape.simplify(fix_winding=True)
+    band = pathops.Path()
+    for sub in subpaths:
+        nodes = sub["nodes"]
+        if len(nodes) < 2:
+            continue
+        band.moveTo(nodes[0][0], nodes[0][1])
+        for i in range(bz.segment_count(sub)):
+            p0, c1, c2, p3 = bz.segment(sub, i)
+            if bz.is_straight((p0, c1, c2, p3)):
+                band.lineTo(*p3)
+            else:
+                band.cubicTo(c1[0], c1[1], c2[0], c2[1], p3[0], p3[1])
+        band.close()                                    # un tracé ouvert a une surface (fermée) : comme Illustrator
+    band.stroke(2 * abs(distance), pathops.LineCap.BUTT_CAP, pathops.LineJoin.MITER_JOIN, 4.0)
+    band.convertConicsToQuads()
+    band.simplify(fix_winding=True)
+    return from_path(_op(shape, band, "union" if distance > 0 else "difference"))

@@ -98,6 +98,12 @@ def paint_ill_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
         painter.drawLine(QPointF(c.x() + s * 0.4, c.y() - s * 0.5), QPointF(c.x(), c.y() - s * 0.9))
         painter.drawPolyline(QPolygonF([QPointF(c.x() - s * 0.8, c.y()), QPointF(c.x() - s * 0.8, c.y() + s * 0.8),
                                         QPointF(c.x() + s * 0.8, c.y() + s * 0.8), QPointF(c.x() + s * 0.8, c.y())]))
+    elif kind == "ill_fx":                                     # effets : « fx » tracé à la main
+        painter.drawArc(QRectF(c.x() - s * 0.75, c.y() - s * 0.95, s * 0.7, s * 0.6), 30 * 16, 150 * 16)
+        painter.drawLine(QPointF(c.x() - s * 0.75, c.y() - s * 0.65), QPointF(c.x() - s * 0.75, c.y() + s * 0.85))
+        painter.drawLine(QPointF(c.x() - s * 1.0, c.y() - s * 0.2), QPointF(c.x() - s * 0.45, c.y() - s * 0.2))
+        painter.drawLine(QPointF(c.x() - s * 0.15, c.y() - s * 0.2), QPointF(c.x() + s * 0.85, c.y() + s * 0.85))
+        painter.drawLine(QPointF(c.x() + s * 0.85, c.y() - s * 0.2), QPointF(c.x() - s * 0.15, c.y() + s * 0.85))
     elif kind == "ill_text":
         painter.drawLine(QPointF(c.x() - s * 0.7, c.y() - s * 0.75), QPointF(c.x() + s * 0.7, c.y() - s * 0.75))
         painter.drawLine(QPointF(c.x(), c.y() - s * 0.75), QPointF(c.x(), c.y() + s * 0.8))
