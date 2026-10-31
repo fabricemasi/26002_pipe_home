@@ -19,6 +19,7 @@ n'importent PAS Qt.
 | Bézier : nœuds, segments, cadres exacts, point le plus proche, insertion / suppression / conversion, joindre, inverser, matrices affines, formes, `d` SVG | `bezier.py` | `node`, `segments`, `bounds`, `nearest`, `insert_node`, `set_handle`, `smooth_node`, `join`, `transform`, `rotate`, `scale`, `rect`, `ellipse`, `polygon`, `star`, `from_cubics`, `svg_d` |
 | Dégradés (modèle en fractions de la boîte, outil Dégradé, SVG), nuancier par défaut | `paint.py` | `valid_gradient`, `new_gradient`, `absolute`, `set_from_drag`, `svg_gradient`, `SWATCHES` |
 | Pathfinder (skia-pathops) : modes de forme, division, découpe, fusion, recadrage, soustraction arrière, vectoriser le contour | `pathfinder.py` | `combine`, `divide`, `trim`, `merge`, `crop`, `outline_stroke`, `to_path`, `from_path` |
+| Shape Builder (Maj+M) : zones de la sélection, survol hachuré, glisser = réunir, Alt = supprimer | `shape_builder.py` | `ShapeBuilderTool` (`apply`, `region_at`) |
 | Calques : accès, bandes de hauteur, panneau | `layers.py` | `layers`, `layer_of`, `top_z`, `members`, `LayersPanel` |
 | Export / import SVG (dégradés compris) | `svg.py` | `export_svg`, `path_element`, `import_svg`, `parse_d`, `arc_to_cubics`, `parse_transform`, `parse_color` |
 | Éléments de la scène (plan de travail, calque, tracé), chemin et pinceaux Qt gardés, zone cliquable | `items.py` | `IllArtboardItem`, `IllLayerItem`, `IllPathItem` (`sync`, `apply_visibility`, `hit_path`, `contains_scene_point`, `geometry_rect`), `notify_moved`, `qpath`, `gradient_brush` |
@@ -124,12 +125,16 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 | Mode Tracés (Ctrl+Y) | Terminé (affichage) | — |
 | Enregistrement / réouverture (`.mro`) | Terminé | `test_save_and_reopen` |
 | Export SVG (plan, tous, dessin, sélection), import SVG (fichier, glisser-déposer) | Terminé pour les tracés (pas de dégradés, texte, images, masques) | `SvgTest`, `test_export_and_import…` |
-| Shape Builder, texte, pinceaux / largeur variable, masques, Aspect / effets, images, vectorisation, PDF, outils avancés, réglages du module | Non commencé | — |
+| Shape Builder (zones, réunir, supprimer, survol) | Terminé (pas de mode « boucle fermée » ni d'option de couleur du nuancier) | `ShapeBuilderTest` |
+| Texte (point, captif, sur tracé), pinceaux / largeur variable, masques d'écrêtage / d'opacité, Aspect / effets, images placées, vectorisation, export PDF, outils avancés (dégradé de forme, filet, déformation…), réglages du module (Réglages : Board), repères commentés / magnétisme | Non commencé | — |
 
 ## PASSATION (2026-10-31)
 
-- Commit de la tranche 1-5 (intégration, document, plans de travail, formes, sélection, transformations, plume,
-  sauvegarde, export / import SVG) : voir `git log -- fm_illustrator`.
+- Commits (branche `nettoyage-code`, locaux, rien de poussé) : 27c3bf7 tranche 1-5 (intégration, document, plans
+  de travail, formes, sélection, transformations, plume, sauvegarde, export / import SVG) ; e344fd5 tranche 6-8
+  (dégradés, nuancier, calques, Pathfinder) ; puis tranche 9 (Shape Builder) : `git log -- fm_illustrator`.
+- Après chaque tranche, suite complète = référence + `FramePacerTest` de test_cad (instable connu) ; une fois
+  `test_md_tables` (Markdown), vert en le relançant seul : instable, sans lien avec le module.
 - Référence de la suite complète AVANT le module (`tests/run.py --tout`, venv) : 13 fichiers en échec, tous
   préexistants : test_file_attributes, test_focus_viewer, test_input_tabs_settings, test_interface_edit_scope,
   test_md_live_preview, test_render_log, test_row_templates, test_settings_preload, test_shadows,
@@ -137,8 +142,14 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 - Les tests du board affichent des « TypeError: Unknown return type » à la destruction des panneaux (signaux
   `canUndoChanged` du board) : déjà présents dans `test_design`, sans effet sur les résultats.
 - Tranches 6-8 (dégradés, nuancier, calques, Pathfinder) : commit suivant (voir `git log -- fm_illustrator`).
-- Prochaine tranche conseillée : 9 Shape Builder (Maj+M) sur `pathfinder.divide` : zones calculées à l'entrée de
-  l'outil sur la sélection, survol = zone en surbrillance, glisser = réunir les zones traversées, Alt = les
-  supprimer ; puis 10 texte (`ill_text` : texte de point / captif / sur tracé, police par les briques du board).
+- Tranche 9 (Shape Builder) : commit suivant. Zones calculées une fois par sélection (clé : identifiants + étape
+  d'annulation), ~44 ms pour 20 objets / 98 zones, puis survol = `QPainterPath.contains` par zone.
+- POINT DE REPRISE : tranche 10, texte. Proposition : élément `ill_text` (types « point » / « area » / « path »,
+  `text`, police / taille / interlignage / approche par les briques du board : `fm_board.ui.FontPicker`), rendu par
+  `QTextLayout` gardé dans `sync`, édition sur place comme `fm_miro.items._Text`, texte sur tracé = glyphes posés le
+  long de `bezier.flatten` (comme `fm_design/text_curve.py`), vectorisation du texte = `QPainterPath.addText` ->
+  nœuds. Puis 12 masques (groupe d'écrêtage : `clip` sur le groupe, `QGraphicsItem.ItemClipsChildrenToShape`
+  impossible sans parenté : peindre via `QPainter.setClipPath` dans l'élément, export `<clipPath>`), 14 images
+  (`asset` du board, `_bring_asset`), 16 PDF (`QPdfWriter` + `paint_path`, vectoriel).
 - Pistes de fluidité restantes : enregistrement JSON hors du fil de l'interface (coque, tous modules) ; clic de
   plume (création d'élément).

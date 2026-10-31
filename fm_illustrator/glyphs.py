@@ -98,6 +98,11 @@ def paint_ill_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
         painter.drawLine(QPointF(c.x() + s * 0.4, c.y() - s * 0.5), QPointF(c.x(), c.y() - s * 0.9))
         painter.drawPolyline(QPolygonF([QPointF(c.x() - s * 0.8, c.y()), QPointF(c.x() - s * 0.8, c.y() + s * 0.8),
                                         QPointF(c.x() + s * 0.8, c.y() + s * 0.8), QPointF(c.x() + s * 0.8, c.y())]))
+    elif kind == "ill_shape_builder":
+        painter.drawEllipse(QPointF(c.x() - s * 0.3, c.y() + s * 0.1), s * 0.5, s * 0.5)
+        painter.drawEllipse(QPointF(c.x() + s * 0.3, c.y() + s * 0.1), s * 0.5, s * 0.5)
+        painter.drawLine(QPointF(c.x() + s * 0.65, c.y() - s * 0.9), QPointF(c.x() + s * 0.65, c.y() - s * 0.45))
+        painter.drawLine(QPointF(c.x() + s * 0.42, c.y() - s * 0.68), QPointF(c.x() + s * 0.88, c.y() - s * 0.68))
     elif kind == "ill_gradient":
         r = QRectF(c.x() - s * 0.85, c.y() - s * 0.6, s * 1.7, s * 1.2)
         painter.drawRect(r)

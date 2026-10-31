@@ -759,4 +759,5 @@ TOOL_CLASSES = [SelectTool, DirectTool, PenTool, AddAnchorTool, DeleteAnchorTool
 
 
 def make_tools(ctl) -> dict:
-    return {cls.name: cls(ctl) for cls in TOOL_CLASSES}
+    from .shape_builder import ShapeBuilderTool
+    return {cls.name: cls(ctl) for cls in TOOL_CLASSES + [ShapeBuilderTool]}

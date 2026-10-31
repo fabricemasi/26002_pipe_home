@@ -9,7 +9,7 @@ dessinés (contours et boîte seulement)."""
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QGraphicsItem
 
 from . import bezier as bz, model
@@ -67,7 +67,8 @@ class IllOverlay(QGraphicsItem):
         return (ctl.active, ctl.tool, ctl.artboard_id, round(self._zoom(), 6),
                 tuple(i.item_id for i in ctl.selection()),
                 tuple(sorted((k, tuple(sorted(v))) for k, v in ctl.anchors.items() if v)),
-                id(ctl.hover), repr(ctl.tip), tuple(b.data.get("name") for b in ctl.artboards()))
+                id(ctl.hover), repr(ctl.tip), tuple(b.data.get("name") for b in ctl.artboards()),
+                ctl.preview[2] if ctl.preview is not None and ctl.preview[0] == "regions" else None)
 
     def dynamic_rects(self) -> list[QRectF]:
         """Zones peintes (scène) : à repeindre à chaque changement."""
@@ -203,6 +204,13 @@ class IllOverlay(QGraphicsItem):
             path = QPainterPath(QPointF(*p0))
             path.cubicTo(QPointF(*c1), QPointF(*p3), QPointF(*p3))
             painter.drawPath(path)
+        elif kind == "regions":                         # Shape Builder : zones hachurées (rouge = à supprimer)
+            _kind, paths, delete = self.ctl.preview
+            color = QColor("#e0281e") if delete else accent
+            painter.setPen(QPen(color, 1.5 / z))
+            painter.setBrush(QBrush(color, Qt.BDiagPattern))
+            for path in paths:
+                painter.drawPath(path)
         elif kind == "polyline":
             pts = self.ctl.preview[1]
             if len(pts) > 1:
@@ -239,6 +247,11 @@ def _control_rect(item) -> QRectF:
 
 
 def _preview_rect(preview) -> QRectF:
+    if preview[0] == "regions":
+        rect = QRectF()
+        for path in preview[1]:
+            rect = rect.united(path.boundingRect())
+        return rect
     if preview[0] == "rubber":
         pts = preview[1:]
     else:

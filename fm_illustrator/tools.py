@@ -31,7 +31,8 @@ TOOL_KEYS = {(Qt.Key_V, False): "select", (Qt.Key_A, False): "direct", (Qt.Key_P
              (Qt.Key_C, True): "convert", (Qt.Key_M, False): "rect", (Qt.Key_L, False): "ellipse",
              (Qt.Key_Backslash, False): "line",
              (Qt.Key_N, False): "pencil", (Qt.Key_O, True): "artboard", (Qt.Key_H, False): "hand",
-             (Qt.Key_Z, False): "zoom", (Qt.Key_I, False): "eyedropper", (Qt.Key_G, False): "gradient"}
+             (Qt.Key_Z, False): "zoom", (Qt.Key_I, False): "eyedropper", (Qt.Key_G, False): "gradient",
+             (Qt.Key_M, True): "shape_builder"}
 
 
 def _constrain45(origin: QPointF, pos: QPointF) -> QPointF:

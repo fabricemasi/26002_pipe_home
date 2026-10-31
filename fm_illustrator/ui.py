@@ -19,7 +19,7 @@ TOOL_GROUPS = [
      ("convert", "ill_convert")],
     [("rect", "ill_rect"), ("ellipse", "ill_ellipse"), ("polygon", "ill_polygon"), ("star", "ill_star"),
      ("line", "ill_line"), ("pencil", "ill_pencil")],
-    [("gradient", "ill_gradient"), ("eyedropper", "ill_eyedropper")],
+    [("shape_builder", "ill_shape_builder"), ("gradient", "ill_gradient"), ("eyedropper", "ill_eyedropper")],
     [("artboard", "ill_artboard"), ("hand", "ill_hand"), ("zoom", "ill_zoom")],
 ]
 STROKE_WIDTHS = [0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 15.0, 20.0, 30.0, 50.0]
