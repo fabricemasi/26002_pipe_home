@@ -175,6 +175,8 @@ class ViewerMixin:
         if self._project_columns_hidden:
             return
         folder = Path(folder)
+        if not gallery and self._font_claims(folder) and self._open_font(folder):   # source .ufo : fm_font
+            return
         files = self._viewer_folder_files(folder)
         if gallery and not files and not self._recursive_on():
             # Les photos sont dans les sous-dossiers : la planche les montre (mode récursif allumé pour cela,
@@ -581,6 +583,10 @@ class ViewerMixin:
         une fois que le clic l'a montree dans l'inspecteur. L'image part de l'apercu de la LIGNE
         (pas de celui de l'inspecteur) ; le retour aux colonnes la ramene dans l'inspecteur."""
         if self._project_columns_hidden:
+            return
+        # Police (.ttf / .otf / .woff…) : elle a un aperçu, mais le double-clic l'ouvre dans fm_font (réglage
+        # « Double-clic sur une source… ») ; sans lui, la visionneuse comme avant.
+        if self._font_claims(path) and self._open_font(path):
             return
         if self._video_claims(path) and self._open_video(path):   # video / sequence EXR, TIFF… : module video
             return

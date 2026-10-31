@@ -140,6 +140,28 @@ class IntegrationTest(WindowTestCase):
         self.assertIsNotNone(host._font)
         host._close_font()
 
+    def test_column_double_click_routes_font_before_viewer(self):
+        """Le vrai chemin du double-clic : une police a un aperçu (colonne -> visionneuse), une source .ufo est
+        un dossier (colonne -> visionneuse de dossier) ; les deux doivent aller au module d'abord."""
+        from main_window.viewer import ViewerMixin
+        host = _Host()
+        host._viewer_folder_files = lambda folder: (_ for _ in ()).throw(AssertionError("visionneuse atteinte"))
+        ViewerMixin._view_in_viewer.__get__(host)(self.ttf)
+        self.assertEqual(host._font.project.source, self.ttf)
+        host._close_font()
+        ViewerMixin._view_folder_in_viewer.__get__(host)(self.ufo)
+        self.assertEqual(host._font.project.path, self.ufo)
+        host._close_font()
+        ui_state.APPLIED_SETTINGS["typo_open_double_click"] = False
+        try:
+            with mock.patch("main_window.viewer.QTimer.singleShot") as later:  # réglage coupé : visionneuse
+                host._video_claims = lambda path: False
+                ViewerMixin._view_in_viewer.__get__(host)(self.ttf)
+            self.assertIsNone(host._font)
+            later.assert_called_once()
+        finally:
+            ui_state.APPLIED_SETTINGS["typo_open_double_click"] = True
+
     def test_live_settings_reach_open_pane(self):
         host = _Host()
         host._open_font(None)
