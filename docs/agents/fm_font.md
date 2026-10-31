@@ -136,7 +136,7 @@ Légende : TERMINÉ (fonctionne, sauvegardé si besoin, testé) / PARTIEL / NON 
 | Crayon, calligraphie (modèle) | TERMINÉ | pression = 3e valeur des échantillons |
 | Composants, ancres, accentués, cycles (modèle) | TERMINÉ | propagation structurelle testée |
 | Métriques, crénage, aide automatique (modèle) | TERMINÉ | suggestions jamais appliquées seules |
-| Features : vérification, génération liga / dlig / smcp / c2sc / onum / lnum / tnum / pnum / case / salt / ssXX | TERMINÉ (modèle) | frac : génération sommaire |
+| Features : vérification, génération liga / dlig / smcp / c2sc / onum / lnum / tnum / pnum / case / salt / ssXX / frac | TERMINÉ | frac : barre, numérateurs, dénominateurs après la barre (« 12/34 » vérifié par HarfBuzz) ; exige .numr ET .dnom |
 | Compilation OTF / TTF / WOFF / WOFF2, vérifiée fontTools + HarfBuzz (crénage, liga, mark, mkmk) | TERMINÉ | `CompileTest` |
 | Masters, interpolation, police variable (fvar / gvar / STAT / avar, instances) | TERMINÉ | `test_fm_font_axes` (avar relue par fontTools, chasse vérifiée par HarfBuzz) |
 | Import TTF / OTF / WOFF / WOFF2 / SVG, features comprises | TERMINÉ | GSUB simples / multiples / alternatives / ligatures repris en .fea, marques (MarkBase / MarkMark) en ancres ; même mise en forme HarfBuzz après réexport (testé) ; NON repris, avec message : lookups contextuels, GPOS simples / cursifs / MarkLig |

@@ -89,6 +89,28 @@ def features_in(text: str) -> list[str]:
     return list(dict.fromkeys(re.findall(r"\bfeature\s+([A-Za-z0-9]{4})\s*\{", text)))
 
 
+DIGITS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
+
+
+def _fraction_lines(names) -> list[str]:
+    """frac (méthode courante) : barre de fraction, tous les chiffres en numérateurs, puis ceux qui suivent la barre
+    ou un dénominateur deviennent dénominateurs (« 12/34 » -> 1 2 numérateurs, 3 4 dénominateurs). Il faut
+    les chiffres et leurs variantes .numr ET .dnom."""
+    digits = [d for d in DIGITS if d in names and f"{d}.numr" in names and f"{d}.dnom" in names]
+    if not digits:
+        return []
+    numr = " ".join(f"{d}.numr" for d in digits)
+    dnom = " ".join(f"{d}.dnom" for d in digits)
+    bar = "fraction" if "fraction" in names else ("slash" if "slash" in names else None)
+    lines = []
+    if bar == "fraction" and "slash" in names:
+        lines.append("    lookup FRAC_BAR { sub slash by fraction; } FRAC_BAR;")
+    lines.append(f"    lookup FRAC_NUMR {{ sub [{' '.join(digits)}] by [{numr}]; }} FRAC_NUMR;")
+    if bar is not None:
+        lines.append(f"    lookup FRAC_DNOM {{ sub [{bar} {dnom}] [{numr}]' by [{dnom}]; }} FRAC_DNOM;")
+    return lines
+
+
 def generate(font, tags) -> str:
     """Code .fea pour les features demandées, d'après les glyphes présents (ligatures f_i, suffixes .sc, .osf…)."""
     names = set(font.keys())
@@ -104,15 +126,7 @@ def generate(font, tags) -> str:
                 if lig in names and all(p in names for p in parts):
                     lines.append(f"    sub {' '.join(parts)} by {lig};")
         elif tag == "frac":
-            nums = [n for n in names if n.endswith(".numr")]
-            if nums:
-                numr = " ".join(sorted(n[:-5] for n in nums if n[:-5] in names))
-                dnom = " ".join(sorted(n[:-5] for n in names if n.endswith(".dnom") and n[:-5] in names))
-                if numr and dnom:
-                    lines += [f"    lookup FRAC_NUMR {{ sub [{numr}] by [{' '.join(x + '.numr' for x in numr.split())}]; }} FRAC_NUMR;",
-                              f"    sub [{' '.join(x + '.numr' for x in numr.split())}] slash' by fraction;"
-                              if "fraction" in names and "slash" in names else ""]
-                    lines = [line for line in lines if line]
+            lines += _fraction_lines(names)
         elif tag in SUFFIX_FEATURES:
             suffix = SUFFIX_FEATURES[tag][0]
             for name in sorted(names):

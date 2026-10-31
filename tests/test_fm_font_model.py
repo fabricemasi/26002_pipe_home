@@ -442,6 +442,25 @@ class FeaturesTest(unittest.TestCase):
         self.assertEqual(merged.count("feature liga"), 1)
         self.assertEqual(features.check(merged, p.font.keys()), [])
 
+    def test_generate_frac_shaped_by_harfbuzz(self):
+        p = FontProject.new("Frac")
+        for d in features.DIGITS:
+            for suffix in ("", ".numr", ".dnom"):
+                p.add_glyph(d + suffix)
+                p.font[d + suffix].contours.append(shapes.rectangle(50, 0, 450, 300 if suffix else 700))
+        self.assertEqual(features.generate(p.font, ["frac"]).count("lookup FRAC_"), 1)   # sans barre : numérateurs
+        for name in ("slash", "fraction"):
+            p.add_glyph(name)
+            p.font[name].contours.append(shapes.rectangle(50, 0, 100, 700))
+        code = features.generate(p.font, ["frac"])
+        self.assertEqual(features.check(code, p.font.keys()), [])
+        features.set_features(p, code)
+        from fm_font.compile import to_bytes
+        shaper = Shaper(to_bytes(compile_static(p.font, "ttf")))
+        self.assertEqual(shaper.names("12/34", {"frac": True}),
+                         ["one.numr", "two.numr", "fraction", "three.dnom", "four.dnom"])
+        self.assertEqual(shaper.names("1/2"), ["one", "slash", "two"])                  # frac non demandée
+
 
 class CompileTest(unittest.TestCase):
     """Bout en bout : famille -> sauvegarde -> réouverture -> compilation -> relecture fontTools + HarfBuzz."""
