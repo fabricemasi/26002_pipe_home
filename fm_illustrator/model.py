@@ -15,6 +15,9 @@ identifiant du calque (vide = le plus bas) ; `fill_gradient` / `stroke_gradient`
 `effects` / `extra_strokes` = aspect (effets non destructifs, contours supplémentaires : `appearance.py`) ;
 `mask` = « clip » / « opacity » : cet objet est le MASQUE de son groupe (écrêtage : sa forme découpe les autres
 objets du groupe, lui-même sans peinture ; opacité : sa luminance règle leur opacité, `mask_invert` = inversée).
+- `ill_image` : image placée (Fichier > Importer, Ctrl+Maj+P) : `asset` = fichier du dossier d'images du board
+  (incorporée : copiée une fois, comme les images de Miro), `w` × `h` = taille de pose (unités), `matrix` = matrice
+  affine (repère de l'élément) appliquée au rectangle (0, 0, w, h) : échelle, rotation, symétrie, inclinaison ;
 - `ill_text` : texte (`text.py`), mêmes attributs de peinture qu'un tracé. `mode` : « point » (origine (x, y) = ligne
   de base du 1er trait, comme Illustrator et SVG), « area » (texte captif : cadre `w` × `h`, origine = son coin haut
   gauche, retour à la ligne automatique), « path » (texte curviligne : `subpaths` = tracé de base, `path_offset` =
@@ -29,7 +32,8 @@ ARTBOARD = "ill_artboard"
 LAYER = "ill_layer"
 PATH = "ill_path"
 TEXT = "ill_text"
-OBJECT_TYPES = (PATH, TEXT)
+IMAGE = "ill_image"
+OBJECT_TYPES = (PATH, TEXT, IMAGE)
 ILL_TYPES = (ARTBOARD, LAYER) + OBJECT_TYPES
 
 ACCENT = "#2f7cf6"                     # couleur de sélection du module (bleu d'Illustrator, calque 1)
@@ -62,6 +66,11 @@ DEFAULTS = {
            "cap": "butt", "join": "miter", "miter": 10.0, "dash": [], "fill_rule": "nonzero",
            "group": "", "name": "", "hidden": False, "layer": "", "fill_gradient": None, "stroke_gradient": None,
            "mask": "", "mask_invert": False, "effects": [], "extra_strokes": []},
+    IMAGE: {"asset": "", "w": 100.0, "h": 100.0, "matrix": [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], "subpaths": [],
+            "fill": "", "stroke": "", "stroke_width": 1.0, "opacity": 1.0, "cap": "butt", "join": "miter",
+            "miter": 10.0, "dash": [], "fill_rule": "nonzero", "group": "", "name": "", "hidden": False, "layer": "",
+            "fill_gradient": None, "stroke_gradient": None, "mask": "", "mask_invert": False, "effects": [],
+            "extra_strokes": []},
     PATH: {"subpaths": [], "fill": DEFAULT_FILL, "stroke": DEFAULT_STROKE, "stroke_width": 1.0, "opacity": 1.0,
            "cap": "butt", "join": "miter", "miter": 10.0, "dash": [], "fill_rule": "nonzero",
            "group": "", "name": "", "hidden": False, "layer": "", "fill_gradient": None, "stroke_gradient": None,
@@ -141,13 +150,23 @@ def normalize_entity(item: dict) -> dict:
         item["w"] = max(1.0, item["w"])
         item["h"] = max(1.0, item["h"])
         item["path_offset"] = min(1.0, max(0.0, item["path_offset"]))
+    if kind == IMAGE:
+        item["w"] = max(1.0, item["w"])
+        item["h"] = max(1.0, item["h"])
+        try:
+            m = [float(v) for v in item["matrix"]][:6]
+        except (TypeError, ValueError):
+            m = []
+        if len(m) != 6 or any(v != v or abs(v) > 1e9 for v in m) or abs(m[0] * m[3] - m[1] * m[2]) < 1e-12:
+            m = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+        item["matrix"] = m
     if item["mask"] not in MASKS or not item.get("group"):
         item["mask"] = ""
     from .appearance import valid_effects, valid_strokes
     item["effects"] = valid_effects(item["effects"])
     item["extra_strokes"] = valid_strokes(item["extra_strokes"])
     item["subpaths"] = valid_subpaths(item["subpaths"])
-    item["fill"] = valid_color(item["fill"], DEFAULT_FILL)
+    item["fill"] = valid_color(item["fill"], "" if kind == IMAGE else DEFAULT_FILL)
     item["stroke"] = valid_color(item["stroke"], DEFAULT_STROKE)
     item["stroke_width"] = min(1000.0, max(0.0, item["stroke_width"]))
     item["opacity"] = min(1.0, max(0.0, item["opacity"]))

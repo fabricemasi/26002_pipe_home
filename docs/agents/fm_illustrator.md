@@ -26,7 +26,7 @@ n'importent PAS Qt.
 | Texte (Qt) : mise en page point / captif / curviligne (police de base 100 px), chemin des lettres, créer les contours, SVG `<text>` / `<textPath>`, éditeur sur place | `text.py` | `layout`, `base_font`, `outline_subpaths`, `svg_text`, `TextEditor` |
 | Calques : accès, bandes de hauteur, panneau | `layers.py` | `layers`, `layer_of`, `top_z`, `members`, `LayersPanel` |
 | Export / import SVG (dégradés compris) | `svg.py` | `export_svg`, `path_element`, `import_svg`, `parse_d`, `arc_to_cubics`, `parse_transform`, `parse_color` |
-| Éléments de la scène (plan de travail, calque, tracé, texte), chemin et pinceaux Qt gardés, zone cliquable, MASQUES (écrêtage, opacité : `mask_item`, `_paint_through_opacity_mask`, registre `scene.ill_masks`) | `items.py` | `IllArtboardItem`, `IllLayerItem`, `IllPathItem` (`sync`, `apply_visibility`, `hit_path`, `contains_scene_point`, `geometry_rect`), `notify_moved`, `qpath`, `gradient_brush` |
+| Éléments de la scène (plan de travail, calque, tracé, texte, IMAGE placée `IllImageItem`), chemin et pinceaux Qt gardés, zone cliquable, MASQUES (écrêtage, opacité : `mask_item`, `_paint_through_opacity_mask`, registre `scene.ill_masks`) | `items.py` | `IllArtboardItem`, `IllLayerItem`, `IllPathItem` (`sync`, `apply_visibility`, `hit_path`, `contains_scene_point`, `geometry_rect`), `notify_moved`, `qpath`, `gradient_brush` |
 | Activation, événements, sélection, commandes (style, grouper, disposition dans le calque, verrou, masquer, joindre, tracé transparent, pipette, plans, calques, Pathfinder, vectoriser le contour, export / import) | `controller.py` | `IllustratorController` |
 | Gestes partagés (déplacer, transformer, cadre de sélection), Sélection, Sélection directe | `tools.py` | `MoveGesture`, `TransformGesture`, `marquee_select`, `SelectTool`, `DirectTool`, `TOOL_KEYS` |
 | Plume, points (ajout / suppression / conversion), formes, crayon, plan de travail, main, zoom, pipette, dégradé (G), texte (T) | `tools_draw.py` | `PenTool`, `ShapeTool`…, `PencilTool`, `ArtboardTool`, `make_tools` |
@@ -88,6 +88,19 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
   vectoriser le contour) ignorent les textes : Ctrl+Maj+O (Créer les contours) d'abord, comme Illustrator. Un seul
   style par texte (pas de styles de caractères par partie). Tests : `QT_QPA_FONTDIR` = `C:\Windows\Fonts`
   (l'offscreen n'a sinon aucune police : des carrés).
+- **Images placées** (tranche 14, `ill_image`) : Importer (Ctrl+Maj+P, menu Exporter / importer, ou dépôt de
+  fichiers PNG / JPEG / GIF / BMP / WebP / TIFF ; un SVG déposé ou importé devient des objets) : l'image est COPIÉE
+  dans le dossier d'images du board (`serialization.import_asset`, comme les images de Miro : incorporée, jamais
+  liée ; nettoyage, copier-coller entre boards et annulation la protègent par la clé `asset`, sans rien changer à la
+  coque), posée à 100 % (1 pixel = 1 unité) au centre de la vue, une étape. Géométrie = rectangle (0, 0, w, h) et
+  `matrix` (échelle, rotation, symétrie, inclinaison appliquées par `bake`). Rendu = image décodée une fois et
+  partagée (`fm_miro.items.asset_pixmap`, plafonnée à 2 400 px), lissée, dans l'image gardée de l'élément. Effets
+  tramés, masques (l'image peut être masquée ou servir de masque d'opacité), opacité : comme un tracé ; pas de fond /
+  contour ni d'effets vectoriels ; ignorée par Pathfinder et les opérations de tracés. « Recadrer l'image (masque) »
+  : un rectangle à sa taille devient son masque d'écrêtage (à modifier en Sélection directe). SVG : `<image>`
+  incorporée en URI data: avec sa matrice ; à l'import, `<image>` (URI data: ou fichier relatif au SVG) copiée dans le
+  board. Image absente : cadre gris barré. Limites : pas d'images liées (mise à jour à la source), pas de
+  ré-échantillonnage ni de profil colorimétrique, pas d'outil Recadrer dédié.
 - **Aspect et effets** (tranche 13) : non destructifs, dans l'objet (`effects`, `extra_strokes`) ; un effet par
   type, ordre fixe (géométrie puis trame). Vectoriels (décalage du tracé par skia-pathops, arrondis des angles entre
   segments droits) : le chemin DESSINÉ change (`draw_path`, zone cliquable comprise), la géométrie de l'objet et sa
@@ -152,6 +165,7 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
 | Masque d'opacité 600 × 400 : recomposition / pan | 27 ms / 21 ms | 10 ms / 5 ms |
 | 200 objets avec ombre + lueur : pan / zoom continu / image refaite (zoom fixé, fin du zoom) | — / 174 ms / 174 ms | 10,5 ms / 35 ms (dernière image composée reposée à l'échelle) / 174 ms (une fois, à l'arrêt du zoom : reste à étaler) |
 | Curseur d'effet en direct (1 objet) | — | ~15-30 ms par mouvement |
+| 20 photos 3 000 × 2 000 (zoom 30 %) : pan / zoom continu / importer les 20 | — | 4,9 ms / 9 ms / 285 ms (copie + empreinte, une fois) |
 | Mise en page d'un texte (à la validation, à l'annulation, pas pendant la frappe) : point 11 lettres / curviligne 200 lettres / captif 300 mots | — / — / 40 ms (un `addText` par mot) | 0,3 ms / 17 ms / 19 ms (36 ms justifié) |
 Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 
@@ -178,6 +192,7 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 | Texte : point, captif (retour à la ligne, justifié, débordement), curviligne, édition sur place, police / corps / gras / italique / alignement / interligne / approche / départ sur le tracé, créer les contours, SVG aller-retour | Partiel (un style par texte ; pas de zone de texte dans une forme quelconque, de chaînage de cadres, de styles de paragraphe, de glyphes OpenType) | `test_illustrator_text.py` |
 | Masques d'écrêtage et d'opacité (créer, annuler, inverser, rendu vérifié au pixel, SVG aller-retour) | Partiel (un masque par groupe, pas de groupes imbriqués, options Transparence non faites) | `test_illustrator_masks.py` |
 | Aspect et effets : décalage, arrondis, flou, contour progressif, ombre portée, lueur externe, contours supplémentaires, décomposer l'aspect, SVG `<filter>` | Partiel (un effet par type, pas de styles graphiques, d'ombre / lueur internes, de modes de fusion) | `test_illustrator_effects.py` |
+| Images placées (importer, dépôt, transformations, recadrage par masque, effets, SVG `<image>` aller-retour) | Partiel (incorporées seulement, pas d'images liées ni de ré-échantillonnage) | `test_illustrator_images.py` |
 | Pinceaux / largeur variable, images placées, vectorisation, export PDF, outils avancés (dégradé de forme, filet, déformation…), réglages du module (Réglages : Board), repères commentés / magnétisme | Non commencé | — |
 
 ## PASSATION (2026-10-31)
@@ -196,10 +211,12 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 - Tranches 6-8 (dégradés, nuancier, calques, Pathfinder) : commit suivant (voir `git log -- fm_illustrator`).
 - Tranche 9 (Shape Builder) : commit suivant. Zones calculées une fois par sélection (clé : identifiants + étape
   d'annulation), ~44 ms pour 20 objets / 98 zones, puis survol = `QPainterPath.contains` par zone.
-- Tranche 10 (texte) : 68ab7c1. Tranche 12 (masques) : 3bf4f4d. Tranche 13 (aspect et effets) : commit suivant.
+- Tranche 10 (texte) : 68ab7c1. Tranche 12 (masques) : 3bf4f4d. Tranche 13 (aspect et effets) : ac3a4f4. Tranche 14
+  (images) : commit suivant ; il corrige aussi l'import SVG du contrôleur, qui créait tout en tracés (textes compris).
 - POINT DE REPRISE : tranche 11 (pinceaux, largeur variable : profil de largeur le long du tracé, contour
   vectorisé par `pathfinder.outline_stroke` puis déformé ; peut devenir un effet vectoriel de `appearance.py`),
-  14 images (`asset` du board, `_bring_asset`), 16 PDF
+  15 vectorisation (Image Trace : seuil / postérisation de l'image décodée, contours par carrés marchants, lissage
+  `fm_font.shapes.fit_cubic`, un tracé par couleur ; en fil de fond pour les grandes images), 16 PDF
   (`QPdfWriter` + `paint_path`, vectoriel).
 - Pistes de fluidité restantes : enregistrement JSON hors du fil de l'interface (coque, tous modules) ; clic de
   plume (création d'élément) ; images d'effets refaites à l'arrêt d'un zoom (~0,9 ms par objet à ombre + lueur :

@@ -516,6 +516,8 @@ class IllustratorChrome(QObject):
                 lambda: QTimer.singleShot(0, lambda: self._export(None, True)))
         menu.addSeparator()
         menu.addAction("Importer un SVG…").triggered.connect(lambda: QTimer.singleShot(0, self._import))
+        menu.addAction("Importer une image ou un SVG… (Ctrl+Maj+P)").triggered.connect(
+            lambda: QTimer.singleShot(0, ctl.place_dialog))
         _popup(menu, anchor)
 
     def _start_dir(self) -> str:

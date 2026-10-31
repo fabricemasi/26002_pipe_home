@@ -5,7 +5,8 @@ chaque tracé = un `<path>` (fond, contour, épaisseur, extrémités, jointures,
 groupes = `<g>`, dégradés = `<linearGradient>` / `<radialGradient>` (userSpaceOnUse) dans `<defs>`.
 Import : `<path>` (M L H V C S Q T A Z, absolus et relatifs), `<rect>` (coins arrondis), `<circle>`, `<ellipse>`,
 `<line>`, `<polyline>`, `<polygon>`, `<g>` ; attributs et `style` en ligne ; `transform` (matrix, translate, scale,
-rotate, skewX, skewY) appliqué aux nœuds ; dégradés `url(#id)` (objectBoundingBox ou userSpaceOnUse, `href` vers
+rotate, skewX, skewY) appliqué aux nœuds ; `<image>` (URI data: ou fichier, copiée dans le board par l'appelant) ;
+dégradés `url(#id)` (objectBoundingBox ou userSpaceOnUse, `href` vers
 les arrêts d'un autre dégradé ; `gradientTransform` ignoré). Non lus : CSS de `<style>`, `<use>`, texte, images,
 masques."""
 from __future__ import annotations
@@ -86,8 +87,22 @@ def _xml_id(name: str) -> str:
     return text if text[0].isalpha() or text[0] == "_" else "_" + text
 
 
+def image_element(data: dict, dx: float, dy: float, href: str) -> str:
+    """`<image>` : rectangle (0, 0, w, h) et matrice de l'objet (décalée à sa place)."""
+    if not href:
+        return ""
+    a, b, c, d, e, f = data.get("matrix") or (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+    num = bz._num
+    e += data.get("x", 0.0) + dx
+    f += data.get("y", 0.0) + dy
+    extra = f' opacity="{num(float(data["opacity"]))}"' if float(data.get("opacity", 1.0)) < 1 else ""
+    return (f'<image width="{num(data.get("w", 100.0))}" height="{num(data.get("h", 100.0))}" '
+            f'preserveAspectRatio="none" transform="matrix({num(a)} {num(b)} {num(c)} {num(d)} {num(e)} {num(f)})"'
+            f'{extra} href={quoteattr(href)}/>')
+
+
 def export_svg(objects: list[dict], area: tuple[float, float, float, float] | None = None,
-               background: str = "", title: str = "", text_svg=None) -> str:
+               background: str = "", title: str = "", text_svg=None, image_href=None) -> str:
     """Document SVG des `objects` (dicts `ill_path`, déjà dans l'ordre de dessin). `area` = (x, y, l, h) : zone
     exportée (un plan de travail), origine du SVG en son coin ; None = cadre de tous les objets."""
     if area is None:
@@ -158,6 +173,11 @@ def export_svg(objects: list[dict], area: tuple[float, float, float, float] | No
             continue
         if data.get("type") == model.TEXT:              # texte : `text.svg_text` (mise en page Qt), fourni
             element = text_svg(data, -x, -y) if text_svg is not None else ""
+        elif data.get("type") == model.IMAGE:           # image : incorporée (`image_href`, fourni)
+            element = image_element(data, -x, -y, image_href(data) if image_href is not None else "")
+            fid = (refs_of.get(n) or {}).get("filter")
+            if element and fid:
+                element = f'<g filter="url(#{fid})">{element}</g>'
         else:
             element = path_element(data, -x, -y, refs_of.get(n))
         if element:
@@ -169,6 +189,13 @@ def export_svg(objects: list[dict], area: tuple[float, float, float, float] | No
 
 
 def _object_bounds(data: dict):
+    if data.get("type") == model.IMAGE:
+        m = data.get("matrix") or (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+        w, h = float(data.get("w", 100.0)), float(data.get("h", 100.0))
+        pts = [bz.apply(m, px, py) for px, py in ((0, 0), (w, 0), (w, h), (0, h))]
+        ox, oy = data.get("x", 0.0), data.get("y", 0.0)
+        return (min(p[0] for p in pts) + ox, min(p[1] for p in pts) + oy, max(p[0] for p in pts) + ox,
+                max(p[1] for p in pts) + oy)
     if data.get("type") == model.TEXT and data.get("mode") != "path":     # estimation sans Qt (import, cadre)
         size = float(data.get("font_size", 16.0))
         lines = str(data.get("text", "")).split("\n")
@@ -549,6 +576,17 @@ def import_svg(text: str) -> list[dict]:
                                            * _length(style.get("opacity-parent"), 1.0))
             for child in children:
                 walk(child, m, passed, sub_group)
+            return
+        if tag == "image":
+            href = el.get("{http://www.w3.org/1999/xlink}href") or el.get("href") or ""
+            w, h = _length(el.get("width")), _length(el.get("height"))
+            if href and w > 0 and h > 0:
+                matrix = bz.multiply(bz.translate(_length(el.get("x")), _length(el.get("y"))), m)
+                entity = model.new_entity(model.IMAGE, w=w, h=h, matrix=list(matrix), group=group,
+                                          opacity=_length(style.get("opacity"), 1.0)
+                                          * _length(style.get("opacity-parent"), 1.0))
+                entity.update({"type": model.IMAGE, "x": 0.0, "y": 0.0, "_href": href})
+                out.append(entity)
             return
         if tag == "text":
             entity = _text_entity(el, style, m, group)

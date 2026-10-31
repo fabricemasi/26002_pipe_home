@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QGraphicsView
 
 from fm_board import model as board_model
 from . import bezier as bz, layers as lay, model
-from .items import IllArtboardItem, IllItem, IllLayerItem, IllPathItem, IllTextItem
+from .items import IllArtboardItem, IllImageItem, IllItem, IllLayerItem, IllPathItem, IllTextItem
 from .overlay import IllOverlay
 from .tools import TOOL_KEYS
 from .tools_draw import make_tools
@@ -101,7 +101,112 @@ class IllustratorController(QObject):
     def shapes(self) -> list[IllPathItem]:
         """Sélection sans les textes : opérations de géométrie (Pathfinder, joindre, tracé transparent…), qui
         demandent des contours (Ctrl+Maj+O), comme dans Illustrator."""
-        return [i for i in self.selection() if not isinstance(i, IllTextItem)]
+        return [i for i in self.selection() if not isinstance(i, (IllTextItem, IllImageItem))]
+
+    # -- images placées --
+    IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff")
+
+    def place_image(self, path, at: QPointF | None = None, asset: str | None = None) -> IllImageItem | None:
+        """Importer (Ctrl+Maj+P) : l'image est copiée dans le dossier du board (incorporée), posée à 100 % (1 pixel =
+        1 unité), centrée sur `at` (le centre de la vue par défaut) ; une étape (calque créé au besoin compris)."""
+        from PySide6.QtGui import QImageReader
+        from fm_board import serialization
+        board = getattr(self.scene, "board_path", None)
+        if board is None:
+            return None
+        try:
+            name = asset or serialization.import_asset(board, path)
+        except OSError:
+            return None
+        size = QImageReader(str(serialization.asset_path(board, name))).size()
+        if not size.isValid():
+            return None
+        w, h = float(size.width()), float(size.height())
+        at = at or self.view.view_center()
+        layer = self.ensure_layer()
+        data = board_model.new_item(model.IMAGE, asset=name, w=w, h=h, x=round(at.x() - w / 2, 3),
+                                    y=round(at.y() - h / 2, 3), layer=layer.item_id)
+        data["z"] = lay.top_z(self.scene, layer, self.objects())
+        item = self.scene._add(data)
+        self.commit_new(item, "Importer une image")
+        return item
+
+    def place_dialog(self):
+        from PySide6.QtWidgets import QFileDialog
+        start = getattr(self.scene, "board_path", None)
+        patterns = " ".join("*" + s for s in self.IMAGE_SUFFIXES + (".svg",))
+        paths, _f = QFileDialog.getOpenFileNames(self.pane, "Importer", str(start.parent) if start else "",
+                                                 f"Images et SVG ({patterns})")
+        at = self.view.view_center()
+        for n, path in enumerate(paths):
+            from pathlib import Path
+            p = Path(path)
+            if p.suffix.lower() == ".svg":
+                self.import_svg(p, at)
+            else:
+                self.place_image(p, at + QPointF(20 * n, 20 * n))
+
+    def crop_with_mask(self):
+        """Recadrer une image : un rectangle à sa taille devient son masque d'écrêtage (à modifier ensuite en
+        Sélection directe), groupe et masque en une étape."""
+        images = [i for i in self.selection() if isinstance(i, IllImageItem) and not i.mask_item()]
+        if not images:
+            return
+        before, added = {}, []
+        for image in images:
+            before[image.item_id] = image.to_dict()
+            r = image.geometry_rect()
+            gid = board_model.new_id()
+            image.data = image.to_dict()
+            image.data["group"] = gid
+            image.apply(image.data)
+            mask = board_model.new_item(model.PATH, x=r.x(), y=r.y(), z=image.zValue() + 0.5, group=gid, mask="clip",
+                                        subpaths=bz.rect(0, 0, r.width(), r.height()), fill="", stroke="",
+                                        layer=image.data.get("layer", ""))
+            before[mask["id"]] = None
+            added.append(self.scene._add(mask))
+        self.scene.push(before, self.scene.snapshot(list(before)), "Recadrer l'image")
+        self.select(images + added)
+
+    def _image_href(self, data: dict) -> str:
+        """Image incorporée au SVG (URI data:, comme l'option « Incorporer » d'Illustrator)."""
+        import base64
+        import mimetypes
+        from fm_board import serialization
+        board = getattr(self.scene, "board_path", None)
+        if board is None or not serialization.is_asset_name(data.get("asset", "")):
+            return ""
+        path = serialization.asset_path(board, data["asset"])
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            return ""
+        mime = mimetypes.guess_type(path.name)[0] or "image/png"
+        return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+
+    def _resolve_href(self, href: str, base) -> str | None:
+        """`<image>` d'un SVG importé -> image du dossier du board (URI data: ou fichier relatif au SVG)."""
+        import base64
+        import re
+        from pathlib import Path
+        from urllib.parse import unquote
+        from fm_board import serialization
+        board = getattr(self.scene, "board_path", None)
+        if board is None or not href:
+            return None
+        m = re.match(r"data:image/([a-z0-9.+-]+);base64,(.*)", href, re.S)
+        try:
+            if m:
+                suffix = {"jpeg": ".jpg", "svg+xml": ".svg"}.get(m.group(1), "." + m.group(1)[:5])
+                return serialization.import_image_bytes(board, base64.b64decode(m.group(2)), suffix)
+            target = Path(unquote(href.replace("file:///", "")))
+            if not target.is_absolute() and base is not None:
+                target = Path(base).parent / target
+            if target.is_file():
+                return serialization.import_asset(board, target)
+        except (OSError, ValueError):
+            pass
+        return None
 
     def texts(self) -> list[IllTextItem]:
         return [i for i in self.selection() if isinstance(i, IllTextItem)]
@@ -998,9 +1103,11 @@ class IllustratorController(QObject):
             r = board.scene_rect()
             area = (r.x(), r.y(), r.width(), r.height())
             text = svg.export_svg(self.export_data(r, only_selection), area,
-                                  background="", title=str(board.data.get("name", "")), text_svg=svg_text)
+                                  background="", title=str(board.data.get("name", "")), text_svg=svg_text,
+                                  image_href=self._image_href)
         else:
-            text = svg.export_svg(self.export_data(None, only_selection), text_svg=svg_text)
+            text = svg.export_svg(self.export_data(None, only_selection), text_svg=svg_text,
+                                  image_href=self._image_href)
         target = Path(path)
         part = target.with_name(target.name + ".part")
         part.write_text(text, encoding="utf-8")
@@ -1022,11 +1129,20 @@ class IllustratorController(QObject):
         layer = self.ensure_layer()
         self._flush_pending_layer("Nouveau calque")
         z = lay.top_z(self.scene, layer, self.objects())
+        resolved = []
         for e in entities:
+            if e.get("type") == model.IMAGE:
+                name = self._resolve_href(e.pop("_href", ""), path)
+                if not name:
+                    continue                                 # image introuvable : ignorée (compte rendu : rien)
+                e["asset"] = name
+            resolved.append(e)
+        for e in resolved:
             e = dict(e)
             if e.get("group"):
                 e["group"] = groups.setdefault(e["group"], board_model.new_id())
-            data = board_model.new_item(model.PATH, **{k: v for k, v in e.items() if k not in ("id", "type")})
+            values = {k: v for k, v in e.items() if k not in ("id", "type")}
+            data = board_model.new_item(e.get("type") or model.PATH, **values)      # texte / image : leur type
             data["x"], data["y"], data["z"] = e.get("x", 0.0) + dx, e.get("y", 0.0) + dy, z
             data["layer"] = layer.item_id
             z += 1
@@ -1130,7 +1246,7 @@ class IllustratorController(QObject):
             return True
         if ctrl and key in (Qt.Key_G, Qt.Key_J, Qt.Key_Y, Qt.Key_A, Qt.Key_2, Qt.Key_3, Qt.Key_8, Qt.Key_BracketLeft,
                             Qt.Key_BracketRight, Qt.Key_At, Qt.Key_Eacute, Qt.Key_QuoteDbl, Qt.Key_Underscore,
-                            Qt.Key_O, Qt.Key_7, Qt.Key_Egrave):
+                            Qt.Key_O, Qt.Key_7, Qt.Key_Egrave, Qt.Key_P):
             return True
         return not ctrl and Qt.Key_A <= key <= Qt.Key_Z
 
@@ -1189,6 +1305,8 @@ class IllustratorController(QObject):
             self.toggle_outline()
         elif key == Qt.Key_O and shift:
             self.outline_text()
+        elif key == Qt.Key_P and shift:                     # Ctrl+Maj+P : Importer
+            self.place_dialog()
         elif key in (Qt.Key_7, Qt.Key_Egrave):              # Ctrl+7 (AZERTY : « è »)
             self.release_mask() if alt else self.make_mask("clip")
         elif key == Qt.Key_A:
@@ -1215,10 +1333,15 @@ class IllustratorController(QObject):
         return self.current_tool().key_release(event.key(), event.modifiers())
 
     def drop_files(self, paths, at: QPointF) -> bool:
-        svgs = [p for p in paths if p.suffix.lower() == ".svg"]
-        for path in svgs:
-            self.import_svg(path, at)
-        return bool(svgs)
+        """Fichiers déposés : SVG = objets, images = images placées (décalées si plusieurs)."""
+        done = False
+        for n, path in enumerate(paths):
+            suffix = path.suffix.lower()
+            if suffix == ".svg":
+                done = bool(self.import_svg(path, at)) or done
+            elif suffix in self.IMAGE_SUFFIXES:
+                done = self.place_image(path, at + QPointF(20 * n, 20 * n)) is not None or done
+        return done
 
     def toggle_outline(self):
         """Mode Tracés (Ctrl+Y) : contours fins sans peinture (affichage seulement)."""

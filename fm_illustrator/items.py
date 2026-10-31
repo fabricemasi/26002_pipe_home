@@ -568,7 +568,60 @@ class IllTextItem(IllPathItem):
             data["rotation"] = round((float(data.get("rotation", 0.0)) + angle + 180.0) % 360.0 - 180.0, 4)
 
 
+class IllImageItem(IllPathItem):
+    """Image placée : le rectangle (0, 0, w, h) transformé par `matrix` ; image décodée une fois et partagée
+    (`fm_miro.items.asset_pixmap`), peinte lissée dans l'image gardée de l'élément (refaite au zoom seulement).
+    Effets tramés, masques, opacité : comme un tracé ; pas d'effets vectoriels ni de fond / contour."""
+
+    def _matrix(self):
+        return tuple(self.data.get("matrix") or (1.0, 0.0, 0.0, 1.0, 0.0, 0.0))
+
+    def _build_geometry(self):
+        m = self._matrix()
+        w, h = float(self.data.get("w", 100.0)), float(self.data.get("h", 100.0))
+        pts = [QPointF(*bz.apply(m, x, y)) for x, y in ((0, 0), (w, 0), (w, h), (0, h))]
+        path = QPainterPath(pts[0])
+        for p in pts[1:]:
+            path.lineTo(p)
+        path.closeSubpath()
+        self.path = path
+        self._box = path.boundingRect()
+
+    def _effect_path(self) -> QPainterPath:
+        return self.path
+
+    def hit_path(self, tolerance_px: float = 4.0) -> QPainterPath:
+        return self.path                                # toute l'image se clique
+
+    def bake(self, m):
+        self.data["matrix"] = [round(v, 9) for v in bz.multiply(self._matrix(), m)]
+
+    def pixmap(self):
+        from fm_miro.items import asset_pixmap
+        scene = self.scene()
+        path = getattr(scene, "board_path", None) if scene is not None else None
+        return asset_pixmap(path, self.data.get("asset", "")) if path is not None else None
+
+    def _paint_vector(self, painter: QPainter):
+        w, h = float(self.data.get("w", 100.0)), float(self.data.get("h", 100.0))
+        target = QRectF(0, 0, w, h)
+        painter.save()
+        painter.setTransform(QTransform(*self._matrix()), True)
+        pixmap = self.pixmap()
+        if pixmap is not None and not pixmap.isNull():
+            painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+            painter.drawPixmap(target, pixmap, QRectF(pixmap.rect()))
+        else:                                           # image absente : cadre barré (comme Illustrator)
+            painter.fillRect(target, QColor(230, 230, 230))
+            painter.setPen(QPen(QColor(150, 150, 150), 0))
+            painter.drawRect(target)
+            painter.drawLine(target.topLeft(), target.bottomRight())
+            painter.drawLine(target.topRight(), target.bottomLeft())
+        painter.restore()
+
+
 ITEM_CLASSES[model.ARTBOARD] = IllArtboardItem
+ITEM_CLASSES[model.IMAGE] = IllImageItem
 ITEM_CLASSES[model.TEXT] = IllTextItem
 ITEM_CLASSES[model.PATH] = IllPathItem
 ITEM_CLASSES[model.LAYER] = IllLayerItem
