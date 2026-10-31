@@ -8,10 +8,6 @@ from settings_catalog import CATALOG, Node, Spec
 
 TYPO_TAB = "Module Typographie"
 
-CATALOG["Typographie : Ouverture"] = [
-    Spec("typo_open_double_click", "Double-clic sur une source (.ufo, .designspace) ou une police (.ttf, .otf, "
-                                   ".woff) : module typographique", "bool", True),
-]
 CATALOG["Typographie : Secours"] = [
     Spec("typo_autosave_seconds", "Sauvegarde de secours du travail non enregistré (0 = jamais)", "slider", 60,
          {"min": 0, "max": 900, "unit": "s"}),
@@ -61,7 +57,6 @@ CATALOG["Typographie : Couleurs"] = [
 ]
 
 TYPO_TREE = (
-    Node("Ouverture", "Typographie : Ouverture"),
     Node("Secours", "Typographie : Secours"),
     Node("Nouveaux projets", "Typographie : Nouveaux projets"),
     Node("Éditeur", "Typographie : Éditeur"),

@@ -36,9 +36,11 @@ Partie de la doc du module ; entrée, carte et PASSATION : `docs/agents/fm_font.
 - **Réglages** : préfixe `typo_` (le préfixe `font_` est déjà celui des polices de l'interface). Tolérances en
   DIXIÈMES (curseurs entiers des réglages, `scale: 10`). Appliqués en direct au module ouvert
   (`settings_link._apply_settings`, chemin rapide des clés `typo_`).
-- **Accès** (2026-10-30) : double-clic sur une source (`.ufo` = DOSSIER, `.designspace`) ou une police
-  (`.ttf`, `.otf`, `.woff`, `.woff2`, importée) dans une colonne (réglage `typo_open_double_click`, vrai par
-  défaut) ; menu d'une colonne (zone vide) « Créer un projet typographique » (UFO vierge, puis double-clic). Pas
+- **Accès** (2026-10-31, demande de l'utilisateur : PAS de double-clic, réglage `typo_open_double_click`
+  retiré) : bouton « Typographie » de la barre de navigation et menu d'une ligne « Ouvrir dans le module
+  typographique », sur une source (`.ufo` = DOSSIER, `.designspace`) ou une police (`.ttf`, `.otf`, `.woff`,
+  `.woff2`, importée) ; le double-clic garde son sens habituel (police : visionneuse ; `.ufo` : explorateur) ;
+  menu d'une colonne (zone vide) « Créer un projet typographique » (UFO vierge, sélectionné). Pas
   d'accès depuis le Board (un projet de police n'est pas un élément de tableau blanc). Modes exclusifs : ouvrir
   l'éditeur Markdown, le board ou la vidéo ferme d'abord le module (`_leave_font`, questions si modifié) ; fermer
   l'appli aussi (`closeEvent`).

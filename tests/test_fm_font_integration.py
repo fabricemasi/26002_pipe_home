@@ -79,7 +79,7 @@ class IntegrationTest(WindowTestCase):
 
     def test_defaults_and_settings_window(self):
         defaults = settings_store.DEFAULT_SETTINGS
-        self.assertTrue(defaults["typo_open_double_click"])
+        self.assertNotIn("typo_open_double_click", defaults)               # jamais au double-clic (utilisateur)
         self.assertEqual(defaults["typo_node_size"], 7)
         import settings_window_v2 as v2
         from fm_font.settings import TYPO_TAB
@@ -100,14 +100,13 @@ class IntegrationTest(WindowTestCase):
                       "Fond du canvas"):
             self.assertIn(label, texts)
 
-    def test_double_click_open_close_and_columns(self):
+    def test_open_close_and_columns(self):
+        from main_window.font_module import font_target
         host = _Host()
-        self.assertTrue(host._font_claims(self.ufo))
-        self.assertTrue(host._font_claims(self.ttf))
-        self.assertFalse(host._font_claims(self.tmp))
-        ui_state.APPLIED_SETTINGS["typo_open_double_click"] = False
-        self.assertFalse(host._font_claims(self.ufo))
-        ui_state.APPLIED_SETTINGS["typo_open_double_click"] = True
+        self.assertTrue(font_target(self.ufo, True))
+        self.assertTrue(font_target(self.ttf, False))
+        self.assertFalse(font_target(self.ufo, False))                     # un .ufo est un dossier
+        self.assertFalse(font_target(self.tmp, True))
         self.assertTrue(host._open_font(self.ufo))
         pane = host._font
         self.assertIsNotNone(pane)
@@ -175,35 +174,42 @@ class IntegrationTest(WindowTestCase):
         self.assertIsNone(bar._font)
         self.assertFalse(bar.btn_font.isEnabled())
 
-    def test_viewer_double_click_routes_ufo_folder(self):
+    def test_double_click_never_opens_the_module(self):
+        """Demande de l'utilisateur : le module s'ouvre par le menu d'une ligne ou le bouton de la barre, jamais au
+        double-clic (une police va à la visionneuse, un .ufo à l'explorateur comme tout dossier)."""
         from main_window.viewer import ViewerMixin
         host = _Host()
-        host.on_activated = ViewerMixin.on_activated.__get__(host)
-        host.on_activated(self.ufo)
-        self.assertIsNotNone(host._font)
-        host._close_font()
+        host._open_font = lambda path=None: self.fail("module ouvert au double-clic")
+        host._video_claims = lambda path: False
+        with mock.patch("main_window.viewer.open_in_file_manager") as explorer:
+            ViewerMixin.on_activated.__get__(host)(self.ufo)
+        explorer.assert_called_once()
 
-    def test_column_double_click_routes_font_before_viewer(self):
-        """Le vrai chemin du double-clic : une police a un aperçu (colonne -> visionneuse), une source .ufo est
-        un dossier (colonne -> visionneuse de dossier) ; les deux doivent aller au module d'abord."""
-        from main_window.viewer import ViewerMixin
-        host = _Host()
-        host._viewer_folder_files = lambda folder: (_ for _ in ()).throw(AssertionError("visionneuse atteinte"))
-        ViewerMixin._view_in_viewer.__get__(host)(self.ttf)
-        self.assertEqual(host._font.project.source, self.ttf)
-        host._close_font()
-        ViewerMixin._view_folder_in_viewer.__get__(host)(self.ufo)
-        self.assertEqual(host._font.project.path, self.ufo)
-        host._close_font()
-        ui_state.APPLIED_SETTINGS["typo_open_double_click"] = False
-        try:
-            with mock.patch("main_window.viewer.QTimer.singleShot") as later:  # réglage coupé : visionneuse
-                host._video_claims = lambda path: False
-                ViewerMixin._view_in_viewer.__get__(host)(self.ttf)
-            self.assertIsNone(host._font)
-            later.assert_called_once()
-        finally:
-            ui_state.APPLIED_SETTINGS["typo_open_double_click"] = True
+    def test_row_menu_opens_the_module(self):
+        import column as column_module
+        from browser_core import ROLE_PATH
+        opened = []
+        window = track(QWidget())
+        window._open_font = opened.append
+        column = column_module.Column(self.tmp, "Contenu")
+        column.setParent(window)
+        column.resize(300, 400)
+        window.show()
+        app.processEvents()
+        for path in (self.ufo, self.ttf):
+            item = next(column.list.item(i) for i in range(column.list.count())
+                        if Path(column.list.item(i).data(ROLE_PATH)) == path)
+            seen = []
+
+            def fake_exec(menu, *args, **kwargs):
+                seen.extend(a.text() for a in menu.actions())
+                return next(a for a in menu.actions() if a.text() == "Ouvrir dans le module typographique")
+            with mock.patch.object(column_module.Menu, "exec", fake_exec):
+                column._on_context_menu(column.list.visualItemRect(item).center())
+            for _ in range(3):
+                app.processEvents()
+            self.assertEqual(seen.count("Ouvrir dans le module typographique"), 1)
+            self.assertEqual(opened[-1], path)
 
     def test_live_settings_reach_open_pane(self):
         host = _Host()

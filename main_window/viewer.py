@@ -175,8 +175,6 @@ class ViewerMixin:
         if self._project_columns_hidden:
             return
         folder = Path(folder)
-        if not gallery and self._font_claims(folder) and self._open_font(folder):   # source .ufo : fm_font
-            return
         files = self._viewer_folder_files(folder)
         if gallery and not files and not self._recursive_on():
             # Les photos sont dans les sous-dossiers : la planche les montre (mode récursif allumé pour cela,
@@ -547,8 +545,6 @@ class ViewerMixin:
         # Double-clic (ou "Ouvrir") : un dossier s'ouvre dans l'explorateur
         # Windows, un fichier dans son application par defaut. Une note .md d'un coffre Obsidian
         # s'ouvre dans Obsidian, SUR cette note (demande de l'utilisateur) ; a defaut, son logiciel.
-        if self._font_claims(path) and self._open_font(path):   # source .ufo (dossier) / .designspace, police
-            return
         if path.is_dir():
             open_in_file_manager(path)
             return
@@ -583,10 +579,6 @@ class ViewerMixin:
         une fois que le clic l'a montree dans l'inspecteur. L'image part de l'apercu de la LIGNE
         (pas de celui de l'inspecteur) ; le retour aux colonnes la ramene dans l'inspecteur."""
         if self._project_columns_hidden:
-            return
-        # Police (.ttf / .otf / .woff…) : elle a un aperçu, mais le double-clic l'ouvre dans fm_font (réglage
-        # « Double-clic sur une source… ») ; sans lui, la visionneuse comme avant.
-        if self._font_claims(path) and self._open_font(path):
             return
         if self._video_claims(path) and self._open_video(path):   # video / sequence EXR, TIFF… : module video
             return

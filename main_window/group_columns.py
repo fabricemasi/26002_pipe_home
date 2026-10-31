@@ -59,6 +59,7 @@ class GroupColumnsMixin:
         if path is not None:
             self._last_active_group_column = column
         self.update_active_column()
+        self._sync_mode_buttons()              # boutons de mode de la barre : la sélection du groupe compte aussi
         if path is None:
             return
         # Inspecteur (apercu image/turntable, rendu manuel du menu contextuel) :

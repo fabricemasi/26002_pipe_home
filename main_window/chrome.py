@@ -50,15 +50,26 @@ class ChromeMixin:
             button.setGraphicsEffect(effect)
 
     def _selected_path(self) -> tuple:
-        """(colonne, chemin) du choix le plus profond des colonnes, ou (None, None)."""
-        for column in reversed(getattr(self, "columns", [])):
-            try:
-                path = column.current_path()
-            except RuntimeError:
-                continue
-            if path is not None:
-                return column, Path(path)
-        return None, None
+        """(colonne, chemin) du choix le plus profond des colonnes, ou (None, None). Une ligne choisie dans le groupe
+        IN / OVER / OUT / LOGICIELS (hors de `self.columns`) compte tant qu'aucune colonne ouverte après lui n'a de
+        sélection : même règle que le focus (`update_active_column`)."""
+        def deepest(columns):
+            for column in reversed(columns):
+                try:
+                    path = column.current_path()
+                except RuntimeError:
+                    continue
+                if path is not None:
+                    return column, Path(path)
+            return None, None
+        columns = getattr(self, "columns", [])
+        group = getattr(self, "_last_active_group_column", None)
+        if group is not None:
+            found = deepest([group])
+            if found[1] is not None:
+                after = deepest(columns[self._chain_expected_total():])
+                return after if after[1] is not None else found
+        return deepest(columns)
 
     def _sync_mode_buttons(self):
         """Boutons visionneuse / editeur de texte de la barre : l'editeur n'est disponible que sur un fichier
@@ -86,11 +97,9 @@ class ChromeMixin:
         self._set_button_usable(self.btn_video, on_video or (not viewer_open and is_file
                                                              and video.is_media_file(path)))
         self.btn_video.set_alert(self._mode_on_color() if on_video else None)
-        import fm_font
+        from .font_module import font_target
         on_font = getattr(self, "_font", None) is not None
-        # Un .ufo est un DOSSIER ; les autres sources / polices sont des fichiers (type repris de la lecture du dossier).
-        font_ok = (path is not None and fm_font.is_font_file(path)
-                   and (not is_file if path.suffix.lower() == ".ufo" else is_file))
+        font_ok = path is not None and font_target(path, not is_file)
         self._set_button_usable(self.btn_font, on_font or (not viewer_open and font_ok))
         self.btn_font.set_alert(self._mode_on_color() if on_font else None)
 

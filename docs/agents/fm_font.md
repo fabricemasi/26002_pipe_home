@@ -8,10 +8,11 @@ Mission autonome lancée le 2026-10-30 (aucune question à l'utilisateur, aucun 
 `.venv`, le Python global n'a ni ufo2ft ni uharfbuzz). **Mesures** : `python -m fm_font.bench 1000` (modèle,
 multimasters) et `python -m fm_font.bench 1000 --qt` (canvas, grille, aperçu ; offscreen).
 
-**Utilisation** : double-clic sur un `.ufo` / `.designspace` / `.ttf` / `.otf` / `.woff(2)` d'une colonne, ou bouton
-« Typographie » de la barre de navigation (icône « A » + nœud, kind `"font"`, `btn_font` ; grisé tant que la
-sélection n'est pas une source ou une police, voir `_sync_mode_buttons` ; module ouvert = le bouton le ferme,
-`_toggle_font`), ou menu d'une colonne « Créer un projet typographique ». Pages : Glyphes (Ctrl+1), Éditeur (Ctrl+2, double-clic sur un
+**Utilisation** (JAMAIS au double-clic, demande de l'utilisateur 2026-10-31) : bouton « Typographie » de la barre
+de navigation (icône « A » + nœud, kind `"font"`, `btn_font` ; grisé tant que la sélection, y compris dans IN / OVER /
+OUT / LOGICIELS, n'est pas une source `.ufo` (dossier) / `.designspace` ou une police `.ttf` / `.otf` / `.woff(2)`,
+voir `_sync_mode_buttons` ; module ouvert = le bouton le ferme, `_toggle_font`), menu d'une ligne « Ouvrir dans le
+module typographique » (`font_target`), ou menu d'une colonne « Créer un projet typographique ». Pages : Glyphes (Ctrl+1), Éditeur (Ctrl+2, double-clic sur un
 glyphe), Aperçu (Ctrl+3), Features (Ctrl+4, Ctrl+Entrée = appliquer), Diagnostic (Ctrl+5). Outils : V sélection,
 P plume, B crayon, R rectangle, E ellipse, Y polygone (Alt = étoile), C plume calligraphique, W brosse, M mesure,
 K couteau (Maj = 45°), H main ; Espace tenu / bouton du milieu = déplacer la vue ; molette = zoom ; flèches = déplacer (Maj ×10) ;
@@ -59,7 +60,7 @@ RIEN de la fenêtre principale (elle lui pose des `HOOKS`).
 | Hinting TrueType (ttfautohint, repli « symbole ») et PostScript / CFF (otfautohint d'afdko ; zones et fûts déduits) | `hinting.py` | `autohint`, `autohint_cff`, `blue_zones`, `stems`, `with_ps_hinting_info` |
 | Sauvegarde de SECOURS (travail non enregistré, proposée à la réouverture) | `autosave.py` | `Autosaver` (`write`, `find`, `restore`, `discard`), `snapshot` |
 | Réglages `typo_*` dans le catalogue (fenêtre « Réglages : Typographie ») | `settings.py` | `TYPO_TAB`, `TYPO_TREE` |
-| BRANCHEMENT dans la fenêtre principale (hors du paquet) | `main_window/font_module.py` | `FontModuleMixin` : `_font_claims`, `_open_font`, `_leave_font`, `_close_font` |
+| BRANCHEMENT dans la fenêtre principale (hors du paquet) | `main_window/font_module.py` | `font_target`, `FontModuleMixin` : `_toggle_font`, `_open_font`, `_leave_font`, `_close_font` |
 | Menu de colonne « Créer un projet typographique » (hors du paquet) | `column_parts/context_menu.py`, `column_parts/file_operations.py` | `_create_font_project` |
 
 ## Parties de la doc (lire celle du sujet seulement)

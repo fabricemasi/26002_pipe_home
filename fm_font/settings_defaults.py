@@ -1,12 +1,9 @@
 """Défauts des réglages du module typographique (clés `typo_*`) : source unique, fusionnés dans DEFAULT_SETTINGS
 par `settings_store`. Aucun import de l'appli. Lus par `canvas.GlyphCanvas.apply_settings`, `glyph_grid`,
-`preview`, `pane` (et le double-clic de l'explorateur)."""
+`preview`, `pane`."""
 from typing import Any
 
 TYPO_DEFAULTS: dict[str, Any] = {
-    # Double-clic sur une source (.ufo, .designspace) ou une police (.ttf, .otf, .woff, .woff2) dans une colonne :
-    # ouverte dans le module typographique (une police compilée est IMPORTÉE, jamais réécrite).
-    "typo_open_double_click": True,
     # Nouveau projet : unités par em et métriques verticales proposées.
     "typo_new_upm": 1000,
     "typo_new_ascender": 800,

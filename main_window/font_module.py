@@ -1,25 +1,22 @@
-"""Branchement du module typographique (fm_font) : ouverture plein cadre (double-clic sur une source .ufo /
-.designspace ou une police .ttf / .otf / .woff / .woff2, menu « Créer un projet typographique » d'une colonne),
-hooks, réglages. Carte du module : docs/agents/fm_font.md ; de la fenêtre : docs/agents/fm_browser.md."""
+"""Branchement du module typographique (fm_font) : ouverture plein cadre par le bouton « Typographie » de la barre
+ou le menu d'une ligne « Ouvrir dans le module typographique » (source .ufo / .designspace, police .ttf / .otf /
+.woff / .woff2 ; JAMAIS au double-clic, demande de l'utilisateur), menu « Créer un projet typographique » d'une
+colonne, hooks, réglages. Carte du module : docs/agents/fm_font.md ; de la fenêtre : docs/agents/fm_browser.md."""
 from pathlib import Path
 
 import ui_state
 from settings_store import load_settings
 
 
+def font_target(path, is_dir: bool) -> bool:
+    """Le module sait-il ouvrir `path` ? Source ou police (un .ufo est un DOSSIER, le reste des fichiers) ; `is_dir`
+    vient de la lecture du dossier (aucun accès disque)."""
+    import fm_font
+    return fm_font.is_font_file(path) and is_dir == (Path(path).suffix.lower() == ".ufo")
+
+
 class FontModuleMixin:
     """Méthodes de PipelineBrowser : module typographique (fm_font) recouvrant les colonnes."""
-
-    def _font_claims(self, path) -> bool:
-        """Le double-clic va-t-il au module ? Source (un .ufo est un DOSSIER) ou police compilée, réglage
-        « Double-clic sur une source… » (Réglages : Typographie)."""
-        import fm_font
-        path = Path(path)
-        if not fm_font.is_font_file(path):
-            return False
-        if not (ui_state.APPLIED_SETTINGS or {}).get("typo_open_double_click", True):
-            return False
-        return path.is_dir() if path.suffix.lower() == ".ufo" else path.is_file()
 
     def _install_font_hooks(self):
         import fm_font.pane as font_pane
