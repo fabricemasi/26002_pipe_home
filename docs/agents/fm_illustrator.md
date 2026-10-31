@@ -39,6 +39,8 @@ n'importent PAS Qt.
 | Barre d'outils (gauche), témoin fond / contour, barre de contrôle (haut), menus couleur (nuancier, dégradé) / épaisseur / Pathfinder / plans / export, panneau Calques | `ui.py` | `IllustratorChrome`, `FillStroke` |
 | Menu Objet / clic droit | `menus.py` | `fill_object_menu`, `open_context_menu` |
 | Glyphes des boutons | `glyphs.py` | `paint_ill_glyph` (appelé par `fm_board.ui.paint_glyph`) |
+| Réglages (onglet « Illustrator » de « Réglages : Board », clés `board_ill_*`) : lignes et arbre ; défauts | `settings.py` ; `settings_defaults.py` | `ILL_TAB`, `ILL_TREE` ; `ILL_DEFAULTS` |
+| Réglages APPLIQUÉS (sans Qt) : `LOOK`, recopie dans les modules chargés, unité affichée, format des plans | `look.py` | `apply_settings`, `push`, `value`, `to_display`, `artboard_size` |
 
 Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
 - `fm_board/model.py` : `DEFAULTS` reçoit les types, `normalize_item` appelle `ill_model.normalize_entity`, `ICON_ROWS`
@@ -93,6 +95,18 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
   vectoriser le contour) ignorent les textes : Ctrl+Maj+O (Créer les contours) d'abord, comme Illustrator. Un seul
   style par texte (pas de styles de caractères par partie). Tests : `QT_QPA_FONTDIR` = `C:\Windows\Fonts`
   (l'offscreen n'a sinon aucune police : des carrés).
+- **Réglages** (tranche 18) : onglet « Illustrator » de la fenêtre « Réglages : Board » (bouton engrenage du cadre
+  Board), comme Design / Tableur : Sélection et repères (couleur de sélection, tailles des poignées et des points,
+  couleur et distance des repères commentés, repères actifs à l'ouverture), Nouveaux objets (format du plan de
+  travail, police et corps des textes, unité affichée pt / mm / px), Clavier et outils (flèches, Maj + flèches,
+  fidélité du crayon / pinceau, détail de la vectorisation), Export (DPI des parties tramées du PDF). Appliqués EN
+  DIRECT : `BoardPane.apply_settings` -> `look.apply_settings` (4 µs quand rien ne change : chemin rapide) ->
+  `look.push` recopie dans les modules CHARGÉS (`tools.HANDLE_PX`, `overlay.ANCHOR_SIDE`, `tools_xform.SNAP_PX`,
+  `controller.NUDGE`…, lus à chaque usage ; jamais `from … import CONSTANTE`, qui figerait la valeur) ->
+  `controller.apply_settings` repeint. Valeur invalide = défaut. Fichiers PARTAGÉS touchés (lignes du module
+  seulement) : `settings_store.py` (`DEFAULT_SETTINGS.update(ILL_DEFAULTS)`), `settings_window_v2.py` (import,
+  `STANDALONE_TABS`, `MODULE_SCOPES["board"]`, `TAB_LABELS`, menu « Restaurer »), `tests/test_settings_window_v2.py`
+  (listes d'onglets du Board).
 - **Pinceaux et largeur variable** (tranche 11) : `width_profile` ([[t, facteur]] le long du tracé) et `brush`
   (pointe calligraphique : angle, rondeur, taille ; la largeur dépend de la direction) d'un tracé. Le contour est
   alors une SURFACE calculée (`brushes.outline`, numpy : points échantillonnés, normales, largeurs, extrémités
@@ -254,7 +268,8 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 | Export PDF (plan courant, tous les plans, dessin entier ; vectoriel, images pleine résolution ; relu par QtPdf dans les tests) | Partiel (pas de PDF/X, fond perdu, traits de coupe, CMJN ; texte en contours) | `test_illustrator_pdf.py` |
 | Outils avancés : Rotation / Échelle / Symétrie à origine, saisies, Transformer de nouveau (pas et répétition), Aligner / Répartir, repères commentés | Partiel (pas de Transformation manuelle E, de repères d'angle / de points, de copie Alt pendant les outils à origine) | `test_illustrator_xform.py` |
 | Pinceaux : profils de largeur, outil Largeur, pointe calligraphique, Pinceau, Forme de tache, Vectoriser le contour, SVG / PDF | Partiel (pas de pinceaux Diffusion / Motif / Art / Soies, largeur asymétrique, pression) | `test_illustrator_brushes.py` |
-| Réglages du module (Réglages : Board), outils restants (dégradé de forme libre, filet de dégradé, Transformation manuelle E, déformation / enveloppe, symboles, motifs, perspective, Largeur asymétrique, pinceaux Diffusion / Motif / Art), compatibilité .ai (non annoncée) | Non commencé | — |
+| Réglages du module (onglet Illustrator de Réglages : Board, en direct) | Terminé | `test_illustrator_settings.py` |
+| Outils restants (dégradé de forme libre, filet de dégradé, Transformation manuelle E, déformation / enveloppe, symboles, motifs, perspective, Largeur asymétrique, pinceaux Diffusion / Motif / Art), compatibilité .ai (non annoncée) | Non commencé | — |
 
 ## PASSATION (2026-10-31)
 
@@ -275,9 +290,9 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 - Tranche 10 (texte) : 68ab7c1. Tranche 12 (masques) : 3bf4f4d. Tranche 13 (aspect et effets) : ac3a4f4. Tranche 14
   (images) : d97b2ae (corrige aussi l'import SVG du contrôleur, qui créait tout en tracés). Tranche 15
   (vectorisation) : 7cf18e0. Tranche 16 (export PDF) : 9cd1b20. Tranche 17 (outils avancés) : 889f7dc. Tranche 11
-  (pinceaux) : commit suivant.
-- POINT DE REPRISE : 18 réglages du module (Réglages : Board : couleur de sélection, tolérances, repères commentés, unités
-  affichées pt / mm / px ; catalogue `settings.py` + défauts `settings_defaults.py` comme fm_design), 19 finition.
+  (pinceaux) : d129836. Tranche 18 (réglages) : commit suivant.
+- POINT DE REPRISE : 19 finition (bilan, vérification dans la vraie fenêtre Windows, icônes réglables
+  `ui_board_ill_*` dans Module MRO > Icônes comme Design, pistes de fluidité ci-dessous).
 - Pistes de fluidité restantes : enregistrement JSON hors du fil de l'interface (coque, tous modules) ; clic de
   plume (création d'élément) ; 1re image de nombreux traits au pinceau (~1,2 ms chacun : contour + `QPointF`) ; images d'effets refaites à l'arrêt d'un zoom (~0,9 ms par objet à ombre + lueur :
   à étaler par tranches, ou à faire seulement pour les objets visibles).

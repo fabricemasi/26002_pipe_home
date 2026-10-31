@@ -13,10 +13,12 @@ from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QGraphicsItem
 
 from . import bezier as bz, model
-from .tools import HANDLE_PX, box_handles, visible_handles
+from . import tools as _tools                       # tailles lues à chaque usage (réglages : look.push)
+from .tools import box_handles, visible_handles
 
 OVERLAY_Z = 1e8
-ANCHOR_SIDE = 5.0               # côté d'un point d'ancrage (pixels)
+ANCHOR_SIDE = 5.0               # côté d'un point d'ancrage (pixels) ; réglable (look.push)
+GUIDE_COLOR = "#ff2fd0"         # repères commentés (réglable)
 MAX_ANCHORS = 6000
 
 
@@ -77,7 +79,7 @@ class IllOverlay(QGraphicsItem):
         if not ctl.active:
             return []
         z = self._zoom()
-        pad = (HANDLE_PX + 12) / z
+        pad = (_tools.HANDLE_PX + 12) / z
         out = []
         items = ctl.selection()
         rect = ctl.selection_rect(items)
@@ -143,7 +145,7 @@ class IllOverlay(QGraphicsItem):
         if ctl.preview is not None:
             self._paint_preview(painter, z, accent)
         if ctl.guides:                                  # repères commentés : magenta (comme Illustrator)
-            painter.setPen(QPen(QColor("#ff2fd0"), 1.0 / z))
+            painter.setPen(QPen(QColor(GUIDE_COLOR), 1.0 / z))
             for line in ctl.guides:
                 painter.drawLine(line)
         origin = self._origin()
@@ -176,7 +178,7 @@ class IllOverlay(QGraphicsItem):
                 self._paint_box_handles(painter, z, r, accent)
 
     def _paint_box_handles(self, painter, z, rect, accent):
-        s = HANDLE_PX / z
+        s = _tools.HANDLE_PX / z
         painter.setPen(QPen(accent, 1.0 / z))
         painter.setBrush(QColor("#ffffff"))
         for p in box_handles(rect).values():

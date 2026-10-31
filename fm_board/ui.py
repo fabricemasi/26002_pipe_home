@@ -1218,6 +1218,9 @@ class BoardPane(QWidget):
             self.design.apply_settings()
         if self.tableur is not None:
             self.tableur.apply_settings(self._settings)
+        from fm_illustrator import look as ill_look              # Reglages > Illustrator (sans Qt, leger)
+        if ill_look.apply_settings(self._settings) and self.illustrator is not None:
+            self.illustrator.apply_settings()
 
     def _on_gpu_failed(self, message: str):
         """Rendu GPU impossible : le reglage est remis a faux (pas de nouvel essai a chaque ouverture) et signale."""

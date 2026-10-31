@@ -11,7 +11,7 @@ from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QFileDialog, QInputDialog, QWidget
 
 from fm_board.ui import _bar, _GlyphButton, _menu, _panel, _slider, _SwatchGrid, _TextButton
-from . import model, paint
+from . import look, model, paint
 
 TOOL_GROUPS = [
     [("select", "ill_select"), ("direct", "ill_direct")],
@@ -305,8 +305,8 @@ class IllustratorChrome(QObject):
         self.fill_button.set_swatch(values.get("fill") or "#ffffff")
         self.stroke_button.set_swatch(values.get("stroke") or "#ffffff", ring=min(18.0, 3 + float(
             values.get("stroke_width", 1.0)) * 2) if values.get("stroke") else None)
-        width = float(values.get("stroke_width", 1.0)) / model.PT
-        self.width_button.setText(f"{width:g} pt" if values.get("stroke") else "aucun")
+        self.width_button.setText(look.to_display(float(values.get("stroke_width", 1.0)))
+                                  if values.get("stroke") else "aucun")
         self.opacity.blockSignals(True)
         self.opacity.setValue(round(float(values.get("opacity", 1.0)) * 100))
         self.opacity.blockSignals(False)
@@ -317,7 +317,7 @@ class IllustratorChrome(QObject):
             from .text import base_font
             first = texts[-1].data
             self.font_button.setText(base_font(first).family()[:18])
-            self.size_button.setText(f"{round(float(first['font_size']) / model.PT, 1):g} pt")
+            self.size_button.setText(look.to_display(float(first["font_size"])))
             self.title.setText("Texte" if len(items) == 1 else self.title.text())
         self.fill_stroke.update()
         self.layers_button.set_on(self.layers_open)

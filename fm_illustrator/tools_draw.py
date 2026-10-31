@@ -9,7 +9,8 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QCursor
 
 from . import bezier as bz, model
-from .tools import (ANCHOR_PX, DRAG_PX, HANDLE_PX, DirectTool, SelectTool, Tool, _constrain45, _near_objects,
+from . import tools as _tools                       # tailles lues à chaque usage (réglages : look.push)
+from .tools import (DRAG_PX, DirectTool, SelectTool, Tool, _constrain45, _near_objects,
                     anchor_at, bezier_handle_at, box_handles, segment_at)
 
 
@@ -71,7 +72,7 @@ class PenTool(Tool):
             self.dragging = False
             return
         first = nodes[0]
-        t = ctl.tolerance(ANCHOR_PX + 1)
+        t = ctl.tolerance(_tools.ANCHOR_PX + 1)
         lx, ly = self._local(pos)
         if len(nodes) > 1 and abs(first[0] - lx) <= t and abs(first[1] - ly) <= t:
             self.item.data["subpaths"][self.sub]["closed"] = True
@@ -132,7 +133,7 @@ class PenTool(Tool):
         else:
             first = self.nodes()[0]
             lx, ly = self._local(pos)
-            t = self.ctl.tolerance(ANCHOR_PX + 1)
+            t = self.ctl.tolerance(_tools.ANCHOR_PX + 1)
             if len(self.nodes()) > 1 and abs(first[0] - lx) <= t and abs(first[1] - ly) <= t:
                 mode = "close"
         if mode != self.hover_mode:
@@ -178,7 +179,7 @@ class PenTool(Tool):
         return False
 
     def _open_end_at(self, pos):
-        t = self.ctl.tolerance(ANCHOR_PX + 1)
+        t = self.ctl.tolerance(_tools.ANCHOR_PX + 1)
         for item in reversed(self.ctl.selection() or _near_objects(self.ctl, pos)):
             ox, oy = item.data["x"], item.data["y"]
             for si, sub in enumerate(item.data["subpaths"]):
@@ -549,7 +550,7 @@ class ArtboardTool(Tool):
         board = self.ctl.selected_artboard()
         if board is None:
             return None
-        t = self.ctl.tolerance(HANDLE_PX + 2)
+        t = self.ctl.tolerance(_tools.HANDLE_PX + 2)
         for name, p in box_handles(board.scene_rect()).items():
             if abs(pos.x() - p.x()) <= t and abs(pos.y() - p.y()) <= t:
                 return name

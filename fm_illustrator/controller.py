@@ -14,14 +14,15 @@ from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtWidgets import QGraphicsView
 
 from fm_board import model as board_model
-from . import bezier as bz, layers as lay, model
+from . import bezier as bz, layers as lay, look, model
 from .items import IllArtboardItem, IllImageItem, IllItem, IllLayerItem, IllPathItem, IllTextItem
 from .overlay import IllOverlay
 from .tools import TOOL_KEYS
 from .tools_draw import make_tools
 
 HIT_PX = 5.0                    # tolérance de la souris (pixels d'écran)
-NUDGE = 1.0                     # flèches : 1 unité (Maj : 10), comme l'« incrément clavier » d'Illustrator
+NUDGE = 1.0                     # flèches : 1 unité (Maj : 10), comme l'« incrément clavier » d'Illustrator ;
+NUDGE_BIG = 10.0                # réglables (Réglages : Board > Illustrator, look.push)
 
 
 class IllustratorController(QObject):
@@ -43,7 +44,8 @@ class IllustratorController(QObject):
         from .brushes import CALLIGRAPHIC
         self.brush = dict(CALLIGRAPHIC)            # pointe du Pinceau (B)
         self.blob_size = 20.0                      # diamètre de l'outil Forme de tache (Maj+B)
-        self.smart_guides = True                   # repères commentés (Ctrl+U)
+        look.push()                                # réglages recopiés dans les modules chargés
+        self.smart_guides = bool(look.value("smart_guides"))     # repères commentés (Ctrl+U : la session)
         self.guides: list = []                     # lignes des repères commentés du geste en cours
         self.last_transform = None                 # {"matrix", "copy"} : Transformer de nouveau (Ctrl+D)
         self.editor = None                         # texte édité sur place (text.TextEditor)
@@ -55,7 +57,7 @@ class IllustratorController(QObject):
         self.tip = None                            # (point de scène, texte) : taille / angle pendant un geste
         self.style_clipboard = None
         from .trace import settings_for
-        self.trace_settings = settings_for("color6")       # derniers réglages de vectorisation (session)
+        self.trace_settings = settings_for("color6", detail=look.value("trace_detail"))  # (session)
         self._trace_relay = None
         self.tools = make_tools(self)
         self.overlay = IllOverlay(self)
@@ -100,7 +102,12 @@ class IllustratorController(QObject):
         self.stateChanged.emit()
 
     def apply_settings(self):
+        """Réglages changés (look.apply_settings a recopié les valeurs) : dessin temporaire et barres à jour."""
+        self.overlay._key = None
+        for item in self.artboards():
+            item.update()
         self.refresh()
+        self.stateChanged.emit()
 
     def busy(self) -> bool:
         """Échap a quelque chose à annuler ici (geste, tracé en cours, sélection) ; sinon le board décide (fermer)."""
@@ -326,6 +333,7 @@ class IllustratorController(QObject):
         layer = self.ensure_layer()
         style = {k: v for k, v in self.style.items() if k in model.DEFAULTS[model.TEXT]}
         style["fill"] = style.get("fill") or "#000000"
+        style.update(font_family=look.value("font"), font_size=round(look.value("text_size") * model.PT, 4))
         if style["fill"] == model.DEFAULT_FILL and self.style.get("stroke"):
             style["fill"] = "#000000"                      # style par défaut (fond blanc) : texte noir, lisible
         style.update(stroke="", stroke_gradient=None)
@@ -1249,7 +1257,7 @@ class IllustratorController(QObject):
         boards = self.artboards()
         index = (max(float(b.data.get("index", 0)) for b in boards) + 1) if boards else 0
         if rect is None:
-            w, h = size or (model.DEFAULTS[model.ARTBOARD]["w"], model.DEFAULTS[model.ARTBOARD]["h"])
+            w, h = size or look.artboard_size()
             if boards:                                       # à droite du dernier, comme Illustrator
                 last = boards[-1].scene_rect()
                 rect = QRectF(last.right() + 40, last.top(), w, h)
@@ -1478,7 +1486,7 @@ class IllustratorController(QObject):
             return True
         arrows = {Qt.Key_Left: (-1, 0), Qt.Key_Right: (1, 0), Qt.Key_Up: (0, -1), Qt.Key_Down: (0, 1)}
         if key in arrows and not ctrl:
-            step = NUDGE * (10 if shift else 1)
+            step = NUDGE_BIG if shift else NUDGE
             self.nudge(arrows[key][0] * step, arrows[key][1] * step)
             return True
         if ctrl:
