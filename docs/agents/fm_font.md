@@ -11,8 +11,8 @@ multimasters) et `python -m fm_font.bench 1000 --qt` (canvas, grille, aperçu ; 
 **Utilisation** (JAMAIS au double-clic, demande de l'utilisateur 2026-10-31) : bouton « Typographie » de la barre
 de navigation (icône « A » + nœud, kind `"font"`, `btn_font` ; grisé tant que la sélection, y compris dans IN / OVER /
 OUT / LOGICIELS, n'est pas une source `.ufo` (dossier) / `.designspace` ou une police `.ttf` / `.otf` / `.woff(2)`,
-voir `_sync_mode_buttons` ; module ouvert = le bouton le ferme, `_toggle_font`), menu d'une ligne « Ouvrir dans le
-module typographique » (`font_target`), ou menu d'une colonne « Créer un projet typographique ». Module ouvert :
+voir `_sync_mode_buttons` ; module ouvert = le bouton le ferme, `_toggle_font`), menu d'une ligne, de la pellicule, de la planche ou de
+l'image du focus « Ouvrir dans le module typographique » (table commune `main_window/module_targets.py`, `font_target`), ou menu d'une colonne « Créer un projet typographique ». Module ouvert :
 cadre « Typographie » de la barre (comme « Vidéo » / « Board », `titlebar.font_group`, `_layout_font_buttons`) :
 annuler, rétablir (grisés selon la pile, libellé de l'étape en infobulle), enregistrer (fond accent si modifié),
 exporter (menu des formats), engrenage = fenêtre « Réglages : Typographie », fermer ; le module ne les répète pas

@@ -98,10 +98,10 @@ class FilmCellsTest(unittest.TestCase):
 
     def test_context_menu_goes_to_the_callback(self):
         asked = []
-        self.strip._on_menu = asked.append
+        self.strip._on_menu = lambda pos, path: asked.append((pos, path))
         self.strip.contextMenuEvent(type("E", (), {"globalPos": lambda s: QPoint(3, 4),
                                                    "accept": lambda s: None})())
-        self.assertEqual(asked, [QPoint(3, 4)])
+        self.assertEqual(asked[0][0], QPoint(3, 4))         # + fichier sous la souris (modules, module_targets)
 
 
 class GalleryCellsTest(unittest.TestCase):
@@ -135,7 +135,8 @@ class GalleryCellsTest(unittest.TestCase):
             ui_state.APPLIED_SETTINGS["viewer_gallery_text_height"] = height
             self.gallery.restyle()
 
-        self.gallery = focus.FocusGallery(None, paths, str(paths[0]), on_split=on_split, on_menu=self.menus.append)
+        self.gallery = focus.FocusGallery(None, paths, str(paths[0]), on_split=on_split,
+                                          on_menu=lambda pos, path: self.menus.append((pos, path)))
         self.addCleanup(self.gallery.deleteLater)
         self.gallery.resize(800, 600)
         self.gallery.show()
@@ -338,7 +339,7 @@ class GalleryCellsTest(unittest.TestCase):
     def test_context_menu_goes_to_the_callback(self):
         self.gallery.contextMenuEvent(type("E", (), {"globalPos": lambda s: QPoint(5, 6),
                                                      "accept": lambda s: None})())
-        self.assertEqual(self.menus, [QPoint(5, 6)])
+        self.assertEqual(self.menus[0][0], QPoint(5, 6))    # + fichier sous la souris (modules, module_targets)
 
 
 class FocusFrameTest(unittest.TestCase):

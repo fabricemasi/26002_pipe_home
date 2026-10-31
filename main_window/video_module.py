@@ -82,10 +82,7 @@ class VideoModuleMixin:
         if self._video is not None:
             self._close_video()
             return
-        import fm_video as video
-        _column, path = self._selected_path()
-        if path is not None and path.is_file() and video.is_media_file(path):
-            self._open_video(path)
+        self._open_selected_in(("video",))
 
     def _open_video(self, path: Path) -> bool:
         """Le module video recouvre les colonnes ; ses boutons dans le cadre « Vidéo » de la barre de navigation.

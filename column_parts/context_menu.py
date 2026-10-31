@@ -69,10 +69,11 @@ class ColumnContextMenuMixin:
         menu = Menu(self)
         menu.setFont(font(11, 400))
         act_open = menu.addAction("Ouvrir")
-        # Module typographique (fm_font) : par ce menu ou le bouton de la barre, jamais au double-clic.
-        from main_window.font_module import font_target
-        act_font = (menu.addAction("Ouvrir dans le module typographique")
-                    if font_target(path, bool(item.data(ROLE_ISDIR))) else None)
+        # Modules qui savent ouvrir ce fichier (visionneuse, éditeur, board, CAD, tableur, vidéo, typographie) :
+        # tous proposés (main_window/module_targets.py).
+        owner = self.window()
+        module_actions = (owner.add_module_actions(menu, path, bool(item.data(ROLE_ISDIR)), viewer=True)
+                          if hasattr(owner, "add_module_actions") else {})
         act_rename = menu.addAction("Renommer le raccourci…" if is_shortcut else "Renommer")
         act_reveal = menu.addAction("Afficher dans l'explorateur")
         act_viewer = act_recursive = None
@@ -216,10 +217,7 @@ class ColumnContextMenuMixin:
             if key is not None:
                 QTimer.singleShot(0, lambda: self._prompt_item_title(key))
             return
-        if act_font is not None and chosen is act_font:
-            owner = self.window()
-            if hasattr(owner, "_open_font"):
-                QTimer.singleShot(0, lambda p=path: owner._open_font(p))
+        if module_actions and owner.run_module_action(chosen, module_actions, path, self):
             return
         if chosen is act_open:
             self.activated.emit(path)

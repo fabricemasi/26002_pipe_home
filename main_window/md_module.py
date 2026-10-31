@@ -130,10 +130,7 @@ class MdModuleMixin:
         if getattr(self, "_md_open", False):
             self._close_md_editor()
             return
-        import fm_markdown as mdeditor
-        _column, path = self._selected_path()
-        if path is not None and path.is_file() and mdeditor.is_text_file(path):
-            self._open_md_editor(path)
+        self._open_selected_in(("md",))
 
     def _open_md_editor(self, path: Path) -> bool:
         """Le fichier recouvre les colonnes ; ses boutons dans le cadre « Éditeur » de la barre de navigation."""

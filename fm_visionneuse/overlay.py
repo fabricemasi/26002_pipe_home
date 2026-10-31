@@ -160,6 +160,14 @@ class FocusOverlay(QWidget):
     # deplacee) n'en est pas un.
     _click_at = None
     _on_click = None
+    on_menu = None              # (position globale) : clic droit sur l'image (visionneuse)
+
+    def contextMenuEvent(self, event):
+        if self.on_menu is not None and self._at_rest():
+            self.on_menu(event.globalPos())
+            event.accept()
+            return
+        super().contextMenuEvent(event)
 
     def wheelEvent(self, event):
         if self._on_wheel is not None:

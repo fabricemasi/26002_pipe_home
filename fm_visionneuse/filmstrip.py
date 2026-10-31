@@ -129,7 +129,7 @@ class FocusFilmstrip(QWidget):
         self._on_double_click = on_double_click
         self._on_resized = on_resized        # la bande a change de hauteur (zoom des vignettes)
         self._on_split = on_split            # (ratio, fini) : bordure image | texte tiree (Ctrl)
-        self._on_menu = on_menu              # (position globale) : clic droit
+        self._on_menu = on_menu              # (position globale, chemin sous la souris ou None) : clic droit
         self._split_drag = None              # (bas des cellules en y global, hauteur de l'image) pendant le geste
         _FILM_SIGNALS.ready.connect(self.update)
         previews.MTIME_SIGNALS.refreshed.connect(self.update)      # date relue en fond (memory_only)
@@ -530,7 +530,8 @@ class FocusFilmstrip(QWidget):
     def contextMenuEvent(self, event):
         if self._on_menu is not None:
             self.reveal()
-            self._on_menu(event.globalPos())
+            index = self._index_at(QPointF(self.mapFromGlobal(event.globalPos())))
+            self._on_menu(event.globalPos(), self._paths[index] if index >= 0 else None)
             event.accept()
             return
         super().contextMenuEvent(event)

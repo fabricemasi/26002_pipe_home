@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QGraphicsDropShadowEffect, QGraphicsOpacityEffect,
 
 from app_style import C, resolve_color_ref, build_stylesheet, role_color, role_font, scaled
 from settings_widgets import shadow_look
-from browser_core import TITLEBAR_HEIGHT, entry_is_dir
+from browser_core import TITLEBAR_HEIGHT
 import ui_state
 
 from .helpers import _set_qss
@@ -72,35 +72,28 @@ class ChromeMixin:
         return deepest(columns)
 
     def _sync_mode_buttons(self):
-        """Boutons visionneuse / editeur de texte de la barre : l'editeur n'est disponible que sur un fichier
-        texte selectionne (ou deja ouvert, pour en sortir) ; la visionneuse sur une selection (ou ouverte)."""
+        """Boutons de mode de la barre : chaque module est dégrisé sur un fichier qu'il sait ouvrir (ou quand il
+        est ouvert, pour en sortir), que le fichier soit choisi dans les colonnes ou montré par la visionneuse
+        (focus, planche) : `_module_path`, table `module_targets`. La visionneuse : sur une sélection (ou
+        ouverte)."""
         if not hasattr(self, "btn_text_editor"):
             return
-        import fm_markdown as mdeditor
         editing = getattr(self, "_md_open", False)
-        _column, path = self._selected_path()
+        _column, path, _is_dir = self._module_path()
+        keys = self._module_keys()
         viewer_open = getattr(self, "_project_columns_hidden", False)
-        # Type repris de la lecture du dossier (un `is_file()` par bouton = 3 allers-retours par clic en reseau).
-        is_file = path is not None and not entry_is_dir(path)
-        self._set_button_usable(self.btn_text_editor,
-                                editing or (not viewer_open and is_file and mdeditor.is_text_file(path)))
+        self._set_button_usable(self.btn_text_editor, editing or "md" in keys)
         self._set_button_usable(self.btn_viewer, viewer_open or editing or path is not None)
         self.btn_text_editor.set_alert(self._mode_on_color() if editing else None)
         self.btn_viewer.set_alert(self._mode_on_color() if viewer_open else None)
-        import fm_board as board
         on_board = self._board is not None
-        self._set_button_usable(self.btn_board, on_board or (not viewer_open and is_file and (
-            board.is_board_file(path) or board.is_cad_drawing(path) or self._is_spreadsheet(path))))
+        self._set_button_usable(self.btn_board, on_board or not keys.isdisjoint(("board", "cad", "sheet")))
         self.btn_board.set_alert(self._mode_on_color() if on_board else None)
-        import fm_video as video
         on_video = getattr(self, "_video", None) is not None
-        self._set_button_usable(self.btn_video, on_video or (not viewer_open and is_file
-                                                             and video.is_media_file(path)))
+        self._set_button_usable(self.btn_video, on_video or "video" in keys)
         self.btn_video.set_alert(self._mode_on_color() if on_video else None)
-        from .font_module import font_target
         on_font = getattr(self, "_font", None) is not None
-        font_ok = path is not None and font_target(path, not is_file)
-        self._set_button_usable(self.btn_font, on_font or (not viewer_open and font_ok))
+        self._set_button_usable(self.btn_font, on_font or "font" in keys)
         self.btn_font.set_alert(self._mode_on_color() if on_font else None)
 
     @staticmethod

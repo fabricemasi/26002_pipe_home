@@ -40,18 +40,24 @@ class ViewerChromeMixin:
         if final:
             self._flush_filmstrip_style()
 
-    def _filmstrip_menu(self, global_pos):
-        """Clic droit sur la pellicule : style du tableau, de la sous-cellule image ou de la sous-cellule
+    def _filmstrip_menu(self, global_pos, path=None):
+        """Clic droit sur la pellicule ou la planche : modules qui savent ouvrir le fichier sous la souris
+        (`path`, module_targets), puis style du tableau, de la sous-cellule image ou de la sous-cellule
         texte, dans la fenetre « Changement de style a la volee » (pas d'override : une seule visionneuse,
         ce sont les valeurs de Reglages > Visionneuse)."""
         from fm_visionneuse.settings import VIEWER_FILM_GROUPS
         menu = Menu(self)
+        modules = self.add_module_actions(menu, path, False) if path is not None else {}
+        if modules:
+            menu.addSeparator()
         head = menu.addAction("Changement de style à la volée")
         head.setEnabled(False)
         menu.addSeparator()
         names = {"Tableau": "Tableau…", "Cellules": "Cellules…", "Sous cellule texte": "Cellule texte…"}
         actions = {menu.addAction(names.get(title, title)): (title, group) for title, group in VIEWER_FILM_GROUPS}
         chosen = menu.exec(global_pos)
+        if self.run_module_action(chosen, modules, path):
+            return
         if chosen in actions:
             QTimer.singleShot(0, lambda: self._open_filmstrip_style(*actions[chosen]))
 
@@ -220,6 +226,7 @@ class ViewerChromeMixin:
     def _attach_viewer(self, overlay):
         overlay.set_viewer(self._viewer_neighbour, self._on_viewer_moved, self._button_rects(),
                            on_click=self._on_viewer_image_click)
+        overlay.on_menu = self._focus_menu       # clic droit : modules qui savent ouvrir l'image
 
     def _on_viewer_image_click(self, anchor=None):
         """Clic simple sur l'image : bascule entre ajustement ecran et taille reelle (100 %)."""
@@ -274,6 +281,7 @@ class ViewerChromeMixin:
             if strip is not None:
                 strip.reveal()                   # pas de pellicule (reglage coupe) : rien a montrer
         self._viewer_sync.start()
+        self._sync_mode_buttons()                # boutons de mode : l'image montree (~0,05 ms)
 
     def _viewer_image(self, path: Path, fallback: QPixmap | None = None) -> tuple:
         """(pixmap, taille reelle ou None, image pleine definition ou None) pour `path`."""

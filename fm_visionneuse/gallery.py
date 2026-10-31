@@ -68,7 +68,7 @@ class FocusGallery(QListWidget):
         super().__init__(parent)
         self.current = current
         self._on_split = on_split            # (hauteur du texte en px, fini) : Ctrl + bordure image | texte
-        self._on_menu = on_menu              # (position globale) : clic droit
+        self._on_menu = on_menu              # (position globale, chemin sous la souris ou None) : clic droit
         self._split_drag = None              # bas de la case (y global) pendant le geste
         self.film_look = _film_look()
         self._look_sig = _film_look_signature()
@@ -1063,7 +1063,8 @@ class FocusGallery(QListWidget):
 
     def contextMenuEvent(self, event):
         if self._on_menu is not None:
-            self._on_menu(event.globalPos())
+            key = self.indexAt(self.viewport().mapFromGlobal(event.globalPos())).data(Qt.UserRole)
+            self._on_menu(event.globalPos(), Path(key) if key else None)
             event.accept()
             return
         super().contextMenuEvent(event)

@@ -374,6 +374,7 @@ class ViewerMixin:
         masquees, image seule au centre (pas pendant la planche)."""
         self._sync_collapse_button()
         self._request_crumbs()                   # visionneuse ouverte / fermee : son cheminement ou celui des colonnes
+        self._sync_mode_buttons()                # boutons de mode : image de la visionneuse ou choix des colonnes
         if not self._project_columns_hidden:
             self._release_viewer_buttons()       # cadre « Visionneuse » de la barre : boutons rendus
             self._viewer_sync.stop()

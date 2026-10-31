@@ -32,18 +32,12 @@ class BoardModuleMixin:
         if self._board is not None:
             self._close_board()
             return
-        import fm_board as board
-        _column, path = self._selected_path()
-        if path is not None and path.is_file() and board.is_board_file(path):
-            self._open_board(path)
-        elif path is not None and path.is_file() and board.is_cad_drawing(path):
-            self._open_cad_drawing(path)
-        elif path is not None and path.is_file() and self._is_spreadsheet(path):
-            self._open_spreadsheet(path)
+        self._open_selected_in(("board", "cad", "sheet"))
 
     @staticmethod
     def _is_spreadsheet(path) -> bool:
-        return path is not None and Path(path).suffix.lower() in (".xlsx", ".xlsm", ".csv", ".tsv")
+        from .module_targets import SPREADSHEET_SUFFIXES
+        return path is not None and Path(path).suffix.lower() in SPREADSHEET_SUFFIXES
 
     def _open_spreadsheet(self, path: Path):
         """Classeur Excel / CSV dans le module Tableur, en mode Standard (fm_tableur/files_mode.py) : lu HORS du fil

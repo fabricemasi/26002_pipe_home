@@ -199,12 +199,13 @@ from main_window.md_module import MdModuleMixin
 from main_window.video_module import VideoModuleMixin
 from main_window.board_module import BoardModuleMixin
 from main_window.font_module import FontModuleMixin
+from main_window.module_targets import ModuleTargetsMixin
 
 
 class PipelineBrowser(
     ColumnsMixin, CrumbsMixin, PreviewStackMixin, GroupColumnsMixin, SelectionMixin, ColumnsHiddenMixin, GalleryMixin,
     ViewerMixin, ViewerButtonsMixin, ViewerChromeMixin, CollapseMixin, SettingsLinkMixin, ChromeMixin, MdModuleMixin,
-    VideoModuleMixin, BoardModuleMixin, FontModuleMixin, QMainWindow,
+    VideoModuleMixin, BoardModuleMixin, FontModuleMixin, ModuleTargetsMixin, QMainWindow,
 ):
     _bulk_navigation = False        # _navigate_to en cours : niveaux intermediaires sans fondu ni animation
 

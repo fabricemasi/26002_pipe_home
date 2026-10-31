@@ -23,6 +23,7 @@ from fm_font.compile import compile_static  # noqa: E402
 from fm_font.document import FontProject  # noqa: E402
 from main_window.chrome import ChromeMixin  # noqa: E402
 from main_window.font_module import FontModuleMixin  # noqa: E402
+from main_window.module_targets import ModuleTargetsMixin  # noqa: E402
 
 app = QApplication.instance() or QApplication([])
 
@@ -42,7 +43,7 @@ class _TitleBar(QWidget):
         pass
 
 
-class _Host(FontModuleMixin, ChromeMixin):
+class _Host(FontModuleMixin, ChromeMixin, ModuleTargetsMixin):
     """Fenêtre principale réduite à ce que le mixin utilise."""
 
     def __init__(self):
@@ -237,8 +238,11 @@ class IntegrationTest(WindowTestCase):
         import column as column_module
         from browser_core import ROLE_PATH
         opened = []
-        window = track(QWidget())
-        window._open_font = opened.append
+
+        class _Window(ModuleTargetsMixin, QWidget):                       # menu commun (module_targets)
+            def open_in_module(self, key, path, column=None):
+                opened.append(Path(path))
+        window = track(_Window())
         column = column_module.Column(self.tmp, "Contenu")
         column.setParent(window)
         column.resize(300, 400)
