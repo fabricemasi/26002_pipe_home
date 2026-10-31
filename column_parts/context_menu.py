@@ -26,6 +26,8 @@ class ColumnContextMenuMixin:
             act_new_text_file = menu.addAction("Nouveau document texte") if self._show_files else None
             # Board facon Miro (paquet board/) : fichier .mro (JSON), ouvert dans l'appli au double-clic.
             act_new_board = menu.addAction("Créer un mro") if self._show_files else None
+            # Module typographique (paquet fm_font/) : source UFO 3 (dossier .ufo), ouverte au double-clic.
+            act_new_font = menu.addAction("Créer un projet typographique") if self._show_files else None
             act_add_shortcut = menu.addAction("Ajouter un raccourci...")
             act_paste = None
             if QApplication.clipboard().mimeData().hasUrls():
@@ -49,6 +51,8 @@ class ColumnContextMenuMixin:
                 QTimer.singleShot(0, self._create_text_file)
             elif act_new_board is not None and chosen is act_new_board:
                 QTimer.singleShot(0, self._create_board_file)
+            elif act_new_font is not None and chosen is act_new_font:
+                QTimer.singleShot(0, self._create_font_project)
             elif chosen is act_add_shortcut:
                 # 150ms (PAS 0) : ce menu ouvre un QFileDialog (via
                 # _add_shortcut), pas seulement une QInputDialog — voir

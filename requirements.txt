@@ -40,3 +40,6 @@ ufo2ft
 uharfbuzz
 skia-pathops
 brotli
+# Hinting TrueType automatique (export « TrueType hinté ») : ttfautohint-py (MIT, binaire ttfautohint FreeType / GPLv2
+# inclus pour Windows). Facultatif.
+ttfautohint-py

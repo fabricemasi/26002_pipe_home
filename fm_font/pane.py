@@ -30,11 +30,13 @@ HOOKS: dict = {
     "settings": lambda: {},                 # réglages appliqués (dict complet de l'appli)
     "status": lambda text: None,            # barre d'état de la fenêtre
     "open_settings": None,                  # fenêtre « Réglages : Typographie »
+    "autosave_dir": None,                   # dossier des sauvegardes de secours (None : autosave.default_dir)
 }
 
 PAGES = ("Glyphes", "Éditeur", "Aperçu", "Features", "Diagnostic")
 EXPORT_FORMATS = (("otf", "OpenType CFF (.otf)"), ("ttf", "TrueType (.ttf)"), ("woff", "WOFF (.woff)"),
-                  ("woff2", "WOFF2 (.woff2)"), ("variable-ttf", "Police variable TrueType (.ttf)"),
+                  ("woff2", "WOFF2 (.woff2)"), ("ttf-hinted", "TrueType hinté, ttfautohint (.ttf)"),
+                  ("woff2-hinted", "WOFF2 hinté (.woff2)"), ("variable-ttf", "Police variable TrueType (.ttf)"),
                   ("variable-woff2", "Police variable WOFF2 (.woff2)"))
 
 
@@ -68,6 +70,12 @@ class FontPane(QWidget):
         self.cache = PathCache(self.project)
         self.current_name: str | None = None
         self._last_dirty = False
+        from .autosave import Autosaver
+        self.autosaver = Autosaver(HOOKS.get("autosave_dir"))
+        self._autosaved_revision = None
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.timeout.connect(self._autosave_tick)
+        self._restart_autosave()
         self._build()
         self._attach_project()
         self.show_page("Glyphes")
@@ -443,6 +451,15 @@ class FontPane(QWidget):
         menu = Menu(self)
         for mode in MODES:
             menu.addAction(mode).triggered.connect(lambda _c=False, m=mode: self._set_mode(m))
+        menu.addSeparator()
+        strings = menu.addMenu("Chaînes de contrôle")
+        from .metrics import CONTROL_STRINGS
+        for label, text in CONTROL_STRINGS.items():
+            strings.addAction(label).triggered.connect(lambda _c=False, t=text: self.preview_field.setText(t))
+        if self.current_name:
+            name = self.current_name
+            strings.addAction(f"Glyphe courant entre n et o ({name})").triggered.connect(
+                lambda: self.preview_field.setText(f"nn/{name} nono/{name} oo"))
         self._popup(menu, self.mode_button)
 
     def _set_mode(self, mode: str) -> None:
@@ -479,7 +496,25 @@ class FontPane(QWidget):
             action = menu.addAction(label)
             action.setEnabled(not fmt.startswith("variable") or len(self.project.masters) > 1)
             action.triggered.connect(lambda _c=False, f=fmt: self.export_dialog(f))
+        if len(self.project.masters) > 1 and self.project.axes:
+            # Instances STATIQUES interpolées (une par instance nommée du Designspace, sinon une par master et
+            # une à mi-chemin) : OTF, masters compatibles exigés (sinon le message dit pourquoi).
+            menu.addSeparator()
+            sub = menu.addMenu("Instance statique interpolée (.otf)")
+            for label, location in self.instance_locations():
+                sub.addAction(label).triggered.connect(
+                    lambda _c=False, n=label, loc=location: self.export_dialog("otf", instance=(n, loc)))
         self._popup(menu, self.export_button)
+
+    def instance_locations(self) -> list[tuple[str, dict]]:
+        p = self.project
+        if p.instances:
+            return [(i.styleName or i.name or "Instance", dict(i.location)) for i in p.instances]
+        out = [(m.name, {a.name: m.location.get(a.name, a.default) for a in p.axes}) for m in p.masters]
+        axis = p.axes[0]
+        out.append((f"Mi-chemin ({axis.name} {(axis.minimum + axis.maximum) / 2:g})",
+                    {axis.name: (axis.minimum + axis.maximum) / 2}))
+        return out
 
     def _apply_features_if_open(self) -> None:
         if self.pages.currentWidget() is self.features_page:
@@ -556,6 +591,26 @@ class FontPane(QWidget):
         except (ValueError, components.CycleError) as exc:
             self.status(str(exc))
 
+    # -- secours --
+
+    def _restart_autosave(self) -> None:
+        seconds = int(self.settings.get("typo_autosave_seconds", 60))
+        if seconds > 0:
+            self._autosave_timer.start(seconds * 1000)
+        else:
+            self._autosave_timer.stop()
+
+    def _autosave_tick(self) -> None:
+        """Travail non enregistré copié en fond (instantané de quelques ms ici, écriture dans un fil)."""
+        p = self.project
+        if p.is_dirty() and p.revision != self._autosaved_revision:
+            self._autosaved_revision = p.revision
+            self.autosaver.write(p)
+
+    def _discard_autosave(self, *keys_of) -> None:
+        for project in keys_of or (self.project,):
+            self.autosaver.discard(project)
+
     # -- fichiers --
 
     def confirm_leave(self) -> bool:
@@ -569,6 +624,8 @@ class FontPane(QWidget):
 
     def request_close(self) -> None:
         if self.confirm_leave():
+            self.autosaver.wait(5)
+            self._discard_autosave()                          # enregistré, ou fermé sans enregistrer : voulu
             self.closeRequested.emit()
 
     def new_project(self) -> None:
@@ -582,10 +639,21 @@ class FontPane(QWidget):
         except ProjectError as exc:
             self.status(str(exc))
             return False
+        rescue = self.autosaver.find(project.path, project.source)
+        if rescue is not None:
+            if confirm(self, "Version de secours", f"Une version de secours plus récente de « {Path(path).name} » "
+                       "existe (travail non enregistré lors d'une fermeture inattendue). La récupérer ?",
+                       "Récupérer"):
+                try:
+                    project = self.autosaver.restore(rescue)
+                except ProjectError as exc:
+                    self.status(f"Secours illisible : {exc}")
+            else:
+                self.autosaver.discard(folder=rescue)
         self.set_project(project)
         self.status(f"{Path(path).name} ouvert." + (" Police IMPORTÉE : « Enregistrer » demande où écrire la "
                                                      "source (le fichier d'origine n'est jamais réécrit)."
-                                                     if project.source else ""))
+                                                     if project.source and project.path is None else ""))
         return True
 
     def open_dialog(self) -> None:
@@ -608,6 +676,8 @@ class FontPane(QWidget):
         except ProjectError as exc:
             self.status(str(exc))
             return False
+        self.autosaver.wait(5)
+        self._discard_autosave()
         self.status(f"Enregistré : {self.project.path}")
         self._sync_title()
         return True
@@ -619,27 +689,35 @@ class FontPane(QWidget):
                                                "Designspace (*.designspace);;UFO (*.ufo)")
         if not path:
             return False
+        from .autosave import project_key
+        old_key = project_key(self.project)
         try:
             self.project.save(path)
         except ProjectError as exc:
             self.status(str(exc))
             return False
+        self.autosaver.wait(5)
+        self.autosaver.discard(folder=self.autosaver.directory / old_key)
+        self._discard_autosave()
         self.status(f"Enregistré : {path}")
         self._sync_title()
         return True
 
-    def export_dialog(self, fmt: str) -> None:
-        ext = ".woff2" if fmt.endswith("woff2") else ".ttf" if fmt.endswith("ttf") else f".{fmt}"
-        style = self.project.masters[self.canvas.master].name.replace(" ", "")
+    def export_dialog(self, fmt: str, instance: tuple | None = None) -> None:
+        base = fmt.replace("-hinted", "")
+        ext = ".woff2" if base.endswith("woff2") else ".ttf" if base.endswith("ttf") else f".{base}"
+        style = (instance[0] if instance else self.project.masters[self.canvas.master].name).replace(" ", "")
         suffix = "-VF" if fmt.startswith("variable") else f"-{style}"
         name = f"{self.project.family_name.replace(' ', '')}{suffix}{ext}"
         path, _f = QFileDialog.getSaveFileName(self, "Exporter la police", name, f"Police (*{ext})")
         if path:
-            self.export_to(path, fmt)
+            self.export_to(path, fmt, instance)
 
-    def export_to(self, path, fmt: str) -> bool:
+    def export_to(self, path, fmt: str, instance: tuple | None = None) -> bool:
         try:
-            notes = export(self.project, path, fmt, master=self.canvas.master)
+            notes = export(self.project, path, fmt, master=self.canvas.master,
+                           instance=instance[1] if instance else None,
+                           instance_name=instance[0] if instance else "Instance")
         except CompileError as exc:
             self.status(str(exc))
             return False
@@ -656,6 +734,8 @@ class FontPane(QWidget):
         self.grid.set_cell_size(int(self.settings["typo_cell_size"]))
         self.preview.settings = self.settings
         self.preview.update()
+        if "typo_autosave_seconds" in settings:
+            self._restart_autosave()
 
     def eventFilter(self, obj, event):
         from PySide6.QtCore import QEvent
@@ -670,6 +750,7 @@ class FontPane(QWidget):
         super().keyPressEvent(event)
 
     def shutdown(self) -> None:
+        self._autosave_timer.stop()
         self.cache.detach()
         self.preview.detach()
         if self._on_change in self.project.listeners:

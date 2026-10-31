@@ -545,6 +545,8 @@ class ViewerMixin:
         # Double-clic (ou "Ouvrir") : un dossier s'ouvre dans l'explorateur
         # Windows, un fichier dans son application par defaut. Une note .md d'un coffre Obsidian
         # s'ouvre dans Obsidian, SUR cette note (demande de l'utilisateur) ; a defaut, son logiciel.
+        if self._font_claims(path) and self._open_font(path):   # source .ufo (dossier) / .designspace, police
+            return
         if path.is_dir():
             open_in_file_manager(path)
             return

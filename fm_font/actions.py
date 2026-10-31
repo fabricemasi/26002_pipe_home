@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fontTools.misc.transform import Transform
 
-from . import components, geometry, glyph_info
+from . import components, geometry, glyph_info, kerning
 from . import contours as C
 
 
@@ -50,7 +50,7 @@ def contour_op(cv, op: str) -> None:
     """op : reverse / close / open / start / quadratic / cubic (contours de la sélection)."""
     contours = cv.selected_contours() or list(range(len(cv.glyph.contours)))
     nodes = _nodes(cv)
-    tolerance = float(cv.settings["typo_quadratic_tolerance"])
+    tolerance = float(cv.settings["typo_quadratic_tolerance"]) / 10
 
     def fn(glyph):
         for c in contours:
@@ -83,6 +83,7 @@ def glyph_op(cv, op: str) -> None:
               "align_left": "Aligner à gauche", "align_right": "Aligner à droite", "align_top": "Aligner en haut",
               "align_bottom": "Aligner en bas", "align_hcenter": "Centrer horizontalement",
               "align_vcenter": "Centrer verticalement", "distribute_h": "Répartir horizontalement",
+              "corners": "Arrondir les coins",
               "distribute_v": "Répartir verticalement", "center": "Centrer dans la chasse"}
     font = cv.font
 
@@ -118,14 +119,35 @@ def glyph_op(cv, op: str) -> None:
         elif op == "center":
             from .metrics import center
             center(glyph, font)
+        elif op == "corners":
+            nodes = {(c, i) for c, i in selection if glyph.contours[c][i].type is not None}
+            geometry.round_corners(glyph, nodes, float(cv.settings["typo_corner_radius"]))
     cv.edit(labels[op], fn)
-    if op in ("overlaps", "union", "difference", "intersection", "xor", "decompose", "simplify"):
+    if op in ("overlaps", "union", "difference", "intersection", "xor", "decompose", "simplify", "corners"):
         cv.clear_selection()
 
 
 def add_anchor(cv, name: str, pos=None) -> None:
     x, y = cv.to_font(pos) if pos is not None else (cv.glyph.width / 2, cv.font.info.capHeight or 700)
     cv.edit(f"Ancre {name}", lambda g: components.set_anchor(g, name, round(x), round(y)))
+
+
+def kerning_class(project, side: int, names) -> None:
+    """Classe de crénage depuis la sélection de la grille : côté 1 (gauche) ou 2 (droite), nommée d'après le
+    premier glyphe ; côté 0 = retirer ces glyphes de leurs classes (les deux côtés). Un pas d'annulation par côté."""
+    names = list(names)
+    if not names:
+        return
+    font = project.font
+    sides = (1, 2) if side == 0 else (side,)
+    for s in sides:
+        prefix = kerning.KERN1 if s == 1 else kerning.KERN2
+        if side == 0:
+            for group, members in list(font.groups.items()):
+                if group.startswith(prefix) and set(members) & set(names):
+                    kerning.set_group(project, s, group, [g for g in members if g not in names])
+        else:
+            kerning.set_group(project, s, names[0], names)
 
 
 def canvas_menu(pane, global_pos, local_pos) -> object:
@@ -150,7 +172,8 @@ def canvas_menu(pane, global_pos, local_pos) -> object:
     for op, label in (("overlaps", "Supprimer les chevauchements"), ("union", "Union (contours choisis)"),
                       ("difference", "Différence (1er moins les autres)"), ("intersection", "Intersection"),
                       ("xor", "Exclusion"), ("directions", "Corriger le sens"), ("simplify", "Simplifier"),
-                      ("round", "Arrondir les coordonnées")):
+                      ("round", "Arrondir les coordonnées"),
+                      ("corners", "Arrondir les coins choisis (rayon : réglages)")):
         paths.addAction(label).triggered.connect(lambda _c=False, o=op: glyph_op(cv, o))
     transform = menu.addMenu("Transformer")
     for op, label in (("mirror_h", "Symétrie horizontale"), ("mirror_v", "Symétrie verticale"),
@@ -184,6 +207,14 @@ def grid_menu(pane, global_pos) -> object:
     menu.addAction("Dupliquer").triggered.connect(lambda: pane.duplicate_selected())
     menu.addAction("Supprimer").triggered.connect(lambda: pane.delete_selected())
     menu.addSeparator()
+    classes = menu.addMenu("Classes de crénage")
+    classes.setEnabled(bool(names))
+    classes.addAction("Classe GAUCHE avec la sélection").triggered.connect(
+        lambda: kerning_class(pane.project, 1, names))
+    classes.addAction("Classe DROITE avec la sélection").triggered.connect(
+        lambda: kerning_class(pane.project, 2, names))
+    classes.addAction("Retirer la sélection de ses classes").triggered.connect(
+        lambda: kerning_class(pane.project, 0, names))
     menu.addAction("Construire les accentués choisis (ancres)").triggered.connect(
         lambda: pane.build_accented([u for n in names for u in pane.project.font[n].unicodes]))
     charsets = menu.addMenu("Créer les glyphes manquants")

@@ -264,7 +264,8 @@ class SettingsLinkMixin:
     def _module_open(self) -> bool:
         """Un module occupe l'appli : Markdown / code, board, visionneuse (ou planche), video."""
         return bool(getattr(self, "_md_open", False) or getattr(self, "_board", None) is not None
-                    or getattr(self, "_video", None) is not None or getattr(self, "_project_columns_hidden", False))
+                    or getattr(self, "_video", None) is not None or getattr(self, "_project_columns_hidden", False)
+                    or getattr(self, "_font", None) is not None)
 
     def _app_used_recently(self) -> bool:
         """Entree clavier / souris recente ET destinee a l'appli (fenetre active, ou curseur sur l'une de ses
@@ -455,6 +456,13 @@ class SettingsLinkMixin:
                 ui_state.APPLIED_SETTINGS.update({k: settings.get(k) for k in changed})
             if getattr(self, "_video", None) is not None:
                 self._video.apply_settings(ui_state.APPLIED_SETTINGS or settings)
+            return
+        if changed and all(k.startswith("typo_") for k in changed):
+            # Reglages : Typographie : seul le module typographique ouvert est restyle (canvas, grille, apercu).
+            if isinstance(ui_state.APPLIED_SETTINGS, dict):
+                ui_state.APPLIED_SETTINGS.update({k: settings.get(k) for k in changed})
+            if getattr(self, "_font", None) is not None:
+                self._font.apply_settings(ui_state.APPLIED_SETTINGS or settings)
             return
         if changed and all(k.startswith(("board_", "tableur_")) for k in changed):
             # Reglages > Module MRO (magnetisme du board, module Tableur) : rien d'autre a refaire que le board ouvert.

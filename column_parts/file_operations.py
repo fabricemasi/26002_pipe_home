@@ -108,6 +108,46 @@ class ColumnFileOperationsMixin:
             if it.data(ROLE_PATH) == str(new_path):
                 self.list.setCurrentItem(it)
                 break
+    def _create_font_project(self, name: str | None = None):
+        """« Créer un projet typographique » (voir _on_context_menu) : une famille vierge en source UFO 3
+        (`<Nom>.ufo`, un dossier : .notdef, espace, métriques des réglages « Nouveaux projets »), sélectionnée ;
+        le double-clic l'ouvre dans le module typographique (fm_font)."""
+        from fm_font.document import FontProject, ProjectError
+        if name is None:
+            name, ok = QInputDialog.getText(self, "Créer un projet typographique", "Nom de la famille :",
+                                            QLineEdit.Normal, "Nouvelle famille")
+            if not ok:
+                return None
+        name = (name or "").strip()
+        if not name:
+            return None
+        if any(ch in name for ch in '\\/:*?"<>|'):
+            QMessageBox.warning(self, "Créer un projet typographique", "Le nom contient des caracteres interdits.")
+            return None
+        new_path = self.directory / f"{name}.ufo"
+        if new_path.exists():
+            QMessageBox.warning(self, "Créer un projet typographique", f"« {new_path.name} » existe deja.")
+            return None
+        import ui_state
+        s = ui_state.APPLIED_SETTINGS or {}
+        project = FontProject.new(name, upm=int(s.get("typo_new_upm", 1000)),
+                                  ascender=int(s.get("typo_new_ascender", 800)),
+                                  descender=int(s.get("typo_new_descender", -200)),
+                                  cap_height=int(s.get("typo_new_cap_height", 700)),
+                                  x_height=int(s.get("typo_new_x_height", 500)))
+        try:
+            project.save(new_path)
+        except ProjectError as exc:
+            QMessageBox.warning(self, "Créer un projet typographique", str(exc))
+            return None
+        self.refresh()
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            if it.data(ROLE_PATH) == str(new_path):
+                self.list.setCurrentItem(it)
+                break
+        return new_path
+
     def _create_board_file(self, name: str | None = None):
         """« Créer un mro » (voir _on_context_menu) : un board vierge (paquet board/, JSON), meme mecanique que
         _create_text_file (nom, caracteres interdits, niveau d'une colonne fusionnee) ; il est selectionne,

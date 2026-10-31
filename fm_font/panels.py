@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget
 
-from . import features, geometry, interpolation, kerning, metrics, validation
+from . import color, features, geometry, interpolation, kerning, metrics, validation
 from .document import ProjectError
 
 
@@ -107,6 +107,7 @@ class GlyphPanel(QWidget):
             ("rsb", "Approche droite", True, lambda v: self._metric("rsb", v)),
             ("x", "Point X", True, lambda v: self._coord(0, v)),
             ("y", "Point Y", True, lambda v: self._coord(1, v)),
+            ("layers", "Calques couleur", True, self._layers),
             ("info", "Contenu", False, None),
         ])
         layout.addWidget(self.table.frame)
@@ -134,6 +135,7 @@ class GlyphPanel(QWidget):
         t.set("y", "" if bounds is None else round(bounds[1], 2))
         t.enable("x", bool(pts))
         t.enable("y", bool(pts))
+        t.set("layers", color.format_layers(color.layers(cv.font, glyph.name)))
         points = sum(len(c) for c in glyph.contours)
         t.set("info", f"{len(glyph.contours)} contours, {points} points, {len(glyph.components)} composants, "
                       f"{len(glyph.anchors)} ancres")
@@ -156,6 +158,14 @@ class GlyphPanel(QWidget):
             self.pane.project.set_unicodes(self._glyph_name(), codes)
         except (ValueError, ProjectError) as exc:
             self.message.emit(str(exc) if isinstance(exc, ProjectError) else "Unicode : codes hexadécimaux attendus.")
+        self.refresh()
+
+    def _layers(self, value):
+        """COLR : « A.rouge:0, A.bleu:1 » (glyphe:indice dans la palette de la famille) ; vide = aucun calque."""
+        try:
+            color.set_layers(self.pane.project, self._glyph_name(), color.parse_layers(value))
+        except color.ColorError as exc:
+            self.message.emit(str(exc))
         self.refresh()
 
     def _metric(self, which, value):
@@ -203,13 +213,23 @@ class FontPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(_title("Famille"))
         self.table = _Table("Famille", [(attr, label, True, (lambda v, a=attr, g=glob: self._commit(a, v, g)))
-                                        for attr, label, glob in self.FIELDS])
+                                        for attr, label, glob in self.FIELDS]
+                            + [("palette", "Palette couleur (CPAL)", True, self._palette)])
         layout.addWidget(self.table.frame)
 
     def refresh(self) -> None:
         info = self.pane.canvas.font.info
         for attr, _label_text, _glob in self.FIELDS:
             self.table.set(attr, getattr(info, attr))
+        self.table.set("palette", " ".join(color.palette(self.pane.canvas.font)))
+
+    def _palette(self, value):
+        """« #ff0000 #0000ff80 » : palette 0 de la famille (polices couleur COLR / CPAL) ; vide = aucune."""
+        try:
+            color.set_palette(self.pane.project, color.parse_palette(value))
+        except color.ColorError as exc:
+            self.message.emit(str(exc))
+        self.refresh()
 
     def _commit(self, attr, value, all_masters):
         project = self.pane.project

@@ -84,7 +84,7 @@ def import_binary(path) -> FontProject:
     if "GSUB" in tt or ("GPOS" in tt and _has_other_gpos(tt)):
         project.messages.append("Features OpenType (GSUB / GPOS hors crénage) non reprises : réécrivez-les dans "
                                 "l'éditeur de features.")
-    project.dirty_extra = True
+    # Rien n'est perdu à fermer un import non modifié (l'original reste intact) : pas « modifié ».
     return project
 
 

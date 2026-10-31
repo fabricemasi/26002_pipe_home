@@ -5,6 +5,8 @@ d'un projet modifié."""
 import os as _os, sys as _sys  # jamais les vrais réglages / presets de l'utilisateur (tests/_isolate.py)
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 import _isolate  # noqa: E402,F401
+import os as _os2, tempfile as _tempfile  # sauvegardes de secours : jamais dans le dossier de l'utilisateur
+_os2.environ.setdefault("FM_FONT_AUTOSAVE_DIR", _tempfile.mkdtemp(prefix="fmfont_secours_"))
 import shutil
 import tempfile
 import time

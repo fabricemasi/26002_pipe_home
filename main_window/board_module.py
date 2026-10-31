@@ -131,6 +131,8 @@ class BoardModuleMixin:
         if not self._close_md_editor():
             return False
         self._close_video()
+        if not self._leave_font():
+            return False
         if self._board is not None:
             if (self._board.source if imported is not None else self._board.path) == Path(path):
                 return True

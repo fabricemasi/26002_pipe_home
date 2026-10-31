@@ -198,12 +198,13 @@ from main_window.chrome import ChromeMixin
 from main_window.md_module import MdModuleMixin
 from main_window.video_module import VideoModuleMixin
 from main_window.board_module import BoardModuleMixin
+from main_window.font_module import FontModuleMixin
 
 
 class PipelineBrowser(
     ColumnsMixin, CrumbsMixin, PreviewStackMixin, GroupColumnsMixin, SelectionMixin, ColumnsHiddenMixin, GalleryMixin,
     ViewerMixin, ViewerButtonsMixin, ViewerChromeMixin, CollapseMixin, SettingsLinkMixin, ChromeMixin, MdModuleMixin,
-    VideoModuleMixin, BoardModuleMixin, QMainWindow,
+    VideoModuleMixin, BoardModuleMixin, FontModuleMixin, QMainWindow,
 ):
     _bulk_navigation = False        # _navigate_to en cours : niveaux intermediaires sans fondu ni animation
 
@@ -486,6 +487,7 @@ class PipelineBrowser(
         self._md_open = False                    # module Markdown / code (paquet mdeditor/) ouvert
         self._editor_buttons = []
         self._board = None
+        self._font = None                        # module typographique (fm_font, main_window/font_module.py)
         self._drawing_relay = None               # lecture de dessin DXF / DWG en cours (_open_cad_drawing)
         self._board_buttons = []
         for btn in (self.btn_browse, self.btn_presets, self.btn_settings, self.btn_collapse, self.btn_viewer,
@@ -959,6 +961,10 @@ class PipelineBrowser(
             video_pane.shutdown()
         board_pane = getattr(self, "_board", None)
         if board_pane is not None and not board_pane.confirm_leave():   # board : enregistre (contenu + vue)
+            event.ignore()
+            return
+        font_pane = getattr(self, "_font", None)
+        if font_pane is not None and not font_pane.confirm_leave():     # typographie : projet modifie
             event.ignore()
             return
         import fm_markdown.pane as md_pane

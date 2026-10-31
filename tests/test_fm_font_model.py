@@ -300,6 +300,17 @@ class GeometryTest(unittest.TestCase):
         hits = geometry.intersections_with_line(self.g, (-10, 50), (200, 50))
         self.assertEqual(len(hits), 2)
 
+    def test_round_corners_is_a_true_arc(self):
+        self.g.contours.append(shapes.rectangle(0, 0, 400, 400))
+        self.assertEqual(geometry.round_corners(self.g, {(0, 1), (0, 2)}, 50), 2)
+        contour = self.g.contours[0]
+        curves = [s for s in C.segments(contour) if s[3] == "curve"]
+        self.assertEqual(len(curves), 2)
+        mid = C.cubic_at(*C.segment_points(contour, curves[0]), 0.5)
+        self.assertAlmostEqual(math.dist(mid, (350, 50)), 50, delta=0.05)    # sur le cercle de rayon 50
+        self.assertFalse(geometry.round_corner(contour, 0, 500))             # rayon trop grand : rien
+        self.assertEqual(geometry.glyph_bounds(self.g), (0, 0, 400, 400))
+
     def test_pencil_fit_follows_points(self):
         pts = [(x, 200 * math.sin(x / 80)) for x in range(0, 500, 5)]
         contour = shapes.pencil_contour(pts, error=2.0, smoothing=0)
@@ -446,6 +457,21 @@ class CompileTest(unittest.TestCase):
         mark = shaper.shape("ó")
         self.assertEqual([g[0] for g in mark], ["o", "acutecomb"])
         self.assertEqual((mark[1][2], mark[1][3]), (270 - 540, -20))
+
+    def test_mark_to_mark_stacking(self):
+        """mkmk : une 2e marque se pose sur l'ancre « top » de la 1re (ufo2ft), vérifié par HarfBuzz."""
+        p = self._ready()
+        f = p.font
+        p.add_glyph("gravecomb")
+        f["gravecomb"].contours.append(shapes.polygon(0, 620, 50, 3))
+        components.set_anchor(f["gravecomb"], "_top", 0, 540)
+        components.set_anchor(f["acutecomb"], "top", 10, 700)
+        out = self.tmp / "mkmk.ttf"
+        export(p, out)
+        shaped = Shaper(out.read_bytes()).shape("o\u0301\u0300")
+        self.assertEqual([g[0] for g in shaped], ["o", "acutecomb", "gravecomb"])
+        # 2e marque : ancre top de la 1re (posée en 270 - 540, -20) + (10, 700) - _top (0, 540)
+        self.assertEqual((shaped[2][2], shaped[2][3]), (270 - 540 + 10, -20 + 160))
 
     def test_export_blocked_and_import_never_overwritten(self):
         p = self._ready()

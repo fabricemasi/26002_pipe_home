@@ -252,6 +252,18 @@ class GlyphCanvas(QWidget):
                     return k
         return None
 
+    def hit_metric_line(self, pos: QPointF):
+        """« right » : ligne de chasse ; « left » : ligne d'origine (x = 0), à 4 px ; None sinon. Tirer la ligne de
+        chasse change la chasse ; tirer l'origine fait glisser le dessin (approche gauche) en gardant la droite."""
+        glyph = self.glyph
+        if glyph is None:
+            return None
+        if abs(self.to_widget(glyph.width, 0).x() - pos.x()) <= 4:
+            return "right"
+        if abs(self.to_widget(0, 0).x() - pos.x()) <= 4:
+            return "left"
+        return None
+
     def snap(self, x: float, y: float, exclude=()) -> tuple[float, float]:
         """Magnétisme : lignes de métriques, autres nœuds (à `typo_snap_distance` px), puis unité entière."""
         limit = self.settings["typo_snap_distance"] / self.scale

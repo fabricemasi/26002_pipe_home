@@ -35,10 +35,13 @@ TYPO_DEFAULTS: dict[str, Any] = {
     "typo_snap_integer": True,
     # Affichage du glyphe : « fill » (rempli), « outline » (contour), « both » (rempli + nœuds).
     "typo_display": "both",
-    # Tolérances : conversion cubique -> quadratique (unités), crayon (unités à l'écran / zoom), calligraphie.
-    "typo_quadratic_tolerance": 1.0,
-    "typo_pencil_error": 3.0,
+    # Tolérances, en DIXIÈMES (curseur entier, affiché avec une décimale) : conversion cubique -> quadratique
+    # (10 = 1,0 unité), précision du crayon (30 = 3,0 px à l'écran).
+    "typo_quadratic_tolerance": 10,
+    "typo_pencil_error": 30,
     "typo_pencil_smoothing": 2,
+    # Rayon des coins arrondis (menu Tracés > Arrondir les coins), en unités.
+    "typo_corner_radius": 40,
     "typo_nib_width": 80,
     "typo_nib_angle": 30,
     "typo_brush_width": 60,
@@ -48,6 +51,9 @@ TYPO_DEFAULTS: dict[str, Any] = {
     # Aperçu : taille du texte (px) et texte par défaut.
     "typo_preview_size": 72,
     "typo_preview_text": "Portez ce vieux whisky au juge blond qui fume",
+    # Sauvegarde de SECOURS du travail non enregistré (proposée à la réouverture après un plantage) : toutes les N
+    # secondes, 0 = jamais. Hors du projet (%LOCALAPPDATA%/fm_font/secours).
+    "typo_autosave_seconds": 60,
     # Molette du canvas : zoom (vrai) ; sinon défilement, zoom avec Ctrl.
     "typo_wheel_zoom": True,
 }

@@ -96,6 +96,8 @@ class VideoModuleMixin:
             return False
         if self._board is not None and not self._close_board():
             return False
+        if not self._leave_font():
+            return False
         self._install_video_hooks()
         if self._video is None:
             from fm_video.pane import VideoPane

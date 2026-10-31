@@ -142,6 +142,8 @@ class MdModuleMixin:
         if self._board is not None and not self._close_board():
             return False
         self._close_video()
+        if not self._leave_font():
+            return False
         try:
             pane = self._md_pane()
         except ImportError:

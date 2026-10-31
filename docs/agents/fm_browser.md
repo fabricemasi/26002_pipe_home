@@ -30,9 +30,10 @@ Chaque mixin est une classe SANS Qt (`class XMixin:`) dont les méthodes utilise
 | `chrome.py` (235) | Habillage de la fenêtre : boutons de mode, styles, tailles, polices, couleurs, ombres des boutons | `refresh_chrome_sizes`, `refresh_chrome_fonts`, `refresh_colors`, `_nav_input_height`, `_sync_collapse_button`, `_set_button_usable`, `_selected_path`… |
 | `md_module.py` (252) | Branchement du module Markdown (fm_markdown) : cadre « Éditeur », ouverture, synchro CSS, hooks | `_set_md_margin`, `_persist_md_margin`, `_md_pane`, `_save_md_state`, `_start_css_sync`, `_apply_md_external`, `_preload_md_editor`… |
 | `video_module.py` (215) | Branchement du module vidéo (fm_video) : cadre « Vidéo », ouverture, hooks, réglages | `_preload_video`, `_video_claims`, `_install_video_hooks`, `_write_video_setting`, `_save_video_state`, `_toggle_video`, `_open_video` |
+| `font_module.py` (100) | Branchement du module typographique (fm_font) : double-clic sur .ufo (dossier) / .designspace / .ttf / .otf / .woff(2), ouverture plein cadre (colonnes masquées), fermeture prudente, autre mode qui le ferme | `_font_claims`, `_install_font_hooks`, `_open_font`, `_leave_font`, `_close_font` |
 | `board_module.py` (170) | Branchement du board (fm_board / fm_cad) : cadre « Board », ouverture, dessins DXF / DWG | `_DrawingRelay`, `_board_icon`, `_toggle_board`, `_open_cad_drawing`, `_cad_drawing_read`, `_open_board`, `_close_board`, `_layout_board_buttons` |
 
 Règles :
 - Un mixin n'importe jamais `pipeline_browser` (annotations seulement, sous `TYPE_CHECKING`) ; les classes de tête (`helpers`, `title_bar`, `interface_move`, `viewer_buttons`) se chargent avant les mixins.
 - Nouvelle méthode de la fenêtre : dans le mixin de sa responsabilité (pas dans `pipeline_browser.py`, réservé au cœur).
-- Les modules (fm_video, fm_markdown, fm_board…) se branchent par `md_module.py`, `video_module.py`, `board_module.py` (leurs `HOOKS`).
+- Les modules (fm_video, fm_markdown, fm_board…) se branchent par `md_module.py`, `video_module.py`, `board_module.py`, `font_module.py` (leurs `HOOKS`).

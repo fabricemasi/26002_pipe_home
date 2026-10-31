@@ -135,6 +135,18 @@ class CanvasTest(WindowTestCase):
         QTest.keyClick(self.cv, Qt.Key_V)
         self.assertIs(self.cv.tool, self.cv.tools["select"])
 
+    def test_metrics_dragged_in_view(self):
+        g = self.glyph()
+        g.contours.append(shapes.rectangle(100, 0, 500, 700))
+        g.width = 600
+        drag(self.cv, [self.w(600, 300), self.w(620, 300), self.w(640, 300)])   # ligne de chasse
+        self.assertEqual(g.width, 640)
+        self.assertEqual(self.project.undo.undo_label(), "Métriques")
+        drag(self.cv, [self.w(0, 300), self.w(20, 300), self.w(40, 300)])      # origine : approche gauche - 40
+        self.assertEqual((min(p.x for p in g.contours[0]), g.width), (60, 600))
+        self.project.undo.undo()
+        self.assertEqual((min(p.x for p in self.glyph().contours[0]), self.glyph().width), (100, 640))
+
     def test_double_click_toggles_smooth(self):
         self.glyph().contours.append(shapes.rectangle(100, 0, 500, 700))
         QTest.mouseDClick(self.cv, Qt.LeftButton, Qt.NoModifier, QPoint(*self.w(500, 0)))

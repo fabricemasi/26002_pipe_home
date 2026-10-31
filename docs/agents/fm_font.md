@@ -40,7 +40,13 @@ RIEN de la fenêtre principale (elle lui pose des `HOOKS`).
 | Aperçu : ligne, paragraphe, cascade, masters ; crénage visuel ; HarfBuzz en fond | `preview.py` | `PreviewWidget`, `parse_text` |
 | Panneaux (briques des réglages) : glyphe, famille, crénage, masters ; pages Features et Diagnostic | `panels.py` | `GlyphPanel`, `FontPanel`, `KerningPanel`, `MastersPanel`, `FeaturesPage`, `DiagnosticsPage` |
 | Menus contextuels (canvas, grille) : opérations réelles | `actions.py` | `canvas_menu`, `grid_menu`, `node_type`, `contour_op`, `glyph_op` |
-| Espace de travail plein écran, fichiers, export, HOOKS | `pane.py` | `FontPane`, `HOOKS` |
+| Espace de travail plein écran, fichiers, export (dont instances statiques), HOOKS | `pane.py` | `FontPane`, `HOOKS`, `instance_locations` |
+| Polices couleur COLR v0 / CPAL (palette, calques ; clés lib d'ufo2ft) | `color.py` | `set_palette`, `set_layers`, `parse_palette`, `parse_layers` |
+| Hinting TrueType (ttfautohint, repli « symbole ») | `hinting.py` | `autohint`, `available` |
+| Sauvegarde de SECOURS (travail non enregistré, proposée à la réouverture) | `autosave.py` | `Autosaver` (`write`, `find`, `restore`, `discard`), `snapshot` |
+| Réglages `typo_*` dans le catalogue (fenêtre « Réglages : Typographie ») | `settings.py` | `TYPO_TAB`, `TYPO_TREE` |
+| BRANCHEMENT dans la fenêtre principale (hors du paquet) | `main_window/font_module.py` | `FontModuleMixin` : `_font_claims`, `_open_font`, `_leave_font`, `_close_font` |
+| Menu de colonne « Créer un projet typographique » (hors du paquet) | `column_parts/context_menu.py`, `column_parts/file_operations.py` | `_create_font_project` |
 
 ## Décisions
 
@@ -66,7 +72,29 @@ RIEN de la fenêtre principale (elle lui pose des `HOOKS`).
 - **kern / mark / mkmk** : générés par ufo2ft depuis le crénage et les ancres (pas écrits dans le .fea).
 - **Interpolation** : le modèle de variation de fontTools (le même que la police variable) ; un glyphe incompatible
   lève `InterpolationError` avec la raison exacte, jamais de résultat faux silencieux.
-- **Réglages** : préfixe `typo_` (le préfixe `font_` est déjà celui des polices de l'interface).
+- **Réglages** : préfixe `typo_` (le préfixe `font_` est déjà celui des polices de l'interface). Tolérances en
+  DIXIÈMES (curseurs entiers des réglages, `scale: 10`). Appliqués en direct au module ouvert
+  (`settings_link._apply_settings`, chemin rapide des clés `typo_`).
+- **Accès** (2026-10-30) : double-clic sur une source (`.ufo` = DOSSIER, `.designspace`) ou une police
+  (`.ttf`, `.otf`, `.woff`, `.woff2`, importée) dans une colonne (réglage `typo_open_double_click`, vrai par
+  défaut) ; menu d'une colonne (zone vide) « Créer un projet typographique » (UFO vierge, puis double-clic). Pas
+  d'accès depuis le Board (un projet de police n'est pas un élément de tableau blanc). Modes exclusifs : ouvrir
+  l'éditeur Markdown, le board ou la vidéo ferme d'abord le module (`_leave_font`, questions si modifié) ; fermer
+  l'appli aussi (`closeEvent`).
+- **Ctrl + glisser** (règle de l'appli) : composants et repères se DÉPLACENT avec Ctrl ; nœuds, poignées, ancres
+  et crénage à la souris dans l'aperçu (Ctrl + glisser aussi) ; les nœuds et poignées sont des gestes d'édition
+  du tracé, tirés sans Ctrl (comme les poignées du CAD et la grille du Tableur).
+- **Import** : une police compilée importée n'est PAS « modifiée » tant qu'on n'y touche pas (rien à perdre) ;
+  « Enregistrer » demande où écrire la source ; l'export refuse le chemin d'origine.
+- **Couleur** : COLR v0 / CPAL par les clés de lib d'ufo2ft (`com.github.googlei18n.ufo2ft.colorPalettes`,
+  `.colorLayers`) ; un calque = un glyphe ordinaire. COLR v1 (dégradés) non fait.
+- **Secours** : `%LOCALAPPDATA%/fm_font/secours/<clé>/` (clé = empreinte du chemin ; `FM_FONT_AUTOSAVE_DIR` dans
+  les tests, jamais le vrai dossier). Sur le fil de l'interface seulement l'instantané en tuples (6,5 ms pour
+  1000 glyphes ; un `deepcopy` coûtait 177 ms) ; reconstruction + écriture dans un fil. `secours.json` écrit en
+  dernier (sans lui, le secours n'est pas valable). Proposé à l'ouverture s'il est plus récent que le fichier ;
+  supprimé après un enregistrement, une fermeture voulue ou un refus.
+- **Hinting** : ttfautohint (ttfautohint-py, roue Windows avec binaire) pour le TrueType ; sans « o » latin, repli
+  automatique en mode symbole. Pas de hinting PostScript (CFF).
 
 ## État des fonctions
 
@@ -77,12 +105,12 @@ Légende : TERMINÉ (fonctionne, sauvegardé si besoin, testé) / PARTIEL / NON 
 | Modèle, projet, sauvegarde atomique, réouverture, récupération | TERMINÉ | `ProjectTest` |
 | Glyphes : créer, supprimer (refus si composant), dupliquer, renommer partout, Unicode | TERMINÉ | modèle ; interface : voir plus bas |
 | Bézier (modèle) | TERMINÉ | `BezierTest` (division exacte, tolérance cu2qu testée à 0,25 / 1 / 4 u) |
-| Géométrie (modèle) | TERMINÉ | `GeometryTest` |
+| Géométrie (modèle) : transformations, symétrie, booléens, chevauchements, simplification, arrondi des coordonnées, COINS ARRONDIS (congé exact), alignement, mesures | TERMINÉ | `GeometryTest` ; coins arrondis : entre deux droites seulement |
 | Crayon, calligraphie (modèle) | TERMINÉ | pression = 3e valeur des échantillons |
 | Composants, ancres, accentués, cycles (modèle) | TERMINÉ | propagation structurelle testée |
 | Métriques, crénage, aide automatique (modèle) | TERMINÉ | suggestions jamais appliquées seules |
 | Features : vérification, génération liga / dlig / smcp / c2sc / onum / lnum / tnum / pnum / case / salt / ssXX | TERMINÉ (modèle) | frac : génération sommaire |
-| Compilation OTF / TTF / WOFF / WOFF2, vérifiée fontTools + HarfBuzz | TERMINÉ | `CompileTest` |
+| Compilation OTF / TTF / WOFF / WOFF2, vérifiée fontTools + HarfBuzz (crénage, liga, mark, mkmk) | TERMINÉ | `CompileTest` |
 | Masters, interpolation, police variable (fvar / gvar / STAT, instances) | TERMINÉ (modèle) | avar : seulement si le Designspace a des `map` |
 | Import TTF / OTF / WOFF / WOFF2 / SVG | TERMINÉ | features GSUB non reprises (message) |
 | Diagnostic trois niveaux | TERMINÉ | FontBakery non installé |
@@ -94,7 +122,18 @@ Légende : TERMINÉ (fonctionne, sauvegardé si besoin, testé) / PARTIEL / NON 
 | Aperçu : ligne, paragraphe, cascade, masters ; crénage visuel (Alt + flèches, Ctrl + glisser) ; HarfBuzz + features | TERMINÉ | compilation de fond |
 | Éditeur de features : erreurs lisibles, génération, application | TERMINÉ | |
 | Diagnostic (page) + FontBakery facultatif | TERMINÉ | FontBakery non installé ici |
-| Masters dans l'interface : ajout (copie compatible), choix, comparaison, compatibilité | TERMINÉ | instances : par l'export variable |
+| Masters dans l'interface : ajout (copie compatible), choix, comparaison, compatibilité | TERMINÉ | |
+| Instances : statiques interpolées (export OTF), nommées dans la police variable | TERMINÉ | édition des instances du Designspace : PARTIEL (lues / gardées, pas d'éditeur) |
+| Polices couleur COLR v0 / CPAL (palette, calques ; panneaux) | TERMINÉ | `test_fm_font_color` ; COLR v1 NON COMMENCÉ |
+| Hinting TrueType (ttfautohint) : export TTF / WOFF2 hinté | TERMINÉ | CFF non hinté |
+| Classes de crénage depuis la grille (gauche, droite, retirer) | TERMINÉ | |
+| Branchement fenêtre principale (double-clic, plein cadre, modes exclusifs, fermeture) | TERMINÉ | `test_fm_font_integration` |
+| Menu de colonne « Créer un projet typographique » | TERMINÉ | |
+| Réglages `typo_*` (catalogue, fenêtre du module, direct) | TERMINÉ | |
+| Récupération après plantage (secours du travail non enregistré, toutes les 60 s, en fond) | TERMINÉ | `test_fm_font_autosave` |
+| Métriques DANS la vue : tirer la ligne de chasse / d'origine | TERMINÉ | `test_metrics_dragged_in_view` |
+| Chaînes de contrôle dans l'aperçu (minuscules, capitales, chiffres, rondes, glyphe courant) | TERMINÉ | menu du mode de l'aperçu |
+| avar (cartes d'axes) : édition | NON COMMENCÉ | relu / écrit si présent dans le Designspace |
 
 ## Mesures (2026-10-30, `python -m fm_font.bench 1000`, dossier temporaire local)
 
@@ -129,10 +168,26 @@ Piège des tests : `QTest.qWait` GARDE le verrou Python avec PySide 6.11 ; un fi
 l'aperçu HarfBuzz) n'avance pas pendant l'attente. Attendre avec `time.sleep` + `processEvents`
 (`PaneTest.flush`). L'appli réelle (`app.exec`) libère le verrou.
 
-## PASSATION
+## PASSATION (2026-10-30)
 
-- Dernière étape validée : modèle complet sans Qt + tests (`tests/test_fm_font_model.py`, 32 tests).
-- Étape suivante : interface Qt (rendu avec cache, canvas, outils, grille, panneaux, espace plein écran, branchement
-  dans la fenêtre principale), puis réglages `typo_*`.
-- Fichiers partagés modifiés AUSSI par une autre session (non commitée) : `tests/run.py` (ligne `fm_font` commitée
-  seule par patch ciblé sur HEAD, `git update-index --cacheinfo`).
+- Commits (branche `nettoyage-code`, locaux, rien de poussé) : 1) modèle sans Qt ; 2) interface Qt ; 3) branchement
+  dans fm_browser + réglages + couleur / hinting / instances / secours / coins arrondis / métriques dans la vue.
+- Tests : `python tests/run.py fm_font` (7 fichiers, ~70 tests, ~11 s). Suite complète `--tout` après le
+  branchement : mêmes échecs que la référence d'avant fm_font (14 fichiers : test_board 1, test_file_attributes 3,
+  test_focus_viewer 6 instables, test_input_tabs_settings 1, test_interface_edit_scope 1, test_md_live_preview 1,
+  test_render_log 2, test_row_templates 1, test_settings_preload 3+1, test_shadows 1, test_software_launch 1,
+  test_table_split 2, test_viewer_buttons 1, test_viewer_filter 4) ; `test_md_tables` a échoué UNE fois
+  (`pane.flush()` du moteur web sous charge) puis passé 3 fois sur 3 : intermittent, sans lien.
+  `test_settings_window_v2.test_tabs_are_general_ones_only` attend maintenant l'onglet « font ».
+- Fichiers PARTAGÉS avec des modifications non commitées d'une autre session : seules MES lignes sont commitées,
+  par un index construit sur HEAD (`git hash-object -w` + `git update-index --cacheinfo`, script de la session
+  `stage_mine.py` : remplacements appliqués au fichier de travail ET à la version HEAD) : `tests/run.py`,
+  `pipeline_browser.py` (mixin, `self._font`, `closeEvent`), `settings_store.py` (TYPO_DEFAULTS),
+  `settings_window_v2.py` (onglet, MODULE_SCOPES / TITLES, menu « Restaurer »), `main_window/settings_link.py`
+  (chemin rapide `typo_`, `_module_open`), `tests/test_settings_window_v2.py` (onglet attendu). Le reste de ces
+  fichiers (travail de l'autre session) est resté intact et non commité.
+- Prochaines actions possibles : éditeur des instances nommées et des cartes d'axes (avar) ; COLR v1 ; outil
+  couteau ; coins arrondis entre courbes ; hinting PostScript ; FontBakery (installer `fontbakery`, la page
+  Diagnostic le lance déjà s'il est présent).
+- Limites connues : rendu vérifié en offscreen seulement (pas d'écran ici) ; la tablette (pression) n'est testée
+  que par la valeur transmise aux outils (`canvas.pressure`), pas avec un vrai stylet.

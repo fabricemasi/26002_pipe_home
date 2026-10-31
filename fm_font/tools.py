@@ -109,6 +109,12 @@ class SelectTool(Tool):
             else:
                 cv.statusMessage.emit("Ctrl + glisser pour déplacer le composant.")
             return
+        side = cv.hit_metric_line(pos)
+        if side is not None:                                # ligne de chasse / d'origine : métriques DANS la vue
+            self._begin(("metric", side))
+            self.metric_start = (cv.glyph.width, cv.to_font(pos)[0])
+            self.metric_moved = 0
+            return
         if not shift:
             cv.clear_selection()
         self.band = QRectF(pos, pos)
@@ -173,6 +179,19 @@ class SelectTool(Tool):
                 dx, dy = round(dx), round(dy)
             comp.transformation = type(comp.transformation)(t[0], t[1], t[2], t[3], t[4] + dx, t[5] + dy)
             self.last = (dx, dy)
+        elif kind == "metric":
+            width0, x0 = self.metric_start
+            dx = cv.to_font(pos)[0] - x0
+            if cv.settings["typo_snap_integer"]:
+                dx = round(dx)
+            if ref == "right":                              # chasse : le dessin ne bouge pas
+                glyph.width = max(0, width0 + dx)
+            else:                                           # origine : le dessin glisse, l'approche droite reste
+                from .metrics import _shift
+                moved = getattr(self, "metric_moved", 0)
+                _shift(glyph, -dx - moved)
+                self.metric_moved = -dx
+                glyph.width = max(0, width0 - dx)
         elif kind == "guide":
             g = glyph.guidelines[ref]
             x, y = self.font_pos(pos)
@@ -211,7 +230,8 @@ class SelectTool(Tool):
             return
         if self.token is not None:
             label = {"points": "Déplacer les points", "anchor": "Déplacer l'ancre", "component": "Déplacer le composant",
-                     "guide": "Déplacer le repère"}[self.drag[0]]
+                     "guide": "Déplacer le repère", "metric": "Métriques"}[self.drag[0]]
+            self.metric_moved = 0
             if cv.project.end_edit(self.token, label):
                 cv.glyphEdited.emit()
         self.token, self.drag = None, None
@@ -406,7 +426,7 @@ class PencilTool(Tool):
             cv.update()
             return
         closed = math.hypot(screen[0].x() - screen[-1].x(), screen[0].y() - screen[-1].y()) <= 10
-        error = cv.settings["typo_pencil_error"] / cv.scale
+        error = cv.settings["typo_pencil_error"] / 10 / cv.scale
         contour = shapes.pencil_contour(pts, error=error, smoothing=int(cv.settings["typo_pencil_smoothing"]),
                                         closed=closed)
         if len(contour):

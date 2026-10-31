@@ -264,3 +264,55 @@ def _segment_intersection(a, b, c, d):
     if 0 <= t <= 1 and 0 <= u <= 1:
         return a[0] + t * r[0], a[1] + t * r[1]
     return None
+
+
+# -- arrondi des coins (congé) --
+
+def round_corner(contour, index: int, radius: float) -> bool:
+    """Remplace le nœud en COIN `index` (entre deux segments droits) par un arc de cercle de rayon `radius` :
+    deux nœuds lisses reliés par une cubique (poignées au coefficient du cercle). False si le coin n'est pas entre
+    deux droites, ou si le rayon dépasse un des segments (rien n'est modifié)."""
+    pts = contour.points
+    node = pts[index]
+    prev, nxt = C.neighbours(contour, index)
+    if prev is None or nxt is None:
+        return False
+    a, b = pts[prev], pts[nxt]
+    if a.type is None or b.type != "line" or node.type != "line":
+        return False
+    va = (a.x - node.x, a.y - node.y)
+    vb = (b.x - node.x, b.y - node.y)
+    la, lb = math.hypot(*va), math.hypot(*vb)
+    if not la or not lb:
+        return False
+    ua, ub = (va[0] / la, va[1] / la), (vb[0] / lb, vb[1] / lb)
+    cos = max(-1.0, min(1.0, ua[0] * ub[0] + ua[1] * ub[1]))
+    angle = math.acos(cos)                                   # angle intérieur du coin
+    if angle < 1e-3 or abs(angle - math.pi) < 1e-3:
+        return False
+    distance = radius / math.tan(angle / 2)                  # du coin aux points de tangence
+    if distance >= la or distance >= lb:
+        return False
+    p1 = (node.x + ua[0] * distance, node.y + ua[1] * distance)
+    p2 = (node.x + ub[0] * distance, node.y + ub[1] * distance)
+    handle = 4 / 3 * math.tan((math.pi - angle) / 4) * radius   # cubique d'un arc d'ouverture (pi - angle)
+    h1 = (p1[0] - ua[0] * handle, p1[1] - ua[1] * handle)
+    h2 = (p2[0] - ub[0] * handle, p2[1] - ub[1] * handle)
+    from ufoLib2.objects import Point
+    new = [Point(p1[0], p1[1], "line", True), Point(*h1), Point(*h2), Point(p2[0], p2[1], "curve", True)]
+    pts[index:index + 1] = new
+    return True
+
+
+def round_corners(glyph, selection, radius: float) -> int:
+    """Arrondit les coins choisis (nœuds en coin entre deux droites). Renvoie le nombre de coins arrondis."""
+    done = 0
+    by_contour: dict[int, list[int]] = {}
+    for c, i in selection:
+        by_contour.setdefault(c, []).append(i)
+    for c, indexes in by_contour.items():
+        contour = glyph.contours[c]
+        for i in sorted(indexes, reverse=True):              # de la fin : les indices restent valables
+            if i < len(contour) and round_corner(contour, i, radius):
+                done += 1
+    return done

@@ -10,7 +10,8 @@ from pathlib import Path
 from fontTools.designspaceLib import InstanceDescriptor
 from fontTools.ttLib import TTFont
 
-FORMATS = ("otf", "ttf", "woff", "woff2", "variable-ttf", "variable-woff2")
+FORMATS = ("otf", "ttf", "woff", "woff2", "ttf-hinted", "woff-hinted", "woff2-hinted", "variable-ttf",
+           "variable-woff2")
 
 
 class CompileError(Exception):
@@ -76,9 +77,12 @@ def to_bytes(tt: TTFont) -> bytes:
     return buffer.getvalue()
 
 
-def export(project, path, fmt: str | None = None, master: int = 0, check: bool = True) -> list:
+def export(project, path, fmt: str | None = None, master: int = 0, check: bool = True,
+           instance: dict | None = None, instance_name: str = "Instance") -> list:
     """Compile et écrit `path` (format d'après l'extension si `fmt` est None). Écriture atomique (fichier
-    temporaire puis remplacement). Renvoie les diagnostics non bloquants."""
+    temporaire puis remplacement). `*-hinted` : TrueType hinté par ttfautohint. `instance` : position dans
+    l'espace de variation ({axe: valeur}) d'une instance STATIQUE interpolée (masters compatibles exigés).
+    Renvoie les diagnostics non bloquants."""
     path = Path(path)
     fmt = fmt or path.suffix.lower().lstrip(".")
     if fmt not in FORMATS:
@@ -96,9 +100,28 @@ def export(project, path, fmt: str | None = None, master: int = 0, check: bool =
         notes = found
     if fmt.startswith("variable"):
         tt = compile_variable(project, "woff2" if fmt.endswith("woff2") else "ttf")
+        data = to_bytes(tt)
     else:
-        tt = compile_static(project.masters[master].font, fmt)
-    data = to_bytes(tt)
+        font = project.masters[master].font
+        if instance is not None:
+            from .interpolation import InterpolationError, instance_font
+            try:
+                font = instance_font(project, instance, instance_name)
+            except InterpolationError as exc:
+                raise CompileError(f"Instance impossible : {exc}") from exc
+        base = fmt.replace("-hinted", "")
+        if fmt.endswith("-hinted"):
+            from .hinting import HintingError, autohint
+            try:
+                hinted = autohint(to_bytes(compile_static(font, "ttf")))
+            except HintingError as exc:
+                raise CompileError(str(exc)) from exc
+            tt = TTFont(io.BytesIO(hinted))
+            if base in ("woff", "woff2"):
+                tt.flavor = base
+        else:
+            tt = compile_static(font, base)
+        data = to_bytes(tt)
     tmp = path.with_name(path.name + ".fmf-tmp")
     tmp.write_bytes(data)
     import os
