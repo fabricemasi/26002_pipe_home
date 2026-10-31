@@ -143,7 +143,7 @@ class IllustratorChrome(QObject):
         self.object_button.clicked.connect(lambda: self.object_menu(self.object_button))
         self.board_button = _TextButton("Plans de travail", "Nouveau plan de travail, formats", self.control)
         self.board_button.clicked.connect(lambda: self.artboard_menu(self.board_button))
-        self.export_button = _GlyphButton("ill_export", "Exporter / importer en SVG", self.control, 30)
+        self.export_button = _GlyphButton("ill_export", "Exporter (SVG, PDF) / importer", self.control, 30)
         self.export_button.clicked.connect(lambda: self.export_menu(self.export_button))
         # Texte choisi : police, taille, paragraphe (montrés seulement quand la sélection contient un texte).
         self.font_button = _TextButton("Police", "Police", self.control, 120)
@@ -511,6 +511,15 @@ class IllustratorChrome(QObject):
                 lambda: QTimer.singleShot(0, self._export_all))
         menu.addAction("Exporter tout le dessin en SVG…").triggered.connect(
             lambda: QTimer.singleShot(0, lambda: self._export(None)))
+        menu.addSeparator()
+        if board is not None:
+            menu.addAction(f"Exporter « {board.data.get('name', '')} » en PDF…").triggered.connect(
+                lambda: QTimer.singleShot(0, lambda: self._export_pdf([board])))
+            menu.addAction("Exporter tous les plans de travail en PDF (une page chacun)…").triggered.connect(
+                lambda: QTimer.singleShot(0, lambda: self._export_pdf(None)))
+        else:
+            menu.addAction("Exporter le dessin en PDF…").triggered.connect(
+                lambda: QTimer.singleShot(0, lambda: self._export_pdf(None)))
         if ctl.selection():
             menu.addAction("Exporter la sélection en SVG…").triggered.connect(
                 lambda: QTimer.singleShot(0, lambda: self._export(None, True)))
@@ -531,6 +540,14 @@ class IllustratorChrome(QObject):
                                                  f"{start}/{name}.svg" if start else f"{name}.svg", "SVG (*.svg)")
         if target:
             self.ctl.export_svg(target, board, only_selection)
+
+    def _export_pdf(self, boards):
+        name = (boards[0].data.get("name") if boards else "plans de travail") or "dessin"
+        start = self._start_dir()
+        target, _f = QFileDialog.getSaveFileName(self.pane, "Exporter en PDF",
+                                                 f"{start}/{name}.pdf" if start else f"{name}.pdf", "PDF (*.pdf)")
+        if target:
+            self.ctl.export_pdf(target, boards)
 
     def _export_all(self):
         folder = QFileDialog.getExistingDirectory(self.pane, "Dossier des SVG", self._start_dir())

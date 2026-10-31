@@ -1194,6 +1194,22 @@ class IllustratorController(QObject):
             out.append(item.to_dict())
         return out
 
+    def export_pdf(self, path, boards=None):
+        """PDF : une page par plan de travail de `boards` (tous si None) ; sans plan de travail, une page au cadre de
+        tout le dessin (marge de 20 unités)."""
+        from . import pdf
+        boards = self.artboards() if boards is None else list(boards)
+        if boards:
+            pages = [(b.scene_rect(), b.data.get("fill", "#ffffff")) for b in boards]
+            title = str(boards[0].data.get("name", "")) if len(boards) == 1 else "Plans de travail"
+        else:
+            rect = self.selection_rect(self.objects())
+            if rect is None:
+                return None
+            pages = [(rect.adjusted(-20, -20, 20, 20), "")]
+            title = "Dessin"
+        return pdf.export_pdf(self, path, pages, title)
+
     def export_svg(self, path, board: IllArtboardItem | None = None, only_selection: bool = False):
         from pathlib import Path
         from . import svg

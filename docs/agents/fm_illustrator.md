@@ -24,6 +24,7 @@ n'importent PAS Qt.
 | Effets tramés (Qt) : flou, contour progressif, ombre portée, lueur externe, image composée gardée pendant le zoom | `effects.py` | `paint_with_effects`, `soften`, `tinted` |
 | Menu Effets (curseurs en direct, couleur, activer, supprimer, contours supplémentaires, décomposer l'aspect) | `appearance_ui.py` | `effects_menu` |
 | Vectorisation d'une image (SANS Qt, numpy) : quantification (noir et blanc, gris, couleurs : k-moyennes), contours orientés des pixels, bruit, angles, courbes (Schneider) | `trace.py` | `trace`, `quantize`, `loops`, `smooth_loop`, `PRESETS`, `settings_for` |
+| Export PDF : une page par plan de travail à sa taille exacte, objets peints un à un (vectoriel), images en pleine résolution | `pdf.py` | `export_pdf`, `DPI` ; `controller.export_pdf` |
 | Texte (Qt) : mise en page point / captif / curviligne (police de base 100 px), chemin des lettres, créer les contours, SVG `<text>` / `<textPath>`, éditeur sur place | `text.py` | `layout`, `base_font`, `outline_subpaths`, `svg_text`, `TextEditor` |
 | Calques : accès, bandes de hauteur, panneau | `layers.py` | `layers`, `layer_of`, `top_z`, `members`, `LayersPanel` |
 | Export / import SVG (dégradés compris) | `svg.py` | `export_svg`, `path_element`, `import_svg`, `parse_d`, `arc_to_cubics`, `parse_transform`, `parse_color` |
@@ -89,6 +90,15 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
   vectoriser le contour) ignorent les textes : Ctrl+Maj+O (Créer les contours) d'abord, comme Illustrator. Un seul
   style par texte (pas de styles de caractères par partie). Tests : `QT_QPA_FONTDIR` = `C:\Windows\Fonts`
   (l'offscreen n'a sinon aucune police : des carrés).
+- **Export PDF** (tranche 16) : menu Exporter : le plan courant, tous les plans (UNE page par plan, chacune à sa
+  taille : 1 unité = 1/96 de pouce = 0,75 pt), ou le dessin entier sans plan de travail (cadre + 20 unités).
+  `QPdfWriter` ; seuls les objets du module, peints un à un par leur propre peinture (pas de rendu de la scène : ni
+  sélection, ni repères, ni Miro / CAD / Design). Restent VECTORIELS : tracés, dégradés, masques d'écrêtage, textes
+  (en contours : police non incorporée, texte non sélectionnable dans le PDF). Sont des IMAGES : effets tramés et
+  masques d'opacité (à `pdf.DPI` = 300) ; images placées incorporées en PLEINE résolution (`IllImageItem.export_images`
+  le temps de l'export, au lieu de l'image réduite à 2 400 px de l'affichage). Mode Tracés ignoré, texte en édition
+  terminé. Écriture atomique. Limites : pas de PDF/X, de fond perdu, de traits de coupe, de profils colorimétriques
+  (RVB seulement), ni de PDF « modifiable dans Illustrator » (non annoncé).
 - **Vectorisation** (tranche 15) : menu Objet > Vectoriser l'image : préréglages aux noms d'Illustrator (Noir et
   blanc, Niveaux de gris, 3 / 6 / 16 couleurs) et curseurs (seuil, couleurs, détail = grand côté de l'image tracée,
   fidélité, bruit, angles), gardés pour la session. Algorithme propre au module (idée générale de potrace, aucun code
@@ -179,6 +189,7 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
 | Curseur d'effet en direct (1 objet) | — | ~15-30 ms par mouvement |
 | 20 photos 3 000 × 2 000 (zoom 30 %) : pan / zoom continu / importer les 20 | — | 4,9 ms / 9 ms / 285 ms (copie + empreinte, une fois) |
 | Vectoriser une illustration 1 200 × 900 (détail 500) : 6 / 16 couleurs ; interface pendant le calcul en fond | — | 0,12 s / 0,26 s ; boucle d'événements : médiane 5 ms, p95 16 ms, pire ~50 ms |
+| Export PDF d'un plan avec 2 000 tracés / + 100 ombres tramées | — | 0,09 s (88 Ko) / 0,33 s (729 Ko) |
 | Mise en page d'un texte (à la validation, à l'annulation, pas pendant la frappe) : point 11 lettres / curviligne 200 lettres / captif 300 mots | — / — / 40 ms (un `addText` par mot) | 0,3 ms / 17 ms / 19 ms (36 ms justifié) |
 Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 
@@ -207,6 +218,7 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 | Aspect et effets : décalage, arrondis, flou, contour progressif, ombre portée, lueur externe, contours supplémentaires, décomposer l'aspect, SVG `<filter>` | Partiel (un effet par type, pas de styles graphiques, d'ombre / lueur internes, de modes de fusion) | `test_illustrator_effects.py` |
 | Images placées (importer, dépôt, transformations, recadrage par masque, effets, SVG `<image>` aller-retour) | Partiel (incorporées seulement, pas d'images liées ni de ré-échantillonnage) | `test_illustrator_images.py` |
 | Vectorisation (préréglages, curseurs, fil de fond, remplacement annulable) | Partiel (pas d'objet de vectorisation modifiable en direct, ni de mode contour, ni de palette imposée) | `test_illustrator_trace.py` |
+| Export PDF (plan courant, tous les plans, dessin entier ; vectoriel, images pleine résolution ; relu par QtPdf dans les tests) | Partiel (pas de PDF/X, fond perdu, traits de coupe, CMJN ; texte en contours) | `test_illustrator_pdf.py` |
 | Pinceaux / largeur variable, images placées, vectorisation, export PDF, outils avancés (dégradé de forme, filet, déformation…), réglages du module (Réglages : Board), repères commentés / magnétisme | Non commencé | — |
 
 ## PASSATION (2026-10-31)
@@ -227,11 +239,11 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
   d'annulation), ~44 ms pour 20 objets / 98 zones, puis survol = `QPainterPath.contains` par zone.
 - Tranche 10 (texte) : 68ab7c1. Tranche 12 (masques) : 3bf4f4d. Tranche 13 (aspect et effets) : ac3a4f4. Tranche 14
   (images) : d97b2ae (corrige aussi l'import SVG du contrôleur, qui créait tout en tracés). Tranche 15
-  (vectorisation) : commit suivant.
+  (vectorisation) : 7cf18e0. Tranche 16 (export PDF) : commit suivant.
 - POINT DE REPRISE : tranche 11 (pinceaux, largeur variable : profil de largeur le long du tracé, contour
   vectorisé par `pathfinder.outline_stroke` puis déformé ; peut devenir un effet vectoriel de `appearance.py`),
-  16 PDF
-  (`QPdfWriter` + `paint_path`, vectoriel).
+  puis 17 outils avancés (rotation / échelle / symétrie avec point d'origine, Transformer de nouveau Ctrl+D,
+  repères commentés et magnétisme, alignement / répartition), 18 réglages du module (Réglages : Board).
 - Pistes de fluidité restantes : enregistrement JSON hors du fil de l'interface (coque, tous modules) ; clic de
   plume (création d'élément) ; images d'effets refaites à l'arrêt d'un zoom (~0,9 ms par objet à ombre + lueur :
   à étaler par tranches, ou à faire seulement pour les objets visibles).

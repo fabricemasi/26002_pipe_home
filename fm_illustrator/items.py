@@ -596,11 +596,28 @@ class IllImageItem(IllPathItem):
     def bake(self, m):
         self.data["matrix"] = [round(v, 9) for v in bz.multiply(self._matrix(), m)]
 
+    export_images = None                # export PDF en cours : {asset: image en PLEINE résolution} (`pdf.py`)
+
     def pixmap(self):
         from fm_miro.items import asset_pixmap
         scene = self.scene()
         path = getattr(scene, "board_path", None) if scene is not None else None
-        return asset_pixmap(path, self.data.get("asset", "")) if path is not None else None
+        if path is None:
+            return None
+        cache = IllImageItem.export_images
+        if cache is not None:                           # export : l'image d'origine, pas la réduite de l'affichage
+            name = self.data.get("asset", "")
+            if name not in cache:
+                from PySide6.QtGui import QImageReader, QPixmap
+                from fm_board.serialization import asset_path, is_asset_name
+                reader = QImageReader(str(asset_path(path, name))) if is_asset_name(name) else None
+                if reader is not None:
+                    reader.setAutoTransform(True)
+                image = reader.read() if reader is not None else None
+                cache[name] = QPixmap.fromImage(image) if image is not None and not image.isNull() else None
+            if cache[name] is not None:
+                return cache[name]
+        return asset_pixmap(path, self.data.get("asset", ""))
 
     def _paint_vector(self, painter: QPainter):
         w, h = float(self.data.get("w", 100.0)), float(self.data.get("h", 100.0))
