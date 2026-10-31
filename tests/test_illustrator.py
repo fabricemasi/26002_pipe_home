@@ -389,6 +389,16 @@ class ToolsTest(IllTestCase):
         self.assertFalse(a.data["subpaths"][0]["closed"])
         self.assertEqual(len(a.data["subpaths"][0]["nodes"]), 3)
 
+    def test_bounds_follow_the_edited_path(self):
+        """Point tiré loin (sélection directe) : les limites de peinture suivent le nouveau tracé à CHAQUE mouvement
+        (l'index BSP relisait les anciennes et elles restaient gardées : trait repeint seulement par morceaux)."""
+        a = self.rect(100, 100, 100, 100)
+        self.ctl.set_tool("direct")
+        self.drag(QPointF(200, 200), QPointF(600, 500))
+        drawn = a.mapRectToScene(a.boundingRect())
+        self.assertTrue(drawn.contains(a.geometry_rect()), (drawn, a.geometry_rect()))
+        self.assertGreater(drawn.right(), 600)
+
     def test_pencil_fits_bezier(self):
         self.ctl.set_tool("pencil")
         pts = [QPointF(100 + i * 10, 200 + 40 * math.sin(i / 3)) for i in range(20)]

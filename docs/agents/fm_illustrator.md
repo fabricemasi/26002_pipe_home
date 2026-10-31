@@ -200,6 +200,10 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
   morceaux groupés, chacun au style de son objet ; Découpe, Fusion, Recadrage retirent les contours (connaissance
   générale d'Illustrator, non vérifiée cette session ; Division garde les contours). Mode « Contour » du panneau :
   non fait. Réunion / Exclusion : une seule simplification de tous les contours (règle winding / pair-impair).
+- **PIÈGE : limites gardées (`IllItem.boundingRect`)** : `prepareGeometryChange` les jette, mais l'index BSP de la
+  scène les RELIT aussitôt (avant le changement) et elles restaient gardées : un tracé modifié (point tiré en
+  sélection directe, plume) n'était repeint que dans son ancien cadre, par morceaux. `IllPathItem.sync` les jette
+  donc APRÈS la nouvelle géométrie (`test_bounds_follow_the_edited_path`). Toute géométrie changée passe par `sync`.
 
 ## Illustrator : ce qui est repris, et à quel degré
 

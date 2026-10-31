@@ -345,6 +345,9 @@ class IllPathItem(IllItem):
             self._brush_fill = gradient_brush(self.data["stroke_gradient"], self._box) \
                 if self.data.get("stroke_gradient") else QBrush(qcolor(self.data["stroke"]))
             self._pen = None
+        # Limites gardées jetées APRÈS la nouvelle géométrie : `prepareGeometryChange` (index BSP) relit les limites
+        # AVANT le changement et les gardait ; le tracé modifié n'était repeint que dans son ancien cadre.
+        self._bounds = None
         self.apply_visibility()
 
     def apply_visibility(self):
