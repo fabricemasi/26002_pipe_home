@@ -63,11 +63,12 @@ def compile_variable(project, fmt: str = "ttf") -> TTFont:
 
 def _default_instances(project, doc) -> None:
     """Instances nommées par défaut : une par master (fvar en a besoin pour être utile)."""
+    default = project.default_location()
     for master in project.masters:
         inst = InstanceDescriptor()
         inst.familyName = project.family_name
         inst.styleName = master.name
-        inst.location = {a.name: master.location.get(a.name, a.default) for a in project.axes}
+        inst.location = {a.name: master.location.get(a.name, default[a.name]) for a in project.axes}
         doc.addInstance(inst)
 
 

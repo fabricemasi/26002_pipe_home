@@ -271,7 +271,8 @@ class FontProject:
         self.set_info("familyName", name, all_masters=True)
 
     def default_location(self) -> dict:
-        return {a.name: a.default for a in self.axes}
+        """Défaut des axes en coordonnées de CONCEPTION (positions des masters)."""
+        return {a.name: _to_design(a, a.default) for a in self.axes}
 
     def is_dirty(self) -> bool:
         return self.dirty_extra or not self.undo.is_clean()
@@ -548,7 +549,8 @@ class FontProject:
     # -- instances nommées (Designspace : fvar de la police variable, instances statiques) --
 
     def set_instances(self, entries) -> None:
-        """`entries` : [(nom de style, {axe: valeur})] ; un pas d'annulation. Valeurs hors des axes refusées."""
+        """`entries` : [(nom de style, {axe: valeur UTILISATEUR})] ; un pas d'annulation. Valeurs hors des axes
+        refusées. Rangées en coordonnées de conception (carte d'axe, voir `axes.py`)."""
         axes = {a.name: a for a in self.axes}
         built = []
         for name, location in entries:
@@ -562,7 +564,7 @@ class FontProject:
             inst = InstanceDescriptor()
             inst.familyName = self.family_name
             inst.styleName = name
-            inst.location = {a: location.get(a, axes[a].default) for a in axes}
+            inst.location = {a: _to_design(axes[a], location.get(a, axes[a].default)) for a in axes}
             built.append(inst)
         before = list(self.instances)
 
@@ -593,6 +595,10 @@ def _axis(name: str, tag: str, minimum: float, default: float, maximum: float) -
     axis.minimum, axis.default, axis.maximum = minimum, default, maximum
     axis.labelNames = {"fr": name, "en": name}
     return axis
+
+
+def _to_design(axis, user: float) -> float:
+    return axis.map_forward(user) if axis.map else user
 
 
 def _ufo_name(family: str, style: str) -> str:

@@ -37,6 +37,7 @@ RIEN de la fenêtre principale (elle lui pose des `HOOKS`).
 | Features .fea : vérification lisible, génération, fusion | `features.py` | `check`, `generate`, `merge`, `set_features` |
 | Mise en forme HarfBuzz (vérification indépendante) | `shaping.py` | `Shaper` |
 | Masters : compatibilité, interpolation, instances | `interpolation.py` | `incompatibilities`, `interpolate_glyph`, `instance_font` |
+| Axes de variation : édition, CARTES (avar), positions des masters, instances multi-axes (saisie texte) | `axes.py` | `set_axes`, `parse_axes`, `format_axes`, `set_master_location`, `parse_location`, `parse_instances`, `format_instances`, `design_ranges` |
 | Compilation / export (statique, WOFF, WOFF2, variable) | `compile.py` | `compile_static`, `compile_variable`, `export` |
 | Import TTF / OTF / WOFF / WOFF2 / UFO / Designspace / SVG | `importer.py` | `open_any`, `import_binary`, `import_svg` |
 | Diagnostic trois niveaux, FontBakery facultatif | `validation.py` | `diagnose`, `fontbakery_report` |
@@ -81,6 +82,11 @@ RIEN de la fenêtre principale (elle lui pose des `HOOKS`).
 - **kern / mark / mkmk** : générés par ufo2ft depuis le crénage et les ancres (pas écrits dans le .fea).
 - **Interpolation** : le modèle de variation de fontTools (le même que la police variable) ; un glyphe incompatible
   lève `InterpolationError` avec la raison exacte, jamais de résultat faux silencieux.
+- **Coordonnées** (convention du Designspace) : min / défaut / max d'un axe en valeurs UTILISATEUR (fvar) ;
+  positions des masters et des instances en valeurs de CONCEPTION ; la carte de l'axe (avar) les relie.
+  L'interpolation normalise dans l'espace de conception (`axes.design_ranges`). L'éditeur des instances parle
+  utilisateur ; « Position du master » parle conception. Changer une carte garde la position UTILISATEUR des
+  masters (aucun refus surprise) ; on corrige ensuite leur position de conception.
 - **Réglages** : préfixe `typo_` (le préfixe `font_` est déjà celui des polices de l'interface). Tolérances en
   DIXIÈMES (curseurs entiers des réglages, `scale: 10`). Appliqués en direct au module ouvert
   (`settings_link._apply_settings`, chemin rapide des clés `typo_`).
@@ -124,7 +130,7 @@ Légende : TERMINÉ (fonctionne, sauvegardé si besoin, testé) / PARTIEL / NON 
 | Métriques, crénage, aide automatique (modèle) | TERMINÉ | suggestions jamais appliquées seules |
 | Features : vérification, génération liga / dlig / smcp / c2sc / onum / lnum / tnum / pnum / case / salt / ssXX | TERMINÉ (modèle) | frac : génération sommaire |
 | Compilation OTF / TTF / WOFF / WOFF2, vérifiée fontTools + HarfBuzz (crénage, liga, mark, mkmk) | TERMINÉ | `CompileTest` |
-| Masters, interpolation, police variable (fvar / gvar / STAT, instances) | TERMINÉ (modèle) | avar : seulement si le Designspace a des `map` |
+| Masters, interpolation, police variable (fvar / gvar / STAT / avar, instances) | TERMINÉ | `test_fm_font_axes` (avar relue par fontTools, chasse vérifiée par HarfBuzz) |
 | Import TTF / OTF / WOFF / WOFF2 / SVG | TERMINÉ | features GSUB non reprises (message) |
 | Diagnostic trois niveaux | TERMINÉ | FontBakery non installé |
 | Interface : espace de travail, pages, barre, état « modifié », fermeture prudente | TERMINÉ | `test_fm_font_pane` |
@@ -136,7 +142,7 @@ Légende : TERMINÉ (fonctionne, sauvegardé si besoin, testé) / PARTIEL / NON 
 | Éditeur de features : erreurs lisibles, génération, application | TERMINÉ | |
 | Diagnostic (page) + FontBakery facultatif | TERMINÉ | FontBakery non installé ici |
 | Masters dans l'interface : ajout (copie compatible), choix, comparaison, compatibilité | TERMINÉ | |
-| Instances nommées (éditeur dans le panneau Masters ; fvar de la police variable ; exports statiques interpolés) | TERMINÉ | `InstancesTest` ; un seul axe dans l'éditeur (premier axe) |
+| Instances nommées (éditeur dans le panneau Masters ; fvar de la police variable ; exports statiques interpolés) | TERMINÉ | `InstancesTest`, `test_fm_font_axes` ; plusieurs axes (« Bold Condensed wght=700 wdth=75 ») |
 | Polices couleur COLR v0 / CPAL (palette, calques ; panneaux) | TERMINÉ | `test_fm_font_color` ; COLR v1 NON COMMENCÉ |
 | Hinting TrueType (ttfautohint) : export TTF / WOFF2 hinté | TERMINÉ | CFF non hinté |
 | Classes de crénage depuis la grille (gauche, droite, retirer) | TERMINÉ | |
@@ -146,7 +152,7 @@ Légende : TERMINÉ (fonctionne, sauvegardé si besoin, testé) / PARTIEL / NON 
 | Récupération après plantage (secours du travail non enregistré, toutes les 60 s, en fond) | TERMINÉ | `test_fm_font_autosave` |
 | Métriques DANS la vue : tirer la ligne de chasse / d'origine | TERMINÉ | `test_metrics_dragged_in_view` |
 | Chaînes de contrôle dans l'aperçu (minuscules, capitales, chiffres, rondes, glyphe courant) | TERMINÉ | menu du mode de l'aperçu |
-| avar (cartes d'axes) : édition | NON COMMENCÉ | relu / écrit si présent dans le Designspace |
+| Axes (plusieurs, ajout / retrait / renommage) et cartes avar : édition ; position de conception du master courant | TERMINÉ | panneau Masters, « Variation » ; un changement de carte garde la position UTILISATEUR des masters |
 
 ## Mesures (2026-10-30, `python -m fm_font.bench 1000`, dossier temporaire local)
 

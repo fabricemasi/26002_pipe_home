@@ -246,6 +246,21 @@ class PaneTest(WindowTestCase):
         self.assertEqual([(i.styleName, i.location["Weight"]) for i in p.project.instances],
                          [("Regular", 400), ("Semi Bold", 600), ("Bold", 700)])
         self.assertIn(("Semi Bold", {"Weight": 600}), p.instance_locations())
+        # axes, carte (avar) et position du master courant depuis le panneau
+        t.fields["axes"].setText("Weight wght 100 400 900 carte 100>20 400>80 900>200 ; Width wdth 75 100 125")
+        t._commit("axes")
+        self.flush()
+        self.assertEqual([a.tag for a in p.project.axes], ["wght", "wdth"])
+        self.assertEqual(t.fields["position"].text(), "Weight=152 Width=100")      # master Bold (700 utilisateur)
+        t.fields["position"].setText("Weight=200")
+        t._commit("position")
+        self.flush()
+        self.assertEqual(p.project.masters[1].location, {"Weight": 200, "Width": 100})
+        t.fields["position"].setText("Weight=999")                                  # refusé, message lisible
+        t._commit("position")
+        self.flush()
+        self.assertIn("hors de l'axe", p.status_label.text())
+        self.assertEqual(t.fields["position"].text(), "Weight=200 Width=100")
 
     def test_context_menus_build(self):
         p = self.pane

@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget
 
+from . import axes as axes_model
 from . import color, features, geometry, interpolation, kerning, metrics, validation
 from .document import ProjectError
 
@@ -476,9 +477,17 @@ class MastersPanel(QWidget):
         self.summary = _label("", "note")
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
-        self.table = _Table("Instances", [("instances", "Instances nommées", True, self._instances)], width=190)
-        self.table.fields["instances"].setToolTip("Ex. « Light 300, Regular 400, Bold 700 » (valeurs sur le premier "
-                                                  "axe) : instances de la police variable et des exports statiques")
+        self.table = _Table("Variation", [("axes", "Axes et cartes", True, self._axes),
+                                          ("position", "Position du master", True, self._position),
+                                          ("instances", "Instances nommées", True, self._instances)], width=190)
+        self.table.fields["axes"].setToolTip(
+            "« Nom étiquette min défaut max [carte u>c …] », axes séparés par « ; ».\nEx. « Weight wght 100 400 900 "
+            "carte 100>20 400>80 900>200 ; Width wdth 75 100 125 ».\nMin / défaut / max : valeurs UTILISATEUR "
+            "(fvar) ; la carte les relie aux valeurs de CONCEPTION des masters (table avar).")
+        self.table.fields["position"].setToolTip("Position de CONCEPTION du master courant, ex. « Weight=80 Width=100 »")
+        self.table.fields["instances"].setToolTip(
+            "Ex. « Light 300, Regular 400, Bold 700 » (premier axe) ou « Bold Condensed wght=700 wdth=75 » "
+            "(valeurs utilisateur) : instances de la police variable et des exports statiques")
         layout.addWidget(self.table.frame)
         row = QHBoxLayout()
         row.addWidget(button("Ajouter un master", "Copie du master courant (graisse 700 sur l'axe Weight)",
@@ -493,32 +502,32 @@ class MastersPanel(QWidget):
         lines = [f"Axes : {axes}"] + [f"{'▶ ' if i == self.pane.canvas.master else ''}{m.name} "
                                       f"{m.location or ''}" for i, m in enumerate(p.masters)]
         self.summary.setText("\n".join(lines))
-        axis = p.axes[0].name if p.axes else None
-        self.table.set("instances", ", ".join(f"{i.styleName} {i.location.get(axis, 0):g}" for i in p.instances)
-                       if axis else "")
-        self.table.enable("instances", axis is not None)
+        master = p.masters[min(self.pane.canvas.master, len(p.masters) - 1)]
+        self.table.set("axes", axes_model.format_axes(p.axes))
+        self.table.set("position", axes_model.format_location(p, master.location))
+        self.table.set("instances", axes_model.format_instances(p))
+        for key in ("position", "instances"):
+            self.table.enable(key, bool(p.axes))
+
+    def _model_call(self, fn) -> None:
+        try:
+            fn()
+        except ProjectError as exc:
+            self.message.emit(str(exc))
+        self.pane.masters_changed()                          # rafraîchit aussi ce panneau (texte refusé effacé)
+
+    def _axes(self, value) -> None:
+        p = self.pane.project
+        self._model_call(lambda: axes_model.set_axes(p, axes_model.parse_axes(value)))
+
+    def _position(self, value) -> None:
+        p = self.pane.project
+        self._model_call(lambda: axes_model.set_master_location(p, self.pane.canvas.master,
+                                                                axes_model.parse_location(p, value)))
 
     def _instances(self, value) -> None:
         p = self.pane.project
-        if not p.axes:
-            return
-        axis = p.axes[0].name
-        entries = []
-        try:
-            for part in value.split(","):
-                part = part.strip()
-                if not part:
-                    continue
-                name, _sep, number = part.rpartition(" ")
-                if not name:
-                    raise ValueError(part)
-                entries.append((name.strip(), {axis: float(number.replace(",", "."))}))
-            p.set_instances(entries)
-        except ValueError:
-            self.message.emit("Instances : « Nom valeur » séparés par des virgules (ex. Light 300, Bold 700).")
-        except ProjectError as exc:
-            self.message.emit(str(exc))
-        self.refresh()
+        self._model_call(lambda: p.set_instances(axes_model.parse_instances(p, value)))
 
     def add(self) -> None:
         p = self.pane.project
@@ -528,8 +537,15 @@ class MastersPanel(QWidget):
             p.masters[0].location = {"Weight": 400}
         axis = p.axes[0]
         used = {m.location.get(axis.name) for m in p.masters}
-        value = next(v for v in (700, 900, 100, 300, 500, 600, 800, 200) if v not in used)
-        axis.minimum, axis.maximum = min(axis.minimum, value), max(axis.maximum, value)
+        if axis.map:                                         # carte posée : rester dans l'axe, ne pas l'étendre
+            low, high = axes_model.design_ranges(p)[axis.name][0::2]
+            value = next((v for v in (high, low, (low + high) / 2) if v not in used), None)
+            if value is None:
+                self.message.emit("Axe déjà occupé : élargissez-le (Axes et cartes) avant d'ajouter un master.")
+                return
+        else:
+            value = next(v for v in (700, 900, 100, 300, 500, 600, 800, 200) if v not in used)
+            axis.minimum, axis.maximum = min(axis.minimum, value), max(axis.maximum, value)
         name = {100: "Thin", 200: "ExtraLight", 300: "Light", 500: "Medium", 600: "SemiBold", 700: "Bold",
                 800: "ExtraBold", 900: "Black"}.get(value, f"W{value}")
         p.add_master(name, {axis.name: value}, copy_from=self.pane.canvas.master)

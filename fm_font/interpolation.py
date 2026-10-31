@@ -57,7 +57,8 @@ def incompatibilities(project) -> list[str]:
 
 
 def _model(project):
-    axes = {a.name: (a.minimum, a.default, a.maximum) for a in project.axes}
+    from .axes import design_ranges
+    axes = design_ranges(project)                          # positions des masters : coordonnées de conception
     locations = [normalizeLocation({a: m.location.get(a, axes[a][1]) for a in axes}, axes) for m in project.masters]
     return VariationModel(locations, axisOrder=list(axes)), axes
 

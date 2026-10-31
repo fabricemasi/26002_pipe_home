@@ -514,10 +514,12 @@ class FontPane(QWidget):
         p = self.project
         if p.instances:
             return [(i.styleName or i.name or "Instance", dict(i.location)) for i in p.instances]
-        out = [(m.name, {a.name: m.location.get(a.name, a.default) for a in p.axes}) for m in p.masters]
+        from .axes import design_value
+        default = p.default_location()
+        out = [(m.name, {a.name: m.location.get(a.name, default[a.name]) for a in p.axes}) for m in p.masters]
         axis = p.axes[0]
-        out.append((f"Mi-chemin ({axis.name} {(axis.minimum + axis.maximum) / 2:g})",
-                    {axis.name: (axis.minimum + axis.maximum) / 2}))
+        middle = (axis.minimum + axis.maximum) / 2
+        out.append((f"Mi-chemin ({axis.name} {middle:g})", dict(default, **{axis.name: design_value(axis, middle)})))
         return out
 
     def _apply_features_if_open(self) -> None:
