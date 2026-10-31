@@ -2,12 +2,45 @@
 
 import shutil
 from pathlib import Path
-from PySide6.QtCore import QFile
+from PySide6.QtCore import QFile, QTimer
 from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog, QLineEdit, QMessageBox
 from browser_core import ROLE_PATH, _prompt_capture_thumbnail, _prompt_change_thumbnail, _prompt_reset_thumbnail, add_shortcut, load_shortcuts, save_shortcuts
 
 
 class ColumnFileOperationsMixin:
+    def _refresh_and_select(self, path):
+        """Dossier relu puis `path` (element cree, colle, renomme) choisi des que la colonne l'affiche. La lecture
+        se fait en fond (`refresh` rend la main avant la nouvelle ligne) : chercher la ligne juste apres ne la
+        trouvait plus, l'element cree n'etait pas selectionne (bug signale 2026-10-31, « Créer un mro »)."""
+        target = str(path)
+
+        def select() -> bool:
+            for i in range(self.list.count()):
+                item = self.list.item(i)
+                if item.data(ROLE_PATH) == target:
+                    self.list.setCurrentItem(item)
+                    return True
+            return False
+
+        def attempt():
+            # Une lecture plus ancienne peut finir avant celle qui voit l'element : on attend la suivante.
+            if select() or not (self.loading or self._load_timer.isActive()):
+                try:
+                    self.loaded.disconnect(on_loaded)
+                except (RuntimeError, TypeError):
+                    pass
+
+        def on_loaded():
+            # `loaded` part pendant que la liste a ses signaux coupes (`_advance_rows`) : choisie un tour plus
+            # tard, la ligne previent bien la fenetre (colonnes suivantes, inspecteur, boutons de mode).
+            QTimer.singleShot(0, self, attempt)
+
+        self.refresh()
+        if not getattr(self, "_async_load", False):
+            select()
+            return
+        self.loaded.connect(on_loaded)
+
     def _create_folder(self):
         name, ok = QInputDialog.getText(
             self, "Nouveau dossier", "Nom du dossier :", QLineEdit.Normal, "Nouveau dossier"
@@ -56,12 +89,7 @@ class ColumnFileOperationsMixin:
         except OSError as exc:
             QMessageBox.warning(self, "Nouveau dossier", f"Impossible de creer le dossier :\n{exc}")
             return
-        self.refresh()
-        for i in range(self.list.count()):
-            it = self.list.item(i)
-            if it.data(ROLE_PATH) == str(new_path):
-                self.list.setCurrentItem(it)
-                break
+        self._refresh_and_select(new_path)
     def _create_text_file(self):
         """"Nouveau document texte" (voir _on_context_menu) : cree un fichier
         .txt vierge, MEME mecanique que _create_folder (nom/caracteres
@@ -102,12 +130,7 @@ class ColumnFileOperationsMixin:
         except OSError as exc:
             QMessageBox.warning(self, "Nouveau document texte", f"Impossible de creer le fichier :\n{exc}")
             return
-        self.refresh()
-        for i in range(self.list.count()):
-            it = self.list.item(i)
-            if it.data(ROLE_PATH) == str(new_path):
-                self.list.setCurrentItem(it)
-                break
+        self._refresh_and_select(new_path)
     def _create_font_project(self, name: str | None = None):
         """« Créer un projet typographique » (voir _on_context_menu) : une famille vierge en source UFO 3
         (`<Nom>.ufo`, un dossier : .notdef, espace, métriques des réglages « Nouveaux projets »), sélectionnée ;
@@ -140,12 +163,7 @@ class ColumnFileOperationsMixin:
         except ProjectError as exc:
             QMessageBox.warning(self, "Créer un projet typographique", str(exc))
             return None
-        self.refresh()
-        for i in range(self.list.count()):
-            it = self.list.item(i)
-            if it.data(ROLE_PATH) == str(new_path):
-                self.list.setCurrentItem(it)
-                break
+        self._refresh_and_select(new_path)
         return new_path
 
     def _create_board_file(self, name: str | None = None):
@@ -181,12 +199,7 @@ class ColumnFileOperationsMixin:
         except OSError as exc:
             QMessageBox.warning(self, "Créer un mro", f"Impossible de creer le board :\n{exc}")
             return None
-        self.refresh()
-        for i in range(self.list.count()):
-            it = self.list.item(i)
-            if it.data(ROLE_PATH) == str(new_path):
-                self.list.setCurrentItem(it)
-                break
+        self._refresh_and_select(new_path)
         return new_path
     def _add_shortcut(self):
         """"Ajouter un raccourci" (voir _on_context_menu, ROLE_IS_SHORTCUT/
@@ -266,13 +279,10 @@ class ColumnFileOperationsMixin:
                 errors.append(f"{src.name} : {exc}")
         if errors:
             QMessageBox.warning(self, "Coller", "Impossible de coller :\n" + "\n".join(errors))
-        self.refresh()
         if last_dest:
-            for i in range(self.list.count()):
-                it = self.list.item(i)
-                if it.data(ROLE_PATH) == str(last_dest):
-                    self.list.setCurrentItem(it)
-                    break
+            self._refresh_and_select(last_dest)
+        else:
+            self.refresh()
     def _rename_shortcut(self, path: Path, shown: str):
         """Change le nom AFFICHE d'un raccourci (cle `name` de .pipeline_shortcuts.json) ; le dossier
         cible n'est jamais renomme. Nom vide = retour au nom du dossier."""
@@ -349,9 +359,4 @@ class ColumnFileOperationsMixin:
                     if sc.get("target") == str(path):
                         sc["target"] = str(new_path)
                 save_shortcuts(source, shortcuts)
-        self.refresh()
-        for i in range(self.list.count()):
-            it = self.list.item(i)
-            if it.data(ROLE_PATH) == str(new_path):
-                self.list.setCurrentItem(it)
-                break
+        self._refresh_and_select(new_path)
