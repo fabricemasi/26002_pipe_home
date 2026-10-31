@@ -98,6 +98,13 @@ class IllItem(BoardItem):
     CONNECTABLE = False
     RESIZABLE = False
     quiet_moves = False                 # vrai pendant un geste : pas de `scene.item_moved` par élément (notify_moved)
+    snapshot_ids = None                 # zoom continu : objets peints par l'image de la vue (`snapshot.py`)
+
+    def paint(self, painter, option, widget=None):
+        ids = IllItem.snapshot_ids
+        if ids is not None and self.item_id in ids:
+            return                                      # dans l'image reposée à l'échelle : rien à peindre
+        super().paint(painter, option, widget)
 
     def itemChange(self, change, value):
         if change is POSITION_HAS_CHANGED and IllItem.quiet_moves:

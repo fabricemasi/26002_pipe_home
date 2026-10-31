@@ -8,7 +8,7 @@ import _isolate  # noqa: E402,F401
 import unittest
 import xml.etree.ElementTree as ET
 
-from PySide6.QtCore import QEvent, QPointF, QRectF, Qt
+from PySide6.QtCore import QEvent, QPointF, Qt
 
 from test_illustrator import APP, IllTestCase, settle
 from fm_board import model, ui as board_ui

@@ -5,7 +5,7 @@ Cinquième module du board (après Miro, CAD, Design, Tableur), commencé le 202
 Board »). Activé par le bouton « Illustrator » du sélecteur de modules (`BoardPane.set_module("illustrator")`).
 Tout est LOCAL ; aucun code, icône ni ressource d'Adobe. **Aucune compatibilité `.ai` n'est annoncée** (non faite).
 
-**Tests** : `python tests/run.py fm_illustrator` (`tests/test_illustrator*.py`, ~5 s) ; `fm_board` les inclut.
+**Tests** : `python tests/run.py fm_illustrator` (`tests/test_illustrator*.py`, 12 fichiers, ~20 s) ; `fm_board` les inclut.
 **Mesures** : `python tools/bench_illustrator.py [N]` (offscreen, 2400 × 1300, N tracés ; défaut 2 000).
 
 ## Carte : fonctionnalité -> fichiers (à ouvrir directement)
@@ -29,7 +29,10 @@ n'importent PAS Qt.
 | Calques : accès, bandes de hauteur, panneau | `layers.py` | `layers`, `layer_of`, `top_z`, `members`, `LayersPanel` |
 | Export / import SVG (dégradés compris) | `svg.py` | `export_svg`, `path_element`, `import_svg`, `parse_d`, `arc_to_cubics`, `parse_transform`, `parse_color` |
 | Éléments de la scène (plan de travail, calque, tracé, texte, IMAGE placée `IllImageItem`), chemin et pinceaux Qt gardés, zone cliquable, MASQUES (écrêtage, opacité : `mask_item`, `_paint_through_opacity_mask`, registre `scene.ill_masks`) | `items.py` | `IllArtboardItem`, `IllLayerItem`, `IllPathItem` (`sync`, `apply_visibility`, `hit_path`, `contains_scene_point`, `geometry_rect`), `notify_moved`, `qpath`, `gradient_brush` |
-| Activation, événements, sélection, commandes (style, grouper, disposition dans le calque, verrou, masquer, joindre, tracé transparent, pipette, plans, calques, Pathfinder, vectoriser le contour, export / import) | `controller.py` | `IllustratorController` |
+| CŒUR du contrôleur : activation, zoom, événements, sélection, création / modification annulable, outils, clavier, dépôt de fichiers | `controller.py` | `IllustratorController` (= `ContentMixin` + `CommandMixin`) |
+| Commandes sur la sélection : effets, masques, style (copier / coller, pipette, X / D), supprimer, flèches, transformer (de nouveau, Déplacer…), aligner / répartir, symétries, grouper, disposition, Pathfinder, vectoriser le contour, verrou, masquer, joindre, tracé transparent, profils et pinceaux | `ctl_commands.py` | `CommandMixin`, `_split_without` |
+| Contenu : images (placer, vectoriser, recadrer), textes (créer, éditer, attributs, contours), calques, plans de travail, export SVG / PDF, import SVG | `ctl_content.py` | `ContentMixin`, `IMAGE_SUFFIXES` |
+| Images de la vue pendant un zoom continu et un Ctrl + glisser de nombreux objets (objets non repeints, `IllItem.snapshot_ids`) | `snapshot.py` | `take`, `drop`, `drag_start`, `drag_end`, `SNAPSHOT_MIN`, `DRAG_MIN_MOVING`, `DRAG_MIN_VISIBLE` |
 | Gestes partagés (déplacer, transformer, cadre de sélection), Sélection, Sélection directe | `tools.py` | `MoveGesture`, `TransformGesture`, `marquee_select`, `SelectTool`, `DirectTool`, `TOOL_KEYS` |
 | Pinceaux et largeur variable (SANS Qt, numpy) : profils de largeur, pointe calligraphique, contour-surface, point le plus proche | `brushes.py` | `outline`, `outline_polygons`, `PROFILES`, `CALLIGRAPHIC`, `nib_width`, `locate`, `valid_profile`, `valid_brush` |
 | Pinceau (B), Forme de tache (Maj+B), Largeur (Maj+W) | `tools_draw.py` | `PaintbrushTool`, `BlobTool`, `WidthTool` |
@@ -44,7 +47,8 @@ n'importent PAS Qt.
 
 Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
 - `fm_board/model.py` : `DEFAULTS` reçoit les types, `normalize_item` appelle `ill_model.normalize_entity`, `ICON_ROWS`
-  (`illustrator`).
+  (`illustrator` + une ligne `ill_<genre>` par bouton du module : icône réglable dans Module MRO > Icônes, glyphe
+  peint sans icône choisie ; `test_every_button_icon_is_settable` vérifie qu'aucun bouton n'en manque).
 - `fm_board/scene.py` : import de `fm_illustrator.items` (enregistre les types), `MODULES` + « illustrator ».
 - `fm_board/view.py` : `view.illustrator` ; les crochets du module Design sont devenus GÉNÉRIQUES
   (`_module_ctl()` = Design ou Illustrator actif : `claims`, souris, clavier, curseur, dépôt de fichiers).
@@ -240,6 +244,17 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
 | Mise en page d'un texte (à la validation, à l'annulation, pas pendant la frappe) : point 11 lettres / curviligne 200 lettres / captif 300 mots | — / — / 40 ms (un `addText` par mot) | 0,3 ms / 17 ms / 19 ms (36 ms justifié) |
 Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 
+### Vraie fenêtre Windows (tranche 19 ; 1 600 × 1 000, 2 000 tracés dont 1/7 en dégradé, zoom 80 %, ~1 300 visibles)
+
+Sonde temporaire (`QT_QPA_PLATFORM=windows`, événements envoyés au viewport + `repaint`, enregistrement automatique
+coupé) ; l'offscreen sous-estimait le coût du zoom (sans image gardée pendant le geste) et du Ctrl + glisser.
+
+| Geste | Avant | Après |
+|---|---|---|
+| Zoom continu (cran) | 104 ms : tous les tracés visibles repeints à chaque cran | 34 ms : image affichée relevée au 1er cran et reposée à l'échelle, objets qu'elle contient non peints, rendu net 300 ms après (`snapshot.take`) |
+| Ctrl + glisser 200 objets : 1er mouvement / médiane / p95 / relâché | 86 / 48 / — / — ms | 62 / 16,9 / 33,6 / 71 ms : fond (vue sans les objets déplacés) + calque (objets déplacés) relevés une fois, calque décalé ; objets à opacité nulle pendant le geste (les MASQUER jetait leurs images gardées : 138 ms au relâché), repositionnés au relâché seulement |
+| Ctrl + glisser 30 objets parmi ~1 300 visibles | — | 51 / 16,7 / 31,3 / 50 ms (même chemin dès 300 objets visibles) |
+
 ## État fonctionnel
 
 | Fonction | État | Test |
@@ -268,7 +283,8 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 | Export PDF (plan courant, tous les plans, dessin entier ; vectoriel, images pleine résolution ; relu par QtPdf dans les tests) | Partiel (pas de PDF/X, fond perdu, traits de coupe, CMJN ; texte en contours) | `test_illustrator_pdf.py` |
 | Outils avancés : Rotation / Échelle / Symétrie à origine, saisies, Transformer de nouveau (pas et répétition), Aligner / Répartir, repères commentés | Partiel (pas de Transformation manuelle E, de repères d'angle / de points, de copie Alt pendant les outils à origine) | `test_illustrator_xform.py` |
 | Pinceaux : profils de largeur, outil Largeur, pointe calligraphique, Pinceau, Forme de tache, Vectoriser le contour, SVG / PDF | Partiel (pas de pinceaux Diffusion / Motif / Art / Soies, largeur asymétrique, pression) | `test_illustrator_brushes.py` |
-| Réglages du module (onglet Illustrator de Réglages : Board, en direct) | Terminé | `test_illustrator_settings.py` |
+| Réglages du module (onglet Illustrator de Réglages : Board, en direct) ; icônes des boutons réglables (Module MRO > Icônes) | Terminé | `test_illustrator_settings.py` |
+| Fluidité en vraie fenêtre : images du zoom continu et du Ctrl + glisser de nombreux objets | Terminé | `SnapshotTest` (`test_illustrator_xform.py`) |
 | Outils restants (dégradé de forme libre, filet de dégradé, Transformation manuelle E, déformation / enveloppe, symboles, motifs, perspective, Largeur asymétrique, pinceaux Diffusion / Motif / Art), compatibilité .ai (non annoncée) | Non commencé | — |
 
 ## PASSATION (2026-10-31)
@@ -290,9 +306,15 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 - Tranche 10 (texte) : 68ab7c1. Tranche 12 (masques) : 3bf4f4d. Tranche 13 (aspect et effets) : ac3a4f4. Tranche 14
   (images) : d97b2ae (corrige aussi l'import SVG du contrôleur, qui créait tout en tracés). Tranche 15
   (vectorisation) : 7cf18e0. Tranche 16 (export PDF) : 9cd1b20. Tranche 17 (outils avancés) : 889f7dc. Tranche 11
-  (pinceaux) : d129836. Tranche 18 (réglages) : commit suivant.
-- POINT DE REPRISE : 19 finition (bilan, vérification dans la vraie fenêtre Windows, icônes réglables
-  `ui_board_ill_*` dans Module MRO > Icônes comme Design, pistes de fluidité ci-dessous).
-- Pistes de fluidité restantes : enregistrement JSON hors du fil de l'interface (coque, tous modules) ; clic de
+  (pinceaux) : d129836. Tranche 18 (réglages) : 0c7598b. Tranche 19 (finition : contrôleur découpé en
+  `controller` / `ctl_commands` / `ctl_content`, icônes réglables, images du zoom et du glisser) : commit suivant.
+- POINT DE REPRISE : les 19 tranches prévues sont faites. Suite possible, au choix de l'utilisateur : lignes « Non
+  commencé » et « Partiel » de l'état fonctionnel (Transformation manuelle E, dégradé de forme libre, éditeur
+  d'arrêts multiples, sous-calques, panneau Contour complet, pinceaux Diffusion / Motif / Art, symboles, motifs),
+  puis les pistes de fluidité ci-dessous. Compatibilité .ai : NON faite, ne pas l'annoncer.
+- Vérifier dans la vraie fenêtre après tout changement de peinture : l'offscreen ne montre ni le coût du zoom
+  continu ni celui des images gardées (voir « Vraie fenêtre Windows » dans Mesures).
+- Pistes de fluidité restantes : 1er mouvement d'un Ctrl + glisser nombreux (~50-60 ms : relevé du fond et peinture
+  du calque) ; enregistrement JSON hors du fil de l'interface (coque, tous modules) ; clic de
   plume (création d'élément) ; 1re image de nombreux traits au pinceau (~1,2 ms chacun : contour + `QPointF`) ; images d'effets refaites à l'arrêt d'un zoom (~0,9 ms par objet à ombre + lueur :
   à étaler par tranches, ou à faire seulement pour les objets visibles).

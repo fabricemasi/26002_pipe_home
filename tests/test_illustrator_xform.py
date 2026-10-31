@@ -1,16 +1,17 @@
 """Module Illustrator, tranche 17 : outils à point d'origine (Rotation R, Mise à l'échelle S, Symétrie O : glisser,
 clic = origine, Alt + clic = valeur saisie), Transformer de nouveau (Ctrl+D, pas et répétition après Ctrl + Alt +
-glisser), Déplacer…, Aligner / Répartir, repères commentés pendant un déplacement (Ctrl+U)."""
+glisser), Déplacer…, Aligner / Répartir, repères commentés pendant un déplacement (Ctrl+U). Tranche 19 : images du zoom continu et du
+Ctrl + glisser de nombreux objets (`snapshot.py`)."""
 import os as _os, sys as _sys  # jamais les vrais réglages / presets de l'utilisateur (tests/_isolate.py)
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 import _isolate  # noqa: E402,F401
 import unittest
 from unittest import mock
 
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt
 from PySide6.QtWidgets import QInputDialog
 
-from test_illustrator import IllTestCase
+from test_illustrator import IllTestCase, settle
 from fm_illustrator import bezier as bz
 
 
@@ -123,6 +124,56 @@ class SmartGuidesTest(IllTestCase):
         self.drag(QPointF(320, 320), QPointF(173, 123), mods=Qt.ControlModifier)
         r = b.geometry_rect()
         self.assertEqual((r.x(), r.y()), (153.0, 103.0))
+
+
+class SnapshotTest(IllTestCase):
+    """Beaucoup d'objets : le zoom continu repose une image de la vue, Ctrl + glisser passe par deux images (fond,
+    calque) ; à la fin, objets à la bonne place, visibles, et un seul retour arrière."""
+
+    def many(self, n=320):
+        from fm_board import model as board_model
+        from fm_illustrator import model as im
+        dicts = [board_model.new_item(im.PATH, x=(i % 20) * 30.0, y=(i // 20) * 30.0, z=float(i),
+                                      subpaths=bz.rect(0, 0, 20, 20), fill="#3366cc") for i in range(n)]
+        self.scene.replace_items([], dicts, "essai")
+        self.view.viewport().repaint()
+        return self.ctl.objects()
+
+    def test_zoom_snapshot_taken_and_dropped(self):
+        from fm_illustrator import snapshot
+        from fm_illustrator.items import IllItem
+        self.view.set_zoom(0.5)
+        self.view.center_on(QPointF(300, 240))
+        self.many()
+        self.view.viewport().repaint()
+        self.assertTrue(snapshot.take(self.ctl))
+        self.assertIsNotNone(self.ctl.zoom_snapshot)
+        self.assertGreaterEqual(len(IllItem.snapshot_ids), snapshot.SNAPSHOT_MIN)
+        snapshot.drop(self.ctl)
+        self.assertIsNone(self.ctl.zoom_snapshot)
+        self.assertIsNone(IllItem.snapshot_ids)
+
+    def test_ctrl_drag_many_objects(self):
+        from fm_illustrator.items import IllItem
+        items = self.many()[:60]
+        self.ctl.select(items)
+        before = [(i.geometry_rect().x(), i.geometry_rect().y()) for i in items]
+        start = items[0].geometry_rect().center()
+        self.mouse(QEvent.MouseButtonPress, start, mods=Qt.ControlModifier)
+        self.mouse(QEvent.MouseMove, start + QPointF(20, 10), buttons=Qt.LeftButton, mods=Qt.ControlModifier)
+        self.assertTrue(self.ctl.dragging_frame)
+        self.assertEqual(items[0].opacity(), 0.0)
+        self.mouse(QEvent.MouseMove, start + QPointF(40, 30), buttons=Qt.LeftButton, mods=Qt.ControlModifier)
+        self.mouse(QEvent.MouseButtonRelease, start + QPointF(40, 30), mods=Qt.ControlModifier)
+        settle()
+        self.assertFalse(self.ctl.dragging_frame)
+        self.assertIsNone(IllItem.snapshot_ids)
+        self.assertTrue(all(i.opacity() == 1.0 for i in self.ctl.objects()))
+        after = [(i.geometry_rect().x(), i.geometry_rect().y()) for i in items]
+        self.assertEqual(after, [(x + 40, y + 30) for x, y in before])
+        self.scene.undo.undo()
+        settle()
+        self.assertEqual([(i.geometry_rect().x(), i.geometry_rect().y()) for i in self.ctl.objects()[:60]], before)
 
 
 if __name__ == "__main__":

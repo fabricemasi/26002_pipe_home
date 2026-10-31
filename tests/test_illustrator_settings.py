@@ -65,6 +65,29 @@ class SettingsTest(IllTestCase):
         self.assertAlmostEqual(text.data["font_size"], 24 * im.PT, places=3)
         self.ctl.discard(text)
 
+    def test_every_button_icon_is_settable(self):
+        """Chaque bouton du module (barre d'outils, barre de contrôle) a sa ligne « Module MRO > Icônes » et lit
+        l'icône choisie (`ui_board_<genre>`) ; sans icône choisie, le glyphe est peint."""
+        from unittest import mock
+        from PySide6.QtGui import QColor, QPixmap
+        from fm_board import ui as board_ui
+        from fm_board.model import ICON_ROWS
+        ui = self.ctl.ui
+        kinds = {b.kind for b in ui.tools.findChildren(board_ui._GlyphButton)}
+        kinds |= {b.kind for b in ui.control.findChildren(board_ui._GlyphButton) if b.kind.startswith("ill_")}
+        self.assertTrue({"ill_pen", "ill_fx", "ill_export", "ill_shape_builder"} <= kinds)
+        self.assertEqual(kinds - {kind for kind, _label in ICON_ROWS}, set())
+        asked = []
+
+        def provider(kind, size):
+            asked.append(kind)
+            pixmap = QPixmap(size, size)
+            pixmap.fill(QColor("#00ff00"))
+            return pixmap
+        with mock.patch.object(board_ui, "ICON_PROVIDER", provider):
+            ui.tools.repaint()
+        self.assertIn("ill_pen", asked)
+
     def test_invalid_values_fall_back(self):
         self.apply(board_ill_handle_size="x", board_ill_units="lieues", board_ill_accent=12)
         self.assertEqual(look.LOOK["handle_size"], 9)

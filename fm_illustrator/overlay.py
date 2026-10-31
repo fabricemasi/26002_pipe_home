@@ -123,6 +123,8 @@ class IllOverlay(QGraphicsItem):
         ctl = self.ctl
         if not ctl.active:
             return
+        view = ctl.view                                 # zone montrée par cette peinture (image du zoom continu)
+        ctl._painted_rect = view.mapToScene(view.viewport().rect()).boundingRect()
         painter.setRenderHint(QPainter.Antialiasing, True)
         z = self._zoom()
         accent = QColor(model.ACCENT)
@@ -134,7 +136,7 @@ class IllOverlay(QGraphicsItem):
                 painter.drawPolygon(ctl.hover.outline_polygon())
             else:
                 painter.drawPath(ctl.hover.path.translated(ctl.hover.pos()))
-        items = ctl.selection()
+        items = [] if getattr(ctl, "dragging_frame", False) else ctl.selection()   # geste à deux images : rien
         if items:
             self._paint_selection(painter, z, accent, items)
         if ctl.marquee is not None:

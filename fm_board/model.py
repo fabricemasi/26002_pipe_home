@@ -196,6 +196,23 @@ ICON_ROWS = [
     ("design_text", "Design : texte"), ("design_images", "Design : images"),
     ("design_layers", "Design : position et calques"), ("design_export", "Design : exporter"),
     ("design_present", "Design : présenter"), ("design_add_page", "Design : ajouter une page"),
+    # Module Illustrator (fm_illustrator/glyphs.py) : outils et barre de controle.
+    ("ill_select", "Illustrator : Sélection"), ("ill_direct", "Illustrator : Sélection directe"),
+    ("ill_pen", "Illustrator : Plume"), ("ill_add_anchor", "Illustrator : Ajout de point"),
+    ("ill_delete_anchor", "Illustrator : Suppression de point"),
+    ("ill_convert", "Illustrator : Conversion de point"), ("ill_text", "Illustrator : Texte"),
+    ("ill_brush", "Illustrator : Pinceau"), ("ill_blob", "Illustrator : Forme de tache"),
+    ("ill_width", "Illustrator : Largeur"), ("ill_rect", "Illustrator : Rectangle"),
+    ("ill_ellipse", "Illustrator : Ellipse"), ("ill_polygon", "Illustrator : Polygone"),
+    ("ill_star", "Illustrator : Étoile"), ("ill_line", "Illustrator : Segment de droite"),
+    ("ill_pencil", "Illustrator : Crayon"), ("ill_rotate", "Illustrator : Rotation"),
+    ("ill_scale", "Illustrator : Mise à l'échelle"), ("ill_reflect", "Illustrator : Symétrie"),
+    ("ill_shape_builder", "Illustrator : Shape Builder"), ("ill_gradient", "Illustrator : Dégradé"),
+    ("ill_eyedropper", "Illustrator : Pipette"), ("ill_artboard", "Illustrator : Plan de travail"),
+    ("ill_hand", "Illustrator : Main"), ("ill_zoom", "Illustrator : Zoom"),
+    ("ill_swap", "Illustrator : intervertir fond et contour"), ("ill_pathfinder", "Illustrator : Pathfinder"),
+    ("ill_align", "Illustrator : aligner et répartir"), ("ill_fx", "Illustrator : effets et aspect"),
+    ("ill_layers", "Illustrator : calques"), ("ill_export", "Illustrator : exporter / importer"),
 ]
 
 # Icones du module CAD (Reglages > Module CAD > Icones ; meme cle d'icone `ui_board_<genre>`) : barre d'outils CAD,

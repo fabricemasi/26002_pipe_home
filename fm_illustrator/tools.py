@@ -134,6 +134,8 @@ class MoveGesture:
             item.setCacheMode(QGraphicsItem.NoCache)
         scene.begin_change(items)
         self.text = "Déplacer"
+        from .snapshot import drag_start
+        self.frame = drag_start(ctl, items) if not self.loose else None     # beaucoup d'objets : deux images
 
     def update(self, pos: QPointF, mods):
         d = pos - self.start
@@ -143,6 +145,11 @@ class MoveGesture:
             sx, sy, self.ctl.guides = self.snapper.snap_rect(self.rect0.translated(d))
             d = QPointF(d.x() + sx, d.y() + sy)
         self.delta = d
+        if self.frame is not None:                      # deux images : seul le calque bouge (objets au relâché)
+            self.frame.offset = (d.x(), d.y())
+            self.frame.update()
+            self.ctl.tip = (pos, f"dX {d.x():.1f}  dY {d.y():.1f}")
+            return
         IllItem.quiet_moves = True
         try:
             for item, origin in zip(self.items, self.origins):
@@ -152,12 +159,23 @@ class MoveGesture:
         self.ctl.tip = (pos, f"dX {d.x():.1f}  dY {d.y():.1f}")
 
     def _restore(self):
+        frame, self.frame = getattr(self, "frame", None), None
+        if frame is not None:
+            from .snapshot import drag_end
+            drag_end(self.ctl, frame)
         for item in self.loose:
             item.setCacheMode(QGraphicsItem.DeviceCoordinateCache)
             item.update()
         self.loose = []
 
     def finish(self):
+        if getattr(self, "frame", None) is not None:   # deux images : les objets prennent leur place maintenant
+            IllItem.quiet_moves = True
+            try:
+                for item, origin in zip(self.items, self.origins):
+                    item.setPos(origin + self.delta)
+            finally:
+                IllItem.quiet_moves = False
         for item in self.items:
             item.data["x"], item.data["y"] = round(item.pos().x(), 3), round(item.pos().y(), 3)
         self._restore()

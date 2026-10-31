@@ -28,7 +28,7 @@ APP = QApplication.instance() or QApplication([])
 from fm_board import model, serialization
 from fm_board import ui as board_ui
 from fm_illustrator import bezier as bz, model as im, svg
-from fm_illustrator.controller import _split_without
+from fm_illustrator.ctl_commands import _split_without
 from fm_illustrator.items import IllArtboardItem, IllPathItem
 
 _PANES = []
