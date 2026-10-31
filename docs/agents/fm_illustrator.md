@@ -23,6 +23,7 @@ n'importent PAS Qt.
 | Aspect (SANS Qt) : effets d'un objet (un par type, ordre fixe), contours supplémentaires, géométrie des effets vectoriels (décalage, arrondis), marges, filtres SVG | `appearance.py` | `valid_effects`, `valid_strokes`, `render_subpaths`, `margin`, `svg_filter`, `ORDER`, `PARAMS` |
 | Effets tramés (Qt) : flou, contour progressif, ombre portée, lueur externe, image composée gardée pendant le zoom | `effects.py` | `paint_with_effects`, `soften`, `tinted` |
 | Menu Effets (curseurs en direct, couleur, activer, supprimer, contours supplémentaires, décomposer l'aspect) | `appearance_ui.py` | `effects_menu` |
+| Vectorisation d'une image (SANS Qt, numpy) : quantification (noir et blanc, gris, couleurs : k-moyennes), contours orientés des pixels, bruit, angles, courbes (Schneider) | `trace.py` | `trace`, `quantize`, `loops`, `smooth_loop`, `PRESETS`, `settings_for` |
 | Texte (Qt) : mise en page point / captif / curviligne (police de base 100 px), chemin des lettres, créer les contours, SVG `<text>` / `<textPath>`, éditeur sur place | `text.py` | `layout`, `base_font`, `outline_subpaths`, `svg_text`, `TextEditor` |
 | Calques : accès, bandes de hauteur, panneau | `layers.py` | `layers`, `layer_of`, `top_z`, `members`, `LayersPanel` |
 | Export / import SVG (dégradés compris) | `svg.py` | `export_svg`, `path_element`, `import_svg`, `parse_d`, `arc_to_cubics`, `parse_transform`, `parse_color` |
@@ -88,6 +89,17 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
   vectoriser le contour) ignorent les textes : Ctrl+Maj+O (Créer les contours) d'abord, comme Illustrator. Un seul
   style par texte (pas de styles de caractères par partie). Tests : `QT_QPA_FONTDIR` = `C:\Windows\Fonts`
   (l'offscreen n'a sinon aucune police : des carrés).
+- **Vectorisation** (tranche 15) : menu Objet > Vectoriser l'image : préréglages aux noms d'Illustrator (Noir et
+  blanc, Niveaux de gris, 3 / 6 / 16 couleurs) et curseurs (seuil, couleurs, détail = grand côté de l'image tracée,
+  fidélité, bruit, angles), gardés pour la session. Algorithme propre au module (idée générale de potrace, aucun code
+  repris) : quantification numpy (k-moyennes, départ « k-means++ » à graine fixe : même image -> même résultat),
+  bords des pixels orientés (trous dans l'autre sens, vidés par la règle non nulle ; sommets ambigus : on tourne à
+  droite), bruit écarté, milieux des bords + Ramer-Douglas-Peucker, angles gardés au-delà du seuil, courbes de
+  Bézier entre les angles (`fm_font.shapes.fit_cubic`). Empilement : couleur la plus fréquente = rectangle de fond
+  (pas de jour entre zones voisines ; pas de fond si l'image a de la transparence). Calcul en FIL DE FOND (bulle
+  « Vectorisation… n / total »), puis l'image est remplacée par un GROUPE de tracés en une étape (annulable) ; rien
+  trouvé = image gardée. Limites : pas de vectorisation « en direct » (objet de vectorisation modifiable puis
+  « Décomposer » d'Illustrator), pas de mode « contour » (traits centraux), pas de palette imposée.
 - **Images placées** (tranche 14, `ill_image`) : Importer (Ctrl+Maj+P, menu Exporter / importer, ou dépôt de
   fichiers PNG / JPEG / GIF / BMP / WebP / TIFF ; un SVG déposé ou importé devient des objets) : l'image est COPIÉE
   dans le dossier d'images du board (`serialization.import_asset`, comme les images de Miro : incorporée, jamais
@@ -166,6 +178,7 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
 | 200 objets avec ombre + lueur : pan / zoom continu / image refaite (zoom fixé, fin du zoom) | — / 174 ms / 174 ms | 10,5 ms / 35 ms (dernière image composée reposée à l'échelle) / 174 ms (une fois, à l'arrêt du zoom : reste à étaler) |
 | Curseur d'effet en direct (1 objet) | — | ~15-30 ms par mouvement |
 | 20 photos 3 000 × 2 000 (zoom 30 %) : pan / zoom continu / importer les 20 | — | 4,9 ms / 9 ms / 285 ms (copie + empreinte, une fois) |
+| Vectoriser une illustration 1 200 × 900 (détail 500) : 6 / 16 couleurs ; interface pendant le calcul en fond | — | 0,12 s / 0,26 s ; boucle d'événements : médiane 5 ms, p95 16 ms, pire ~50 ms |
 | Mise en page d'un texte (à la validation, à l'annulation, pas pendant la frappe) : point 11 lettres / curviligne 200 lettres / captif 300 mots | — / — / 40 ms (un `addText` par mot) | 0,3 ms / 17 ms / 19 ms (36 ms justifié) |
 Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 
@@ -193,6 +206,7 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 | Masques d'écrêtage et d'opacité (créer, annuler, inverser, rendu vérifié au pixel, SVG aller-retour) | Partiel (un masque par groupe, pas de groupes imbriqués, options Transparence non faites) | `test_illustrator_masks.py` |
 | Aspect et effets : décalage, arrondis, flou, contour progressif, ombre portée, lueur externe, contours supplémentaires, décomposer l'aspect, SVG `<filter>` | Partiel (un effet par type, pas de styles graphiques, d'ombre / lueur internes, de modes de fusion) | `test_illustrator_effects.py` |
 | Images placées (importer, dépôt, transformations, recadrage par masque, effets, SVG `<image>` aller-retour) | Partiel (incorporées seulement, pas d'images liées ni de ré-échantillonnage) | `test_illustrator_images.py` |
+| Vectorisation (préréglages, curseurs, fil de fond, remplacement annulable) | Partiel (pas d'objet de vectorisation modifiable en direct, ni de mode contour, ni de palette imposée) | `test_illustrator_trace.py` |
 | Pinceaux / largeur variable, images placées, vectorisation, export PDF, outils avancés (dégradé de forme, filet, déformation…), réglages du module (Réglages : Board), repères commentés / magnétisme | Non commencé | — |
 
 ## PASSATION (2026-10-31)
@@ -212,11 +226,11 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 - Tranche 9 (Shape Builder) : commit suivant. Zones calculées une fois par sélection (clé : identifiants + étape
   d'annulation), ~44 ms pour 20 objets / 98 zones, puis survol = `QPainterPath.contains` par zone.
 - Tranche 10 (texte) : 68ab7c1. Tranche 12 (masques) : 3bf4f4d. Tranche 13 (aspect et effets) : ac3a4f4. Tranche 14
-  (images) : commit suivant ; il corrige aussi l'import SVG du contrôleur, qui créait tout en tracés (textes compris).
+  (images) : d97b2ae (corrige aussi l'import SVG du contrôleur, qui créait tout en tracés). Tranche 15
+  (vectorisation) : commit suivant.
 - POINT DE REPRISE : tranche 11 (pinceaux, largeur variable : profil de largeur le long du tracé, contour
   vectorisé par `pathfinder.outline_stroke` puis déformé ; peut devenir un effet vectoriel de `appearance.py`),
-  15 vectorisation (Image Trace : seuil / postérisation de l'image décodée, contours par carrés marchants, lissage
-  `fm_font.shapes.fit_cubic`, un tracé par couleur ; en fil de fond pour les grandes images), 16 PDF
+  16 PDF
   (`QPdfWriter` + `paint_path`, vectoriel).
 - Pistes de fluidité restantes : enregistrement JSON hors du fil de l'interface (coque, tous modules) ; clic de
   plume (création d'élément) ; images d'effets refaites à l'arrêt d'un zoom (~0,9 ms par objet à ombre + lueur :

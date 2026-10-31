@@ -31,8 +31,9 @@ def fill_object_menu(ctl, menu):
     add("Joindre (Ctrl+J)", ctl.join_selection, has)
     add("Vectoriser le contour", ctl.outline_stroke, has)
     add("Décomposer l'aspect", ctl.expand_appearance, has)
-    add("Recadrer l'image (masque)", ctl.crop_with_mask,
-        any(type(i).__name__ == "IllImageItem" for i in items))
+    has_image = any(type(i).__name__ == "IllImageItem" for i in items)
+    add("Recadrer l'image (masque)", ctl.crop_with_mask, has_image)
+    trace_menu(ctl, menu, has_image)
     add("Créer un tracé transparent (Ctrl+8)", lambda: ctl.make_compound(True), len(items) > 1)
     add("Défaire le tracé transparent (Ctrl+Alt+Maj+8)", lambda: ctl.make_compound(False),
         any(len(i.data["subpaths"]) > 1 for i in items))
@@ -51,6 +52,34 @@ def fill_object_menu(ctl, menu):
     add("Copier le style", ctl.copy_style, has)
     add("Coller le style", ctl.paste_style, has and bool(ctl.style_clipboard))
     add("Mode Tracés (Ctrl+Y)", ctl.toggle_outline)
+
+
+def trace_menu(ctl, menu, enabled: bool):
+    """Vectoriser l'image : préréglages (noms d'Illustrator) et réglages par curseurs (seuil, couleurs, détail,
+    fidélité, bruit, angles), comme le panneau Vectorisation de l'image."""
+    from settings_menu import menu_row
+    from fm_board.ui import _slider
+    from . import trace as tr
+    sub = menu.addMenu("Vectoriser l'image")
+    sub.setEnabled(enabled)
+    for key, (label, _values) in tr.PRESETS.items():
+        sub.addAction(label).triggered.connect(lambda _c=False, k=key: (
+            ctl.trace_settings.update(tr.settings_for(k, detail=ctl.trace_settings["detail"],
+                                                      fidelity=ctl.trace_settings["fidelity"],
+                                                      noise=ctl.trace_settings["noise"])),
+            ctl.trace_image()))
+    sub.addSeparator()
+    s = ctl.trace_settings
+    for key, label, low, high, unit, k in (("threshold", "Seuil (noir et blanc)", 0, 255, "", 1),
+                                           ("colors", "Couleurs", 2, 30, "", 1),
+                                           ("detail", "Détail (px)", 100, 1500, "px", 1),
+                                           ("fidelity", "Fidélité (dixièmes de px)", 3, 50, "", 10),
+                                           ("noise", "Bruit (px²)", 0, 400, "", 1),
+                                           ("corner", "Angles (°)", 10, 170, "°", 1)):
+        slider = _slider(low, high, round(float(s[key]) * k), unit=unit)
+        slider.valueChanged.connect(lambda v, key=key, k=k: s.update({key: v / k if k != 1 else v}))
+        menu_row(sub, label, slider)
+    sub.addAction("Vectoriser avec ces réglages").triggered.connect(lambda: ctl.trace_image())
 
 
 def open_context_menu(ctl, global_pos, scene_pos):

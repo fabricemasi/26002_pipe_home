@@ -48,6 +48,9 @@ class IllustratorController(QObject):
         self.preview = None                        # dessin temporaire de l'outil (ligne élastique de la plume…)
         self.tip = None                            # (point de scène, texte) : taille / angle pendant un geste
         self.style_clipboard = None
+        from .trace import settings_for
+        self.trace_settings = settings_for("color6")       # derniers réglages de vectorisation (session)
+        self._trace_relay = None
         self.tools = make_tools(self)
         self.overlay = IllOverlay(self)
         self.scene.addItem(self.overlay)
@@ -145,6 +148,102 @@ class IllustratorController(QObject):
                 self.import_svg(p, at)
             else:
                 self.place_image(p, at + QPointF(20 * n, 20 * n))
+
+    # -- vectorisation (trace.py) --
+    def image_pixels(self, image: IllImageItem, detail: int):
+        """Pixels RVBA (tableau numpy H × W × 4) de l'image, réduite à `detail` px de grand côté au plus, et la
+        matrice qui ramène la grille tracée au repère de l'élément."""
+        import numpy as np
+        from PySide6.QtGui import QImage, QImageReader
+        from fm_board import serialization
+        board = getattr(self.scene, "board_path", None)
+        if board is None:
+            return None, None
+        reader = QImageReader(str(serialization.asset_path(board, image.data.get("asset", ""))))
+        reader.setAutoTransform(True)
+        size = reader.size()
+        if not size.isValid():
+            return None, None
+        if max(size.width(), size.height()) > detail:
+            size.scale(detail, detail, Qt.KeepAspectRatio)
+            reader.setScaledSize(size)
+        picture = reader.read()
+        if picture.isNull():
+            return None, None
+        picture = picture.convertToFormat(QImage.Format_RGBA8888)
+        w, h = picture.width(), picture.height()
+        raw = np.frombuffer(picture.constBits(), dtype=np.uint8, count=picture.sizeInBytes())
+        pixels = raw.reshape(h, picture.bytesPerLine())[:, :w * 4].reshape(h, w, 4).copy()
+        to_item = bz.multiply(bz.scale(float(image.data["w"]) / w, float(image.data["h"]) / h),
+                              tuple(image.data.get("matrix") or bz.IDENTITY))
+        return pixels, to_item
+
+    def trace_image(self, settings: dict | None = None, background: bool = True, image=None):
+        """Vectoriser l'image choisie (ou `image`) : calcul en FIL DE FOND (l'interface reste libre ; la bulle montre
+        l'avancement), puis l'image est remplacée par un groupe de tracés, une étape. `background=False` : tout de
+        suite (tests)."""
+        from . import trace as tr
+        if image is None:
+            images = [i for i in self.selection() if isinstance(i, IllImageItem)]
+            if not images:
+                return None
+            image = images[-1]
+        settings = dict(settings or self.trace_settings)
+        pixels, to_item = self.image_pixels(image, int(settings.get("detail", 500)))
+        if pixels is None:
+            return None
+        if not background:
+            return self._apply_trace(image, tr.trace(pixels, settings), to_item)
+        import threading
+        from PySide6.QtCore import QObject as _QObject, Signal as _Signal
+
+        class Relay(_QObject):
+            done = _Signal(object)
+            step = _Signal(int, int)
+        relay = Relay(self)
+        self._trace_relay = relay                           # gardé : le fil lui envoie le résultat
+        relay.step.connect(lambda n, total: self._trace_tip(image, f"Vectorisation… {n} / {total}"))
+        relay.done.connect(lambda result: self._finish_trace(image, result, to_item))
+        self._trace_tip(image, "Vectorisation…")
+
+        def work():
+            try:
+                result = tr.trace(pixels, settings, progress=lambda n, total: relay.step.emit(n, total))
+            except Exception as exc:                        # noqa: BLE001 - montré dans la bulle
+                result = exc
+            relay.done.emit(result)
+        threading.Thread(target=work, daemon=True, name="vectorisation").start()
+        return True
+
+    def _trace_tip(self, image, text: str):
+        if image.scene() is not None:
+            self.tip = (image.geometry_rect().center(), text)
+            self.refresh()
+
+    def _finish_trace(self, image, result, to_item):
+        self.tip = None
+        self._trace_relay = None
+        if isinstance(result, Exception) or image.scene() is None:
+            self.refresh()
+            return None
+        return self._apply_trace(image, result, to_item)
+
+    def _apply_trace(self, image, result, to_item):
+        if not result:
+            return []
+        gid = board_model.new_id()
+        z = image.zValue()
+        added = []
+        for n, (color, subs) in enumerate(result):
+            subs = bz.copy_subpaths(subs)
+            bz.transform(subs, to_item)
+            added.append(board_model.new_item(model.PATH, x=image.data["x"], y=image.data["y"], z=z + n * 0.001,
+                                              subpaths=subs, fill=color, stroke="", group=gid,
+                                              layer=image.data.get("layer", ""), opacity=image.data.get("opacity", 1.0)))
+        new = self.scene.replace_items([image], added, "Vectoriser l'image")
+        self.select(new)
+        self.refresh()
+        return new
 
     def crop_with_mask(self):
         """Recadrer une image : un rectangle à sa taille devient son masque d'écrêtage (à modifier ensuite en
