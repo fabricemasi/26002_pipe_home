@@ -60,7 +60,14 @@ def load(path) -> dict:
     return normalize(data)
 
 
+COMPACT_MIN = 2000                  # elements a partir desquels le JSON est ecrit sans indentation
+
+
 def dumps(data: dict) -> str:
+    """JSON du board. Au-dela de `COMPACT_MIN` elements : sans indentation (encodeur C de Python ; avec `indent`,
+    l'encodeur Python : mesure, 2 000 traces Illustrator, 179 -> 67 ms, a chaque enregistrement automatique)."""
+    if len(data.get("items") or ()) >= COMPACT_MIN:
+        return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
     return json.dumps(data, ensure_ascii=False, indent=1)
 
 

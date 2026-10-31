@@ -48,7 +48,9 @@ MODULES = [("miro", "Miro", "Module Miro : post-it, textes, formes, dessin, comm
            ("cad", "CAD", "Module CAD : dessin technique 2D (lignes, calques, accrochages, barre de commande)"),
            ("design", "Design", "Module Design : pages, formes, textes, images, modèles, export (à la manière de Canva)"),
            ("tableur", "Tableur", "Module Tableur : classeurs, formules, graphiques, import / export Excel (à la manière "
-                                  "d'Excel)")]
+                                  "d'Excel)"),
+           ("illustrator", "Illustrator", "Module Illustrator : illustration vectorielle, plans de travail, plume, "
+                                          "formes, export SVG (à la manière d'Adobe Illustrator)")]
 DRAW_BAR = [("pen", "Stylo"), ("highlighter", "Surligneur"), ("smart", "Dessin intelligent (formes reconnues)"),
             ("eraser", "Gomme (traits entiers)"), ("precision_eraser", "Gomme de précision (coupe les traits)"),
             ("lasso", "Lasso (sélection à main levée)")]
@@ -92,6 +94,10 @@ def paint_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
     if kind.startswith("design"):
         from fm_design.glyphs import paint_design_glyph        # module Design : ses icones
         paint_design_glyph(painter, kind, rect, color)
+        return
+    if kind == "illustrator" or kind.startswith("ill_"):
+        from fm_illustrator.glyphs import paint_ill_glyph      # module Illustrator : ses icones
+        paint_ill_glyph(painter, kind, rect, color)
         return
     if kind == "tableur":                                       # module Tableur : une grille
         pen = QPen(color, 1.4)
@@ -1156,6 +1162,7 @@ class BoardPane(QWidget):
         self.cad = None                         # module CAD (fm_cad/cad.py), cree au 1er usage
         self.design = None                      # module Design (fm_design/controller.py), cree au 1er usage
         self.tableur = None                     # module Tableur (fm_tableur/board_ui.py), cree au 1er usage
+        self.illustrator = None                 # module Illustrator (fm_illustrator/controller.py), cree au 1er usage
         self.module = None                      # module actif : "miro", "cad", "design" ou None (aucune barre)
         self._cad_export_units = "mm"           # unites du dernier export DXF / DWG (session)
         self.view.cad = None
@@ -1406,6 +1413,8 @@ class BoardPane(QWidget):
             self.design.deactivate()
         if name != "tableur" and self.tableur is not None and self.tableur.active:
             self.tableur.deactivate()
+        if name != "illustrator" and self.illustrator_active():
+            self.illustrator.deactivate()
         self.module = name
         if name == "cad":
             self.toggle_cad(True)
@@ -1425,6 +1434,13 @@ class BoardPane(QWidget):
                 from fm_tableur.board_ui import TableurController
                 self.tableur = TableurController(self)
             self.tableur.activate()
+        if name == "illustrator":
+            self._contextbar.hide()
+            if self.illustrator is None:
+                from fm_illustrator.controller import IllustratorController
+                self.illustrator = IllustratorController(self)
+                self.view.illustrator = self.illustrator
+            self.illustrator.activate()
         if name is None and self.view.tool != "hand":
             self.view.set_tool("select")
         self._sync_tools(self.view.tool)
@@ -1466,6 +1482,8 @@ class BoardPane(QWidget):
             self.design.deactivate()
         if on and self.tableur is not None and self.tableur.active:
             self.tableur.deactivate()
+        if on and self.illustrator_active():
+            self.illustrator.deactivate()
         if on:
             self.module = "cad"
         elif self.module == "cad":
@@ -1496,10 +1514,13 @@ class BoardPane(QWidget):
     def design_active(self) -> bool:
         return self.design is not None and self.design.active
 
+    def illustrator_active(self) -> bool:
+        return self.illustrator is not None and self.illustrator.active
+
     def _on_tool_button(self, kind: str):
         if self.cad_active():
             self.toggle_cad(False)                  # un outil du board : retour au board
-        if self.design_active():
+        if self.design_active() or self.illustrator_active():
             self.set_module("miro")
         if kind == "image":
             self.insert_image_dialog()
@@ -2245,6 +2266,8 @@ class BoardPane(QWidget):
             self.fit()
         elif self.cad_active() and obj is self.view and event.type() == QEvent.KeyPress:
             return False                            # mode CAD : Echap, lettres... vont au controleur CAD
+        elif self.illustrator_active() and obj is self.view and event.type() == QEvent.KeyPress                 and (event.key() != Qt.Key_Escape or self.illustrator.busy()):
+            return False                            # module Illustrator : lettres, Echap (geste, selection) a lui
         elif obj is self.view and event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape:
             if not self.view.editing_text() and not self._selected() and self.view.tool == "select" \
                     and self.view._draft is None:
@@ -2295,6 +2318,8 @@ class BoardPane(QWidget):
             self.design.ui.place()
         if self.tableur is not None and self.tableur.active:
             self.tableur.ui.place()
+        if self.illustrator_active():
+            self.illustrator.ui.place()
 
     def _sync_badge(self):
         """Rendu OpenGL : l'encart est peint par la couche GPU (le widget se cache) ; classique : le widget."""

@@ -20,6 +20,7 @@ import uuid
 
 from fm_cad import cad_model
 from fm_design import design_model
+from fm_illustrator import model as ill_model
 from fm_tableur import board_model as tableur_model
 
 FORMAT = "pipeline-board"
@@ -93,6 +94,8 @@ DEFAULTS: dict[str, dict] = {
     **{kind: copy.deepcopy(values) for kind, values in design_model.DEFAULTS.items()},
     # Module Tableur (fm_tableur/board_model.py) : classeur pose sur le board (format natif dans `workbook`).
     **{kind: copy.deepcopy(values) for kind, values in tableur_model.DEFAULTS.items()},
+    # Module Illustrator (fm_illustrator/model.py) : plans de travail et traces vectoriels.
+    **{kind: copy.deepcopy(values) for kind, values in ill_model.DEFAULTS.items()},
 }
 COMMON = {"x": 0.0, "y": 0.0, "z": 0.0, "rotation": 0.0, "locked": False, "link": ""}
 ROTATABLE = ("shape", "text", "image")
@@ -188,7 +191,7 @@ ICON_ROWS = [
     ("minus", "Zoom : dézoomer"), ("plus", "Zoom : zoomer"), ("fit", "Zoom : tout voir"),
     ("close", "Fermer le fil de commentaire"),
     ("miro", "Modules : Miro"), ("fade", "Modules : griser les éléments"), ("hide", "Modules : masquer les éléments"),
-    ("design", "Modules : Design"), ("tableur", "Modules : Tableur"),
+    ("design", "Modules : Design"), ("tableur", "Modules : Tableur"), ("illustrator", "Modules : Illustrator"),
     ("design_templates", "Design : modèles et formats"), ("design_elements", "Design : éléments"),
     ("design_text", "Design : texte"), ("design_images", "Design : images"),
     ("design_layers", "Design : position et calques"), ("design_export", "Design : exporter"),
@@ -264,6 +267,8 @@ def normalize_item(raw) -> dict | None:
         design_model.normalize_entity(item)
     if kind in tableur_model.TABLEUR_TYPES:
         tableur_model.normalize_entity(item)
+    if kind in ill_model.ILL_TYPES:
+        ill_model.normalize_entity(item)
     if kind == "shape" and item["shape"] == "round" and "radius" not in raw:
         item["radius"] = round(min(item["w"], item["h"]) * 0.18, 2)        # anciens fichiers (version 1)
     if kind == "shape" and item["shape"] not in SHAPE_KINDS:

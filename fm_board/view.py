@@ -110,12 +110,20 @@ class BoardView(QGraphicsView):
         self._press = None
         self.cad = None                 # module CAD (fm_cad/cad.py) : actif, il recoit souris et clavier
         self.design = None              # module Design (fm_design/controller.py) : idem quand il est actif
+        self.illustrator = None         # module Illustrator (fm_illustrator/controller.py) : idem
 
     def _cad_on(self) -> bool:
         return self.cad is not None and self.cad.active
 
     def _design_on(self) -> bool:
         return self.design is not None and self.design.active
+
+    def _module_ctl(self):
+        """Module à contrôleur actif (Design, Illustrator) : il reçoit souris et clavier ; None sinon."""
+        for ctl in (self.design, self.illustrator):
+            if ctl is not None and ctl.active:
+                return ctl
+        return None
 
     # -- rendu GPU du CAD (fm_cad/cad_gpu.py, reglage board_cad_gpu) --
     def set_gpu(self, on: bool) -> bool:
@@ -578,7 +586,7 @@ class BoardView(QGraphicsView):
         if event.type() == QEvent.ShortcutOverride and self._cad_on() and self.cad.claims(event):
             event.accept()
             return True
-        if event.type() == QEvent.ShortcutOverride and self._design_on() and self.design.claims(event):
+        if event.type() == QEvent.ShortcutOverride and (ctl := self._module_ctl()) is not None and ctl.claims(event):
             event.accept()
             return True
         return super().event(event)
@@ -642,7 +650,7 @@ class BoardView(QGraphicsView):
         if self._cad_on():
             self.cad._sync_cursor()         # mode CAD : le reticule, meme pendant un deplacement (il suit le pointeur)
             return
-        if self._design_on() and self._pan is None and not self._space and self.design.sync_cursor():
+        if (ctl := self._module_ctl()) is not None and self._pan is None and not self._space and ctl.sync_cursor():
             return
         if self._pan is not None:
             self.viewport().setCursor(Qt.ClosedHandCursor)
@@ -715,7 +723,7 @@ class BoardView(QGraphicsView):
         if self._cad_on() and self.cad.mouse_press(event):
             event.accept()
             return
-        if self._design_on() and self.design.mouse_press(event):
+        if (ctl := self._module_ctl()) is not None and ctl.mouse_press(event):
             event.accept()
             return
         if event.button() == Qt.LeftButton and self.tool == "select":
@@ -820,7 +828,7 @@ class BoardView(QGraphicsView):
         if self._cad_on() and self.cad.mouse_move(event):
             event.accept()
             return
-        if self._design_on() and self.design.mouse_move(event):
+        if (ctl := self._module_ctl()) is not None and ctl.mouse_move(event):
             event.accept()
             return
         draft = self._draft
@@ -872,7 +880,7 @@ class BoardView(QGraphicsView):
         if self._cad_on() and self.cad.mouse_release(event):
             event.accept()
             return
-        if self._design_on() and self.design.mouse_release(event):
+        if (ctl := self._module_ctl()) is not None and ctl.mouse_release(event):
             event.accept()
             return
         draft, self._draft = self._draft, None
@@ -1084,7 +1092,7 @@ class BoardView(QGraphicsView):
         if self._cad_on() and self.cad.mouse_double_click(event):
             event.accept()
             return
-        if self._design_on() and self.design.mouse_double_click(event):
+        if (ctl := self._module_ctl()) is not None and ctl.mouse_double_click(event):
             event.accept()
             return
         super().mouseDoubleClickEvent(event)
@@ -1097,7 +1105,7 @@ class BoardView(QGraphicsView):
         if self._cad_on() and self.cad.key_press(event):
             event.accept()
             return
-        if self._design_on() and self.design.key_press(event):
+        if (ctl := self._module_ctl()) is not None and ctl.key_press(event):
             event.accept()
             return
         key, mods = event.key(), event.modifiers()
@@ -1172,7 +1180,7 @@ class BoardView(QGraphicsView):
         if self._cad_on() and self.cad.key_release(event):
             event.accept()
             return
-        if self._design_on() and self.design.key_release(event):
+        if (ctl := self._module_ctl()) is not None and ctl.key_release(event):
             event.accept()
             return
         self._refresh_gesture(event)
@@ -1310,7 +1318,7 @@ class BoardView(QGraphicsView):
     def dropEvent(self, event):
         mime = event.mimeData()
         at = self.mapToScene(event.position().toPoint())
-        if mime.hasUrls() and self._design_on() and self.design.drop_files(
+        if mime.hasUrls() and (ctl := self._module_ctl()) is not None and ctl.drop_files(
                 [Path(u.toLocalFile()) for u in mime.urls() if u.isLocalFile()], at):
             event.acceptProposedAction()
             return
