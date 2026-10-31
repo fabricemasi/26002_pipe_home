@@ -23,7 +23,7 @@ n'importent PAS Qt.
 | Texte (Qt) : mise en page point / captif / curviligne (police de base 100 px), chemin des lettres, créer les contours, SVG `<text>` / `<textPath>`, éditeur sur place | `text.py` | `layout`, `base_font`, `outline_subpaths`, `svg_text`, `TextEditor` |
 | Calques : accès, bandes de hauteur, panneau | `layers.py` | `layers`, `layer_of`, `top_z`, `members`, `LayersPanel` |
 | Export / import SVG (dégradés compris) | `svg.py` | `export_svg`, `path_element`, `import_svg`, `parse_d`, `arc_to_cubics`, `parse_transform`, `parse_color` |
-| Éléments de la scène (plan de travail, calque, tracé), chemin et pinceaux Qt gardés, zone cliquable | `items.py` | `IllArtboardItem`, `IllLayerItem`, `IllPathItem` (`sync`, `apply_visibility`, `hit_path`, `contains_scene_point`, `geometry_rect`), `notify_moved`, `qpath`, `gradient_brush` |
+| Éléments de la scène (plan de travail, calque, tracé, texte), chemin et pinceaux Qt gardés, zone cliquable, MASQUES (écrêtage, opacité : `mask_item`, `_paint_through_opacity_mask`, registre `scene.ill_masks`) | `items.py` | `IllArtboardItem`, `IllLayerItem`, `IllPathItem` (`sync`, `apply_visibility`, `hit_path`, `contains_scene_point`, `geometry_rect`), `notify_moved`, `qpath`, `gradient_brush` |
 | Activation, événements, sélection, commandes (style, grouper, disposition dans le calque, verrou, masquer, joindre, tracé transparent, pipette, plans, calques, Pathfinder, vectoriser le contour, export / import) | `controller.py` | `IllustratorController` |
 | Gestes partagés (déplacer, transformer, cadre de sélection), Sélection, Sélection directe | `tools.py` | `MoveGesture`, `TransformGesture`, `marquee_select`, `SelectTool`, `DirectTool`, `TOOL_KEYS` |
 | Plume, points (ajout / suppression / conversion), formes, crayon, plan de travail, main, zoom, pipette, dégradé (G), texte (T) | `tools_draw.py` | `PenTool`, `ShapeTool`…, `PencilTool`, `ArtboardTool`, `make_tools` |
@@ -85,6 +85,19 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
   vectoriser le contour) ignorent les textes : Ctrl+Maj+O (Créer les contours) d'abord, comme Illustrator. Un seul
   style par texte (pas de styles de caractères par partie). Tests : `QT_QPA_FONTDIR` = `C:\Windows\Fonts`
   (l'offscreen n'a sinon aucune police : des carrés).
+- **Masques** (tranche 12) : un masque = l'objet le plus HAUT d'un groupe, `mask` = « clip » ou « opacity » ; les
+  autres objets du groupe sont masqués. Créer (Ctrl+7, ou menu Objet ; AZERTY : Ctrl+è) = la sélection devient UN
+  groupe, son objet le plus haut le masque, en une étape ; écrêtage : le masque perd sa peinture (comme Illustrator).
+  Annuler le masque (Ctrl+Alt+7) : objets dégroupés, le masque reste (sans peinture). Écrêtage = `setClipPath` à la
+  peinture ; opacité = luminance du masque (avec ses couleurs) en alpha, hors du masque = caché (option « Écrêter »
+  d'Illustrator active par défaut), « Inverser le masque » ; masque d'un texte : ses lettres. Seule la partie visible
+  d'un objet écrêté se clique ; la boîte de sélection est réduite au masque. Rendu GARDÉ en image (cache de l'élément)
+  : écrêtage et composition refaits au zoom, quand le masque change (`_refresh_members` jette l'image des membres :
+  `update()` ne suffit pas pour un rendu hors vue), quand un objet entre / sort d'un groupe masqué (`_mask_key`), et
+  pendant un déplacement d'un membre SANS son masque (ou l'inverse : `MoveGesture.loose`, peints sans image le temps
+  du geste). Limites : un masque par groupe, pas de groupes imbriqués, options du panneau Transparence (« Écrêter »
+  décochable, mode de fusion) non faites. SVG : `<clipPath>` / `<mask>` dans `<defs>`, `<g clip-path=…>` /
+  `<g mask=…>` ; import des `clip-path` / `mask` qui visent un élément du document (formes réunies en un masque).
 - **Pathfinder** : style du plus haut (Soustraction : du plus bas) ; Division / Découpe / Fusion / Recadrage :
   morceaux groupés, chacun au style de son objet ; Découpe, Fusion, Recadrage retirent les contours (connaissance
   générale d'Illustrator, non vérifiée cette session ; Division garde les contours). Mode « Contour » du panneau :
@@ -120,6 +133,8 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
 | Pathfinder Réunion de 200 ellipses | 99 ms (réunions deux à deux) | 18 ms (une passe) |
 | Pathfinder Exclusion de 200 ellipses | 4,1 s (XOR deux à deux) | 69 ms (une passe pair-impair) |
 | Division de 20 objets (98 zones) / Découpe | 44 ms / 5 ms | — |
+| 200 objets écrêtés par un cercle : image entière / Ctrl + glisser le groupe | 34 ms / 49 ms (écrêtage refait à chaque image : membres sans image gardée) | 4,6 ms / 20 ms (images gardées) |
+| Masque d'opacité 600 × 400 : recomposition / pan | 27 ms / 21 ms | 10 ms / 5 ms |
 | Mise en page d'un texte (à la validation, à l'annulation, pas pendant la frappe) : point 11 lettres / curviligne 200 lettres / captif 300 mots | — / — / 40 ms (un `addText` par mot) | 0,3 ms / 17 ms / 19 ms (36 ms justifié) |
 Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 
@@ -144,7 +159,8 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 | Export SVG (plan, tous, dessin, sélection), import SVG (fichier, glisser-déposer) | Terminé pour les tracés (pas de dégradés, texte, images, masques) | `SvgTest`, `test_export_and_import…` |
 | Shape Builder (zones, réunir, supprimer, survol) | Terminé (pas de mode « boucle fermée » ni d'option de couleur du nuancier) | `ShapeBuilderTest` |
 | Texte : point, captif (retour à la ligne, justifié, débordement), curviligne, édition sur place, police / corps / gras / italique / alignement / interligne / approche / départ sur le tracé, créer les contours, SVG aller-retour | Partiel (un style par texte ; pas de zone de texte dans une forme quelconque, de chaînage de cadres, de styles de paragraphe, de glyphes OpenType) | `test_illustrator_text.py` |
-| Pinceaux / largeur variable, masques d'écrêtage / d'opacité, Aspect / effets, images placées, vectorisation, export PDF, outils avancés (dégradé de forme, filet, déformation…), réglages du module (Réglages : Board), repères commentés / magnétisme | Non commencé | — |
+| Masques d'écrêtage et d'opacité (créer, annuler, inverser, rendu vérifié au pixel, SVG aller-retour) | Partiel (un masque par groupe, pas de groupes imbriqués, options Transparence non faites) | `test_illustrator_masks.py` |
+| Pinceaux / largeur variable, Aspect / effets, images placées, vectorisation, export PDF, outils avancés (dégradé de forme, filet, déformation…), réglages du module (Réglages : Board), repères commentés / magnétisme | Non commencé | — |
 
 ## PASSATION (2026-10-31)
 
@@ -162,11 +178,10 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 - Tranches 6-8 (dégradés, nuancier, calques, Pathfinder) : commit suivant (voir `git log -- fm_illustrator`).
 - Tranche 9 (Shape Builder) : commit suivant. Zones calculées une fois par sélection (clé : identifiants + étape
   d'annulation), ~44 ms pour 20 objets / 98 zones, puis survol = `QPainterPath.contains` par zone.
-- Tranche 10 (texte) : commit suivant.
+- Tranche 10 (texte) : 68ab7c1. Tranche 12 (masques) : commit suivant.
 - POINT DE REPRISE : tranche 11 (pinceaux, largeur variable : profil de largeur le long du tracé, contour
-  vectorisé par `pathfinder.outline_stroke` puis déformé) ou 12 masques (groupe d'écrêtage : `clip` sur le groupe,
-  `QGraphicsItem.ItemClipsChildrenToShape`
-  impossible sans parenté : peindre via `QPainter.setClipPath` dans l'élément, export `<clipPath>`), 14 images
-  (`asset` du board, `_bring_asset`), 16 PDF (`QPdfWriter` + `paint_path`, vectoriel).
+  vectorisé par `pathfinder.outline_stroke` puis déformé), 13 Aspect / effets (ombre portée, flou : rendu dans
+  l'image gardée de l'élément, comme le masque d'opacité), 14 images (`asset` du board, `_bring_asset`), 16 PDF
+  (`QPdfWriter` + `paint_path`, vectoriel).
 - Pistes de fluidité restantes : enregistrement JSON hors du fil de l'interface (coque, tous modules) ; clic de
   plume (création d'élément).

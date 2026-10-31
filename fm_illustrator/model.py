@@ -11,7 +11,9 @@ Un document Illustrator = les éléments `ill_*` du board :
   deux poignées restent alignées. Les transformations (échelle, rotation…) sont appliquées aux nœuds (comme
   Illustrator) : `rotation` reste 0 ; un déplacement ne change que (x, y).
 `group` = identifiant de groupe (vide = seul) : un clic de l'outil Sélection choisit tout le groupe ; `layer` =
-identifiant du calque (vide = le plus bas) ; `fill_gradient` / `stroke_gradient` = dégradé (`paint.py`) ou None.
+identifiant du calque (vide = le plus bas) ; `fill_gradient` / `stroke_gradient` = dégradé (`paint.py`) ou None ;
+`mask` = « clip » / « opacity » : cet objet est le MASQUE de son groupe (écrêtage : sa forme découpe les autres
+objets du groupe, lui-même sans peinture ; opacité : sa luminance règle leur opacité, `mask_invert` = inversée).
 - `ill_text` : texte (`text.py`), mêmes attributs de peinture qu'un tracé. `mode` : « point » (origine (x, y) = ligne
   de base du 1er trait, comme Illustrator et SVG), « area » (texte captif : cadre `w` × `h`, origine = son coin haut
   gauche, retour à la ligne automatique), « path » (texte curviligne : `subpaths` = tracé de base, `path_offset` =
@@ -37,6 +39,7 @@ MM = 96.0 / 25.4
 
 CAPS = ("butt", "round", "square")
 TEXT_MODES = ("point", "area", "path")
+MASKS = ("", "clip", "opacity")             # objet MASQUE de son groupe : écrêtage / opacité (luminance)
 TEXT_ALIGNS = ("left", "center", "right", "justify")
 JOINS = ("miter", "round", "bevel")
 FILL_RULES = ("nonzero", "evenodd")
@@ -56,10 +59,12 @@ DEFAULTS = {
            "align": "left", "leading": 1.2, "tracking": 0.0, "w": 200.0, "h": 100.0, "path_offset": 0.0,
            "subpaths": [], "fill": "#000000", "stroke": "", "stroke_width": 1.0, "opacity": 1.0,
            "cap": "butt", "join": "miter", "miter": 10.0, "dash": [], "fill_rule": "nonzero",
-           "group": "", "name": "", "hidden": False, "layer": "", "fill_gradient": None, "stroke_gradient": None},
+           "group": "", "name": "", "hidden": False, "layer": "", "fill_gradient": None, "stroke_gradient": None,
+           "mask": "", "mask_invert": False},
     PATH: {"subpaths": [], "fill": DEFAULT_FILL, "stroke": DEFAULT_STROKE, "stroke_width": 1.0, "opacity": 1.0,
            "cap": "butt", "join": "miter", "miter": 10.0, "dash": [], "fill_rule": "nonzero",
-           "group": "", "name": "", "hidden": False, "layer": "", "fill_gradient": None, "stroke_gradient": None},
+           "group": "", "name": "", "hidden": False, "layer": "", "fill_gradient": None, "stroke_gradient": None,
+           "mask": "", "mask_invert": False},
 }
 
 
@@ -135,6 +140,8 @@ def normalize_entity(item: dict) -> dict:
         item["w"] = max(1.0, item["w"])
         item["h"] = max(1.0, item["h"])
         item["path_offset"] = min(1.0, max(0.0, item["path_offset"]))
+    if item["mask"] not in MASKS or not item.get("group"):
+        item["mask"] = ""
     item["subpaths"] = valid_subpaths(item["subpaths"])
     item["fill"] = valid_color(item["fill"], DEFAULT_FILL)
     item["stroke"] = valid_color(item["stroke"], DEFAULT_STROKE)

@@ -34,6 +34,12 @@ def fill_object_menu(ctl, menu):
     add("Défaire le tracé transparent (Ctrl+Alt+Maj+8)", lambda: ctl.make_compound(False),
         any(len(i.data["subpaths"]) > 1 for i in items))
     menu.addSeparator()
+    masked = bool(ctl.masked_groups())
+    add("Créer un masque d'écrêtage (Ctrl+7)", lambda: ctl.make_mask("clip"), len(items) > 1)
+    add("Créer un masque d'opacité", lambda: ctl.make_mask("opacity"), len(items) > 1)
+    add("Annuler le masque (Ctrl+Alt+7)", ctl.release_mask, masked)
+    add("Inverser le masque d'opacité", ctl.invert_opacity_mask, masked)
+    menu.addSeparator()
     add("Verrouiller la sélection (Ctrl+2)", ctl.lock_selection, has)
     add("Tout déverrouiller (Ctrl+Alt+2)", ctl.unlock_all)
     add("Masquer la sélection (Ctrl+3)", ctl.hide_selection, has)

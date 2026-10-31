@@ -110,6 +110,20 @@ class MoveGesture:
         self.items = items
         self.start = start
         self.origins = [QPointF(i.pos()) for i in items]
+        # Membre de masque déplacé sans son masque (ou masque sans ses membres) : la découpe change à chaque image ;
+        # son image gardée (prise à l'ancienne place relative) serait fausse : peint sans image pendant le geste.
+        moving = set(items)
+        self.loose = []
+        for item in items:
+            mask = item.mask_item()
+            if mask is not None and mask not in moving:
+                self.loose.append(item)
+            if item.data.get("mask"):
+                group = item.data.get("group")
+                self.loose += [o for o in ctl.objects() if o.data.get("group") == group and o not in moving
+                               and o is not item]
+        for item in self.loose:
+            item.setCacheMode(QGraphicsItem.NoCache)
         scene.begin_change(items)
         self.text = "Déplacer"
 
@@ -125,9 +139,16 @@ class MoveGesture:
             IllItem.quiet_moves = False
         self.ctl.tip = (pos, f"dX {d.x():.1f}  dY {d.y():.1f}")
 
+    def _restore(self):
+        for item in self.loose:
+            item.setCacheMode(QGraphicsItem.DeviceCoordinateCache)
+            item.update()
+        self.loose = []
+
     def finish(self):
         for item in self.items:
             item.data["x"], item.data["y"] = round(item.pos().x(), 3), round(item.pos().y(), 3)
+        self._restore()
         notify_moved(self.ctl.scene, self.items)
         self.ctl.scene.end_change(self.text)
         self.ctl.tip = None
@@ -139,6 +160,7 @@ class MoveGesture:
                 item.setPos(origin)
         finally:
             IllItem.quiet_moves = False
+        self._restore()
         self.ctl.scene.end_change(self.text)
         self.ctl.tip = None
 

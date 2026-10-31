@@ -9,8 +9,8 @@ recherche une fois par zoom ; chaque élément est gardé en image à l'écran (
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import (QBrush, QColor, QLinearGradient, QPainter, QPainterPath, QPainterPathStroker, QPen,
-                           QRadialGradient)
+from PySide6.QtGui import (QBrush, QColor, QImage, QLinearGradient, QPainter, QPainterPath, QPainterPathStroker,
+                           QPen, QRadialGradient, QTransform)
 from PySide6.QtWidgets import QGraphicsItem
 
 from fm_miro.items import ITEM_CLASSES, POSITION_HAS_CHANGED, BoardItem, CommentItem, ConnectorItem, clone_data
@@ -256,8 +256,69 @@ class IllPathItem(IllItem):
         transformation, symétrie, rotation."""
         bz.transform(self.data["subpaths"], m)
 
+    # -- masques (objet `mask` du groupe : `scene.ill_masks` = {groupe: masque}) --
+    def mask_item(self):
+        """Masque qui s'applique à cet objet (masque de son groupe, pas lui-même), ou None."""
+        group = self.data.get("group")
+        scene = self.scene()
+        if not group or scene is None:
+            return None
+        mask = getattr(scene, "ill_masks", {}).get(group)
+        return mask if mask is not None and mask is not self and mask.scene() is scene else None
+
+    def _register_mask(self):
+        scene = self.scene()
+        if scene is None:
+            return
+        masks = getattr(scene, "ill_masks", None)
+        if masks is None:
+            masks = scene.ill_masks = {}
+        group, kind = self.data.get("group") or "", self.data.get("mask") or ""
+        touched = set()
+        for g, m in list(masks.items()):
+            if m is self and (g != group or not kind):
+                del masks[g]
+                touched.add(g)
+        if kind and group and masks.get(group) is not self:
+            masks[group] = self
+            touched.add(group)
+        if kind and group:
+            touched.add(group)
+        for g in touched:
+            self._refresh_members(scene, g)
+
+    def _refresh_members(self, scene, group):
+        for item in scene.board_items():
+            if isinstance(item, IllPathItem) and item is not self and item.data.get("group") == group:
+                item.setCacheMode(QGraphicsItem.NoCache)    # image gardée jetée (update() ne suffit pas
+                item._apply_mask_cache()                    # pour le rendu hors vue : export, aperçus)
+                item.update()
+
+    def _apply_mask_cache(self):
+        """Image gardée, masqué ou non : l'écrêtage / la composition ne sont refaits qu'au zoom ou quand le masque
+        change (`_refresh_members`) ; un membre déplacé SANS son masque (ou l'inverse) est peint sans image pendant le
+        geste (`tools.MoveGesture`). Mesure, 200 objets écrêtés : image 34 ms -> voir docs/agents/fm_illustrator.md."""
+        if self.cacheMode() != QGraphicsItem.DeviceCoordinateCache:
+            self.setCacheMode(QGraphicsItem.DeviceCoordinateCache)
+
+    def removing_from_scene(self, scene):
+        masks = getattr(scene, "ill_masks", {})
+        for g, m in list(masks.items()):
+            if m is self:
+                del masks[g]
+                self._refresh_members(scene, g)
+
     def sync(self):
         self._build_geometry()
+        self._register_mask()
+        mask = self.mask_item()
+        key = (self.data.get("group"), id(mask) if mask is not None else 0)
+        old = getattr(self, "_mask_key", None)
+        if key != old:                                        # entré dans un groupe masqué ou sorti : image jetée
+            self._mask_key = key
+            if old is not None:
+                self.setCacheMode(QGraphicsItem.NoCache)
+        self._apply_mask_cache()
         self._hit = None
         fill_g = self.data.get("fill_gradient")
         self._fill_brush = gradient_brush(fill_g, self._box) if fill_g else (
@@ -323,10 +384,70 @@ class IllPathItem(IllItem):
         local = scene_pos - self.pos()
         if not self.boundingRect().adjusted(-20, -20, 20, 20).contains(local):
             return False
-        return self.hit_path(tolerance_px).contains(local)
+        return self.hit_path(tolerance_px).contains(local) and self._inside_mask(scene_pos)
+
+    def _inside_mask(self, scene_pos: QPointF) -> bool:
+        """Écrêté : seule la partie visible (dans le masque) se clique."""
+        mask = self.mask_item()
+        if mask is None or mask.data.get("mask") != "clip":
+            return True
+        return mask.path.contains(mask.mapFromScene(scene_pos))
 
     def paint_content(self, painter: QPainter):
-        self.paint_path(painter, outline=bool(getattr(self.scene(), "ill_outline", False)))
+        outline = bool(getattr(self.scene(), "ill_outline", False))
+        if self.data.get("mask") and not outline:
+            return                                      # un masque ne se peint pas (mode Tracés : son contour)
+        mask = None if outline else self.mask_item()
+        if mask is None:
+            self.paint_path(painter, outline=outline)
+        elif mask.data.get("mask") == "clip":
+            painter.save()
+            painter.setClipPath(self.mapFromItem(mask, mask.path), Qt.IntersectClip)
+            self.paint_path(painter)
+            painter.restore()
+        else:
+            self._paint_through_opacity_mask(painter, mask)
+
+    MAX_MASK_PIXELS = 4096 * 4096
+
+    def _paint_through_opacity_mask(self, painter: QPainter, mask):
+        """Masque d'opacité : l'objet est peint dans une image, le masque (avec ses couleurs) dans une autre dont la
+        luminance devient l'alpha (hors du masque : caché, comme l'option « Écrêter » d'Illustrator, active par
+        défaut). Une fois par image gardée de l'élément (zoom, changement), pas à chaque image du board."""
+        world = painter.worldTransform()
+        device = world.mapRect(self.boundingRect()).toAlignedRect()
+        if device.isEmpty() or device.width() * device.height() > self.MAX_MASK_PIXELS:
+            self.paint_path(painter)
+            return
+        shift = QTransform.fromTranslate(-device.x(), -device.y())
+        art = QImage(device.size(), QImage.Format_ARGB32_Premultiplied)
+        art.fill(Qt.transparent)
+        p = QPainter(art)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setTransform(world * shift)
+        self.paint_path(p)
+        p.end()
+        lum = QImage(device.size(), QImage.Format_ARGB32_Premultiplied)
+        lum.fill(QColor("#000000"))
+        p = QPainter(lum)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setTransform(mask.itemTransform(self)[0] * world * shift)
+        mask.paint_path(p)
+        p.end()
+        gray = lum.convertToFormat(QImage.Format_Grayscale8)
+        if mask.data.get("mask_invert"):
+            gray.invertPixels()
+        alpha = QImage(device.size(), QImage.Format_ARGB32_Premultiplied)
+        alpha.fill(Qt.white)
+        alpha.setAlphaChannel(gray)
+        p = QPainter(art)
+        p.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+        p.drawImage(0, 0, alpha)
+        p.end()
+        painter.save()
+        painter.resetTransform()
+        painter.drawImage(device.topLeft(), art)
+        painter.restore()
 
     def paint_path(self, painter: QPainter, outline: bool = False):
         """Fond puis contour (ordre d'Illustrator par défaut) ; `outline` = mode Tracés (Ctrl+Y) : filet noir fin."""

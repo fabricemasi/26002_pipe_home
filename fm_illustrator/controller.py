@@ -186,6 +186,50 @@ class IllustratorController(QObject):
         if items:
             self.change(items, lambda i: i.data.update({key: value}), text)
 
+    # -- masques (Objet > Masque d'écrêtage ; panneau Transparence > Créer un masque) --
+    def make_mask(self, kind: str = "clip"):
+        """L'objet le plus HAUT de la sélection devient le masque des autres (un groupe, une étape). Écrêtage : le
+        masque perd sa peinture (comme Illustrator)."""
+        items = self.selection()
+        if len(items) < 2:
+            return
+        top = items[-1]
+        gid = board_model.new_id()
+
+        def change(item):
+            item.data["group"] = gid
+            item.data["mask"] = ""
+            if item is top:
+                item.data["mask"] = kind
+                if kind == "clip":
+                    item.data.update(fill="", stroke="", fill_gradient=None, stroke_gradient=None)
+        self.change(items, change, "Créer un masque d'écrêtage" if kind == "clip" else "Créer un masque d'opacité")
+        self.select(items)
+
+    def masked_groups(self) -> list[str]:
+        groups = []
+        for item in self.selection():
+            g = item.data.get("group")
+            if g and g in getattr(self.scene, "ill_masks", {}) and g not in groups:
+                groups.append(g)
+        return groups
+
+    def release_mask(self):
+        """Annuler le masque (Ctrl+Alt+7) : les objets ne sont plus groupés ni masqués ; le masque d'écrêtage reste,
+        sans peinture (comme Illustrator)."""
+        groups = set(self.masked_groups())
+        items = [i for i in self.objects() if i.data.get("group") in groups]
+        if items:
+            self.change(items, lambda i: i.data.update(group="", mask=""), "Annuler le masque")
+            self.select(items)
+
+    def invert_opacity_mask(self):
+        masks = [self.scene.ill_masks[g] for g in self.masked_groups()
+                 if self.scene.ill_masks[g].data.get("mask") == "opacity"]
+        if masks:
+            self.change(masks, lambda m: m.data.update(mask_invert=not m.data.get("mask_invert")),
+                        "Inverser le masque")
+
     def outline_text(self) -> list:
         """Créer les contours (Ctrl+Maj+O) : chaque texte choisi devient un tracé (lettres en sous-tracés, même
         style, même place) ; le texte n'est plus modifiable (comme Illustrator)."""
@@ -384,10 +428,14 @@ class IllustratorController(QObject):
         self.anchors.clear()
 
     def selection_rect(self, items=None) -> QRectF | None:
-        """Boîte englobante de la sélection (géométrie, sans l'épaisseur des contours : comme Illustrator)."""
+        """Boîte englobante de la sélection (géométrie, sans l'épaisseur des contours : comme Illustrator) ; un objet
+        écrêté compte pour sa partie dans le masque."""
         rect = None
         for item in self.selection() if items is None else items:
             r = item.geometry_rect()
+            mask = item.mask_item()
+            if mask is not None and mask.data.get("mask") == "clip":
+                r = r.intersected(mask.geometry_rect())
             rect = r if rect is None else rect.united(r)
         return rect
 
@@ -992,7 +1040,7 @@ class IllustratorController(QObject):
             return True
         if ctrl and key in (Qt.Key_G, Qt.Key_J, Qt.Key_Y, Qt.Key_A, Qt.Key_2, Qt.Key_3, Qt.Key_8, Qt.Key_BracketLeft,
                             Qt.Key_BracketRight, Qt.Key_At, Qt.Key_Eacute, Qt.Key_QuoteDbl, Qt.Key_Underscore,
-                            Qt.Key_O):
+                            Qt.Key_O, Qt.Key_7, Qt.Key_Egrave):
             return True
         return not ctrl and Qt.Key_A <= key <= Qt.Key_Z
 
@@ -1051,6 +1099,8 @@ class IllustratorController(QObject):
             self.toggle_outline()
         elif key == Qt.Key_O and shift:
             self.outline_text()
+        elif key in (Qt.Key_7, Qt.Key_Egrave):              # Ctrl+7 (AZERTY : « è »)
+            self.release_mask() if alt else self.make_mask("clip")
         elif key == Qt.Key_A:
             if shift:
                 self.clear_selection()

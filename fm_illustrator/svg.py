@@ -102,6 +102,27 @@ def export_svg(objects: list[dict], area: tuple[float, float, float, float] | No
                 gid = f"degrade{len(defs) + 1}"
                 defs.append(paint.svg_gradient(g, box, gid, data.get("x", 0.0) - x, data.get("y", 0.0) - y))
                 refs_of.setdefault(n, {})[which] = f"url(#{gid})"
+    wrap = {}                                           # groupe masqué -> attribut du <g>
+    for n, data in enumerate(objects):
+        kind, g = data.get("mask"), data.get("group") or ""
+        if not kind or not g or g in wrap:
+            continue
+        mid = f"masque{len(wrap) + 1}"
+        if data.get("type") == model.TEXT:
+            inner = text_svg(data, -x, -y) if text_svg is not None else ""
+        else:
+            inner = path_element(dict(data, fill=data.get("fill") or ("#000000" if kind == "clip" else "")),
+                                 -x, -y, refs_of.get(n))
+        if kind == "clip":
+            defs.append(f'<clipPath id="{mid}">{inner}</clipPath>')
+            wrap[g] = f'clip-path="url(#{mid})"'
+        else:
+            if data.get("mask_invert"):                 # inversé : blanc partout, puis le masque en différence
+                inner = (f'<rect x="-100000" y="-100000" width="200000" height="200000" fill="#ffffff"/>'
+                         f'<g style="mix-blend-mode:difference">{inner}</g>')
+            defs.append(f'<mask id="{mid}" maskUnits="userSpaceOnUse" x="-100000" y="-100000" width="200000" '
+                        f'height="200000">{inner}</mask>')
+            wrap[g] = f'mask="url(#{mid})"'
     if defs:
         lines.append("<defs>" + "".join(defs) + "</defs>")
     group = None
@@ -113,8 +134,10 @@ def export_svg(objects: list[dict], area: tuple[float, float, float, float] | No
             if group:
                 lines.append("</g>")
             if g:
-                lines.append("<g>")
+                lines.append(f"<g {wrap[g]}>" if g in wrap else "<g>")
             group = g
+        if data.get("mask") and g in wrap:              # le masque est dans <defs>
+            continue
         if data.get("type") == model.TEXT:              # texte : `text.svg_text` (mise en page Qt), fourni
             element = text_svg(data, -x, -y) if text_svg is not None else ""
         else:
@@ -479,7 +502,7 @@ def import_svg(text: str) -> list[dict]:
     def tag_of(el):
         return el.tag.split("}", 1)[-1] if isinstance(el.tag, str) else ""
 
-    def walk(el, matrix, inherited, group):
+    def walk(el, matrix, inherited, group, masked=False):
         tag = tag_of(el)
         if tag in ("defs", "clipPath", "mask", "symbol", "style", "title", "desc", "metadata", "pattern",
                    "linearGradient", "radialGradient", "marker"):
@@ -488,6 +511,15 @@ def import_svg(text: str) -> list[dict]:
         if style.get("display") == "none":
             return
         m = bz.multiply(parse_transform(el.get("transform", "")), matrix)
+        ref = None if masked else _mask_ref(el)
+        if ref is not None and ref[1] in masks:          # clip-path / mask : un groupe dont le masque est en haut
+            counter[0] += 1
+            gid = f"svg{counter[0]}"
+            walk(el, matrix, inherited, gid, masked=True)
+            entity = _mask_entity(masks[ref[1]], ref[0], m, gid, gradients)
+            if entity is not None:
+                out.append(entity)
+            return
         if tag in ("svg", "g"):
             children = list(el)
             sub_group = group
@@ -519,8 +551,46 @@ def import_svg(text: str) -> list[dict]:
             entity.update(stroke_gradient=stroke_g, stroke=stroke_g["stops"][0][1])
         out.append(entity)
 
+    masks = {el.get("id"): el for el in root.iter()
+             if isinstance(el.tag, str) and el.tag.split("}", 1)[-1] in ("clipPath", "mask") and el.get("id")}
     walk(root, bz.IDENTITY, {}, "")
     return out
+
+
+def _mask_ref(el) -> tuple[str, str] | None:
+    """(« clip » / « opacity », id) d'un `clip-path` / `mask` qui vise un élément du document."""
+    for attr, kind in (("clip-path", "clip"), ("mask", "opacity")):
+        value = el.get(attr)
+        if value is None:
+            for part in (el.get("style") or "").split(";"):
+                if ":" in part and part.split(":", 1)[0].strip() == attr:
+                    value = part.split(":", 1)[1]
+        m = re.match(r"\s*url\(\s*#([^)\s]+)\s*\)", value or "")
+        if m:
+            return kind, m.group(1)
+    return None
+
+
+def _mask_entity(el, kind: str, matrix, group: str, gradients) -> dict | None:
+    """Objet masque depuis un `<clipPath>` / `<mask>` : ses formes réunies en un tracé (repère de l'élément qui
+    l'utilise) ; écrêtage = sans peinture."""
+    subs, style, tag = [], {}, "path"
+    for child in el.iter():
+        t = child.tag.split("}", 1)[-1] if isinstance(child.tag, str) else ""
+        shape = _shape_subpaths(t, child)
+        if not shape:
+            continue
+        if not subs:
+            style, tag = _styles(child, {}), t
+        bz.transform(shape, bz.multiply(parse_transform(child.get("transform", "")), matrix))
+        subs += shape
+    if not subs:
+        return None
+    entity = _entity(subs, style, group, matrix, tag)
+    entity["mask"] = kind
+    if kind == "clip":
+        entity.update(fill="", stroke="", fill_gradient=None, stroke_gradient=None)
+    return entity
 
 
 def _text_entity(el, style, matrix, group) -> dict | None:
