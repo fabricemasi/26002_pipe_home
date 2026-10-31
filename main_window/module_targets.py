@@ -68,8 +68,15 @@ class ModuleTargetsMixin:
         return column, path, path is not None and entry_is_dir(path)
 
     def _module_keys(self) -> set:
+        """Modules qui savent ouvrir le fichier de `_module_path`, visionneuse comprise (fichier qu'elle sait montrer :
+        image, PureRef, fichier dont l'aperçu existe ; jamais un dossier ni un fichier sans aperçu)."""
         _column, path, is_dir = self._module_path()
-        return set(module_targets(path, is_dir))
+        keys = set(module_targets(path, is_dir))
+        if path is not None and not is_dir:
+            from column_parts.shared import opens_in_viewer
+            if opens_in_viewer(Path(path)):
+                keys.add("viewer")
+        return keys
 
     def open_in_module(self, key: str, path, column=None):
         """Ouvre `path` dans le module `key` (voir MODULES). Visionneuse ouverte : elle se referme d'abord (les

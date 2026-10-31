@@ -105,9 +105,16 @@ class ModuleTargetsTest(WindowTestCase):
         host = track(_Host())
         host._sync_mode_buttons()
         self.assertEqual(host.usable(), set())
+        self.assertFalse(host.btn_viewer.isEnabled())                       # rien de choisi : visionneuse grisée
         host.selected = self.tmp / "notes.csv"
         host._sync_mode_buttons()
         self.assertEqual(host.usable(), {"text_editor", "board"})
+        self.assertFalse(host.btn_viewer.isEnabled())                       # pas un fichier qu'elle sait montrer
+        for path, viewable in ((self.tmp, False), (self.tmp / "Essai.ufo", False), (self.tmp / "a.png", True)):
+            host.selected = path
+            host._sync_mode_buttons()
+            self.assertEqual(host.btn_viewer.isEnabled(), viewable, path)
+        host.selected = self.tmp / "notes.csv"
         host._toggle_board()                                                # bouton « Board » : le tableur
         self.assertEqual(host.opened, [("sheet", self.tmp / "notes.csv")])
         # Visionneuse ouverte (focus ou planche) : les boutons suivent l'image montrée, pas les colonnes.
@@ -116,6 +123,7 @@ class ModuleTargetsTest(WindowTestCase):
         host._viewer_paths, host._viewer_index = [str(self.tmp / "a.png"), str(self.tmp / "clip.mp4")], 1
         host._sync_mode_buttons()
         self.assertEqual(host.usable(), {"video"})
+        self.assertTrue(host.btn_viewer.isEnabled())                        # ouverte : pour en sortir
         host._open_selected_in(("video",))
         self.assertEqual(host.opened, [("viewer closed", False), ("video", self.tmp / "clip.mp4")])
 

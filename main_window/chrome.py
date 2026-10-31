@@ -74,16 +74,15 @@ class ChromeMixin:
     def _sync_mode_buttons(self):
         """Boutons de mode de la barre : chaque module est dégrisé sur un fichier qu'il sait ouvrir (ou quand il
         est ouvert, pour en sortir), que le fichier soit choisi dans les colonnes ou montré par la visionneuse
-        (focus, planche) : `_module_path`, table `module_targets`. La visionneuse : sur une sélection (ou
-        ouverte)."""
+        (focus, planche) : `_module_path`, table `module_targets`. La visionneuse : sur un fichier qu'elle sait
+        montrer (`opens_in_viewer`), ou ouverte (pour en sortir)."""
         if not hasattr(self, "btn_text_editor"):
             return
         editing = getattr(self, "_md_open", False)
-        _column, path, _is_dir = self._module_path()
         keys = self._module_keys()
         viewer_open = getattr(self, "_project_columns_hidden", False)
         self._set_button_usable(self.btn_text_editor, editing or "md" in keys)
-        self._set_button_usable(self.btn_viewer, viewer_open or editing or path is not None)
+        self._set_button_usable(self.btn_viewer, viewer_open or "viewer" in keys)
         self.btn_text_editor.set_alert(self._mode_on_color() if editing else None)
         self.btn_viewer.set_alert(self._mode_on_color() if viewer_open else None)
         on_board = self._board is not None
