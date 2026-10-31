@@ -64,3 +64,11 @@ Partie de la doc du module ; entrée, carte et PASSATION : `docs/agents/fm_font.
   automatique en mode symbole. CFF : otfautohint d'afdko dans le processus (`--processes 1`, jamais de pool
   de processus qui relancerait l'appli sous Windows) ; BlueValues déduites des métriques, StdVW / StdHW
   mesurés sur l, I, n, H / o, H, e (repli 8 % / 7 % du cadratin), posés le temps de la compilation seulement.
+
+## Piège : chemin réel du double-clic (corrigé le 2026-10-31)
+
+Le double-clic d'une colonne n'arrive PAS directement à `ViewerMixin.on_activated` : un fichier qui a un aperçu
+(les polices en ont un, `FONT_EXTENSIONS` dans `PREVIEWABLE_EXTENSIONS`) part vers `_view_in_viewer`, un dossier
+(un `.ufo`) vers `_view_folder_in_viewer`. Le module est donc demandé en tête de CES DEUX entrées (et de
+`on_activated` pour le menu « Ouvrir »). Test : `test_column_double_click_routes_font_before_viewer` ; un test qui
+appelle seulement `on_activated` ne voit pas ce chemin.
