@@ -239,7 +239,7 @@ def _default_glyph(key: str, size: int) -> QPixmap | None:
                     pb_previews.UI_ICON_NAVBAR_PRESETS: "presets", pb_previews.UI_ICON_SETTINGS_GEAR: "gear",
                     pb_previews.UI_ICON_SETTINGS_STYLE: "sliders", pb_previews.UI_ICON_NAVBAR_VIEWER: "viewer",
                     pb_previews.UI_ICON_NAVBAR_TEXT_EDITOR: "text_editor",
-                    pb_previews.UI_ICON_NAVBAR_BOARD: "board"}
+                    pb_previews.UI_ICON_NAVBAR_BOARD: "board", pb_previews.UI_ICON_NAVBAR_FONT: "font"}
     if key in navbar_kinds:
         from preview_column import IconButton
 

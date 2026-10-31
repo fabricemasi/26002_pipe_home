@@ -478,6 +478,11 @@ class PipelineBrowser(
         self.btn_video.clicked.connect(self._toggle_video)
         self._video = None
         self._video_buttons = []
+        # Module typographique (fm_font/) : grise tant que la selection n'est pas une source ou une police.
+        self.btn_font = IconButton("font", role_color("buttons", "#c4cacf"), C["text"])
+        self.btn_font.setToolTip("Module typographique (sélectionner une source .ufo / .designspace "
+                                 "ou une police .ttf / .otf / .woff)")
+        self.btn_font.clicked.connect(self._toggle_font)
         self.btn_viewer.setToolTip("Visionneuse (sélection en cours)")
         self.btn_text_editor.setToolTip("Éditeur Markdown / code (sélectionner une note, un fichier texte ou de code)")
         self.btn_board.setToolTip("Board (sélectionner un fichier .mro — clic droit dans une colonne > Créer un mro)")
@@ -491,7 +496,7 @@ class PipelineBrowser(
         self._drawing_relay = None               # lecture de dessin DXF / DWG en cours (_open_cad_drawing)
         self._board_buttons = []
         for btn in (self.btn_browse, self.btn_presets, self.btn_settings, self.btn_collapse, self.btn_viewer,
-                    self.btn_text_editor, self.btn_board, self.btn_video):
+                    self.btn_text_editor, self.btn_board, self.btn_video, self.btn_font):
             btn.setCursor(Qt.ArrowCursor)
             btn.setFlat(True)
             btn.setStyleSheet("QPushButton { background: transparent; border: none; }"
@@ -682,7 +687,7 @@ class PipelineBrowser(
         self.titlebar._background_status = self._background_status
         self.titlebar.add_tools(self.root_field, self.btn_browse, self.preset_picker, self.btn_presets,
                                 self.btn_settings, self.btn_collapse, self.btn_viewer, self.btn_text_editor,
-                                self.btn_board, self.btn_video)
+                                self.btn_board, self.btn_video, self.btn_font)
         self._sync_mode_buttons()
         self.titlebar.refresh_sizes()
         self.titlebar.refresh_look()

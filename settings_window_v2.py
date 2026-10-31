@@ -602,7 +602,8 @@ CATALOG["Barre de navigation : Icones"] = [
         ("navbar_max", "Icône agrandir"), ("navbar_close", "Icône fermer"),
         ("navbar_browse", "Icône parcourir (racine)"), ("navbar_presets", "Icône gérer les presets"),
         ("settings_gear", "Icône réglages"), ("navbar_viewer", "Icône visionneuse"),
-        ("navbar_text_editor", "Icône éditeur Markdown / code"), ("navbar_board", "Icône board"))
+        ("navbar_text_editor", "Icône éditeur Markdown / code"), ("navbar_board", "Icône board"),
+        ("navbar_font", "Icône typographie"))
 ]
 CATALOG["Barre de navigation"] = [
     Spec("navbar_bottom_enabled", "Bordure bas", "inner_line", True,

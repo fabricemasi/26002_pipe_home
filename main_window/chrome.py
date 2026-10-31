@@ -86,6 +86,13 @@ class ChromeMixin:
         self._set_button_usable(self.btn_video, on_video or (not viewer_open and is_file
                                                              and video.is_media_file(path)))
         self.btn_video.set_alert(self._mode_on_color() if on_video else None)
+        import fm_font
+        on_font = getattr(self, "_font", None) is not None
+        # Un .ufo est un DOSSIER ; les autres sources / polices sont des fichiers (type repris de la lecture du dossier).
+        font_ok = (path is not None and fm_font.is_font_file(path)
+                   and (not is_file if path.suffix.lower() == ".ufo" else is_file))
+        self._set_button_usable(self.btn_font, on_font or (not viewer_open and font_ok))
+        self.btn_font.set_alert(self._mode_on_color() if on_font else None)
 
     @staticmethod
     def _mode_on_color() -> str:
@@ -144,7 +151,7 @@ class ChromeMixin:
         self.titlebar.refresh_look()
         self.root_field.setFont(role_font("info", 11, 400))
         for btn in (self.btn_browse, self.btn_presets, self.btn_settings, self.btn_style, self.btn_collapse,
-                    self.btn_viewer, self.btn_text_editor, self.btn_board, self.btn_video):
+                    self.btn_viewer, self.btn_text_editor, self.btn_board, self.btn_video, self.btn_font):
             btn.set_colors(role_color("buttons", "#c4cacf"), C["text"])
         self.path_label.setFont(role_font("info", 11, 400))
         self.path_label.setStyleSheet(f"color: {role_color('info', C['text_mono'])}; background: transparent;")

@@ -1433,6 +1433,18 @@ class IconButton(QPushButton):
                 corner = QPointF(cx + sx * s * 1.4, cy + sy * s * 1.4)
                 painter.drawLine(corner, QPointF(corner.x() - sx * s * 0.8, corner.y()))
                 painter.drawLine(corner, QPointF(corner.x(), corner.y() - sy * s * 0.8))
+        elif self._kind == "font":
+            # Module typographique : un « A » a empattements et un noeud de Bezier sur son sommet.
+            painter.setBrush(Qt.NoBrush)
+            top, foot = cy - s * 1.25, cy + s * 1.45
+            painter.drawPolyline(QPolygonF([QPointF(cx - s * 1.25, foot), QPointF(cx, top),
+                                            QPointF(cx + s * 1.25, foot)]))
+            painter.drawLine(QPointF(cx - s * 0.7, cy + s * 0.45), QPointF(cx + s * 0.7, cy + s * 0.45))
+            painter.drawLine(QPointF(cx - s * 1.75, foot), QPointF(cx - s * 0.75, foot))
+            painter.drawLine(QPointF(cx + s * 0.75, foot), QPointF(cx + s * 1.75, foot))
+            painter.setBrush(QColor(color))
+            painter.drawRect(QRectF(cx - s * 0.32, top - s * 0.32, s * 0.64, s * 0.64))
+            painter.setBrush(Qt.NoBrush)
         elif self._kind == "video":
             # Module video : une pellicule et son triangle de lecture.
             painter.setBrush(Qt.NoBrush)
@@ -1494,7 +1506,8 @@ class IconButton(QPushButton):
             return custom_ui_icon_pixmap(UI_ICON_SETTINGS_GEAR, size)
         if self._kind == "sliders":
             return custom_ui_icon_pixmap(UI_ICON_SETTINGS_STYLE, size)
-        if self._kind in ("min", "max", "close", "browse", "presets", "viewer", "text_editor", "board", "video"):
+        if self._kind in ("min", "max", "close", "browse", "presets", "viewer", "text_editor", "board", "video",
+                          "font"):
             return custom_ui_icon_pixmap(f"ui_navbar_{self._kind}", size)
         viewer_key = VIEWER_BUTTON_ICONS.get(self._kind)
         if viewer_key is not None:

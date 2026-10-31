@@ -29,6 +29,19 @@ class FontModuleMixin:
             "open_settings": lambda: self.open_module_settings("font"),
         })
 
+    def _toggle_font(self):
+        """Bouton « Typographie » de la barre : module ouvert = retour aux colonnes (projet modifié : enregistrer /
+        fermer sans enregistrer / annuler) ; sinon il s'ouvre sur la source ou la police sélectionnée."""
+        pane = getattr(self, "_font", None)
+        if pane is not None:
+            if pane.confirm_leave():
+                self._close_font()
+            return
+        import fm_font
+        _column, path = self._selected_path()
+        if path is not None and fm_font.is_font_file(path):
+            self._open_font(path)
+
     def _open_font(self, path=None) -> bool:
         """Le module recouvre les colonnes (modes exclusifs : éditeur, board, vidéo, visionneuse). `path` : source
         ou police à ouvrir (une police compilée est IMPORTÉE, jamais réécrite) ; None = projet vierge."""

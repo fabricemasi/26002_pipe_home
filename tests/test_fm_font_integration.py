@@ -132,6 +132,49 @@ class IntegrationTest(WindowTestCase):
             host._font.request_close()
         self.assertIsNone(host._font)
 
+    def test_navbar_button_greyed_until_a_font_is_selected(self):
+        from main_window.chrome import ChromeMixin
+        from preview_column import IconButton
+
+        class _Bar(ChromeMixin, _Host):
+            def __init__(self):
+                super().__init__()
+                self.selected = None
+                self._md_open = False
+                self._video = None
+                for name in ("btn_viewer", "btn_text_editor", "btn_board", "btn_video", "btn_font"):
+                    setattr(self, name, track(IconButton(name[4:], "#c4cacf", "#ffffff")))
+                self.btn_font.clicked.connect(self._toggle_font)
+
+            def _selected_path(self):
+                return None, self.selected
+
+            def _is_spreadsheet(self, path):
+                return False
+
+            def _sync_collapse_button(self):
+                self._sync_mode_buttons()
+
+        bar = _Bar()
+        bar._sync_mode_buttons()
+        self.assertFalse(bar.btn_font.isEnabled())                          # rien de sélectionné : grisé
+        for path, usable in ((self.tmp, False), (self.ufo, True), (self.ttf, True), (self.tmp / "notes.ufo", False)):
+            bar.selected = path
+            bar._sync_mode_buttons()
+            self.assertEqual(bar.btn_font.isEnabled(), usable, path)
+        bar.selected = self.ttf
+        bar._sync_mode_buttons()
+        bar.btn_font.click()                                              # ouvre le module sur la police
+        self.assertIsNotNone(bar._font)
+        self.assertEqual(bar._font.project.source, self.ttf)
+        bar.selected = None
+        bar._sync_mode_buttons()
+        self.assertTrue(bar.btn_font.isEnabled())                           # module ouvert : bouton pour en sortir
+        with mock.patch.object(pane_mod, "confirm", side_effect=AssertionError("aucune question attendue")):
+            bar.btn_font.click()                                            # projet intact : fermé sans question
+        self.assertIsNone(bar._font)
+        self.assertFalse(bar.btn_font.isEnabled())
+
     def test_viewer_double_click_routes_ufo_folder(self):
         from main_window.viewer import ViewerMixin
         host = _Host()
