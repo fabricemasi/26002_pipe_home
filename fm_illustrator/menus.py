@@ -23,6 +23,7 @@ def fill_object_menu(ctl, menu):
     add("Grouper (Ctrl+G)", lambda: ctl.set_group(True), len(items) > 1)
     add("Dissocier (Ctrl+Maj+G)", lambda: ctl.set_group(False), any(i.data.get("group") for i in items))
     menu.addSeparator()
+    transform_menu(ctl, menu, has)
     add("Symétrie horizontale", lambda: ctl.flip(True), has)
     add("Symétrie verticale", lambda: ctl.flip(False), has)
     add("Rotation de 90° horaire", lambda: ctl.rotate_selection(90), has)
@@ -52,6 +53,44 @@ def fill_object_menu(ctl, menu):
     add("Copier le style", ctl.copy_style, has)
     add("Coller le style", ctl.paste_style, has and bool(ctl.style_clipboard))
     add("Mode Tracés (Ctrl+Y)", ctl.toggle_outline)
+
+
+def fill_align_menu(ctl, menu):
+    """Panneau Alignement : sur la sélection (un seul objet / groupe : sur son plan de travail)."""
+    count = len(ctl.selection())
+    for how, label in (("left", "Aligner à gauche"), ("hcenter", "Centrer horizontalement"),
+                       ("right", "Aligner à droite"), ("top", "Aligner en haut"),
+                       ("vcenter", "Centrer verticalement"), ("bottom", "Aligner en bas")):
+        action = menu.addAction(label)
+        action.setEnabled(count > 0)
+        action.triggered.connect(lambda _c=False, h=how: ctl.align(h))
+    menu.addSeparator()
+    for axis, spacing, label in (("h", False, "Répartir les centres horizontalement"),
+                                 ("v", False, "Répartir les centres verticalement"),
+                                 ("h", True, "Répartir l'espacement horizontal"),
+                                 ("v", True, "Répartir l'espacement vertical")):
+        action = menu.addAction(label)
+        action.setEnabled(count > 2)
+        action.triggered.connect(lambda _c=False, a=axis, s=spacing: ctl.distribute(a, s))
+
+
+def transform_menu(ctl, menu, has: bool):
+    from PySide6.QtCore import QPointF
+    sub = menu.addMenu("Transformer")
+    sub.setEnabled(has)
+    sub.addAction("Transformer de nouveau (Ctrl+D)").triggered.connect(ctl.transform_again)
+    sub.addAction("Déplacer…").triggered.connect(ctl.move_dialog)
+
+    def center():
+        rect = ctl.selection_rect()
+        return rect.center() if rect is not None else QPointF()
+    sub.addAction("Rotation…").triggered.connect(lambda: ctl.tools["rotate"].dialog(center()))
+    sub.addAction("Mise à l'échelle…").triggered.connect(lambda: ctl.tools["scale"].dialog(center()))
+    sub.addAction("Symétrie…").triggered.connect(lambda: ctl.tools["reflect"].dialog(center()))
+    menu.addAction("Repères commentés (Ctrl+U)" + (" ✓" if ctl.smart_guides else "")).triggered.connect(
+        ctl.toggle_smart_guides)
+    align = menu.addMenu("Aligner et répartir")
+    fill_align_menu(ctl, align)
 
 
 def trace_menu(ctl, menu, enabled: bool):

@@ -40,6 +40,9 @@ class IllustratorController(QObject):
         self.artboard_id = ""                      # plan de travail choisi (outil Plan de travail)
         self.layer_id = ""                         # calque courant (les objets neufs y vont)
         self._pending_layer = None                 # calque créé avec le 1er objet (même étape d'annulation)
+        self.smart_guides = True                   # repères commentés (Ctrl+U)
+        self.guides: list = []                     # lignes des repères commentés du geste en cours
+        self.last_transform = None                 # {"matrix", "copy"} : Transformer de nouveau (Ctrl+D)
         self.editor = None                         # texte édité sur place (text.TextEditor)
         self._edit = None                          # (élément, avant, neuf, tracé remplacé) de l'édition en cours
         self._forward = False                      # geste de souris confié à l'éditeur de texte (Qt)
@@ -863,14 +866,69 @@ class IllustratorController(QObject):
         if items:
             self.change(items, lambda i: i.data.update(x=i.data["x"] + dx, y=i.data["y"] + dy), "Déplacer")
 
-    def transform_selection(self, matrix, text: str, items=None):
-        """Matrice (repère de la scène) appliquée aux nœuds de chaque objet."""
+    def transform_selection(self, matrix, text: str, items=None, remember: bool = True):
+        """Matrice (repère de la scène) appliquée aux nœuds de chaque objet ; devient la dernière transformation."""
         items = self.selection() if items is None else items
 
         def apply(item):
             px, py = item.data["x"], item.data["y"]
             item.bake(bz.multiply(bz.multiply(bz.translate(px, py), matrix), bz.translate(-px, -py)))
         self.change(items, apply, text)
+        if remember and items:
+            self.remember_transform(matrix)
+
+    def remember_transform(self, matrix, copy: bool = False):
+        self.last_transform = {"matrix": tuple(matrix), "copy": bool(copy)}
+
+    def transform_again(self):
+        """Transformer de nouveau (Ctrl+D) : la dernière transformation (déplacement, rotation, échelle, symétrie)
+        refaite sur la sélection ; si c'était une copie déplacée (Ctrl + Alt + glisser), une NOUVELLE copie
+        (pas et répétition). Une étape."""
+        last = self.last_transform
+        items = self.selection()
+        if last is None or not items:
+            return []
+        if last["copy"]:
+            dicts = [i.to_dict() for i in items]
+            groups = {}
+            for d in dicts:
+                d["id"] = board_model.new_id()
+                if d.get("group"):
+                    d["group"] = groups.setdefault(d["group"], board_model.new_id())
+                px, py = d["x"], d["y"]
+                m = last["matrix"]
+                item_m = bz.multiply(bz.multiply(bz.translate(px, py), m), bz.translate(-px, -py))
+                d["x"], d["y"] = round(px + item_m[4], 3), round(py + item_m[5], 3)
+            new = self.scene.replace_items([], dicts, "Transformer de nouveau")
+            self.select(new)
+            return new
+        self.transform_selection(last["matrix"], "Transformer de nouveau")
+        return items
+
+    def move_dialog(self):
+        """Objet > Transformer > Déplacer… : « dx, dy » en unités."""
+        from PySide6.QtWidgets import QInputDialog
+        text, ok = QInputDialog.getText(self.pane, "Déplacer", "Déplacement horizontal, vertical (unités) :",
+                                        text="10, 0")
+        if not ok:
+            return
+        try:
+            dx, dy = (float(v.replace(" ", "")) for v in text.replace(";", ",").split(",")[:2])
+        except ValueError:
+            return
+        self.transform_selection(bz.translate(dx, dy), "Déplacer")
+
+    def align(self, how: str):
+        from .tools_xform import align
+        align(self, how)
+
+    def distribute(self, axis: str, spacing: bool = False):
+        from .tools_xform import distribute
+        distribute(self, axis, spacing)
+
+    def toggle_smart_guides(self):
+        self.smart_guides = not self.smart_guides
+        self.stateChanged.emit()
 
     def flip(self, horizontal: bool):
         rect = self.selection_rect()
@@ -1361,7 +1419,7 @@ class IllustratorController(QObject):
             return True
         if ctrl and key in (Qt.Key_G, Qt.Key_J, Qt.Key_Y, Qt.Key_A, Qt.Key_2, Qt.Key_3, Qt.Key_8, Qt.Key_BracketLeft,
                             Qt.Key_BracketRight, Qt.Key_At, Qt.Key_Eacute, Qt.Key_QuoteDbl, Qt.Key_Underscore,
-                            Qt.Key_O, Qt.Key_7, Qt.Key_Egrave, Qt.Key_P):
+                            Qt.Key_O, Qt.Key_7, Qt.Key_Egrave, Qt.Key_P, Qt.Key_D, Qt.Key_U):
             return True
         return not ctrl and Qt.Key_A <= key <= Qt.Key_Z
 
@@ -1418,6 +1476,10 @@ class IllustratorController(QObject):
             self.join_selection()
         elif key == Qt.Key_Y:
             self.toggle_outline()
+        elif key == Qt.Key_D:                               # Transformer de nouveau (et non Dupliquer du board)
+            self.transform_again()
+        elif key == Qt.Key_U:
+            self.toggle_smart_guides()
         elif key == Qt.Key_O and shift:
             self.outline_text()
         elif key == Qt.Key_P and shift:                     # Ctrl+Maj+P : Importer

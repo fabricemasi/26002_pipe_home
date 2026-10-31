@@ -817,4 +817,5 @@ class TypeTool(Tool):
 
 def make_tools(ctl) -> dict:
     from .shape_builder import ShapeBuilderTool
-    return {cls.name: cls(ctl) for cls in TOOL_CLASSES + [ShapeBuilderTool, TypeTool]}
+    from .tools_xform import XFORM_TOOLS
+    return {cls.name: cls(ctl) for cls in TOOL_CLASSES + [ShapeBuilderTool, TypeTool] + XFORM_TOOLS}

@@ -31,6 +31,7 @@ n'importent PAS Qt.
 | Éléments de la scène (plan de travail, calque, tracé, texte, IMAGE placée `IllImageItem`), chemin et pinceaux Qt gardés, zone cliquable, MASQUES (écrêtage, opacité : `mask_item`, `_paint_through_opacity_mask`, registre `scene.ill_masks`) | `items.py` | `IllArtboardItem`, `IllLayerItem`, `IllPathItem` (`sync`, `apply_visibility`, `hit_path`, `contains_scene_point`, `geometry_rect`), `notify_moved`, `qpath`, `gradient_brush` |
 | Activation, événements, sélection, commandes (style, grouper, disposition dans le calque, verrou, masquer, joindre, tracé transparent, pipette, plans, calques, Pathfinder, vectoriser le contour, export / import) | `controller.py` | `IllustratorController` |
 | Gestes partagés (déplacer, transformer, cadre de sélection), Sélection, Sélection directe | `tools.py` | `MoveGesture`, `TransformGesture`, `marquee_select`, `SelectTool`, `DirectTool`, `TOOL_KEYS` |
+| Outils à origine (Rotation R, Mise à l'échelle S, Symétrie O ; Alt + clic = valeur), repères commentés (`Snapper`), aligner / répartir | `tools_xform.py` | `RotateTool`, `ScaleTool`, `ReflectTool`, `Snapper`, `align`, `distribute`, `reflect_matrix` |
 | Plume, points (ajout / suppression / conversion), formes, crayon, plan de travail, main, zoom, pipette, dégradé (G), texte (T) | `tools_draw.py` | `PenTool`, `ShapeTool`…, `PencilTool`, `ArtboardTool`, `make_tools` |
 | Dessin temporaire (sélection, poignées, cadre, ligne élastique, noms des plans, bulle) | `overlay.py` | `IllOverlay` |
 | Barre d'outils (gauche), témoin fond / contour, barre de contrôle (haut), menus couleur (nuancier, dégradé) / épaisseur / Pathfinder / plans / export, panneau Calques | `ui.py` | `IllustratorChrome`, `FillStroke` |
@@ -90,6 +91,20 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
   vectoriser le contour) ignorent les textes : Ctrl+Maj+O (Créer les contours) d'abord, comme Illustrator. Un seul
   style par texte (pas de styles de caractères par partie). Tests : `QT_QPA_FONTDIR` = `C:\Windows\Fonts`
   (l'offscreen n'a sinon aucune police : des carrés).
+- **Outils avancés** (tranche 17) : Rotation (R), Mise à l'échelle (S), Symétrie (O) : origine = centre de la
+  sélection, un clic la déplace (repère bleu de l'overlay), glisser transforme autour d'elle (Maj : 45° / uniforme /
+  axe à 45°), Alt + clic = valeur saisie autour du point cliqué ; pas de Ctrl (géométrie). Transformer de nouveau
+  (Ctrl+D, PRIS au Dupliquer du board en mode Illustrator) : la dernière transformation (déplacement, poignées,
+  outils, commandes, saisies) refaite ; après Ctrl + Alt + glisser (copie), Ctrl+D fait une NOUVELLE copie au même
+  écart (pas et répétition d'Illustrator). Objet > Transformer : Déplacer… (« dx, dy »), Rotation…, Mise à
+  l'échelle…, Symétrie…. Aligner / Répartir (bouton de la barre de contrôle, menu Objet) : sur la boîte de la
+  sélection, un objet ou un groupe seul : sur son plan de travail ; un groupe compte pour un ; répartir les centres
+  ou l'espacement (3 unités au moins). Repères commentés (Ctrl+U, actifs par défaut, magenta) : pendant Ctrl +
+  glisser et le glisser d'UN point en Sélection directe, bords et centres aimantés à ceux des objets VISIBLES et des
+  plans de travail à 6 px d'écran ; relevé une fois au début du geste par l'index de la scène, en nombres simples,
+  recherche par dichotomie ; ligne vers l'objet aligné le PLUS PROCHE (courte). Limites : pas de copie Alt pendant
+  les outils à origine (Ctrl+D la remplace), pas de repères d'angle / de points d'ancrage, pas d'outil Transformation
+  manuelle (E), pas de répartition par écart imposé.
 - **Export PDF** (tranche 16) : menu Exporter : le plan courant, tous les plans (UNE page par plan, chacune à sa
   taille : 1 unité = 1/96 de pouce = 0,75 pt), ou le dessin entier sans plan de travail (cadre + 20 unités).
   `QPdfWriter` ; seuls les objets du module, peints un à un par leur propre peinture (pas de rendu de la scène : ni
@@ -189,6 +204,7 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
 | Curseur d'effet en direct (1 objet) | — | ~15-30 ms par mouvement |
 | 20 photos 3 000 × 2 000 (zoom 30 %) : pan / zoom continu / importer les 20 | — | 4,9 ms / 9 ms / 285 ms (copie + empreinte, une fois) |
 | Vectoriser une illustration 1 200 × 900 (détail 500) : 6 / 16 couleurs ; interface pendant le calcul en fond | — | 0,12 s / 0,26 s ; boucle d'événements : médiane 5 ms, p95 16 ms, pire ~50 ms |
+| Ctrl + glisser 200 objets parmi 2 000 avec repères commentés (sans enregistrement automatique pendant la mesure) | 1er mouvement 67 ms, régime ~16 ms (relevé : milliers de `QRectF`, lignes vers des objets lointains) | 1er mouvement ~37 ms (sans repères ~25), régime médiane 15-16 ms / p95 24-27 ms, comme sans repères |
 | Export PDF d'un plan avec 2 000 tracés / + 100 ombres tramées | — | 0,09 s (88 Ko) / 0,33 s (729 Ko) |
 | Mise en page d'un texte (à la validation, à l'annulation, pas pendant la frappe) : point 11 lettres / curviligne 200 lettres / captif 300 mots | — / — / 40 ms (un `addText` par mot) | 0,3 ms / 17 ms / 19 ms (36 ms justifié) |
 Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
@@ -219,6 +235,7 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 | Images placées (importer, dépôt, transformations, recadrage par masque, effets, SVG `<image>` aller-retour) | Partiel (incorporées seulement, pas d'images liées ni de ré-échantillonnage) | `test_illustrator_images.py` |
 | Vectorisation (préréglages, curseurs, fil de fond, remplacement annulable) | Partiel (pas d'objet de vectorisation modifiable en direct, ni de mode contour, ni de palette imposée) | `test_illustrator_trace.py` |
 | Export PDF (plan courant, tous les plans, dessin entier ; vectoriel, images pleine résolution ; relu par QtPdf dans les tests) | Partiel (pas de PDF/X, fond perdu, traits de coupe, CMJN ; texte en contours) | `test_illustrator_pdf.py` |
+| Outils avancés : Rotation / Échelle / Symétrie à origine, saisies, Transformer de nouveau (pas et répétition), Aligner / Répartir, repères commentés | Partiel (pas de Transformation manuelle E, de repères d'angle / de points, de copie Alt pendant les outils à origine) | `test_illustrator_xform.py` |
 | Pinceaux / largeur variable, images placées, vectorisation, export PDF, outils avancés (dégradé de forme, filet, déformation…), réglages du module (Réglages : Board), repères commentés / magnétisme | Non commencé | — |
 
 ## PASSATION (2026-10-31)
@@ -239,11 +256,11 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
   d'annulation), ~44 ms pour 20 objets / 98 zones, puis survol = `QPainterPath.contains` par zone.
 - Tranche 10 (texte) : 68ab7c1. Tranche 12 (masques) : 3bf4f4d. Tranche 13 (aspect et effets) : ac3a4f4. Tranche 14
   (images) : d97b2ae (corrige aussi l'import SVG du contrôleur, qui créait tout en tracés). Tranche 15
-  (vectorisation) : 7cf18e0. Tranche 16 (export PDF) : commit suivant.
+  (vectorisation) : 7cf18e0. Tranche 16 (export PDF) : 9cd1b20. Tranche 17 (outils avancés) : commit suivant.
 - POINT DE REPRISE : tranche 11 (pinceaux, largeur variable : profil de largeur le long du tracé, contour
   vectorisé par `pathfinder.outline_stroke` puis déformé ; peut devenir un effet vectoriel de `appearance.py`),
-  puis 17 outils avancés (rotation / échelle / symétrie avec point d'origine, Transformer de nouveau Ctrl+D,
-  repères commentés et magnétisme, alignement / répartition), 18 réglages du module (Réglages : Board).
+  puis 18 réglages du module (Réglages : Board : couleur de sélection, tolérances, repères commentés, unités
+  affichées pt / mm / px ; catalogue `settings.py` + défauts `settings_defaults.py` comme fm_design), 19 finition.
 - Pistes de fluidité restantes : enregistrement JSON hors du fil de l'interface (coque, tous modules) ; clic de
   plume (création d'élément) ; images d'effets refaites à l'arrêt d'un zoom (~0,9 ms par objet à ombre + lueur :
   à étaler par tranches, ou à faire seulement pour les objets visibles).

@@ -98,6 +98,27 @@ def paint_ill_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
         painter.drawLine(QPointF(c.x() + s * 0.4, c.y() - s * 0.5), QPointF(c.x(), c.y() - s * 0.9))
         painter.drawPolyline(QPolygonF([QPointF(c.x() - s * 0.8, c.y()), QPointF(c.x() - s * 0.8, c.y() + s * 0.8),
                                         QPointF(c.x() + s * 0.8, c.y() + s * 0.8), QPointF(c.x() + s * 0.8, c.y())]))
+    elif kind == "ill_rotate":
+        painter.drawArc(QRectF(c.x() - s * 0.75, c.y() - s * 0.75, s * 1.5, s * 1.5), 30 * 16, 280 * 16)
+        painter.drawLine(QPointF(c.x() + s * 0.65, c.y() - s * 0.38), QPointF(c.x() + s * 0.9, c.y() - s * 0.8))
+        painter.drawLine(QPointF(c.x() + s * 0.65, c.y() - s * 0.38), QPointF(c.x() + s * 0.2, c.y() - s * 0.45))
+    elif kind == "ill_scale":
+        painter.drawRect(QRectF(c.x() - s * 0.85, c.y() - s * 0.1, s * 0.95, s * 0.95))
+        painter.drawRect(QRectF(c.x() - s * 0.85, c.y() - s * 0.85, s * 1.7, s * 1.7))
+        painter.drawLine(QPointF(c.x() + s * 0.1, c.y() - s * 0.1), QPointF(c.x() + s * 0.7, c.y() - s * 0.7))
+    elif kind == "ill_reflect":
+        painter.drawLine(QPointF(c.x(), c.y() - s * 0.95), QPointF(c.x(), c.y() + s * 0.95))
+        painter.drawPolygon(QPolygonF([QPointF(c.x() - s * 0.2, c.y() - s * 0.6), QPointF(c.x() - s * 0.9,
+                                                                                             c.y() + s * 0.6),
+                                       QPointF(c.x() - s * 0.2, c.y() + s * 0.6)]))
+        painter.setBrush(color)
+        painter.drawPolygon(QPolygonF([QPointF(c.x() + s * 0.2, c.y() - s * 0.6), QPointF(c.x() + s * 0.9,
+                                                                                             c.y() + s * 0.6),
+                                       QPointF(c.x() + s * 0.2, c.y() + s * 0.6)]))
+    elif kind == "ill_align":
+        painter.drawLine(QPointF(c.x() - s * 0.9, c.y() - s * 0.9), QPointF(c.x() - s * 0.9, c.y() + s * 0.9))
+        painter.drawRect(QRectF(c.x() - s * 0.9, c.y() - s * 0.65, s * 1.6, s * 0.45))
+        painter.drawRect(QRectF(c.x() - s * 0.9, c.y() + s * 0.15, s * 1.0, s * 0.45))
     elif kind == "ill_fx":                                     # effets : « fx » tracé à la main
         painter.drawArc(QRectF(c.x() - s * 0.75, c.y() - s * 0.95, s * 0.7, s * 0.6), 30 * 16, 150 * 16)
         painter.drawLine(QPointF(c.x() - s * 0.75, c.y() - s * 0.65), QPointF(c.x() - s * 0.75, c.y() + s * 0.85))

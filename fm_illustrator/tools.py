@@ -5,7 +5,7 @@ release / hover / clés / curseur).
 Raccourcis d'Illustrator (sources et degré de vérification : `docs/agents/fm_illustrator.md`) : V Sélection,
 A Sélection directe, P Plume, + / - ajout / suppression de point, Maj+C Conversion de point, M Rectangle,
 L Ellipse, \\ Segment de droite, N Crayon, Maj+O Plan de travail, H Main, Z Zoom, I Pipette, G Dégradé,
-T Texte, Maj+M Shape Builder ; Polygone et Étoile
+T Texte, Maj+M Shape Builder, R Rotation, S Mise à l'échelle, O Symétrie ; Polygone et Étoile
 n'ont pas de lettre dans Illustrator (Y y est la Baguette magique : laissée libre).
 
 Règle de l'appli : déplacer des ÉLÉMENTS = Ctrl + glisser ; les gestes de géométrie (poignées, points) sans Ctrl."""
@@ -33,7 +33,8 @@ TOOL_KEYS = {(Qt.Key_V, False): "select", (Qt.Key_A, False): "direct", (Qt.Key_P
              (Qt.Key_Backslash, False): "line",
              (Qt.Key_N, False): "pencil", (Qt.Key_O, True): "artboard", (Qt.Key_H, False): "hand",
              (Qt.Key_Z, False): "zoom", (Qt.Key_I, False): "eyedropper", (Qt.Key_G, False): "gradient",
-             (Qt.Key_M, True): "shape_builder", (Qt.Key_T, False): "type"}
+             (Qt.Key_M, True): "shape_builder", (Qt.Key_T, False): "type", (Qt.Key_R, False): "rotate",
+             (Qt.Key_S, False): "scale", (Qt.Key_O, False): "reflect"}
 
 
 def _constrain45(origin: QPointF, pos: QPointF) -> QPointF:
@@ -108,8 +109,13 @@ class MoveGesture:
             items = scene.replace_items([], dicts, "Déplacer une copie")
             ctl.select(items)                   # la copie est une étape, le déplacement une autre
         self.items = items
+        self.copy = copy
         self.start = start
         self.origins = [QPointF(i.pos()) for i in items]
+        self.rect0 = ctl.selection_rect(items)
+        from .tools_xform import Snapper
+        self.snapper = Snapper(ctl, items)                  # repères commentés (Ctrl+U)
+        self.delta = QPointF(0, 0)
         # Membre de masque déplacé sans son masque (ou masque sans ses membres) : la découpe change à chaque image ;
         # son image gardée (prise à l'ancienne place relative) serait fausse : peint sans image pendant le geste.
         moving = set(items)
@@ -131,6 +137,10 @@ class MoveGesture:
         d = pos - self.start
         if mods & Qt.ShiftModifier:                             # Maj : horizontal, vertical ou 45°
             d = _constrain45(QPointF(0, 0), d)
+        if self.rect0 is not None:
+            sx, sy, self.ctl.guides = self.snapper.snap_rect(self.rect0.translated(d))
+            d = QPointF(d.x() + sx, d.y() + sy)
+        self.delta = d
         IllItem.quiet_moves = True
         try:
             for item, origin in zip(self.items, self.origins):
@@ -152,6 +162,8 @@ class MoveGesture:
         notify_moved(self.ctl.scene, self.items)
         self.ctl.scene.end_change(self.text)
         self.ctl.tip = None
+        self.ctl.guides = []
+        self.ctl.remember_transform(bz.translate(self.delta.x(), self.delta.y()), copy=self.copy)
 
     def cancel(self):
         IllItem.quiet_moves = True
@@ -163,6 +175,7 @@ class MoveGesture:
         self._restore()
         self.ctl.scene.end_change(self.text)
         self.ctl.tip = None
+        self.ctl.guides = []
 
 
 class TransformGesture:
@@ -243,8 +256,11 @@ class TransformGesture:
             item._place_from_data()
             item.update()
         notify_moved(self.ctl.scene, self.items)
-        self.ctl.scene.end_change("Rotation" if self.handle == "rotate" else "Mise à l'échelle")
+        self.ctl.scene.end_change(getattr(self, "label", None)
+                                  or ("Rotation" if self.handle == "rotate" else "Mise à l'échelle"))
         self.ctl.tip = None
+        if self.handle != "origin":                         # outils à origine : `OriginTool.release` s'en charge
+            self.ctl.remember_transform(self.current)
 
     def cancel(self):
         for item in self.items:
@@ -502,10 +518,21 @@ class NodeDrag:
         else:
             self.items = [target[0]]
         self.original = {i.item_id: bz.copy_subpaths(i.data["subpaths"]) for i in self.items}
+        self.snapper = None
+        if mode == "anchors" and sum(len(ctl.anchors.get(i.item_id, ())) for i in self.items) == 1:
+            from .tools_xform import Snapper                # un seul point : aimanté aux repères commentés
+            self.snapper = Snapper(ctl, self.items)
+            item = self.items[0]
+            si, ni = next(iter(ctl.anchors[item.item_id]))
+            n = item.data["subpaths"][si]["nodes"][ni]
+            self.anchor0 = QPointF(n[0] + item.data["x"], n[1] + item.data["y"])
         ctl.scene.begin_change(self.items)
 
     def update(self, pos: QPointF, mods):
         d = pos - self.start
+        if self.snapper is not None and not mods & Qt.ShiftModifier:
+            snapped, self.ctl.guides = self.snapper.snap_point(self.anchor0 + d)
+            d = snapped - self.anchor0
         for item in self.items:
             subs = bz.copy_subpaths(self.original[item.item_id])
             if self.mode == "anchors":
@@ -543,6 +570,7 @@ class NodeDrag:
             item.update()
 
     def finish(self):
+        self.ctl.guides = []
         self.ctl.scene.end_change({"anchors": "Déplacer des points", "handle": "Poignée",
                                    "segment": "Modifier un segment"}[self.mode])
 

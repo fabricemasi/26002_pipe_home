@@ -20,6 +20,7 @@ TOOL_GROUPS = [
     [("type", "ill_text")],
     [("rect", "ill_rect"), ("ellipse", "ill_ellipse"), ("polygon", "ill_polygon"), ("star", "ill_star"),
      ("line", "ill_line"), ("pencil", "ill_pencil")],
+    [("rotate", "ill_rotate"), ("scale", "ill_scale"), ("reflect", "ill_reflect")],
     [("shape_builder", "ill_shape_builder"), ("gradient", "ill_gradient"), ("eyedropper", "ill_eyedropper")],
     [("artboard", "ill_artboard"), ("hand", "ill_hand"), ("zoom", "ill_zoom")],
 ]
@@ -159,12 +160,15 @@ class IllustratorChrome(QObject):
         self.pathfinder_button = _GlyphButton("ill_pathfinder", "Pathfinder (modes de forme, division…)",
                                               self.control, 30)
         self.pathfinder_button.clicked.connect(lambda: self.pathfinder_menu(self.pathfinder_button))
+        self.align_button = _GlyphButton("ill_align", "Aligner et répartir", self.control, 30)
+        self.align_button.clicked.connect(lambda: self.align_menu(self.align_button))
         self.effects_button = _GlyphButton("ill_fx", "Effets et aspect (ombre, lueur, flou, décalage, arrondis, "
                                            "contours supplémentaires)", self.control, 30)
         self.effects_button.clicked.connect(lambda: self._effects(self.effects_button))
         self.layers_button = _GlyphButton("ill_layers", "Calques", self.control, 30)
         self.layers_button.clicked.connect(self.toggle_layers)
-        for widget in (self.object_button, self.pathfinder_button, self.effects_button, self.board_button,
+        for widget in (self.object_button, self.align_button, self.pathfinder_button, self.effects_button,
+                       self.board_button,
                        self.layers_button, self.export_button):
             bar.addWidget(widget)
         from settings_theme import _text_label
@@ -204,6 +208,12 @@ class IllustratorChrome(QObject):
         self.tools.hide()
         self.control.hide()
         self.layers.hide()
+
+    def align_menu(self, anchor):
+        from .menus import fill_align_menu
+        menu = _menu(self.pane, "ill_align")
+        fill_align_menu(self.ctl, menu)
+        _popup(menu, anchor)
 
     def _effects(self, anchor):
         from .appearance_ui import effects_menu

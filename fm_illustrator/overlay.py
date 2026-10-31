@@ -68,7 +68,8 @@ class IllOverlay(QGraphicsItem):
                 tuple(i.item_id for i in ctl.selection()),
                 tuple(sorted((k, tuple(sorted(v))) for k, v in ctl.anchors.items() if v)),
                 id(ctl.hover), repr(ctl.tip), tuple(b.data.get("name") for b in ctl.artboards()),
-                ctl.preview[2] if ctl.preview is not None and ctl.preview[0] == "regions" else None)
+                ctl.preview[2] if ctl.preview is not None and ctl.preview[0] == "regions" else None,
+                None if self._origin() is None else (round(self._origin().x(), 3), round(self._origin().y(), 3)))
 
     def dynamic_rects(self) -> list[QRectF]:
         """Zones peintes (scène) : à repeindre à chaque changement."""
@@ -104,7 +105,16 @@ class IllOverlay(QGraphicsItem):
         if ctl.tip is not None:
             p = ctl.tip[0]
             out.append(QRectF(p.x() - 10 / z, p.y() - 10 / z, 200 / z, 50 / z))
+        for line in ctl.guides:
+            out.append(QRectF(line.p1(), line.p2()).normalized().adjusted(-pad, -pad, pad, pad))
+        origin = self._origin()
+        if origin is not None:
+            out.append(QRectF(origin.x() - 12 / z, origin.y() - 12 / z, 24 / z, 24 / z))
         return out
+
+    def _origin(self):
+        tool = self.ctl.current_tool()
+        return tool.origin_point() if hasattr(tool, "origin_point") and self.ctl.selection() else None
 
     # -- peinture --
     def paint(self, painter: QPainter, option, widget=None):
@@ -132,6 +142,18 @@ class IllOverlay(QGraphicsItem):
             painter.drawRect(ctl.marquee)
         if ctl.preview is not None:
             self._paint_preview(painter, z, accent)
+        if ctl.guides:                                  # repères commentés : magenta (comme Illustrator)
+            painter.setPen(QPen(QColor("#ff2fd0"), 1.0 / z))
+            for line in ctl.guides:
+                painter.drawLine(line)
+        origin = self._origin()
+        if origin is not None:                          # point d'origine des outils Rotation / Échelle / Symétrie
+            r = 6.0 / z
+            painter.setPen(QPen(QColor("#00a6d6"), 1.4 / z))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawEllipse(origin, r, r)
+            painter.drawLine(QPointF(origin.x() - 2 * r, origin.y()), QPointF(origin.x() + 2 * r, origin.y()))
+            painter.drawLine(QPointF(origin.x(), origin.y() - 2 * r), QPointF(origin.x(), origin.y() + 2 * r))
         if ctl.tip is not None:
             self._paint_tip(painter, z)
 
