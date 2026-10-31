@@ -4,8 +4,17 @@
 repris). But de l'utilisateur : créer une famille complète, du premier tracé à des fichiers de police valides.
 Mission autonome lancée le 2026-10-30 (aucune question à l'utilisateur, aucun test demandé à l'utilisateur).
 
-**Tests** : `python tests/run.py fm_font` (`tests/test_fm_font*.py`). **Mesures** : `python -m fm_font.bench 1000`
-(modèle) et `python -m fm_font.bench 1000 --qt` (canvas, offscreen).
+**Tests** : `.venv/Scripts/python.exe tests/run.py fm_font` (`tests/test_fm_font*.py` ; les dépendances sont dans
+`.venv`, le Python global n'a ni ufo2ft ni uharfbuzz). **Mesures** : `python -m fm_font.bench 1000` (modèle,
+multimasters) et `python -m fm_font.bench 1000 --qt` (canvas, grille, aperçu ; offscreen).
+
+**Utilisation** : double-clic sur un `.ufo` / `.designspace` / `.ttf` / `.otf` / `.woff(2)` d'une colonne, ou menu
+d'une colonne « Créer un projet typographique ». Pages : Glyphes (Ctrl+1), Éditeur (Ctrl+2, double-clic sur un
+glyphe), Aperçu (Ctrl+3), Features (Ctrl+4, Ctrl+Entrée = appliquer), Diagnostic (Ctrl+5). Outils : V sélection,
+P plume, B crayon, R rectangle, E ellipse, Y polygone (Alt = étoile), C plume calligraphique, W brosse, M mesure,
+H main ; Espace tenu / bouton du milieu = déplacer la vue ; molette = zoom ; flèches = déplacer (Maj ×10) ;
+Suppr ; double-clic sur un nœud = lisse / coin ; clic droit = opérations (nœuds, contours, tracés, transformer,
+aligner, composants, ancres). Clic sur une règle = repère. Ctrl+Z / Ctrl+Y, Ctrl+S.
 
 ## Carte : fonctionnalité -> fichier
 
@@ -178,7 +187,10 @@ l'aperçu HarfBuzz) n'avance pas pendant l'attente. Attendre avec `time.sleep` +
 ## PASSATION (2026-10-30)
 
 - Commits (branche `nettoyage-code`, locaux, rien de poussé) : 1) modèle sans Qt ; 2) interface Qt ; 3) branchement
-  dans fm_browser + réglages + couleur / hinting / instances / secours / coins arrondis / métriques dans la vue.
+  dans fm_browser + réglages + couleur / hinting / instances / secours / coins arrondis / métriques dans la vue ;
+  4) instances nommées, export en fond, mesures multimasters ; 5) aperçu HarfBuzz compilé sur un instantané.
+- Cette doc fait ~210 lignes : à découper en sous-docs (`docs/agents/fm_font/<partie>.md` + la carte) si elle
+  grandit encore (règle des docs de module).
 - Tests : `python tests/run.py fm_font` (7 fichiers, ~70 tests, ~11 s). Suite complète `--tout` après le
   branchement : mêmes échecs que la référence d'avant fm_font (14 fichiers : test_board 1, test_file_attributes 3,
   test_focus_viewer 6 instables, test_input_tabs_settings 1, test_interface_edit_scope 1, test_md_live_preview 1,

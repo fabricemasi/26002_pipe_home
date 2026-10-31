@@ -334,14 +334,16 @@ class PreviewWidget(QWidget):
         if revision in self._hb or self._hb_pending == revision:
             return
         self._hb_pending = revision
-        font = self.project.masters[self.master].font
+        # Instantané (quelques ms) : le fil compile une copie INDÉPENDANTE, jamais le modèle que l'on édite.
+        from .autosave import _build, snapshot
+        master = snapshot(self.project)["masters"][self.master]
         relay = self._relay
 
         def work():
             try:
                 import ufo2ft
                 from .compile import to_bytes
-                tt = ufo2ft.compileTTF(font, useProductionNames=False, removeOverlaps=False)
+                tt = ufo2ft.compileTTF(_build(master), useProductionNames=False, removeOverlaps=False)
                 relay.done.emit(revision, to_bytes(tt), None)
             except Exception as exc:                       # noqa: BLE001 - montré dans la barre d'état
                 relay.done.emit(revision, None, f"{type(exc).__name__} : {exc}")
