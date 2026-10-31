@@ -152,6 +152,22 @@ class CanvasTest(WindowTestCase):
         QTest.mouseDClick(self.cv, Qt.LeftButton, Qt.NoModifier, QPoint(*self.w(500, 0)))
         self.assertTrue(self.glyph().contours[0][1].smooth)
 
+    def test_round_corners_from_menu_reports_count(self):
+        from fm_font import actions
+        self.cv.settings["typo_corner_radius"] = 40
+        self.glyph().contours.append(shapes.rectangle(100, 0, 500, 700))
+        messages = []
+        self.cv.statusMessage.connect(messages.append)
+        self.cv.selection = {(0, 0), (0, 1)}
+        actions.glyph_op(self.cv, "corners")
+        self.assertEqual(len(self.glyph().contours[0]), 10)               # chaque coin -> arc de 4 points
+        self.assertEqual(messages[-1], "2 coin(s) arrondi(s).")
+        self.cv.settings["typo_corner_radius"] = 9000
+        self.cv.selection = {(0, i) for i in range(10)}             # lisses ou rayon trop grand
+        actions.glyph_op(self.cv, "corners")
+        self.assertIn("Aucun coin", messages[-1])
+        self.assertEqual(self.project.undo.undo_label(), "Arrondir les coins")
+
     def test_paint_does_not_crash_with_everything(self):
         g = self.glyph()
         g.contours.append(shapes.ellipse(0, 0, 400, 400))

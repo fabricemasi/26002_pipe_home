@@ -121,8 +121,13 @@ def glyph_op(cv, op: str) -> None:
             center(glyph, font)
         elif op == "corners":
             nodes = {(c, i) for c, i in selection if glyph.contours[c][i].type is not None}
-            geometry.round_corners(glyph, nodes, float(cv.settings["typo_corner_radius"]))
+            rounded.append(geometry.round_corners(glyph, nodes, float(cv.settings["typo_corner_radius"])))
+    rounded = []
     cv.edit(labels[op], fn)
+    if op == "corners":
+        cv.statusMessage.emit(f"{rounded[0]} coin(s) arrondi(s)." if rounded and rounded[0] else
+                              "Aucun coin arrondi : nœuds lisses, segments quadratiques ou rayon plus long "
+                              "qu'un segment.")
     if op in ("overlaps", "union", "difference", "intersection", "xor", "decompose", "simplify", "corners"):
         cv.clear_selection()
 

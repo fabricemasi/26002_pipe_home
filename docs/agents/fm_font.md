@@ -28,7 +28,7 @@ RIEN de la fenêtre principale (elle lui pose des `HOOKS`).
 | Annuler / rétablir (une étape = un geste) | `undo.py` | `UndoStack`, `glyph_snapshot`, `glyph_restore` |
 | Projet : famille, masters, création / ouverture / sauvegarde atomique, glyphes (créer, supprimer, dupliquer, renommer, Unicode) | `document.py` | `FontProject` (`new`, `open`, `save`, `add_glyph`, `add_glyphs_for_unicodes`, `delete_glyphs`, `duplicate_glyph`, `rename_glyph`, `set_unicodes`, `begin_edit` / `end_edit`, `edit_glyph`, `set_info`, `add_master`), `save_ufo_atomic`, `recover_interrupted_save` |
 | Bézier : segments, coin / lisse / symétrique, ajout / suppression / division, ouverture / fermeture, sens, départ, cubique <-> quadratique | `contours.py` | `segments`, `segment_refs`, `insert_point`, `delete_points`, `set_smooth`, `align_handles`, `make_symmetric`, `open_at`, `close`, `reverse`, `set_start_point`, `wrong_directions`, `correct_directions`, `contour_to_quadratic`, `contour_to_cubic`, `nearest_on_segment` |
-| Géométrie : transformations, symétrie, booléens, chevauchements, simplification, arrondi, alignement, mesures | `geometry.py` | `move_points`, `transform_glyph`, `mirror`, `boolean`, `remove_overlaps`, `simplify`, `round_coordinates`, `align`, `distribute`, `measure`, `intersections_with_line` |
+| Géométrie : transformations, symétrie, booléens, chevauchements, simplification, arrondi, coins arrondis, alignement, mesures | `geometry.py` | `move_points`, `transform_glyph`, `mirror`, `boolean`, `remove_overlaps`, `simplify`, `round_coordinates`, `round_corners`, `align`, `distribute`, `measure`, `intersections_with_line`, `flattened` |
 | Formes et crayon (ajustement de Schneider) | `shapes.py` | `rectangle`, `ellipse`, `polygon`, `pencil_contour`, `fit_cubic` |
 | Calligraphie : plume à angle, brosse, pression, lissage, contours éditables | `calligraphy.py` | `outline` |
 | Couteau : coupe exacte le long d'un segment (contours fermés, contre-formes reliées, contours ouverts) | `knife.py` | `cut` |
@@ -125,7 +125,7 @@ Légende : TERMINÉ (fonctionne, sauvegardé si besoin, testé) / PARTIEL / NON 
 | Modèle, projet, sauvegarde atomique, réouverture, récupération | TERMINÉ | `ProjectTest` |
 | Glyphes : créer, supprimer (refus si composant), dupliquer, renommer partout, Unicode | TERMINÉ | modèle ; interface : voir plus bas |
 | Bézier (modèle) | TERMINÉ | `BezierTest` (division exacte, tolérance cu2qu testée à 0,25 / 1 / 4 u) |
-| Géométrie (modèle) : transformations, symétrie, booléens, chevauchements, simplification, arrondi des coordonnées, COINS ARRONDIS (congé exact), alignement, mesures | TERMINÉ | `GeometryTest` ; coins arrondis : entre deux droites seulement |
+| Géométrie (modèle) : transformations, symétrie, booléens, chevauchements, simplification, arrondi des coordonnées, COINS ARRONDIS, alignement, mesures | TERMINÉ | `GeometryTest` ; coins arrondis entre lignes ET cubiques (segments raccourcis par division exacte, arc tangent ; rayon exact entre droites) ; pas entre quadratiques |
 | Crayon, calligraphie (modèle) | TERMINÉ | pression = 3e valeur des échantillons |
 | Composants, ancres, accentués, cycles (modèle) | TERMINÉ | propagation structurelle testée |
 | Métriques, crénage, aide automatique (modèle) | TERMINÉ | suggestions jamais appliquées seules |

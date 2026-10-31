@@ -311,6 +311,37 @@ class GeometryTest(unittest.TestCase):
         self.assertFalse(geometry.round_corner(contour, 0, 500))             # rayon trop grand : rien
         self.assertEqual(geometry.glyph_bounds(self.g), (0, 0, 400, 400))
 
+    def test_round_corners_between_curves_keeps_curves_exact(self):
+        # lentille : deux cubiques qui se rejoignent en coin à (0, 0) et (400, 0)
+        top = [(0, 0), (100, 200), (300, 200), (400, 0)]
+        lens = C.new_contour([(0, 0, "curve"), (100, 200, None), (300, 200, None), (400, 0, "curve"),
+                              (300, -200, None), (100, -200, None)])
+        self.g.contours.append(lens)
+        self.assertEqual(geometry.round_corners(self.g, {(0, 0), (0, 3)}, 20), 2)
+        contour = self.g.contours[0]
+        segs = C.segments(contour)
+        self.assertEqual(len(segs), 4)
+        # arc au coin (0, 0) : centre sur la bissectrice à r / sin(angle / 2), milieu de l'arc à r du centre
+        half = math.atan2(200, 100)                                       # demi-angle intérieur
+        center = (20 / math.sin(half), 0)
+        arc = next(s for s in segs if max(abs(x) for x, _y in C.segment_points(contour, s)) < 30)
+        self.assertAlmostEqual(math.dist(C.cubic_at(*C.segment_points(contour, arc), 0.5), center), 20, delta=0.1)
+        # la courbe du haut, raccourcie par division exacte, reste SUR la courbe d'origine
+        trimmed = next(s for s in segs if min(y for _x, y in C.segment_points(contour, s)) > 0
+                       and max(x for x, _y in C.segment_points(contour, s)) > 300)
+        dense = [C.cubic_at(*top, k / 2000) for k in range(2001)]
+        for k in range(11):
+            q = C.cubic_at(*C.segment_points(contour, trimmed), k / 10)
+            self.assertLess(min(math.dist(q, d) for d in dense), 0.5)
+        # ligne + courbe : coins à (200, 0) et (200, 400) ; rayon trop grand : rien
+        d = C.new_contour([(0, 0, "line"), (200, 0, "line"), (300, 100, None), (300, 300, None), (200, 400, "curve"),
+                           (0, 400, "line")])
+        self.g.contours.append(d)
+        self.assertEqual(geometry.round_corners(self.g, {(1, 1)}, 5000), 0)
+        self.assertEqual(geometry.round_corners(self.g, {(1, 1), (1, 4)}, 30), 2)
+        self.assertEqual(min(p.y for p in self.g.contours[1]), 0)               # la ligne du bas reste à y = 0
+        self.assertEqual([p.type for p in self.g.contours[1] if p.type].count("curve"), 3)   # 2 arcs + la courbe
+
     def test_pencil_fit_follows_points(self):
         pts = [(x, 200 * math.sin(x / 80)) for x in range(0, 500, 5)]
         contour = shapes.pencil_contour(pts, error=2.0, smoothing=0)

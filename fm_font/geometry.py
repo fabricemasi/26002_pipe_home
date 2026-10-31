@@ -275,44 +275,109 @@ def _segment_intersection(a, b, c, d):
 
 # -- arrondi des coins (congé) --
 
+def _unit(v):
+    length = math.hypot(*v)
+    return (v[0] / length, v[1] / length) if length > 1e-9 else None
+
+
+def _point_at_distance(pts, corner, distance, from_end: bool):
+    """Paramètre t du segment (ligne ou cubique, `pts`) à `distance` du coin (à t = 1 si `from_end`, sinon à
+    t = 0) ; None si le segment est trop court. Bissection sur la distance au coin."""
+    at = (lambda t: C.cubic_at(*pts, t)) if len(pts) == 4 else (lambda t: C.lerp(pts[0], pts[-1], t))
+    far = at(0.0 if from_end else 1.0)
+    if math.dist(far, corner) <= distance:
+        return None
+    lo, hi = (0.0, 1.0)
+    for _ in range(60):                                      # f(lo) > 0 du côté éloigné, f(hi) < 0 au coin
+        mid = (lo + hi) / 2
+        t = mid if from_end else 1 - mid
+        if math.dist(at(t), corner) > distance:
+            lo = mid
+        else:
+            hi = mid
+    mid = (lo + hi) / 2
+    return mid if from_end else 1 - mid
+
+
 def round_corner(contour, index: int, radius: float) -> bool:
-    """Remplace le nœud en COIN `index` (entre deux segments droits) par un arc de cercle de rayon `radius` :
-    deux nœuds lisses reliés par une cubique (poignées au coefficient du cercle). False si le coin n'est pas entre
-    deux droites, ou si le rayon dépasse un des segments (rien n'est modifié)."""
+    """Remplace le nœud en COIN `index` par un arc de rayon `radius` tangent aux deux segments (lignes ou
+    cubiques). Les segments sont raccourcis par division EXACTE (leur forme ne change pas) ; l'arc est une
+    cubique tangente aux deux (rayon exact entre deux droites ; entre courbes, rayon de l'arc qui joint les deux
+    points de tangence situés à la distance du congé). False (rien modifié) : nœud lisse ou au bout d'un contour
+    ouvert, segment quadratique, rayon plus grand qu'un des segments."""
     pts = contour.points
     node = pts[index]
-    prev, nxt = C.neighbours(contour, index)
-    if prev is None or nxt is None:
+    if node.type is None or node.smooth:
         return False
-    a, b = pts[prev], pts[nxt]
-    if a.type is None or b.type != "line" or node.type != "line":
+    segs = C.segments(contour)
+    inc = next((s for s in segs if s[2] == index), None)
+    out = next((s for s in segs if s[0] == index), None)
+    if inc is None or out is None or inc[3] not in ("line", "curve") or out[3] not in ("line", "curve"):
         return False
-    va = (a.x - node.x, a.y - node.y)
-    vb = (b.x - node.x, b.y - node.y)
-    la, lb = math.hypot(*va), math.hypot(*vb)
-    if not la or not lb:
+    if (inc[3] == "curve" and len(inc[1]) != 2) or (out[3] == "curve" and len(out[1]) != 2):
         return False
-    ua, ub = (va[0] / la, va[1] / la), (vb[0] / lb, vb[1] / lb)
-    cos = max(-1.0, min(1.0, ua[0] * ub[0] + ua[1] * ub[1]))
-    angle = math.acos(cos)                                   # angle intérieur du coin
+    pin, pout = C.segment_points(contour, inc), C.segment_points(contour, out)
+    corner = (node.x, node.y)
+    ua = next((u for u in (_unit((q[0] - corner[0], q[1] - corner[1])) for q in reversed(pin[:-1])) if u), None)
+    ub = next((u for u in (_unit((q[0] - corner[0], q[1] - corner[1])) for q in pout[1:]) if u), None)
+    if ua is None or ub is None:
+        return False
+    angle = math.acos(max(-1.0, min(1.0, ua[0] * ub[0] + ua[1] * ub[1])))   # angle intérieur du coin
     if angle < 1e-3 or abs(angle - math.pi) < 1e-3:
         return False
     distance = radius / math.tan(angle / 2)                  # du coin aux points de tangence
-    if distance >= la or distance >= lb:
+    t_in = _point_at_distance(pin, corner, distance, from_end=True)
+    t_out = _point_at_distance(pout, corner, distance, from_end=False)
+    if t_in is None or t_out is None:
         return False
-    p1 = (node.x + ua[0] * distance, node.y + ua[1] * distance)
-    p2 = (node.x + ub[0] * distance, node.y + ub[1] * distance)
-    handle = 4 / 3 * math.tan((math.pi - angle) / 4) * radius   # cubique d'un arc d'ouverture (pi - angle)
-    h1 = (p1[0] - ua[0] * handle, p1[1] - ua[1] * handle)
-    h2 = (p2[0] - ub[0] * handle, p2[1] - ub[1] * handle)
+    if len(pin) == 4:
+        (_, a1, b1, p1), _rest = C.split_cubic(*pin, t_in)
+        tan1 = _unit((p1[0] - b1[0], p1[1] - b1[1])) or _unit((p1[0] - a1[0], p1[1] - a1[1]))
+        inc_new = [a1, b1]
+    else:
+        p1 = C.lerp(pin[0], pin[1], t_in)
+        tan1, inc_new = (-ua[0], -ua[1]), []
+    if len(pout) == 4:
+        _rest, (p2, c2, d2, _) = C.split_cubic(*pout, t_out)
+        tan2 = _unit((c2[0] - p2[0], c2[1] - p2[1])) or _unit((d2[0] - p2[0], d2[1] - p2[1]))
+        out_new = [c2, d2]
+    else:
+        p2 = C.lerp(pout[0], pout[1], t_out)
+        tan2, out_new = ub, []
+    if tan1 is None or tan2 is None:
+        return False
+    turn = math.acos(max(-1.0, min(1.0, tan1[0] * tan2[0] + tan1[1] * tan2[1])))
+    chord = math.dist(p1, p2)
+    if turn < 1e-4 or chord < 1e-9:
+        return False
+    arc_radius = chord / (2 * math.sin(turn / 2))
+    handle = 4 / 3 * math.tan(turn / 4) * arc_radius         # cubique d'un arc de cercle d'ouverture `turn`
+    h1 = (p1[0] + tan1[0] * handle, p1[1] + tan1[1] * handle)
+    h2 = (p2[0] - tan2[0] * handle, p2[1] - tan2[1] * handle)
     from ufoLib2.objects import Point
-    new = [Point(p1[0], p1[1], "line", True), Point(*h1), Point(*h2), Point(p2[0], p2[1], "curve", True)]
-    pts[index:index + 1] = new
+    new = [Point(*q) for q in inc_new] + [Point(p1[0], p1[1], inc[3], True), Point(*h1), Point(*h2),
+                                          Point(p2[0], p2[1], "curve", True)] + [Point(*q) for q in out_new]
+    first = pts[0]
+    start_obj = pts[inc[0]]
+    doomed = {id(pts[i]) for i in inc[1]} | {id(node)} | {id(pts[i]) for i in out[1]}
+    if C.is_closed(contour):                                 # rotation : le début du segment entrant en tête
+        k = inc[0]
+        ring = pts[k:] + pts[:k]
+    else:
+        ring = list(pts)
+    kept = [q for q in ring if id(q) not in doomed]
+    at = next(i for i, q in enumerate(kept) if q is start_obj) + 1
+    kept[at:at] = new
+    if C.is_closed(contour):
+        anchor = first if any(q is first for q in kept) else new[len(inc_new)]
+        k = next(i for i, q in enumerate(kept) if q is anchor)
+        kept = kept[k:] + kept[:k]
+    pts[:] = kept
     return True
 
 
 def round_corners(glyph, selection, radius: float) -> int:
-    """Arrondit les coins choisis (nœuds en coin entre deux droites). Renvoie le nombre de coins arrondis."""
+    """Arrondit les coins choisis (nœuds en coin, entre lignes et / ou cubiques). Renvoie le nombre arrondi."""
     done = 0
     by_contour: dict[int, list[int]] = {}
     for c, i in selection:
