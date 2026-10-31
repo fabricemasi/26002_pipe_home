@@ -5,7 +5,8 @@ release / hover / clés / curseur).
 Raccourcis d'Illustrator (sources et degré de vérification : `docs/agents/fm_illustrator.md`) : V Sélection,
 A Sélection directe, P Plume, + / - ajout / suppression de point, Maj+C Conversion de point, M Rectangle,
 L Ellipse, \\ Segment de droite, N Crayon, Maj+O Plan de travail, H Main, Z Zoom, I Pipette, G Dégradé,
-T Texte, Maj+M Shape Builder, R Rotation, S Mise à l'échelle, O Symétrie ; Polygone et Étoile
+T Texte, Maj+M Shape Builder, R Rotation, S Mise à l'échelle, O Symétrie,
+B Pinceau, Maj+B Forme de tache, Maj+W Largeur ; Polygone et Étoile
 n'ont pas de lettre dans Illustrator (Y y est la Baguette magique : laissée libre).
 
 Règle de l'appli : déplacer des ÉLÉMENTS = Ctrl + glisser ; les gestes de géométrie (poignées, points) sans Ctrl."""
@@ -34,7 +35,8 @@ TOOL_KEYS = {(Qt.Key_V, False): "select", (Qt.Key_A, False): "direct", (Qt.Key_P
              (Qt.Key_N, False): "pencil", (Qt.Key_O, True): "artboard", (Qt.Key_H, False): "hand",
              (Qt.Key_Z, False): "zoom", (Qt.Key_I, False): "eyedropper", (Qt.Key_G, False): "gradient",
              (Qt.Key_M, True): "shape_builder", (Qt.Key_T, False): "type", (Qt.Key_R, False): "rotate",
-             (Qt.Key_S, False): "scale", (Qt.Key_O, False): "reflect"}
+             (Qt.Key_S, False): "scale", (Qt.Key_O, False): "reflect", (Qt.Key_B, False): "paintbrush",
+             (Qt.Key_B, True): "blob", (Qt.Key_W, True): "width"}
 
 
 def _constrain45(origin: QPointF, pos: QPointF) -> QPointF:

@@ -40,6 +40,9 @@ class IllustratorController(QObject):
         self.artboard_id = ""                      # plan de travail choisi (outil Plan de travail)
         self.layer_id = ""                         # calque courant (les objets neufs y vont)
         self._pending_layer = None                 # calque créé avec le 1er objet (même étape d'annulation)
+        from .brushes import CALLIGRAPHIC
+        self.brush = dict(CALLIGRAPHIC)            # pointe du Pinceau (B)
+        self.blob_size = 20.0                      # diamètre de l'outil Forme de tache (Maj+B)
         self.smart_guides = True                   # repères commentés (Ctrl+U)
         self.guides: list = []                     # lignes des repères commentés du geste en cours
         self.last_transform = None                 # {"matrix", "copy"} : Transformer de nouveau (Ctrl+D)
@@ -309,6 +312,10 @@ class IllustratorController(QObject):
         except (OSError, ValueError):
             pass
         return None
+
+    def shapes_all(self) -> list[IllPathItem]:
+        """Tous les tracés (ni textes, ni images), du bas vers le haut."""
+        return [i for i in self.objects() if not isinstance(i, (IllTextItem, IllImageItem))]
 
     def texts(self) -> list[IllTextItem]:
         return [i for i in self.selection() if isinstance(i, IllTextItem)]
@@ -877,6 +884,29 @@ class IllustratorController(QObject):
         if remember and items:
             self.remember_transform(matrix)
 
+    # -- pinceaux et largeur variable (brushes.py) --
+    def set_width_profile(self, profile: list, text: str = "Profil de largeur"):
+        from .brushes import valid_profile
+        items = [i for i in self.shapes() if i.data.get("stroke")]
+        if items:
+            value = valid_profile(profile)
+            self.change(items, lambda i: i.data.update(width_profile=[list(p) for p in value]), text)
+
+    def set_brush(self, brush: dict | None, live: bool = False):
+        """Pointe calligraphique des tracés choisis (None = retirer) ; aussi la pointe courante du Pinceau."""
+        from .brushes import valid_brush
+        value = valid_brush(brush)
+        if value is not None:
+            self.brush = dict(value)
+        items = [i for i in self.shapes() if i.data.get("stroke")]
+        if not items:
+            return
+        change = lambda i: i.data.update(brush=dict(value) if value else None)   # noqa: E731
+        if live:
+            self.scene.live_change("ill_brush", items, change, "Pointe calligraphique")
+        else:
+            self.change(items, change, "Pointe calligraphique" if value else "Retirer le pinceau")
+
     def remember_transform(self, matrix, copy: bool = False):
         self.last_transform = {"matrix": tuple(matrix), "copy": bool(copy)}
 
@@ -1048,10 +1078,15 @@ class IllustratorController(QObject):
         if not items:
             return []
         added = []
+        from . import brushes
         for item in items:
-            subs = pf.outline_stroke(self.scene_subpaths(item), float(item.data["stroke_width"]),
-                                     item.data.get("cap", "butt"), item.data.get("join", "miter"),
-                                     float(item.data.get("miter", 10.0)))
+            if brushes.has_brush(item.data):                # largeur variable : la surface calculée, nettoyée
+                shape = brushes.outline(dict(item.data, subpaths=self.scene_subpaths(item)))
+                subs = pf.combine([(shape, "nonzero")], "unite") if shape else []
+            else:
+                subs = pf.outline_stroke(self.scene_subpaths(item), float(item.data["stroke_width"]),
+                                         item.data.get("cap", "butt"), item.data.get("join", "miter"),
+                                         float(item.data.get("miter", 10.0)))
             if not subs:
                 continue
             subs, origin = place_origin(subs)
@@ -1064,7 +1099,7 @@ class IllustratorController(QObject):
             outline.update(id=board_model.new_id(), subpaths=subs, x=origin.x(), y=origin.y(),
                            fill=item.data["stroke"], fill_gradient=item.data.get("stroke_gradient"),
                            stroke="", stroke_gradient=None, fill_rule="nonzero", group=group,
-                           z=item.zValue() + 0.5)
+                           z=item.zValue() + 0.5, width_profile=[], brush=None)
             added.append(outline)
         new = self.scene.replace_items(items, added, "Vectoriser le contour")
         self.select(new)

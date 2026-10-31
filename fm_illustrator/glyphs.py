@@ -98,6 +98,27 @@ def paint_ill_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
         painter.drawLine(QPointF(c.x() + s * 0.4, c.y() - s * 0.5), QPointF(c.x(), c.y() - s * 0.9))
         painter.drawPolyline(QPolygonF([QPointF(c.x() - s * 0.8, c.y()), QPointF(c.x() - s * 0.8, c.y() + s * 0.8),
                                         QPointF(c.x() + s * 0.8, c.y() + s * 0.8), QPointF(c.x() + s * 0.8, c.y())]))
+    elif kind == "ill_brush":
+        painter.drawLine(QPointF(c.x() + s * 0.85, c.y() - s * 0.85), QPointF(c.x() - s * 0.1, c.y() + s * 0.1))
+        path = QPainterPath(QPointF(c.x() - s * 0.1, c.y() + s * 0.1))
+        path.cubicTo(QPointF(c.x() - s * 0.6, c.y() + s * 0.05), QPointF(c.x() - s * 0.6, c.y() + s * 0.6),
+                     QPointF(c.x() - s * 0.95, c.y() + s * 0.9))
+        path.cubicTo(QPointF(c.x() - s * 0.3, c.y() + s * 0.9), QPointF(c.x() + s * 0.05, c.y() + s * 0.5),
+                     QPointF(c.x() - s * 0.1, c.y() + s * 0.1))
+        painter.setBrush(color)
+        painter.drawPath(path)
+    elif kind == "ill_blob":
+        painter.setBrush(color)
+        painter.drawEllipse(QPointF(c.x() - s * 0.35, c.y() + s * 0.2), s * 0.45, s * 0.4)
+        painter.drawEllipse(QPointF(c.x() + s * 0.3, c.y() - s * 0.15), s * 0.45, s * 0.45)
+    elif kind == "ill_width":
+        path = QPainterPath(QPointF(c.x() - s * 0.95, c.y()))
+        path.cubicTo(QPointF(c.x() - s * 0.3, c.y() - s * 0.7), QPointF(c.x() + s * 0.3, c.y() - s * 0.7),
+                     QPointF(c.x() + s * 0.95, c.y()))
+        path.cubicTo(QPointF(c.x() + s * 0.3, c.y() + s * 0.7), QPointF(c.x() - s * 0.3, c.y() + s * 0.7),
+                     QPointF(c.x() - s * 0.95, c.y()))
+        painter.drawPath(path)
+        painter.drawLine(QPointF(c.x(), c.y() - s * 0.5), QPointF(c.x(), c.y() + s * 0.5))
     elif kind == "ill_rotate":
         painter.drawArc(QRectF(c.x() - s * 0.75, c.y() - s * 0.75, s * 1.5, s * 1.5), 30 * 16, 280 * 16)
         painter.drawLine(QPointF(c.x() + s * 0.65, c.y() - s * 0.38), QPointF(c.x() + s * 0.9, c.y() - s * 0.8))

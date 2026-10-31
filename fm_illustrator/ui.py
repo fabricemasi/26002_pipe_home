@@ -17,7 +17,7 @@ TOOL_GROUPS = [
     [("select", "ill_select"), ("direct", "ill_direct")],
     [("pen", "ill_pen"), ("add_anchor", "ill_add_anchor"), ("delete_anchor", "ill_delete_anchor"),
      ("convert", "ill_convert")],
-    [("type", "ill_text")],
+    [("type", "ill_text"), ("paintbrush", "ill_brush"), ("blob", "ill_blob"), ("width", "ill_width")],
     [("rect", "ill_rect"), ("ellipse", "ill_ellipse"), ("polygon", "ill_polygon"), ("star", "ill_star"),
      ("line", "ill_line"), ("pencil", "ill_pencil")],
     [("rotate", "ill_rotate"), ("scale", "ill_scale"), ("reflect", "ill_reflect")],
@@ -160,6 +160,9 @@ class IllustratorChrome(QObject):
         self.pathfinder_button = _GlyphButton("ill_pathfinder", "Pathfinder (modes de forme, division…)",
                                               self.control, 30)
         self.pathfinder_button.clicked.connect(lambda: self.pathfinder_menu(self.pathfinder_button))
+        self.brush_button = _GlyphButton("ill_brush", "Pinceau : profil de largeur, pointe calligraphique, "
+                                         "forme de tache", self.control, 30)
+        self.brush_button.clicked.connect(lambda: self.brush_menu(self.brush_button))
         self.align_button = _GlyphButton("ill_align", "Aligner et répartir", self.control, 30)
         self.align_button.clicked.connect(lambda: self.align_menu(self.align_button))
         self.effects_button = _GlyphButton("ill_fx", "Effets et aspect (ombre, lueur, flou, décalage, arrondis, "
@@ -167,7 +170,8 @@ class IllustratorChrome(QObject):
         self.effects_button.clicked.connect(lambda: self._effects(self.effects_button))
         self.layers_button = _GlyphButton("ill_layers", "Calques", self.control, 30)
         self.layers_button.clicked.connect(self.toggle_layers)
-        for widget in (self.object_button, self.align_button, self.pathfinder_button, self.effects_button,
+        for widget in (self.object_button, self.brush_button, self.align_button, self.pathfinder_button,
+                       self.effects_button,
                        self.board_button,
                        self.layers_button, self.export_button):
             bar.addWidget(widget)
@@ -208,6 +212,40 @@ class IllustratorChrome(QObject):
         self.tools.hide()
         self.control.hide()
         self.layers.hide()
+
+    def brush_menu(self, anchor):
+        """Profils de largeur (sélection), pointe calligraphique (curseurs en direct : sélection + Pinceau), forme
+        de tache."""
+        from settings_menu import menu_row
+        from . import brushes
+        ctl = self.ctl
+        menu = _menu(self.pane, "ill_brushes")
+        menu.aboutToHide.connect(ctl.scene.commit_live)
+        profiles = menu.addMenu("Profil de largeur")
+        for key, (label, profile) in brushes.PROFILES.items():
+            profiles.addAction(label).triggered.connect(lambda _c=False, p=profile, k=label: ctl.set_width_profile(
+                p, f"Profil : {k}"))
+        menu.addSeparator()
+        brush = dict(ctl.brush)
+        for key, label, low, high, unit, k in (("angle", "Angle de la pointe", 0, 180, "°", 1),
+                                               ("roundness", "Rondeur", 2, 100, "%", 100),
+                                               ("size", "Taille", 1, 200, "px", 1)):
+            slider = _slider(low, high, round(brush[key] * k), unit=unit)
+
+            def moved(v, key=key, k=k):
+                brush[key] = v / k
+                ctl.set_brush(dict(brush), live=True)
+            slider.valueChanged.connect(moved)
+            menu_row(menu, label, slider)
+        menu.addAction("Appliquer la pointe calligraphique").triggered.connect(lambda: ctl.set_brush(dict(brush)))
+        menu.addAction("Retirer le pinceau et le profil").triggered.connect(
+            lambda: (ctl.set_brush(None), ctl.set_width_profile([], "Profil : uniforme")))
+        menu.addSeparator()
+        blob = _slider(2, 300, round(ctl.blob_size), unit="px")
+        blob.valueChanged.connect(lambda v: setattr(ctl, "blob_size", float(v)))
+        menu_row(menu, "Forme de tache", blob)
+        menu.addAction("Vectoriser le contour").triggered.connect(ctl.outline_stroke)
+        _popup(menu, anchor)
 
     def align_menu(self, anchor):
         from .menus import fill_align_menu

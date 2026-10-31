@@ -33,10 +33,19 @@ def _paint(color: str) -> tuple[str, float]:
 
 def path_element(data: dict, dx: float = 0.0, dy: float = 0.0, refs: dict | None = None) -> str:
     """`<path>` ; `refs` = {"fill" / "stroke": "url(#id)"} pour un dégradé."""
-    from . import appearance
+    from . import appearance, brushes
     d = bz.svg_d(appearance.render_subpaths(data), data.get("x", 0.0) + dx, data.get("y", 0.0) + dy)
     if not d:
         return ""
+    above = ""                                          # contour à largeur variable : une surface au-dessus
+    if data.get("stroke") and brushes.has_brush(data):
+        color, op = _paint(data["stroke"])
+        if (refs or {}).get("stroke"):
+            color, op = refs["stroke"], 1.0
+        extra = f' fill-opacity="{bz._num(op)}"' if op < 1 else ""
+        bd = bz.svg_d(brushes.outline(data), data.get("x", 0.0) + dx, data.get("y", 0.0) + dy)
+        above = f'<path d="{bd}" fill="{color}"{extra}/>' if bd else ""
+        data = dict(data, stroke="")
     under = []                                          # contours supplémentaires (aspect) : sous l'objet
     for stroke in data.get("extra_strokes") or []:
         color, op = _paint(stroke["color"])
@@ -75,11 +84,11 @@ def path_element(data: dict, dx: float = 0.0, dy: float = 0.0, refs: dict | None
         attrs.append(f'opacity="{bz._num(opacity)}"')
     if data.get("name"):
         attrs.append(f"id={quoteattr(_xml_id(data['name']))}")
-    element = "".join(under) + f"<path {' '.join(attrs)}/>"
+    element = "".join(under) + f"<path {' '.join(attrs)}/>" + above
     fid = (refs or {}).get("filter")
     if fid:
         return f'<g filter="url(#{fid})">{element}</g>'
-    return f"<g>{element}</g>" if under else element
+    return f"<g>{element}</g>" if under or above else element
 
 
 def _xml_id(name: str) -> str:

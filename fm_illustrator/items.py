@@ -10,11 +10,11 @@ from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (QBrush, QColor, QImage, QLinearGradient, QPainter, QPainterPath, QPainterPathStroker,
-                           QPen, QRadialGradient, QTransform)
+                           QPen, QPolygonF, QRadialGradient, QTransform)
 from PySide6.QtWidgets import QGraphicsItem
 
 from fm_miro.items import ITEM_CLASSES, POSITION_HAS_CHANGED, BoardItem, CommentItem, ConnectorItem, clone_data
-from . import appearance, bezier as bz, model
+from . import appearance, bezier as bz, brushes, model
 
 ARTBOARD_Z = -300000.0                 # sous les pages Design (-200000) et les cadres de Miro (-100000)
 CAPS = {"butt": Qt.FlatCap, "round": Qt.RoundCap, "square": Qt.SquareCap}
@@ -332,6 +332,12 @@ class IllPathItem(IllItem):
             QBrush(qcolor(self.data["fill"])) if self.data.get("fill") else None)
         self._pen = stroke_pen(self.data, self._box) if self.data.get("stroke") and \
             float(self.data.get("stroke_width", 0.0)) > 0 else None
+        self._brushed = False                           # contour à largeur variable / calligraphique : une surface
+        if self._pen is not None and self.data.get("subpaths") and brushes.has_brush(self.data):
+            self._brushed = True                        # calculée au 1er affichage / clic (`_brush_shape`)
+            self._brush_fill = gradient_brush(self.data["stroke_gradient"], self._box) \
+                if self.data.get("stroke_gradient") else QBrush(qcolor(self.data["stroke"]))
+            self._pen = None
         self.apply_visibility()
 
     def apply_visibility(self):
@@ -369,7 +375,7 @@ class IllPathItem(IllItem):
         return qpath(appearance.render_subpaths(self.data), self.data.get("fill_rule", "nonzero"))
 
     def paint_margin(self) -> QRectF:
-        w = float(self.data.get("stroke_width", 0.0)) if self.data.get("stroke") else 0.0
+        w = brushes.stroke_hit_width(self.data) if self.data.get("stroke") else 0.0
         m = w * max(1.0, float(self.data.get("miter", 10.0)) / 2) if self.data.get("join") == "miter" else w
         m = max(m, w) / 2 + 1.0 + appearance.margin(self.data)
         drawn = getattr(self, "draw_path", None)
@@ -393,6 +399,8 @@ class IllPathItem(IllItem):
         hit = stroker.createStroke(drawn)
         if self.data.get("fill"):
             hit = hit.united(drawn)
+        if self._brushed:
+            hit = hit.united(self._brush_shape())
         self._hit = ((zoom, tolerance_px), hit)
         return hit
 
@@ -466,7 +474,25 @@ class IllPathItem(IllItem):
         painter.restore()
 
     draw_path = QPainterPath()
+    _brushed = False
     _extra_pens: list = []
+
+    def _brush_shape(self):
+        """Surface du contour-pinceau, calculée À LA DEMANDE (affichage, clic) et gardée tant que la géométrie et le
+        pinceau ne changent pas : à l'ouverture d'un dessin, les traits hors de l'écran ne coûtent rien (~1 ms
+        chacun sinon : 500 traits au pinceau ajoutaient ~1 s)."""
+        if not self._brushed:
+            return None
+        key = self._fx_generation                       # augmenté à chaque `sync` (tout changement y passe)
+        kept = getattr(self, "_brush_kept", None)
+        if kept is None or kept[0] != key:
+            path = QPainterPath()
+            path.setFillRule(Qt.WindingFill)
+            for poly in brushes.outline_polygons(self.data):     # d'un bloc : pas nœud par nœud
+                path.addPolygon(QPolygonF([QPointF(x, y) for x, y in poly]))
+                path.closeSubpath()
+            kept = self._brush_kept = (key, path)
+        return kept[1]
     _raster = False
 
     def paint_path(self, painter: QPainter, outline: bool = False):
@@ -494,6 +520,8 @@ class IllPathItem(IllItem):
             painter.fillPath(path, self._fill_brush)
         if self._pen is not None:
             painter.strokePath(path, self._pen)
+        elif self._brushed:
+            painter.fillPath(self._brush_shape(), self._brush_fill)
 
 
 class IllTextItem(IllPathItem):

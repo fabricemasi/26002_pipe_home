@@ -31,6 +31,8 @@ n'importent PAS Qt.
 | Éléments de la scène (plan de travail, calque, tracé, texte, IMAGE placée `IllImageItem`), chemin et pinceaux Qt gardés, zone cliquable, MASQUES (écrêtage, opacité : `mask_item`, `_paint_through_opacity_mask`, registre `scene.ill_masks`) | `items.py` | `IllArtboardItem`, `IllLayerItem`, `IllPathItem` (`sync`, `apply_visibility`, `hit_path`, `contains_scene_point`, `geometry_rect`), `notify_moved`, `qpath`, `gradient_brush` |
 | Activation, événements, sélection, commandes (style, grouper, disposition dans le calque, verrou, masquer, joindre, tracé transparent, pipette, plans, calques, Pathfinder, vectoriser le contour, export / import) | `controller.py` | `IllustratorController` |
 | Gestes partagés (déplacer, transformer, cadre de sélection), Sélection, Sélection directe | `tools.py` | `MoveGesture`, `TransformGesture`, `marquee_select`, `SelectTool`, `DirectTool`, `TOOL_KEYS` |
+| Pinceaux et largeur variable (SANS Qt, numpy) : profils de largeur, pointe calligraphique, contour-surface, point le plus proche | `brushes.py` | `outline`, `outline_polygons`, `PROFILES`, `CALLIGRAPHIC`, `nib_width`, `locate`, `valid_profile`, `valid_brush` |
+| Pinceau (B), Forme de tache (Maj+B), Largeur (Maj+W) | `tools_draw.py` | `PaintbrushTool`, `BlobTool`, `WidthTool` |
 | Outils à origine (Rotation R, Mise à l'échelle S, Symétrie O ; Alt + clic = valeur), repères commentés (`Snapper`), aligner / répartir | `tools_xform.py` | `RotateTool`, `ScaleTool`, `ReflectTool`, `Snapper`, `align`, `distribute`, `reflect_matrix` |
 | Plume, points (ajout / suppression / conversion), formes, crayon, plan de travail, main, zoom, pipette, dégradé (G), texte (T) | `tools_draw.py` | `PenTool`, `ShapeTool`…, `PencilTool`, `ArtboardTool`, `make_tools` |
 | Dessin temporaire (sélection, poignées, cadre, ligne élastique, noms des plans, bulle) | `overlay.py` | `IllOverlay` |
@@ -91,6 +93,19 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
   vectoriser le contour) ignorent les textes : Ctrl+Maj+O (Créer les contours) d'abord, comme Illustrator. Un seul
   style par texte (pas de styles de caractères par partie). Tests : `QT_QPA_FONTDIR` = `C:\Windows\Fonts`
   (l'offscreen n'a sinon aucune police : des carrés).
+- **Pinceaux et largeur variable** (tranche 11) : `width_profile` ([[t, facteur]] le long du tracé) et `brush`
+  (pointe calligraphique : angle, rondeur, taille ; la largeur dépend de la direction) d'un tracé. Le contour est
+  alors une SURFACE calculée (`brushes.outline`, numpy : points échantillonnés, normales, largeurs, extrémités
+  rondes ou plates, anneau pour un tracé fermé, points presque alignés retirés) : rendu, zone cliquable, SVG (surface
+  à la couleur du contour, au-dessus du fond), PDF, Vectoriser le contour (surface nettoyée par une réunion pathops).
+  Calculée À LA DEMANDE (1er affichage ou clic) et gardée jusqu'au `sync` suivant : à la création / ouverture, un
+  trait au pinceau ne coûte pas plus qu'un autre. Outils : Pinceau (B : crayon + pointe courante, contour à la
+  couleur du contour), Forme de tache (Maj+B : surface ronde à la couleur du contour, réunie aux surfaces de même
+  couleur sans contour qu'elle touche dans le calque, une étape), Largeur (Maj+W : glisser depuis un point du
+  contour = sa largeur, profil symétrique ; Alt + clic = retirer le point). Bouton « Pinceau » de la barre de
+  contrôle : profils prédéfinis (Uniforme, Fuseau, Effilés, Renflé), pointe calligraphique en direct (sélection et
+  Pinceau), taille de la Forme de tache, Vectoriser le contour. Limites : pas de pinceaux Diffusion / Motif / Art /
+  Soies, ni de largeur asymétrique, ni de pression du stylet, ni de bibliothèque de pinceaux.
 - **Outils avancés** (tranche 17) : Rotation (R), Mise à l'échelle (S), Symétrie (O) : origine = centre de la
   sélection, un clic la déplace (repère bleu de l'overlay), glisser transforme autour d'elle (Maj : 45° / uniforme /
   axe à 45°), Alt + clic = valeur saisie autour du point cliqué ; pas de Ctrl (géométrie). Transformer de nouveau
@@ -204,6 +219,8 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
 | Curseur d'effet en direct (1 objet) | — | ~15-30 ms par mouvement |
 | 20 photos 3 000 × 2 000 (zoom 30 %) : pan / zoom continu / importer les 20 | — | 4,9 ms / 9 ms / 285 ms (copie + empreinte, une fois) |
 | Vectoriser une illustration 1 200 × 900 (détail 500) : 6 / 16 couleurs ; interface pendant le calcul en fond | — | 0,12 s / 0,26 s ; boucle d'événements : médiane 5 ms, p95 16 ms, pire ~50 ms |
+| Contour d'un trait au pinceau (20 courbes) | 104 ms (long tracé), puis 1,2 ms (Ramer-Douglas-Peucker quasi quadratique, boucles Python) | 0,5 ms (numpy, tri des points alignés vectorisé) |
+| 500 traits au pinceau : création / 1re image (~260 visibles) / image suivante | 2 s (contour refait à chaque `sync`, deux fois à la création) | 253 ms (comme sans pinceau) / 427 ms (99 sans pinceau) / 8 ms |
 | Ctrl + glisser 200 objets parmi 2 000 avec repères commentés (sans enregistrement automatique pendant la mesure) | 1er mouvement 67 ms, régime ~16 ms (relevé : milliers de `QRectF`, lignes vers des objets lointains) | 1er mouvement ~37 ms (sans repères ~25), régime médiane 15-16 ms / p95 24-27 ms, comme sans repères |
 | Export PDF d'un plan avec 2 000 tracés / + 100 ombres tramées | — | 0,09 s (88 Ko) / 0,33 s (729 Ko) |
 | Mise en page d'un texte (à la validation, à l'annulation, pas pendant la frappe) : point 11 lettres / curviligne 200 lettres / captif 300 mots | — / — / 40 ms (un `addText` par mot) | 0,3 ms / 17 ms / 19 ms (36 ms justifié) |
@@ -216,7 +233,7 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 | Bouton du module, exclusivité, griser / masquer | Terminé | `ShellTest` |
 | Plans de travail (outil, formats, aller à, renommer, Ctrl + glisser, poignées) | Partiel (pas de panneau Plans de travail, pas d'options d'export par plan) | `test_artboard_tool…` |
 | Rectangle, ellipse, polygone, étoile, segment (Maj, Alt, flèches) | Terminé (pas de formes « dynamiques », pas de dialogue de taille au clic) | `ToolsTest` |
-| Sélection, cadre, Ctrl + glisser, copie, poignées d'échelle / rotation, flèches | Terminé (pas de repères commentés / magnétisme) | `ToolsTest` |
+| Sélection, cadre, Ctrl + glisser, copie, poignées d'échelle / rotation, flèches | Terminé (repères commentés : tranche 17) | `ToolsTest` |
 | Plume, ajout / suppression / conversion de points, sélection directe, segments tirés | Terminé | `test_pen…`, `test_direct…` |
 | Crayon (ajustement Bézier) | Terminé | `test_pencil_fits_bezier` |
 | Fond / contour (couleur, aucun, X, Maj+X, D, /), épaisseur, extrémités, angles, tirets, opacité, pipette | Partiel (pas de panneau Contour complet : profils, alignement du contour) | `test_keyboard…` |
@@ -227,7 +244,7 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 | Grouper, disposition, verrouiller, masquer, joindre, tracé transparent, symétries, rotation 90° | Terminé | `CommandsTest` |
 | Mode Tracés (Ctrl+Y) | Terminé (affichage) | — |
 | Enregistrement / réouverture (`.mro`) | Terminé | `test_save_and_reopen` |
-| Export SVG (plan, tous, dessin, sélection), import SVG (fichier, glisser-déposer) | Terminé pour les tracés (pas de dégradés, texte, images, masques) | `SvgTest`, `test_export_and_import…` |
+| Export SVG (plan, tous, dessin, sélection), import SVG (fichier, glisser-déposer) | Terminé : tracés, dégradés, textes, masques, effets (`<filter>`), images incorporées, contours au pinceau ; import sans CSS `<style>`, `<use>`, motifs | `SvgTest`, tests de chaque tranche |
 | Shape Builder (zones, réunir, supprimer, survol) | Terminé (pas de mode « boucle fermée » ni d'option de couleur du nuancier) | `ShapeBuilderTest` |
 | Texte : point, captif (retour à la ligne, justifié, débordement), curviligne, édition sur place, police / corps / gras / italique / alignement / interligne / approche / départ sur le tracé, créer les contours, SVG aller-retour | Partiel (un style par texte ; pas de zone de texte dans une forme quelconque, de chaînage de cadres, de styles de paragraphe, de glyphes OpenType) | `test_illustrator_text.py` |
 | Masques d'écrêtage et d'opacité (créer, annuler, inverser, rendu vérifié au pixel, SVG aller-retour) | Partiel (un masque par groupe, pas de groupes imbriqués, options Transparence non faites) | `test_illustrator_masks.py` |
@@ -236,7 +253,8 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 | Vectorisation (préréglages, curseurs, fil de fond, remplacement annulable) | Partiel (pas d'objet de vectorisation modifiable en direct, ni de mode contour, ni de palette imposée) | `test_illustrator_trace.py` |
 | Export PDF (plan courant, tous les plans, dessin entier ; vectoriel, images pleine résolution ; relu par QtPdf dans les tests) | Partiel (pas de PDF/X, fond perdu, traits de coupe, CMJN ; texte en contours) | `test_illustrator_pdf.py` |
 | Outils avancés : Rotation / Échelle / Symétrie à origine, saisies, Transformer de nouveau (pas et répétition), Aligner / Répartir, repères commentés | Partiel (pas de Transformation manuelle E, de repères d'angle / de points, de copie Alt pendant les outils à origine) | `test_illustrator_xform.py` |
-| Pinceaux / largeur variable, images placées, vectorisation, export PDF, outils avancés (dégradé de forme, filet, déformation…), réglages du module (Réglages : Board), repères commentés / magnétisme | Non commencé | — |
+| Pinceaux : profils de largeur, outil Largeur, pointe calligraphique, Pinceau, Forme de tache, Vectoriser le contour, SVG / PDF | Partiel (pas de pinceaux Diffusion / Motif / Art / Soies, largeur asymétrique, pression) | `test_illustrator_brushes.py` |
+| Réglages du module (Réglages : Board), outils restants (dégradé de forme libre, filet de dégradé, Transformation manuelle E, déformation / enveloppe, symboles, motifs, perspective, Largeur asymétrique, pinceaux Diffusion / Motif / Art), compatibilité .ai (non annoncée) | Non commencé | — |
 
 ## PASSATION (2026-10-31)
 
@@ -256,11 +274,10 @@ Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
   d'annulation), ~44 ms pour 20 objets / 98 zones, puis survol = `QPainterPath.contains` par zone.
 - Tranche 10 (texte) : 68ab7c1. Tranche 12 (masques) : 3bf4f4d. Tranche 13 (aspect et effets) : ac3a4f4. Tranche 14
   (images) : d97b2ae (corrige aussi l'import SVG du contrôleur, qui créait tout en tracés). Tranche 15
-  (vectorisation) : 7cf18e0. Tranche 16 (export PDF) : 9cd1b20. Tranche 17 (outils avancés) : commit suivant.
-- POINT DE REPRISE : tranche 11 (pinceaux, largeur variable : profil de largeur le long du tracé, contour
-  vectorisé par `pathfinder.outline_stroke` puis déformé ; peut devenir un effet vectoriel de `appearance.py`),
-  puis 18 réglages du module (Réglages : Board : couleur de sélection, tolérances, repères commentés, unités
+  (vectorisation) : 7cf18e0. Tranche 16 (export PDF) : 9cd1b20. Tranche 17 (outils avancés) : 889f7dc. Tranche 11
+  (pinceaux) : commit suivant.
+- POINT DE REPRISE : 18 réglages du module (Réglages : Board : couleur de sélection, tolérances, repères commentés, unités
   affichées pt / mm / px ; catalogue `settings.py` + défauts `settings_defaults.py` comme fm_design), 19 finition.
 - Pistes de fluidité restantes : enregistrement JSON hors du fil de l'interface (coque, tous modules) ; clic de
-  plume (création d'élément) ; images d'effets refaites à l'arrêt d'un zoom (~0,9 ms par objet à ombre + lueur :
+  plume (création d'élément) ; 1re image de nombreux traits au pinceau (~1,2 ms chacun : contour + `QPointF`) ; images d'effets refaites à l'arrêt d'un zoom (~0,9 ms par objet à ombre + lueur :
   à étaler par tranches, ou à faire seulement pour les objets visibles).

@@ -518,12 +518,15 @@ class PencilTool(Tool):
         if closed and not sub["closed"]:
             sub["closed"] = True
         subs, origin = place_origin([sub])
-        style = dict(ctl.style)
+        item = ctl.new_path(subs, origin, self.style(closed))
+        ctl.commit_new(item, self.label.split(" (")[0])
+
+    def style(self, closed: bool) -> dict:
+        style = dict(self.ctl.style)
         if not closed:
             style["fill"] = ""
             style["stroke"] = style.get("stroke") or model.DEFAULT_STROKE
-        item = ctl.new_path(subs, origin, style)
-        ctl.commit_new(item, "Crayon")
+        return style
 
     def cancel(self):
         self.points = None
@@ -815,7 +818,164 @@ class TypeTool(Tool):
         return Qt.IBeamCursor
 
 
+class PaintbrushTool(PencilTool):
+    """Pinceau (B) : comme le crayon, avec la pointe calligraphique courante (`ctl.brush`) : sans fond, contour à la
+    couleur du contour courant."""
+    name, label = "paintbrush", "Pinceau (B)"
+
+    def style(self, closed: bool) -> dict:
+        style = dict(self.ctl.style)
+        style.update(fill="", fill_gradient=None, stroke=style.get("stroke") or model.DEFAULT_STROKE,
+                     brush=dict(self.ctl.brush), width_profile=[])
+        return style
+
+
+class BlobTool(Tool):
+    """Forme de tache (Maj+B) : peint une SURFACE (couleur du contour courant, comme Illustrator) ; elle se réunit
+    aux surfaces de même couleur, sans contour, qu'elle touche dans le même calque. Une étape."""
+    name, label = "blob", "Forme de tache (Maj+B)"
+
+    def __init__(self, ctl):
+        super().__init__(ctl)
+        self.points = None
+
+    def press(self, pos, mods):
+        self.points = [(pos.x(), pos.y())]
+
+    def drag(self, pos, mods):
+        if self.points is None:
+            return
+        if math.dist(self.points[-1], (pos.x(), pos.y())) >= self.ctl.tolerance(1.5):
+            self.points.append((pos.x(), pos.y()))
+            self.ctl.preview = ("polyline", list(self.points))
+
+    def release(self, pos, mods):
+        from . import brushes, pathfinder as pf
+        ctl = self.ctl
+        points, self.points = self.points, None
+        ctl.preview = None
+        if not points:
+            return
+        if len(points) == 1:
+            points = points + [(points[0][0] + 0.01, points[0][1])]
+        sub = {"closed": False, "nodes": [bz.node(x, y) for x, y in points]}
+        shape = brushes.outline({"subpaths": [sub], "stroke_width": ctl.blob_size, "cap": "round"})
+        color = ctl.style.get("stroke") or model.DEFAULT_STROKE
+        box = bz.bounds(shape)
+        if box is None:
+            return
+        area = QRectF(box[0], box[1], box[2] - box[0], box[3] - box[1])
+        layer = ctl.current_layer()
+        touching = [i for i in ctl.scene.items(area, Qt.IntersectsItemBoundingRect)
+                    if i in ctl.shapes_all() and i.data.get("fill") == color and not i.data.get("stroke")
+                    and (layer is None or i.data.get("layer") in ("", layer.item_id)) and ctl.editable(i)]
+        shapes = [(shape, "nonzero")] + [(ctl.scene_subpaths(i), i.data.get("fill_rule", "nonzero"))
+                                         for i in touching]
+        merged = pf.combine(shapes, "unite")
+        if not merged:
+            return
+        subs, origin = place_origin(merged)
+        style = dict(ctl.style)
+        style.update(fill=color, fill_gradient=None, stroke="", stroke_gradient=None, brush=None, width_profile=[])
+        if not touching:
+            item = ctl.new_path(subs, origin, style)
+            ctl.commit_new(item, "Forme de tache")
+            return
+        from fm_board import model as board_model
+        keep = touching[-1].to_dict()
+        keep.update(id=board_model.new_id(), subpaths=subs, x=origin.x(), y=origin.y(), fill_rule="nonzero")
+        new = ctl.scene.replace_items(touching, [keep], "Forme de tache")
+        ctl.select(new)
+
+    def cancel(self):
+        self.points = None
+        self.ctl.preview = None
+
+    def busy(self) -> bool:
+        return self.points is not None
+
+    def cursor(self):
+        return Qt.CrossCursor
+
+
+class WidthTool(Tool):
+    """Largeur (Maj+W) : glisser depuis un point d'un contour = sa largeur à cet endroit (profil, symétrique) ;
+    Alt + clic sur un point de largeur = le retirer. Une étape par geste."""
+    name, label = "width", "Largeur (Maj+W ; Alt + clic = retirer un point)"
+    NEAR = 0.03                                         # deux points de largeur plus proches : le même
+
+    def __init__(self, ctl):
+        super().__init__(ctl)
+        self.target = None                              # (objet, t, point de scène)
+
+    def _locate(self, pos):
+        from . import brushes
+        for item in reversed(self.ctl.shapes_all()):
+            if not item.data.get("stroke") or not self.ctl.editable(item):
+                continue
+            hit = brushes.locate(item.data, (pos.x() - item.data["x"], pos.y() - item.data["y"]))
+            if hit is not None and hit[0] <= self.ctl.tolerance(6) + brushes.stroke_hit_width(item.data) / 2:
+                d, t, (px, py) = hit
+                return item, t, QPointF(px + item.data["x"], py + item.data["y"])
+        return None
+
+    def press(self, pos, mods):
+        found = self._locate(pos)
+        if found is None:
+            return
+        item, t, _p = found
+        if mods & Qt.AltModifier:                       # retirer le point de largeur le plus proche
+            profile = [p for p in item.data.get("width_profile") or [] if abs(p[0] - t) > self.NEAR]
+            self.ctl.change([item], lambda i: i.data.update(width_profile=profile), "Retirer un point de largeur")
+            return
+        self.target = found
+        self.ctl.select([item])
+        self.ctl.scene.begin_change([item])
+
+    def drag(self, pos, mods):
+        if self.target is None:
+            return
+        from .brushes import valid_profile
+        item, t, anchor = self.target
+        base = float(item.data.get("stroke_width", 1.0)) or 1.0
+        factor = max(0.0, 2 * math.dist((pos.x(), pos.y()), (anchor.x(), anchor.y())) / base)
+        profile = [list(p) for p in item.data.get("width_profile") or []] or [[0.0, 1.0], [1.0, 1.0]]
+        profile = [p for p in profile if abs(p[0] - t) > self.NEAR or p[0] in (0.0, 1.0) and abs(p[0] - t) > 1e-9]
+        profile.append([t, factor])
+        item.data["width_profile"] = valid_profile(profile)
+        item.prepareGeometryChange()
+        item.sync()
+        item.update()
+        self.ctl.tip = (pos, f"largeur {base * factor:.1f}")
+
+    def release(self, pos, mods):
+        if self.target is None:
+            return
+        self.target = None
+        self.ctl.tip = None
+        self.ctl.scene.end_change("Largeur")
+
+    def hover(self, pos, mods):
+        found = self._locate(pos)
+        self.ctl.hover = found[0] if found else None
+        self.ctl.preview = ("polyline", [(found[2].x() - 0.01, found[2].y()), (found[2].x(), found[2].y())]) \
+            if found else None
+
+    def cancel(self):
+        if self.target is not None:
+            self.ctl.scene.end_change("Largeur")
+        self.target = None
+        self.ctl.tip = None
+
+    def busy(self) -> bool:
+        return self.target is not None
+
+    def cursor(self):
+        return Qt.SizeHorCursor
+
+
 def make_tools(ctl) -> dict:
     from .shape_builder import ShapeBuilderTool
     from .tools_xform import XFORM_TOOLS
-    return {cls.name: cls(ctl) for cls in TOOL_CLASSES + [ShapeBuilderTool, TypeTool] + XFORM_TOOLS}
+    return {cls.name: cls(ctl) for cls in TOOL_CLASSES + [ShapeBuilderTool, TypeTool, PaintbrushTool, BlobTool,
+                                                          WidthTool] + XFORM_TOOLS}

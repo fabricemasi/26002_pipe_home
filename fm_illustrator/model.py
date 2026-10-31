@@ -12,6 +12,7 @@ Un document Illustrator = les éléments `ill_*` du board :
   Illustrator) : `rotation` reste 0 ; un déplacement ne change que (x, y).
 `group` = identifiant de groupe (vide = seul) : un clic de l'outil Sélection choisit tout le groupe ; `layer` =
 identifiant du calque (vide = le plus bas) ; `fill_gradient` / `stroke_gradient` = dégradé (`paint.py`) ou None ;
+`width_profile` / `brush` = largeur variable / pointe calligraphique du contour (`brushes.py`, tracés seulement) ;
 `effects` / `extra_strokes` = aspect (effets non destructifs, contours supplémentaires : `appearance.py`) ;
 `mask` = « clip » / « opacity » : cet objet est le MASQUE de son groupe (écrêtage : sa forme découpe les autres
 objets du groupe, lui-même sans peinture ; opacité : sa luminance règle leur opacité, `mask_invert` = inversée).
@@ -74,7 +75,8 @@ DEFAULTS = {
     PATH: {"subpaths": [], "fill": DEFAULT_FILL, "stroke": DEFAULT_STROKE, "stroke_width": 1.0, "opacity": 1.0,
            "cap": "butt", "join": "miter", "miter": 10.0, "dash": [], "fill_rule": "nonzero",
            "group": "", "name": "", "hidden": False, "layer": "", "fill_gradient": None, "stroke_gradient": None,
-           "mask": "", "mask_invert": False, "effects": [], "extra_strokes": []},
+           "mask": "", "mask_invert": False, "effects": [], "extra_strokes": [], "width_profile": [],
+           "brush": None},
 }
 
 
@@ -163,6 +165,10 @@ def normalize_entity(item: dict) -> dict:
     if item["mask"] not in MASKS or not item.get("group"):
         item["mask"] = ""
     from .appearance import valid_effects, valid_strokes
+    if kind == PATH:
+        from .brushes import valid_brush, valid_profile
+        item["width_profile"] = valid_profile(item.get("width_profile"))
+        item["brush"] = valid_brush(item.get("brush"))
     item["effects"] = valid_effects(item["effects"])
     item["extra_strokes"] = valid_strokes(item["extra_strokes"])
     item["subpaths"] = valid_subpaths(item["subpaths"])
@@ -193,7 +199,7 @@ def style_of(data: dict) -> dict:
     """Attributs de peinture d'un tracé (pipette, styles par défaut des nouveaux objets)."""
     return {k: copy.deepcopy(data[k]) for k in ("fill", "stroke", "stroke_width", "opacity", "cap", "join", "miter",
                                                 "dash", "fill_rule", "fill_gradient", "stroke_gradient", "effects",
-                                                "extra_strokes")
+                                                "extra_strokes", "width_profile", "brush")
             if k in data}
 
 
