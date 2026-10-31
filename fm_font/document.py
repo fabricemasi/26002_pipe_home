@@ -545,6 +545,33 @@ class FontProject:
             self.notify("glyph", (i, name))
         return True
 
+    # -- instances nommées (Designspace : fvar de la police variable, instances statiques) --
+
+    def set_instances(self, entries) -> None:
+        """`entries` : [(nom de style, {axe: valeur})] ; un pas d'annulation. Valeurs hors des axes refusées."""
+        axes = {a.name: a for a in self.axes}
+        built = []
+        for name, location in entries:
+            for axis_name, value in location.items():
+                axis = axes.get(axis_name)
+                if axis is None:
+                    raise ProjectError(f"Instance « {name} » : axe « {axis_name} » inconnu.")
+                if not axis.minimum <= value <= axis.maximum:
+                    raise ProjectError(f"Instance « {name} » : {axis_name} {value:g} hors de "
+                                       f"{axis.minimum:g}–{axis.maximum:g}.")
+            inst = InstanceDescriptor()
+            inst.familyName = self.family_name
+            inst.styleName = name
+            inst.location = {a: location.get(a, axes[a].default) for a in axes}
+            built.append(inst)
+        before = list(self.instances)
+
+        def apply(values):
+            self.instances = list(values)
+            self.notify("masters", None)
+        apply(built)
+        self.undo.push("Instances", lambda: apply(before), lambda: apply(built))
+
     # -- masters --
 
     def add_master(self, name: str, location: dict, copy_from: int = 0) -> Master:

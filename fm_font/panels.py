@@ -476,6 +476,10 @@ class MastersPanel(QWidget):
         self.summary = _label("", "note")
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
+        self.table = _Table("Instances", [("instances", "Instances nommées", True, self._instances)], width=190)
+        self.table.fields["instances"].setToolTip("Ex. « Light 300, Regular 400, Bold 700 » (valeurs sur le premier "
+                                                  "axe) : instances de la police variable et des exports statiques")
+        layout.addWidget(self.table.frame)
         row = QHBoxLayout()
         row.addWidget(button("Ajouter un master", "Copie du master courant (graisse 700 sur l'axe Weight)",
                              self.add))
@@ -489,6 +493,32 @@ class MastersPanel(QWidget):
         lines = [f"Axes : {axes}"] + [f"{'▶ ' if i == self.pane.canvas.master else ''}{m.name} "
                                       f"{m.location or ''}" for i, m in enumerate(p.masters)]
         self.summary.setText("\n".join(lines))
+        axis = p.axes[0].name if p.axes else None
+        self.table.set("instances", ", ".join(f"{i.styleName} {i.location.get(axis, 0):g}" for i in p.instances)
+                       if axis else "")
+        self.table.enable("instances", axis is not None)
+
+    def _instances(self, value) -> None:
+        p = self.pane.project
+        if not p.axes:
+            return
+        axis = p.axes[0].name
+        entries = []
+        try:
+            for part in value.split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                name, _sep, number = part.rpartition(" ")
+                if not name:
+                    raise ValueError(part)
+                entries.append((name.strip(), {axis: float(number.replace(",", "."))}))
+            p.set_instances(entries)
+        except ValueError:
+            self.message.emit("Instances : « Nom valeur » séparés par des virgules (ex. Light 300, Bold 700).")
+        except ProjectError as exc:
+            self.message.emit(str(exc))
+        self.refresh()
 
     def add(self) -> None:
         p = self.pane.project

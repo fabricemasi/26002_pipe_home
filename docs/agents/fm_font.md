@@ -93,6 +93,10 @@ RIEN de la fenêtre principale (elle lui pose des `HOOKS`).
   1000 glyphes ; un `deepcopy` coûtait 177 ms) ; reconstruction + écriture dans un fil. `secours.json` écrit en
   dernier (sans lui, le secours n'est pas valable). Proposé à l'ouverture s'il est plus récent que le fichier ;
   supprimé après un enregistrement, une fermeture voulue ou un refus.
+- **Export en fond** : la compilation (~2 s pour 1000 glyphes, surtout la suppression des chevauchements) ne
+  fige jamais l'interface : instantané du projet (`autosave.snapshot`), projet INDÉPENDANT reconstruit dans le fil
+  (`project_from_snapshot`), résultat dans la barre d'état. Modifier le projet pendant l'export ne change pas la
+  police produite (testé).
 - **Hinting** : ttfautohint (ttfautohint-py, roue Windows avec binaire) pour le TrueType ; sans « o » latin, repli
   automatique en mode symbole. Pas de hinting PostScript (CFF).
 
@@ -123,7 +127,7 @@ Légende : TERMINÉ (fonctionne, sauvegardé si besoin, testé) / PARTIEL / NON 
 | Éditeur de features : erreurs lisibles, génération, application | TERMINÉ | |
 | Diagnostic (page) + FontBakery facultatif | TERMINÉ | FontBakery non installé ici |
 | Masters dans l'interface : ajout (copie compatible), choix, comparaison, compatibilité | TERMINÉ | |
-| Instances : statiques interpolées (export OTF), nommées dans la police variable | TERMINÉ | édition des instances du Designspace : PARTIEL (lues / gardées, pas d'éditeur) |
+| Instances nommées (éditeur dans le panneau Masters ; fvar de la police variable ; exports statiques interpolés) | TERMINÉ | `InstancesTest` ; un seul axe dans l'éditeur (premier axe) |
 | Polices couleur COLR v0 / CPAL (palette, calques ; panneaux) | TERMINÉ | `test_fm_font_color` ; COLR v1 NON COMMENCÉ |
 | Hinting TrueType (ttfautohint) : export TTF / WOFF2 hinté | TERMINÉ | CFF non hinté |
 | Classes de crénage depuis la grille (gauche, droite, retirer) | TERMINÉ | |
@@ -145,6 +149,9 @@ Légende : TERMINÉ (fonctionne, sauvegardé si besoin, testé) / PARTIEL / NON 
 | Enregistrer 1000 glyphes (UFO atomique) / ouvrir | 1 180 / 515 ms |
 | Compiler TTF / OTF 1000 glyphes | ~2 100 ms chacun (toujours hors du fil de l'interface) |
 | Diagnostic 1000 glyphes | 330 ms -> 90 ms (sens des contours sans copie du glyphe) |
+| Compatibilité de 2 masters (1000 glyphes) / interpoler un glyphe | 6 / 0,3 ms |
+| Instance complète interpolée (1000 glyphes) / police variable (1000 glyphes, 2 masters) | 330 / 460 ms |
+| Export depuis l'interface | dans un FIL : instantané 6,5 ms sur le fil de l'interface (`export_to(background=True)`) |
 
 ### Mesures Qt (`python -m fm_font.bench 200 --qt`, offscreen, 1200 x 900, glyphe de 400 points plein écran)
 

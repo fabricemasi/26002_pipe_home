@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, Qt, QTimer, Signal
+from PySide6.QtCore import QObject, QPointF, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (QFileDialog, QHBoxLayout, QScrollArea, QSplitter, QStackedWidget, QVBoxLayout,
                                QWidget)
@@ -38,6 +38,10 @@ EXPORT_FORMATS = (("otf", "OpenType CFF (.otf)"), ("ttf", "TrueType (.ttf)"), ("
                   ("woff2", "WOFF2 (.woff2)"), ("ttf-hinted", "TrueType hinté, ttfautohint (.ttf)"),
                   ("woff2-hinted", "WOFF2 hinté (.woff2)"), ("variable-ttf", "Police variable TrueType (.ttf)"),
                   ("variable-woff2", "Police variable WOFF2 (.woff2)"))
+
+
+class _ExportRelay(QObject):
+    done = Signal(object, object)                         # diagnostics, erreur (texte) : retour du fil d'export
 
 
 def confirm(parent, title: str, message: str, action: str) -> bool:
@@ -711,19 +715,46 @@ class FontPane(QWidget):
         name = f"{self.project.family_name.replace(' ', '')}{suffix}{ext}"
         path, _f = QFileDialog.getSaveFileName(self, "Exporter la police", name, f"Police (*{ext})")
         if path:
-            self.export_to(path, fmt, instance)
+            self.export_to(path, fmt, instance, background=True)
 
-    def export_to(self, path, fmt: str, instance: tuple | None = None) -> bool:
-        try:
-            notes = export(self.project, path, fmt, master=self.canvas.master,
-                           instance=instance[1] if instance else None,
-                           instance_name=instance[0] if instance else "Instance")
-        except CompileError as exc:
-            self.status(str(exc))
-            return False
+    def export_to(self, path, fmt: str, instance: tuple | None = None, background: bool = False):
+        """Compile et écrit la police. `background` : instantané du projet ici (quelques ms), compilation dans un
+        fil (~2 s pour 1000 glyphes) : l'interface reste fluide ; le résultat arrive dans la barre d'état.
+        Renvoie True / False (synchrone) ou le fil lancé."""
+        kwargs = {"master": self.canvas.master, "instance": instance[1] if instance else None,
+                  "instance_name": instance[0] if instance else "Instance"}
+        if not background:
+            try:
+                notes = export(self.project, path, fmt, **kwargs)
+            except CompileError as exc:
+                self.status(str(exc))
+                return False
+            self._exported(path, notes, None)
+            return True
+        import threading
+        from .autosave import project_from_snapshot, snapshot
+        snap = snapshot(self.project)
+        relay = self._export_relay = _ExportRelay()
+        relay.done.connect(lambda notes, error: self._exported(path, notes, error))
+        self.status(f"Export de {Path(path).name} en cours…")
+
+        def work():
+            try:
+                relay.done.emit(export(project_from_snapshot(snap), path, fmt, **kwargs), None)
+            except CompileError as exc:
+                relay.done.emit(None, str(exc))
+            except Exception as exc:                        # noqa: BLE001 - message dans la barre d'état
+                relay.done.emit(None, f"{type(exc).__name__} : {exc}")
+        thread = threading.Thread(target=work, name="fm_font export", daemon=True)
+        thread.start()
+        return thread
+
+    def _exported(self, path, notes, error) -> None:
+        if error is not None:
+            self.status(error)
+            return
         warnings = [n for n in notes if n.level != "suggestion"]
         self.status(f"Exporté : {path}" + (f" ({len(warnings)} avertissement(s), voir Diagnostic)" if warnings else ""))
-        return True
 
     # -- fenêtre --
 

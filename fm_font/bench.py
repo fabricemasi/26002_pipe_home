@@ -74,6 +74,24 @@ def run_model(count: int = 1000) -> dict:
         out[f"diagnostic ({count} glyphes)"] = _median(lambda: validation.diagnose(big), 1)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+    out.update(run_masters(count))
+    return out
+
+
+def run_masters(count: int = 1000) -> dict:
+    """Multimasters : compatibilité, interpolation d'un glyphe, instance complète, police variable."""
+    from . import interpolation
+    from .compile import compile_variable
+    from .document import _axis
+    project = build_font(count, masters=2)
+    project.masters[1].location = {"Weight": 700}
+    project.masters[0].location = {"Weight": 400}
+    project.axes = [_axis("Weight", "wght", 400, 400, 700)]
+    out = {f"compatibilité de 2 masters ({count} glyphes)": _median(lambda: interpolation.incompatibilities(project), 3),
+           "interpoler un glyphe": _median(lambda: interpolation.interpolate_glyph(project, "g00001", {"Weight": 550}), 20),
+           f"instance complète ({count} glyphes)": _median(
+               lambda: interpolation.instance_font(project, {"Weight": 550}), 1),
+           f"police variable ({count} glyphes, 2 masters)": _median(lambda: compile_variable(project), 1)}
     return out
 
 

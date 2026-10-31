@@ -86,6 +86,27 @@ class ColorHintingTest(unittest.TestCase):
             export(p, self.tmp / "x.otf", "otf", instance={"Weight": 500})
 
 
+class InstancesTest(unittest.TestCase):
+    def test_named_instances_saved_and_in_variable_font(self):
+        from fm_font.compile import compile_variable
+        from fm_font.document import ProjectError
+        p = _project(("Regular", "Bold"))
+        p.set_instances([("Regular", {"Weight": 400}), ("Medium", {"Weight": 550}), ("Bold", {"Weight": 700})])
+        with self.assertRaises(ProjectError):
+            p.set_instances([("Trop", {"Weight": 950})])
+        tmp = Path(tempfile.mkdtemp(prefix="fmfont_inst_"))
+        try:
+            p.save(tmp / "Fam.designspace")
+            q = FontProject.open(tmp / "Fam.designspace")
+            self.assertEqual([i.styleName for i in q.instances], ["Regular", "Medium", "Bold"])
+            tt = compile_variable(q)
+            self.assertEqual([i.coordinates["wght"] for i in tt["fvar"].instances], [400, 550, 700])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        p.undo.undo()
+        self.assertEqual(p.instances, [])
+
+
 class KerningClassesFromGridTest(unittest.TestCase):
     def test_class_from_selection(self):
         from fm_font.actions import kerning_class

@@ -74,6 +74,20 @@ def _build(master: dict) -> ufoLib2.Font:
     return font
 
 
+def project_from_snapshot(snap: dict) -> FontProject:
+    """Projet INDÉPENDANT reconstruit d'un instantané (fil de fond : export, secours) : modifier le projet affiché
+    pendant ce temps ne change rien à ce qui est compilé ou écrit."""
+    from .document import Master
+    project = FontProject()
+    project.axes = snap["axes"]
+    project.instances = snap["instances"]
+    project.path = Path(snap["path"]) if snap.get("path") else None
+    project.source = Path(snap["source"]) if snap.get("source") else None
+    for m in snap["masters"]:
+        project.masters.append(Master(_build(m), m["name"], m["location"], Path(m["path"]) if m["path"] else None))
+    return project
+
+
 def write_snapshot(snap: dict, folder: Path) -> Path:
     """Écrit le secours (fil de fond possible) : masters, Designspace, puis `secours.json` (ce qui le rend
     valable)."""

@@ -209,6 +209,16 @@ class PaneTest(WindowTestCase):
         self.assertIsNone(p.project.path)
         self.assertEqual(p.project.source, ttf)
         self.assertFalse(p.export_to(ttf, "ttf"))                       # jamais l'original importé
+        # export en fond : le projet affiché peut changer pendant la compilation, l'instantané fait foi
+        out = self.tmp / "Fond.otf"
+        thread = p.export_to(out, "otf", background=True)
+        p.project.edit_glyph("A", "z", lambda g: setattr(g, "width", 999))
+        thread.join(30)
+        self.flush(0.1)
+        self.assertIn("Exporté", p.status_label.text())
+        from fontTools.ttLib import TTFont
+        self.assertEqual(TTFont(out)["hmtx"]["A"][0], 640)
+        p.project.undo.undo()
         p.project.edit_glyph("A", "y", lambda g: setattr(g, "width", 700))
         closed = []
         p.closeRequested.connect(lambda: closed.append(True))
@@ -229,6 +239,13 @@ class PaneTest(WindowTestCase):
         self.assertEqual(p.canvas.font.info.styleName, "Bold")
         from fm_font.interpolation import incompatibilities
         self.assertEqual(incompatibilities(p.project), [])
+        t = p.masters_panel.table
+        t.fields["instances"].setText("Regular 400, Semi Bold 600, Bold 700")
+        t._commit("instances")
+        self.flush()
+        self.assertEqual([(i.styleName, i.location["Weight"]) for i in p.project.instances],
+                         [("Regular", 400), ("Semi Bold", 600), ("Bold", 700)])
+        self.assertIn(("Semi Bold", {"Weight": 600}), p.instance_locations())
 
     def test_context_menus_build(self):
         p = self.pane
