@@ -62,6 +62,39 @@ class ExportTest(PsCase):
         self.assertTrue(any("JPEG" in n for n in job.notes))
 
 
+class NativeFileTest(PsCase):
+    def test_native_export_and_reimport_keep_the_whole_document(self):
+        _item, std = self.editor(40, 30, background="Transparent")
+        s = std.session
+        std.canvas.actions.add_text({"content": "Natif", "x": 4, "y": 4, "size": 20})
+        panel = std.layers_panel
+        panel.add()
+        panel.mask_add()
+        expected = C.flatten_u8(s.doc)
+        names = [l.name for l in s.doc.layers]
+        target = self.tmp / "doc.fmps"
+        job = std.export(str(target), wait=True)
+        self.assertIsNone(job.error)
+        self.assertTrue(any("Document natif" in n for n in job.notes))
+        job = std.export(str(target), wait=True)                                    # 2e écriture : copie .bak de la 1re
+        self.assertTrue((self.tmp / "doc.fmps.bak").exists())
+        with mock.patch("PySide6.QtWidgets.QMessageBox.warning"):
+            refused = std.export(str(self.tmp / "calque.fmps"), s.layer(), wait=True)
+        self.assertIsInstance(refused.error, io_images.ImageError)                   # un seul calque : refusé
+        self.pane.set_module("photoshop")
+        item = self.pane.photoshop.import_file(str(target))
+        loaded = item.session.doc
+        self.assertEqual([l.name for l in loaded.layers], names)
+        self.assertEqual(loaded.layers[1].source["content"], "Natif")
+        self.assertIsNotNone(loaded.layers[2].mask)
+        self.assertTrue(np.array_equal(C.flatten_u8(loaded), expected))
+        bad = self.tmp / "abime.fmps"
+        bad.write_bytes(b"PK pas une archive")
+        with mock.patch("PySide6.QtWidgets.QMessageBox.warning") as warning:
+            self.assertIsNone(self.pane.photoshop.import_file(str(bad)))
+            self.assertTrue(warning.called)
+
+
 class SnapshotTest(unittest.TestCase):
     def test_snapshot_is_structurally_independent(self):
         doc = M.new_document(8, 8)

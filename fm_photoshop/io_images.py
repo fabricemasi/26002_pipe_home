@@ -21,8 +21,9 @@ from .container import write_atomic
 
 READ_SUFFIXES = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".webp", ".bmp", ".psd")
 WRITE_FORMATS = {".png": "PNG", ".tif": "TIFF", ".tiff": "TIFF", ".jpg": "JPEG", ".jpeg": "JPEG", ".webp": "WEBP"}
-OPEN_FILTER = "Images (*.png *.jpg *.jpeg *.tif *.tiff *.webp *.bmp);;Photoshop PSD (*.psd)"
-SAVE_FILTER = "PNG (*.png);;TIFF (*.tif *.tiff);;JPEG (*.jpg *.jpeg);;WebP (*.webp)"
+OPEN_FILTER = ("Images (*.png *.jpg *.jpeg *.tif *.tiff *.webp *.bmp);;Photoshop PSD (*.psd);;"
+               "Document natif du module (*.fmps)")
+SAVE_FILTER = "PNG (*.png);;TIFF (*.tif *.tiff);;JPEG (*.jpg *.jpeg);;WebP (*.webp);;Document natif du module (*.fmps)"
 
 
 class ImageError(Exception):
@@ -88,6 +89,12 @@ def encode(rgba: np.ndarray, suffix: str, dpi: float = 72.0, icc: bytes | None =
 def export_document(doc, path, layer=None, **options):
     """Exporte la composition (ou UN calque, rendu dans le cadre du document) ; écriture atomique. Rend les notes."""
     path = Path(path)
+    if path.suffix.lower() == ".fmps":                 # format natif : TOUT le document (calques, masques, textes, profil)
+        from . import container
+        if layer is not None:
+            raise ImageError("Le format natif enregistre le document entier, pas un seul calque.")
+        container.save(doc, path, preview=True, backup=True)
+        return ["Document natif enregistré : calques, masques, textes et profil conservés (copie .bak de la version précédente)."]
     if layer is None:
         rgba = flatten_u8(doc)
     else:

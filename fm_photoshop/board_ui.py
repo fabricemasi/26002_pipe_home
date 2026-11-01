@@ -147,6 +147,8 @@ class PhotoshopController(QObject):
                 return None
         if Path(path).suffix.lower() == ".psd":
             return self.import_psd(path)
+        if Path(path).suffix.lower() == ".fmps":
+            return self.import_native(path)
         try:
             rgba, dpi, icc, notes = io_images.import_image(path)
         except io_images.ImageError as exc:
@@ -167,6 +169,24 @@ class PhotoshopController(QObject):
         session.notify("committed", None)
         if notes:
             QMessageBox.information(self.pane, "Import", "\n".join(notes))
+        return item
+
+    def import_native(self, path):
+        """Document natif `.fmps` ouvert comme NOUVEL élément (le fichier d'origine n'est jamais modifié)."""
+        from . import container
+        try:
+            doc = container.load(Path(path))
+        except container.ContainerError as exc:
+            QMessageBox.warning(self.pane, "Ouverture impossible", str(exc))
+            return None
+        item = self.new_document(doc.width, doc.height, doc.name, doc.dpi, None)
+        if item is None:
+            return None
+        session = item.session
+        session.doc = doc
+        session.active_uid = doc.layers[-1].uid
+        session.notify("reload", None)
+        session.notify("committed", None)
         return item
 
     def import_psd(self, path):

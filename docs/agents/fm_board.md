@@ -22,6 +22,8 @@ fm_board est la COQUE du board : fm_miro (tableau blanc, `docs/agents/fm_miro.md
 | Ouverture / fermeture dans l'appli | hors paquet : `pipeline_browser.py` (`_open_board`, `_close_board`), `column.py` (`_create_board_file`) | Création |
 | Réglages (onglet « MRO » de la fenêtre « Réglages : Board », bouton engrenage du cadre « Board ») | `settings.py` (lignes `CATALOG["MRO…"]`, `MRO_TREE`, titres `BOARD_MENU_GROUPS`), `settings_defaults.py` (`BOARD_DEFAULTS`) ; les lignes « Menus contextuels » sont des copies de celles de l'appli, faites par `settings_window_v2.py` (`_board_menu_spec`, `BOARD_MENU_FOLLOW`) et `settings_store.py` (`BOARD_MENU_KEYS`) | RÉGLAGES |
 
+fm_photoshop (retouche et composition d'images matricielles, élément « ps_doc », `docs/agents/fm_photoshop.md` : crochets listés) s'y branche aussi, avec son éditeur Standard.
+
 À savoir : la classe de base des éléments `BoardItem` est encore dans `fm_miro/items.py` (la coque en dépend) ; elle reviendra dans la coque avec le registre.
 Règle d'isolation : jamais `pipeline_browser.py` (qui pose `fm_board.ui.ICON_PROVIDER`, `SETTING_WRITER`, `fm_cad.cad_export.ODA_PROVIDER`).
 
