@@ -6,7 +6,7 @@ Sixième module du Board (après Miro, CAD, Design, Tableur, Illustrator), comme
 ressource d'Adobe. **Aucune compatibilité PSD en écriture** (lecture seule, voir « Formats »). À ne pas confondre avec
 `fm_cad/cad_photoshop.py` (ENVOI d'entités CAD vers l'application Adobe Photoshop installée : autre responsabilité).
 
-**Tests** : `python tests/run.py fm_photoshop` (15 fichiers `tests/test_photoshop_*.py`, 148 tests, ~35 s) ; `python tests/run.py
+**Tests** : `python tests/run.py fm_photoshop` (15 fichiers `tests/test_photoshop_*.py`, 149 tests, ~35 s) ; `python tests/run.py
 fm_board` (coque + tous les modules) pour tout changement des crochets. **Mesures** : `python tools/bench_photoshop.py [petit|4k|grand]`
 (calcul, mémoire, conteneur) et `python tools/probe_photoshop_latency.py [petit|4k]` (latence visible : évènements réels + peinture).
 
@@ -142,7 +142,8 @@ Légende : **Terminé et testé** / **Partiel** / **Non commencé** / **Bloqué*
 | Enregistrement / réouverture, dossier déplacé, ressource absente, version future | Terminé et testé | |
 | Calques : créer, supprimer, dupliquer, ordre (boutons), visibilité, opacité, verrou, groupes, fusionner, aplatir, 10 modes + normal | Terminé et testé | |
 | Écrêtage, masques (ajouter, peindre, activer, inverser, appliquer, supprimer, cible pixels / masque) | Terminé et testé | |
-| Sélection de PLUSIEURS calques ; miniatures de calques ; réorganisation par glisser dans la liste | Non commencé | ordre par boutons Monter / Descendre (règle Ctrl + glisser à définir pour la liste) |
+| Miniatures de calques (refaites seulement si le plan a changé, 300 ms après le geste) | Terminé et testé | `LayersPanel._thumb` |
+| Sélection de PLUSIEURS calques ; réorganisation par glisser dans la liste | Non commencé | ordre par boutons Monter / Descendre (règle Ctrl + glisser à définir pour la liste) |
 | Pinceau rond dur / doux, taille, dureté, opacité, débit, espacement, lissage, pression, pipette, permutation, curseur à taille réelle, gomme, présélections persistantes | Terminé et testé | pression testée en simulant la valeur (`canvas._pressure`) : évènements de stylet réels non testables ici |
 | Sélections : rectangle, ellipse, lasso, polygonal, baguette (tolérance, contiguë), plage de couleurs, 4 modes, tout / rien / inverser, adoucir, agrandir, contracter, copier / couper / coller, calque via copier / couper, remplir, effacer | Terminé et testé | « Plage de couleurs » : fonction + non reliée à un bouton (baguette non contiguë équivalente) ; agrandir / contracter = octogone |
 | Transformation numérique (décalage, échelle, rotation, symétries, qualité), aperçu, annulation | Terminé et testé | |
@@ -163,7 +164,7 @@ Légende : **Terminé et testé** / **Partiel** / **Non commencé** / **Bloqué*
 
 ## Tests et référence
 
-- `python tests/run.py fm_photoshop` : 15 fichiers, 148 tests, tous OK (2026-11-01). Chaque fichier commence par `import _isolate`.
+- `python tests/run.py fm_photoshop` : 15 fichiers, 149 tests, tous OK (2026-11-01). Chaque fichier commence par `import _isolate`.
   `tests/_photoshop_case.py` : Board réel (`BoardPane`), VRAI chemin (icône de la barre des modules -> bouton de la barre du module ->
   fenêtre « Nouveau document » -> double-clic -> Standard). Piège de test : `QTest` laisse les modificateurs d'un clic tenus pour
   l'application (`release_modifiers`).
@@ -197,7 +198,11 @@ pleins cadre (13 Mo). Fenêtre d'établi 1600 × 900. Latence = évènement rée
 | Déplacer la vue (médiane / p95) | 1,6 / 2,9 ms | 2,7 / 64 ms (tuiles voisines précalculées pendant les temps morts) |
 | Conteneur : 1re écriture / après UN calque modifié / ouverture | 261 / 82 / 60 ms (10 Mo) | 4,3 s / 0,6 s / 1,1 s (202 Mo) |
 | Mémoire : pixels des calques / processus | 13 Mo / +16 Mo | 224 Mo / ~740 Mo en fin de sonde (tuiles, copies d'annulation, bancs) |
+| « Grand » 8000 × 6000, 8 calques : pixels / processus | — | 528 Mo / ~1,4 Go ; tuile 256² 11 ms ; trait 1,2 ms (p95 2,2) ; conteneur 357 Mo : 1re écriture 8,3 s, après UN calque 1,8 s, ouverture 2,3 s |
 | Filtre / réglage en fil de fond | calcul hors du fil de l'interface (aperçu), résultat périmé rejeté | |
+
+Mémoire : le conteneur garde en mémoire les octets PNG encodés de chaque calque (`Plane.png`) pour ne réencoder que ce qui change ;
+sur des pixels aléatoires (cas défavorable, incompressible) cela ajoute ~0,7 × la taille des pixels ; sur de vraies images, bien moins.
 
 Pièges trouvés : (1) un tableau NumPy construit par `np.frombuffer(image.constBits())` puis `ascontiguousarray` SANS copie
 pointe dans la mémoire du `QImage` libéré -> octets aléatoires (copie obligatoire, `vector._to_rgba`) ; (2) l'Alt d'un `QTest`

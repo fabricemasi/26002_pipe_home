@@ -157,6 +157,31 @@ class PaintingTest(PsCase):
         self.assertEqual(int(s.layer().pix.read((40, 30, 41, 31))[0, 0, 3]), 0)
 
 
+class ThumbnailsTest(PsCase):
+    def test_thumbnails_are_rebuilt_only_for_changed_layers(self):
+        _item, std = self.editor(64, 48, background="Transparent")
+        panel, s = std.layers_panel, std.session
+        panel.add()
+        settle(0.1)
+        icons = {panel.list.item(i).data(Qt.UserRole): panel.list.item(i).icon() for i in range(panel.list.count())}
+        self.assertEqual(len(icons), 2)
+        self.assertTrue(all(not icon.isNull() for icon in icons.values()))
+        builds = panel.thumb_builds
+        panel.refresh()                                                       # rien n'a changé : aucune miniature refaite
+        panel.refresh_icons()
+        self.assertEqual(panel.thumb_builds, builds)
+        s.fg = (255, 0, 0)
+        s.brush.size, s.brush.hardness = 20.0, 1.0
+        canvas = std.canvas
+        self.drag(canvas, [self.at(canvas, 10, 10), self.at(canvas, 50, 40)])
+        settle(0.5)                                                           # la minuterie (300 ms) met à jour les icônes
+        self.assertEqual(panel.thumb_builds, builds + 1)                      # seul le calque peint a été refait
+        image = panel.list.item(0).icon().pixmap(36, 36).toImage()
+        reds = sum(1 for x in range(36) for y in range(36) if image.pixelColor(x, y).red() > 200
+                   and image.pixelColor(x, y).green() < 80)
+        self.assertGreater(reds, 20)                                          # le trait rouge est visible dans la miniature
+
+
 class PresetsTest(PsCase):
     def test_presets_are_persistent_and_factory_ones_protected(self):
         written = {}

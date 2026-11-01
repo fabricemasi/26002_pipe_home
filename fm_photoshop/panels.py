@@ -5,7 +5,7 @@ Réglage d'un curseur (opacité…) : appliqué en direct, UNE seule étape d'an
 from __future__ import annotations
 
 from PySide6.QtCore import QSignalBlocker, QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QGridLayout, QHBoxLayout, QLabel, QListWidget,
                                QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
 
@@ -222,6 +222,12 @@ class LayersPanel(QWidget):
         self._refresh_timer.setSingleShot(True)
         self._refresh_timer.timeout.connect(self.refresh)
         self._live = None                           # (calque, avant, libellé) : réglage au curseur en cours
+        self._thumbs: dict = {}                     # uid -> (clé de version, QIcon) : miniatures refaites seulement si besoin
+        self.thumb_builds = 0                       # (tests, mesures)
+        self._thumb_timer = QTimer(self)
+        self._thumb_timer.setSingleShot(True)
+        self._thumb_timer.setInterval(300)
+        self._thumb_timer.timeout.connect(self.refresh_icons)
         self._live_timer = QTimer(self)
         self._live_timer.setSingleShot(True)
         self._live_timer.setInterval(350)
@@ -231,6 +237,7 @@ class LayersPanel(QWidget):
         box.setSpacing(4)
         box.addWidget(_title("Calques"))
         self.list = QListWidget(self)
+        self.list.setIconSize(QSize(36, 36))
         self.list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.list.setMinimumHeight(150)
         self.list.currentRowChanged.connect(self._row_changed)
@@ -292,6 +299,8 @@ class LayersPanel(QWidget):
     def _on_session(self, kind, _rect):
         if kind in ("structure", "reload", "view") and self._live is None:     # (pas pendant un curseur tenu)
             self._refresh_timer.start(0)
+        elif kind in ("committed", "edit"):
+            self._thumb_timer.start()                                         # miniatures : après le geste, pas pendant
 
     # -- liste --
     def _flat(self):
@@ -319,11 +328,64 @@ class LayersPanel(QWidget):
                 item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
                 item.setCheckState(Qt.Checked if layer.visible else Qt.Unchecked)
                 item.setData(Qt.UserRole, layer.uid)
+                item.setIcon(self._thumb(layer))
                 self.list.addItem(item)
                 if layer is active:
                     row_active = row
             self.list.setCurrentRow(row_active)
         self._sync_props(active)
+
+    # -- miniatures --
+    SIZE = 36
+
+    def _version_key(self, layer):
+        if layer.is_group():
+            return ("g", tuple(self._version_key(c) for c in layer.children))
+        return (layer.pix.rev, layer.pix.x, layer.pix.y, layer.mask.plane.rev if layer.mask is not None else -1,
+                layer.source is not None)
+
+    def _thumb(self, layer) -> QIcon:
+        key = self._version_key(layer)
+        cached = self._thumbs.get(layer.uid)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        self.thumb_builds += 1
+        size = self.SIZE
+        image = QImage(size, size, QImage.Format_ARGB32_Premultiplied)
+        painter = QPainter(image)
+        for y in range(0, size, 6):
+            for x in range(0, size, 6):
+                painter.fillRect(x, y, 6, 6, QColor("#ffffff" if (x // 6 + y // 6) % 2 == 0 else "#c8c8c8"))
+        if layer.is_group():
+            painter.setPen(QColor("#303030"))
+            painter.drawText(image.rect(), Qt.AlignCenter, "▸▸")
+        elif layer.pix.data is not None:
+            import numpy as np
+            from PIL import Image
+            data = layer.pix.data
+            h, w = data.shape[:2]
+            scale = min(size / w, size / h)
+            tw, th = max(1, round(w * scale)), max(1, round(h * scale))
+            step_y, step_x = max(1, h // (th * 3)), max(1, w // (tw * 3))              # pré-réduction : jamais le plan entier
+            small = Image.fromarray(np.ascontiguousarray(data[::step_y, ::step_x]), "RGBA").resize((tw, th), Image.BILINEAR)
+            raw = np.ascontiguousarray(np.asarray(small))
+            piece = QImage(raw.data, tw, th, tw * 4, QImage.Format_RGBA8888)
+            painter.drawImage((size - tw) // 2, (size - th) // 2, piece)
+        painter.end()
+        icon = QIcon(QPixmap.fromImage(image))
+        self._thumbs[layer.uid] = (key, icon)
+        return icon
+
+    def refresh_icons(self):
+        """Miniatures des calques modifiés seulement (clé de version = révisions des plans)."""
+        for row in range(self.list.count()):
+            item = self.list.item(row)
+            layer = self.session.doc.find(item.data(Qt.UserRole))
+            if layer is not None:
+                item.setIcon(self._thumb(layer))
+        live = {l.uid for l in self.session.doc.walk()}
+        for uid in [u for u in self._thumbs if u not in live]:
+            del self._thumbs[uid]
 
     def _sync_props(self, layer):
         field = self.opacity.field
