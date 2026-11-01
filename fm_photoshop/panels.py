@@ -78,20 +78,31 @@ class Swatch(QPushButton):
 class BrushPanel(QWidget):
     """Brosse : taille, dureté, opacité, débit, espacement, lissage ; pression ; couleurs ; présélections."""
 
-    def __init__(self, session, canvas, parent=None):
+    def __init__(self, session, canvas, parent=None, settings=None):
         super().__init__(parent)
         self.session, self.canvas = session, canvas
+        self._settings_dict = settings if isinstance(settings, dict) else {}
         box = QVBoxLayout(self)
         box.setContentsMargins(0, 0, 0, 0)
         box.setSpacing(4)
         box.addWidget(_title("Brosse"))
+        self.presets = QComboBox(self)
+        self.presets.setToolTip("Présélections de brosses (persistantes)")
+        self.presets.activated.connect(self._preset_chosen)
+        line = QHBoxLayout()
+        line.addWidget(self.presets, 1)
+        line.addWidget(_button("Enregistrer", "Enregistrer la brosse actuelle comme présélection", self.save_preset, self))
+        line.addWidget(_button("Retirer", "Retirer la présélection choisie (celles d'usine restent)", self.delete_preset,
+                               self))
+        box.addLayout(line)
         b = session.brush
         self.rows = {}
         for key, label, lo, hi, value, unit, scale in (
                 ("size", "Taille", 1, 1000, b.size, "px", 1), ("hardness", "Dureté", 0, 100, b.hardness * 100, "%", 100),
                 ("opacity", "Opacité", 1, 100, b.opacity * 100, "%", 100), ("flow", "Débit", 1, 100, b.flow * 100, "%", 100),
                 ("spacing", "Espacement", 2, 200, b.spacing * 100, "%", 100),
-                ("smoothing", "Lissage", 0, 95, b.smoothing * 100, "%", 100)):
+                ("smoothing", "Lissage", 0, 95, b.smoothing * 100, "%", 100),
+                ("sigma", "Rayon retouche", 1, 50, b.sigma, "px", 1)):
             row = _slider(label, lo, hi, round(value), unit, lambda v, k=key, s=scale: self._set(k, v / s), self)
             self.rows[key] = row
             box.addWidget(row)
@@ -114,6 +125,72 @@ class BrushPanel(QWidget):
         colors.addStretch(1)
         box.addLayout(colors)
         canvas.colorsChanged.connect(self.sync)
+        self._fill_presets()
+
+    # -- présélections (persistantes) --
+    def _settings(self) -> dict:
+        return self._settings_dict
+
+    def _raw_presets(self):
+        return self._settings().get("board_ps_brush_presets", [])
+
+    def _store(self, raw):
+        """Enregistre la liste : réglage de l'appli (fichier + preset actif) si l'appli l'a branché, sinon session."""
+        from fm_board import ui as board_ui
+        writer = board_ui.SETTING_WRITER
+        if writer is not None:
+            writer("board_ps_brush_presets", raw)
+        settings = self._settings()
+        if isinstance(settings, dict):
+            settings["board_ps_brush_presets"] = raw
+
+    def _fill_presets(self, select: str | None = None):
+        from . import presets
+        self.presets.blockSignals(True)
+        self.presets.clear()
+        for brush in presets.all_presets(self._raw_presets()):
+            self.presets.addItem(brush.name, brush.to_dict())
+        index = self.presets.findText(select) if select else -1
+        self.presets.setCurrentIndex(max(0, index) if select else -1)
+        self.presets.blockSignals(False)
+
+    def _preset_chosen(self, index):
+        from .brush import Brush
+        data = self.presets.itemData(index)
+        if data:
+            keep = self.session.brush
+            brush = Brush.from_dict(data)
+            for key in ("size", "hardness", "opacity", "flow", "spacing", "smoothing", "pressure_size",
+                        "pressure_flow", "sigma"):
+                setattr(keep, key, getattr(brush, key))
+            self.sync()
+
+    def save_preset(self, name: str | None = None):
+        from . import presets
+        if name is None:
+            from PySide6.QtWidgets import QInputDialog
+            name, ok = QInputDialog.getText(self, "Présélection de brosse", "Nom :")
+            if not ok:
+                return None
+        try:
+            raw = presets.with_saved(self._raw_presets(), self.session.brush, name)
+        except ValueError as exc:
+            self.canvas.message.emit(str(exc))
+            return None
+        self._store(raw)
+        self._fill_presets(name.strip()[:40])
+        return raw
+
+    def delete_preset(self, name: str | None = None):
+        from . import presets
+        name = name or self.presets.currentText()
+        if not name or name in {b.name for b in presets.FACTORY}:
+            self.canvas.message.emit("Les présélections d'usine ne se retirent pas.")
+            return None
+        raw = presets.without(self._raw_presets(), name)
+        self._store(raw)
+        self._fill_presets()
+        return raw
 
     def _set(self, key, value):
         setattr(self.session.brush, key, float(value))
@@ -127,7 +204,8 @@ class BrushPanel(QWidget):
     def sync(self):
         b = self.session.brush
         for key, value in (("size", b.size), ("hardness", b.hardness * 100), ("opacity", b.opacity * 100),
-                           ("flow", b.flow * 100), ("spacing", b.spacing * 100), ("smoothing", b.smoothing * 100)):
+                           ("flow", b.flow * 100), ("spacing", b.spacing * 100), ("smoothing", b.smoothing * 100),
+                           ("sigma", b.sigma)):
             field = self.rows[key].field
             with QSignalBlocker(field):
                 field.setValue(round(value))

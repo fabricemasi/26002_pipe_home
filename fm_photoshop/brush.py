@@ -12,10 +12,18 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 
+from . import compose as C, filters
 from .history import TilesCommand
 from .planes import rect_intersect
 
 TILE = 64
+# Modes d'un trait : « paint » (pinceau), « erase » (gomme) et les outils de retouche. Clone / correcteur / flou /
+# netteté lisent une COPIE du plan prise au début du trait (une seule fois par trait, jamais à chaque point).
+MODES = ("paint", "erase", "clone", "heal", "blur", "sharpen", "smudge", "dodge", "burn")
+MODE_LABELS = {"paint": "Pinceau", "erase": "Gomme", "clone": "Tampon de duplication",
+               "heal": "Correcteur (texture de la source, tons de la destination)", "blur": "Goutte d'eau (flou)",
+               "sharpen": "Netteté", "smudge": "Doigt", "dodge": "Densité - (éclaircir)", "burn": "Densité + (assombrir)"}
+SNAPSHOT_MODES = ("clone", "heal", "blur", "sharpen")
 
 
 @dataclass
@@ -31,6 +39,8 @@ class Brush:
     pressure_flow: bool = False
     color: tuple = (0, 0, 0)
     eraser: bool = False
+    mode: str = "paint"                 # voir MODES
+    sigma: float = 2.0                  # flou / netteté / correcteur : écart-type (pixels)
 
     def copy(self, **kw) -> "Brush":
         return replace(self, **kw)
@@ -55,6 +65,9 @@ class Brush:
         base.smoothing = min(0.95, max(0.0, base.smoothing))
         base.size = min(5000.0, max(0.5, base.size))
         base.spacing = min(2.0, max(0.02, base.spacing))
+        base.sigma = min(50.0, max(0.3, base.sigma))
+        if base.mode not in MODES:
+            base.mode = "paint"
         return base
 
 
@@ -74,7 +87,7 @@ def dab_alpha(cx: float, cy: float, diameter: float, hardness: float, rect) -> n
 class Stroke:
     """Un trait sur le plan `pixels` ou `mask` d'un calque. `begin` / `move`* / `end` (-> étape d'annulation)."""
 
-    def __init__(self, layer, target: str, brush: Brush, doc_rect, selection=None):
+    def __init__(self, layer, target: str, brush: Brush, doc_rect, selection=None, retouch: dict | None = None):
         if target == "mask" and layer.mask is None:
             raise ValueError("Ce calque n'a pas de masque.")
         if layer.is_group() and target == "pixels":
@@ -84,9 +97,17 @@ class Stroke:
         if layer.source and target == "pixels":
             raise ValueError("Calque de texte ou de forme : convertissez-le d'abord en pixels (menu Calque).")
         self.layer, self.target, self.brush = layer, target, brush
+        self.mode = "erase" if brush.eraser else brush.mode
+        if target == "mask" and self.mode not in ("paint", "erase"):
+            raise ValueError("Cet outil agit sur les pixels, pas sur un masque.")
+        self.retouch = dict(retouch or {})              # clone / correcteur : {"offset": (dx, dy)} = source - destination
+        if self.mode in ("clone", "heal") and not self.retouch.get("offset"):
+            raise ValueError("Choisissez d'abord la source (Alt + clic).")
         self.plane = layer.pix if target == "pixels" else layer.mask.plane
         self.doc_rect = tuple(doc_rect)
         self.selection = selection
+        self._snap = self.plane.read(self.doc_rect) if self.mode in SNAPSHOT_MODES else None
+        self._carry = None                  # doigt : couleurs emportées par le trait
         self._orig: dict = {}               # (tx, ty) -> pixels d'origine de la tuile (uint8)
         self._cov: dict = {}                # (tx, ty) -> couverture (float32)
         self._pos = None                    # position lissée
@@ -151,6 +172,10 @@ class Stroke:
             return None
         dab = dab_alpha(x, y, size, brush.hardness, box) * flow
         self.dabs += 1
+        if self.mode == "smudge":
+            self._stamp_smudge(box, dab)
+            self.dirty = self._union(self.dirty, box)
+            return box
         for ty in range(box[1] // TILE, (box[3] - 1) // TILE + 1):
             for tx in range(box[0] // TILE, (box[2] - 1) // TILE + 1):
                 self._apply_tile(tx, ty, box, dab)
@@ -178,10 +203,32 @@ class Stroke:
         if self.selection is not None:
             alpha = alpha * self.selection.coverage(sub)
         before = orig[ly0:ly1, lx0:lx1]
-        self.plane.write(sub, self._result(before, alpha))
+        self.plane.write(sub, self._result(before, alpha, sub))
 
-    def _result(self, before: np.ndarray, alpha: np.ndarray) -> np.ndarray:
+    # -- lecture de la copie du début du trait --
+    def _snap_read(self, rect) -> np.ndarray:
+        """Pixels de la copie (transparents hors du document)."""
+        w, h = rect[2] - rect[0], rect[3] - rect[1]
+        out = np.zeros((h, w, 4), np.uint8)
+        common = rect_intersect(rect, self.doc_rect)
+        if common is not None:
+            out[common[1] - rect[1]:common[3] - rect[1], common[0] - rect[0]:common[2] - rect[0]] = \
+                self._snap[common[1] - self.doc_rect[1]:common[3] - self.doc_rect[1],
+                           common[0] - self.doc_rect[0]:common[2] - self.doc_rect[0]]
+        return out
+
+    @staticmethod
+    def _lerp_straight(dest: np.ndarray, src: np.ndarray, alpha: np.ndarray) -> np.ndarray:
+        """Mélange (1 − α)·destination + α·source en couleurs prémultipliées, rendu en couleurs droites."""
+        a = alpha[..., None]
+        pd, ps = C.premultiplied(dest), C.premultiplied(src)
+        return C.to_straight_u8(pd * (1.0 - a) + ps * a)
+
+    def _result(self, before: np.ndarray, alpha: np.ndarray, rect=None) -> np.ndarray:
         brush = self.brush
+        mode = self.mode
+        if self.target != "mask" and mode not in ("paint", "erase"):
+            return self._retouch(mode, before, alpha, rect)
         if self.target == "mask":
             value = 0.299 * brush.color[0] + 0.587 * brush.color[1] + 0.114 * brush.color[2]
             if brush.eraser:
@@ -190,7 +237,7 @@ class Stroke:
             return np.clip(m + (value - m) * alpha + 0.5, 0, 255).astype(np.uint8)[..., None]
         old_a = before[..., 3].astype(np.float32) * (1.0 / 255.0)
         out = before.copy()
-        if brush.eraser:
+        if mode == "erase":
             out[..., 3] = np.clip(old_a * (1.0 - alpha) * 255.0 + 0.5, 0, 255)
             return out
         new_a = alpha + old_a * (1.0 - alpha)
@@ -200,6 +247,71 @@ class Stroke:
         out[..., :3] = np.clip(rgb + 0.5, 0, 255)
         out[..., 3] = np.clip(new_a * 255.0 + 0.5, 0, 255)
         return out
+
+    def _retouch(self, mode, before, alpha, rect):
+        brush = self.brush
+        if mode == "clone":
+            dx, dy = self.retouch["offset"]
+            src = self._snap_read((rect[0] + dx, rect[1] + dy, rect[2] + dx, rect[3] + dy))
+            return self._lerp_straight(before, src, alpha)
+        if mode in ("blur", "sharpen"):
+            m = filters.margin(brush.sigma)
+            ctx = self._snap_read((rect[0] - m, rect[1] - m, rect[2] + m, rect[3] + m))
+            premult = C.premultiplied(ctx)
+            done = (filters.gaussian_blur(premult, brush.sigma) if mode == "blur" else
+                    filters.unsharp(premult, 1.5, brush.sigma))
+            return self._lerp_straight(before, C.to_straight_u8(done)[m:-m, m:-m], alpha)
+        if mode == "heal":
+            return self._heal(before, alpha, rect)
+        rgb = before[..., :3].astype(np.float32)
+        a = alpha[..., None]
+        out = before.copy()
+        if mode == "dodge":
+            out[..., :3] = np.clip(rgb + (255.0 - rgb) * a + 0.5, 0, 255)
+        else:                                                 # burn
+            out[..., :3] = np.clip(rgb * (1.0 - a) + 0.5, 0, 255)
+        return out
+
+    def _heal(self, before, alpha, rect):
+        """Correcteur : basses fréquences (tons) de la DESTINATION + hautes fréquences (texture) de la SOURCE, sur des
+        couleurs pondérées par l'alpha (convolution normalisée). Ce n'est ni un collage ni un simple flou ; ce n'est pas
+        une reconstruction de Poisson (limite documentée)."""
+        sigma = max(0.5, self.brush.sigma)
+        m = filters.margin(sigma)
+        dx, dy = self.retouch["offset"]
+        dest = self._snap_read((rect[0] - m, rect[1] - m, rect[2] + m, rect[3] + m))
+        src = self._snap_read((rect[0] + dx - m, rect[1] + dy - m, rect[2] + dx + m, rect[3] + dy + m))
+
+        def low(ctx):
+            p = C.premultiplied(ctx)
+            blurred = filters.gaussian_blur(p, sigma)
+            a = blurred[..., 3:4]
+            return np.where(a > 1e-4, blurred[..., :3] / np.maximum(a, 1e-4), 0.0)
+        src_rgb = src[..., :3].astype(np.float32) / 255.0
+        healed = low(dest) + (src_rgb - low(src))
+        healed = np.clip(healed[m:-m, m:-m] * 255.0 + 0.5, 0, 255)
+        out = before.copy()
+        a = (alpha * (before[..., 3] > 0))[..., None]
+        out[..., :3] = np.clip(before[..., :3] * (1.0 - a) + healed * a + 0.5, 0, 255)
+        return out
+
+    def _stamp_smudge(self, box, dab):
+        """Doigt : emporte les couleurs du tampon précédent et les dépose sous le nouveau (effet de traînée)."""
+        for ty in range(box[1] // TILE, (box[3] - 1) // TILE + 1):
+            for tx in range(box[0] // TILE, (box[2] - 1) // TILE + 1):
+                self._tile(tx, ty)                           # copie d'origine de la tuile (annulation)
+        cur = C.premultiplied(self.plane.read(box))
+        strength = np.minimum(dab, 1.0) * self.brush.opacity
+        if self.selection is not None:
+            strength = strength * self.selection.coverage(box)
+        carry = self._carry
+        if carry is None or carry.shape != cur.shape:
+            self._carry = cur
+            return
+        s = strength[..., None]
+        out = cur * (1.0 - s) + carry * s
+        self.plane.write(box, C.to_straight_u8(out))
+        self._carry = out
 
     # -- fin --
     def finish_to(self, x, y, pressure=1.0):

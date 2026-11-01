@@ -20,7 +20,9 @@ from .brush import Stroke
 from .planes import rect_intersect, rect_union
 
 TOOLS = ("brush", "eraser", "eyedropper", "move", "hand", "rect_select", "ellipse_select", "lasso", "poly_lasso",
-         "wand", "text", "shape_rect", "shape_ellipse", "shape_line")
+         "wand", "text", "shape_rect", "shape_ellipse", "shape_line", "clone", "heal", "blur", "sharpen", "smudge",
+         "dodge", "burn")
+RETOUCH_TOOLS = ("clone", "heal", "blur", "sharpen", "smudge", "dodge", "burn")      # outil = mode de la brosse
 SHAPE_TOOLS = {"shape_rect": "rect", "shape_ellipse": "ellipse", "shape_line": "line"}
 SELECT_TOOLS = ("rect_select", "ellipse_select", "lasso", "poly_lasso", "wand")
 
@@ -160,6 +162,7 @@ class CanvasView(QWidget):
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(area.adjusted(-0.5, -0.5, 0.5, 0.5))
         self._paint_selection(painter)
+        self._paint_clone_source(painter)
         self._paint_cursor(painter)
         painter.end()
 
@@ -172,7 +175,8 @@ class CanvasView(QWidget):
         return self.session.brush.size * self.zoom()
 
     def _paint_cursor(self, painter):
-        if self._hover is None or self.session.tool not in ("brush", "eraser") or not look.LOOK["cursor_outline"] \
+        if self._hover is None or self.session.tool not in ("brush", "eraser") + RETOUCH_TOOLS \
+                or not look.LOOK["cursor_outline"] \
                 or self._pan is not None or self._move is not None:
             return
         radius = max(1.0, self.brush_diameter() / 2.0)
@@ -182,6 +186,23 @@ class CanvasView(QWidget):
         painter.drawEllipse(self._hover, radius, radius)
         painter.setPen(QPen(QColor(255, 255, 255, 230), 1))
         painter.drawEllipse(self._hover, radius, radius)
+
+    def _paint_clone_source(self, painter):
+        clone = self.session.clone
+        if self.session.tool not in ("clone", "heal") or clone["source"] is None:
+            return
+        spot = QPointF(*clone["source"])
+        if clone["offset"] is not None and self._hover is not None:
+            x, y = self.to_doc(self._hover)
+            spot = QPointF(x + clone["offset"][0], y + clone["offset"][1])
+        p = self.to_widget(spot.x(), spot.y())
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        for pen in (QPen(QColor(0, 0, 0, 220), 3), QPen(QColor(255, 255, 255, 240), 1)):
+            painter.setPen(pen)
+            painter.drawLine(QPointF(p.x() - 8, p.y()), QPointF(p.x() + 8, p.y()))
+            painter.drawLine(QPointF(p.x(), p.y() - 8), QPointF(p.x(), p.y() + 8))
+        painter.restore()
 
     def _cursor_rect(self):
         r = self.brush_diameter() / 2.0 + 4
@@ -203,7 +224,7 @@ class CanvasView(QWidget):
         tool = self.session.tool
         if self._pan is not None or self._space or tool == "hand":
             self.setCursor(Qt.ClosedHandCursor if self._pan else Qt.OpenHandCursor)
-        elif tool in ("brush", "eraser") and look.LOOK["cursor_outline"]:
+        elif (tool in ("brush", "eraser") or tool in RETOUCH_TOOLS) and look.LOOK["cursor_outline"]:
             self.setCursor(Qt.BlankCursor)
         elif tool == "eyedropper" or tool in SELECT_TOOLS or tool in SHAPE_TOOLS or tool == "text":
             self.setCursor(Qt.CrossCursor)
@@ -212,8 +233,13 @@ class CanvasView(QWidget):
 
     def current_brush(self):
         s = self.session
-        brush = s.brush.copy(color=tuple(s.fg), eraser=(s.tool == "eraser"))
-        return brush
+        mode = s.tool if s.tool in RETOUCH_TOOLS else "paint"
+        return s.brush.copy(color=tuple(s.fg), eraser=(s.tool == "eraser"), mode=mode)
+
+    def set_clone_source(self, x, y):
+        self.session.clone = {"source": (float(x), float(y)), "offset": None}
+        self.message.emit("Source du tampon / correcteur choisie.")
+        self.update()
 
     # -- souris --
     def mousePressEvent(self, event):
@@ -229,9 +255,11 @@ class CanvasView(QWidget):
         tool = self.session.tool
         x, y = self.to_doc(pos)
         mods = event.modifiers()
-        if tool == "eyedropper" or (tool in ("brush", "eraser") and mods & Qt.AltModifier):
+        if tool in ("clone", "heal") and mods & Qt.AltModifier:
+            self.set_clone_source(x, y)                          # source choisie EXPLICITEMENT (Alt + clic)
+        elif tool == "eyedropper" or (tool in ("brush", "eraser") and mods & Qt.AltModifier):
             self.pick_color(x, y, background=bool(mods & Qt.ShiftModifier) if tool == "eyedropper" else False)
-        elif tool in ("brush", "eraser"):
+        elif tool in ("brush", "eraser") or tool in RETOUCH_TOOLS:
             self.begin_stroke(x, y, self._pressure)
         elif tool in SELECT_TOOLS:
             self.begin_select(tool, x, y, mods)
@@ -247,6 +275,8 @@ class CanvasView(QWidget):
         if self._hover is not None:
             self.update(self._cursor_rect())
         self._hover = pos
+        if self.session.tool in ("clone", "heal") and self.session.clone["source"] is not None:
+            self.update()                                          # la croix de la source suit le pointeur
         if self._pan is not None:
             start, (cx, cy) = self._pan
             z = self.zoom()
@@ -371,6 +401,14 @@ class CanvasView(QWidget):
             self.set_tool("wand")
         elif key == Qt.Key_T:
             self.set_tool("text")
+        elif key == Qt.Key_S:
+            self.set_tool("clone")
+        elif key == Qt.Key_J:
+            self.set_tool("heal")
+        elif key == Qt.Key_R:
+            self.set_tool("blur")
+        elif key == Qt.Key_O:
+            self.set_tool("dodge")
         elif key == Qt.Key_U:
             self.set_tool({"shape_rect": "shape_ellipse", "shape_ellipse": "shape_line"}.get(s.tool, "shape_rect"))
         elif key == Qt.Key_X:
@@ -429,8 +467,15 @@ class CanvasView(QWidget):
     def begin_stroke(self, x, y, pressure=1.0):
         s = self.session
         layer = s.layer()
+        retouch = None
+        if s.tool in ("clone", "heal"):
+            clone = s.clone
+            if clone["source"] is not None:
+                if clone["offset"] is None or not clone["aligned"]:
+                    clone["offset"] = (clone["source"][0] - x, clone["source"][1] - y)     # fixé au 1er coup de trait
+                retouch = {"offset": (round(clone["offset"][0]), round(clone["offset"][1]))}
         try:
-            self._stroke = Stroke(layer, s.target, self.current_brush(), s.doc.rect(), s.selection)
+            self._stroke = Stroke(layer, s.target, self.current_brush(), s.doc.rect(), s.selection, retouch)
         except ValueError as exc:
             self.message.emit(str(exc))
             return None
@@ -447,7 +492,8 @@ class CanvasView(QWidget):
         if stroke is None:
             return None
         self._notify_dirty(stroke.finish_to(x, y, pressure))
-        label = "Gomme" if stroke.brush.eraser else "Pinceau"
+        from .brush import MODE_LABELS
+        label = "Gomme" if stroke.brush.eraser else MODE_LABELS.get(stroke.mode, "Pinceau").split(" (")[0]
         if stroke.target == "mask":
             label += " (masque)"
         command = stroke.end(label)

@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, Qt, QTimer
-from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QMessageBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFileDialog, QGridLayout, QHBoxLayout, QLabel, QMessageBox, QVBoxLayout, QWidget
 
 from . import io_images
 from .canvas import CanvasView
@@ -26,7 +26,15 @@ TOOL_ROWS = (("brush", "Pinceau", "Pinceau (B)"), ("eraser", "Gomme", "Gomme (E)
              ("text", "Texte", "Texte (T) : un clic crée ou modifie un calque de texte"),
              ("shape_rect", "Rectangle f.", "Forme rectangle (glisser) : couleurs de premier plan / arrière-plan"),
              ("shape_ellipse", "Ellipse f.", "Forme ellipse (glisser)"),
-             ("shape_line", "Ligne", "Ligne (glisser) : couleur de premier plan"))
+             ("shape_line", "Ligne", "Ligne (glisser) : couleur de premier plan"),
+             ("clone", "Tampon", "Tampon de duplication (S) : Alt + clic = source, puis peindre"),
+             ("heal", "Correcteur", "Correcteur (J) : Alt + clic = source ; garde les tons de la destination et la "
+                                    "texture de la source (rayon de retouche réglable)"),
+             ("blur", "Flou", "Goutte d'eau : flou local (R), rayon de retouche réglable"),
+             ("sharpen", "Netteté", "Netteté locale, rayon de retouche réglable"),
+             ("smudge", "Doigt", "Doigt : traîne les couleurs"),
+             ("dodge", "Éclaircir", "Densité - : éclaircit sous le pinceau (O)"),
+             ("burn", "Assombrir", "Densité + : assombrit sous le pinceau"))
 
 
 class StandardPane(QWidget):
@@ -83,21 +91,23 @@ class StandardPane(QWidget):
         body = QHBoxLayout()
         body.setContentsMargins(6, 2, 6, 6)
         body.setSpacing(6)
-        tools = QVBoxLayout()
+        tools = QGridLayout()
         tools.setSpacing(2)
         self.tool_buttons = {}
-        for tool, text, tip in TOOL_ROWS:
+        for index, (tool, text, tip) in enumerate(TOOL_ROWS):
             button = _button(text, tip, lambda t=tool: self.canvas.set_tool(t), self, True)
-            button.setFixedWidth(78)
+            button.setFixedWidth(84)
             self.tool_buttons[tool] = button
-            tools.addWidget(button)
-        tools.addStretch(1)
-        body.addLayout(tools)
+            tools.addWidget(button, index // 2, index % 2)
+        holder_tools = QVBoxLayout()
+        holder_tools.addLayout(tools)
+        holder_tools.addStretch(1)
+        body.addLayout(holder_tools)
         self.canvas = CanvasView(self.session, self)
         body.addWidget(self.canvas, 1)
         side = QVBoxLayout()
         side.setSpacing(8)
-        self.brush_panel = BrushPanel(self.session, self.canvas, self)
+        self.brush_panel = BrushPanel(self.session, self.canvas, self, getattr(board, "_settings", None))
         self.layers_panel = LayersPanel(self.session, self.canvas, self)
         side.addWidget(self.brush_panel)
         side.addWidget(self.layers_panel, 1)

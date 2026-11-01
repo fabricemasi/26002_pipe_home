@@ -14,4 +14,6 @@ PS_DEFAULTS = {
     "board_ps_max_zoom": 32.0,
     "board_ps_cursor_outline": True,
     "board_ps_history_mb": 384,
+    # Présélections de brosses de l'utilisateur (état temps réel, partagé par tous les boards) : liste de brosses
+    "board_ps_brush_presets": [],
 }

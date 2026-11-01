@@ -116,6 +116,13 @@ class PsCase(unittest.TestCase):
         p = canvas.to_widget(x, y)
         return QPoint(round(p.x()), round(p.y()))
 
+    @staticmethod
+    def release_modifiers(widget):
+        """QTest laisse les modificateurs d'un clic « tenus » pour l'application : on les relâche (sinon l'Alt d'un test
+        isolerait un module au clic suivant)."""
+        for key in (Qt.Key_Alt, Qt.Key_Control, Qt.Key_Shift):
+            QTest.keyRelease(widget, key)
+
     def drag(self, canvas, points, modifiers=Qt.NoModifier):
         QTest.mousePress(canvas, Qt.LeftButton, modifiers, points[0])
         for p in points[1:]:
@@ -123,7 +130,11 @@ class PsCase(unittest.TestCase):
             APP.processEvents()
         QTest.mouseRelease(canvas, Qt.LeftButton, modifiers, points[-1])
         APP.processEvents()
+        if modifiers != Qt.NoModifier:
+            self.release_modifiers(canvas)
 
     def click(self, canvas, x, y, modifiers=Qt.NoModifier):
         QTest.mouseClick(canvas, Qt.LeftButton, modifiers, self.at(canvas, x, y))
         APP.processEvents()
+        if modifiers != Qt.NoModifier:
+            self.release_modifiers(canvas)
