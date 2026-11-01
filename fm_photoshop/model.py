@@ -51,6 +51,7 @@ class Layer:
         self.pix = Plane(4, 0) if kind == "raster" else None
         self.mask: Mask | None = None
         self.children: list[Layer] = []
+        self.source: dict | None = None             # calque de TEXTE ou de FORME éditable (voir `vector.py`) ; `pix` en est le rendu
         self.extra: dict = {}                       # clés inconnues (versions plus récentes), réécrites telles quelles
 
     def is_group(self) -> bool:

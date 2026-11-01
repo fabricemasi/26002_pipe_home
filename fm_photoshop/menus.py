@@ -69,6 +69,8 @@ class MenuBar(QWidget):
             add("Aplatir l'image", self.pane.layers_panel.flatten)
         elif key == "layer":
             add("Transformer…", self._transform)
+            add("Modifier le texte / la forme…", self._edit_source)
+            add("Convertir en pixels", a.rasterize)
             add("Symétrie horizontale du calque", lambda: a.layer_flip(True))
             add("Symétrie verticale du calque", lambda: a.layer_flip(False))
             menu.addSeparator()
@@ -124,6 +126,9 @@ class MenuBar(QWidget):
         if layer.locked:
             self.canvas.message.emit("Le calque est verrouillé.")
             return
+        if layer.source:
+            self.canvas.message.emit(self.actions.REFUSED)
+            return
         dialog = dialogs.TransformDialog(self.session, self.pane)
         self._dialog = dialog
         dialog.exec()
@@ -136,3 +141,16 @@ class MenuBar(QWidget):
 
     def _export_layer(self):
         self.pane.export(None, self.session.layer())
+
+    def _edit_source(self):
+        layer = self.session.layer()
+        kind = (layer.source or {}).get("kind")
+        if kind == "text":
+            dialog = dialogs.TextDialog(self.session, self.actions, layer, (0, 0), self.pane)
+        elif kind == "shape":
+            dialog = dialogs.ShapeDialog(self.session, self.actions, layer, self.pane)
+        else:
+            self.canvas.message.emit("Ce calque n'est ni un texte ni une forme.")
+            return
+        self._dialog = dialog
+        dialog.exec()

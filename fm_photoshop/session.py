@@ -30,6 +30,7 @@ class Session:
         self.center = None                         # point du document au centre de la vue
         self.selection = None                      # `selection.Selection` ou None (rien de sélectionné)
         self.options = {"tolerance": 32, "contiguous": True, "sample": "layer"}      # baguette magique
+        self.shape_options = {"fill": True, "stroke": False, "stroke_width": 4, "radius": 0}      # outils de forme
         self.asset: str | None = None              # dernier conteneur écrit dans le dossier du Board
         self.flushed_version = -1
         self.error: str | None = None              # ressource absente / illisible (diagnostic)

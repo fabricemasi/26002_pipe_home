@@ -22,7 +22,11 @@ TOOL_ROWS = (("brush", "Pinceau", "Pinceau (B)"), ("eraser", "Gomme", "Gomme (E)
              ("rect_select", "Rectangle", "Rectangle de sélection (M) — Maj : ajouter, Alt : soustraire"),
              ("ellipse_select", "Ellipse", "Ellipse de sélection (M)"), ("lasso", "Lasso", "Lasso à main levée (L)"),
              ("poly_lasso", "Lasso poly.", "Lasso polygonal (L) : clics, double-clic ou Entrée pour fermer"),
-             ("wand", "Baguette", "Baguette magique (W) : tolérance dans le menu Sélection"))
+             ("wand", "Baguette", "Baguette magique (W) : tolérance dans le menu Sélection"),
+             ("text", "Texte", "Texte (T) : un clic crée ou modifie un calque de texte"),
+             ("shape_rect", "Rectangle f.", "Forme rectangle (glisser) : couleurs de premier plan / arrière-plan"),
+             ("shape_ellipse", "Ellipse f.", "Forme ellipse (glisser)"),
+             ("shape_line", "Ligne", "Ligne (glisser) : couleur de premier plan"))
 
 
 class StandardPane(QWidget):

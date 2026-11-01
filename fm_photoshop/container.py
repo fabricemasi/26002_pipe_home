@@ -31,7 +31,7 @@ VERSION = 1
 MAX_PIXELS = 600_000_000
 RES_NAME = re.compile(r"^(layers|masks)/[0-9a-f]{16}\.png$")
 KNOWN_LAYER = {"id", "name", "kind", "visible", "opacity", "blend", "locked", "clip", "passthrough", "x", "y", "w",
-               "h", "png", "mask", "children"}
+               "h", "png", "mask", "children", "source"}
 KNOWN_DOC = {"width", "height", "name", "dpi", "icc_name", "depth", "meta", "uid"}
 KNOWN_TOP = {"format", "version", "document", "layers", "icc", "extra", "saved_by"}
 
@@ -61,6 +61,8 @@ def _layer_entry(layer: Layer, files: dict) -> dict:
              "opacity": layer.opacity, "blend": layer.blend, "locked": layer.locked, "clip": layer.clip,
              "passthrough": layer.passthrough}
     entry.update(layer.extra)
+    if layer.source:
+        entry["source"] = layer.source
     if layer.pix is not None and layer.pix.data is not None:
         h, w = layer.pix.data.shape[:2]
         entry.update(x=layer.pix.x, y=layer.pix.y, w=w, h=h, png=f"layers/{layer.uid}.png")
@@ -180,6 +182,8 @@ def _load_layer(entry: dict, archive, depth=0) -> Layer:
     layer.clip = bool(entry.get("clip", False))
     layer.passthrough = bool(entry.get("passthrough", True))
     layer.extra.update({k: v for k, v in entry.items() if k not in KNOWN_LAYER})
+    if isinstance(entry.get("source"), dict):
+        layer.source = entry["source"]
     if entry.get("png") and layer.pix is not None:
         w, h = _int(entry.get("w"), "w", 1, MAX_SIDE), _int(entry.get("h"), "h", 1, MAX_SIDE)
         layer.pix.set_all(_int(entry.get("x", 0), "x"), _int(entry.get("y", 0), "y"),

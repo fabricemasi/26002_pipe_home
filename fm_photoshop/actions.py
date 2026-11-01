@@ -27,6 +27,8 @@ class Actions:
     def doc(self):
         return self.s.doc
 
+    REFUSED = "Calque de texte ou de forme : convertissez-le d'abord en pixels (menu Calque)."
+
     def _say(self, text):
         self.last_message = text
         return text
@@ -97,6 +99,8 @@ class Actions:
     # -- remplir / effacer --
     def fill(self, color, label="Remplir"):
         layer = self.s.layer()
+        if layer.source and self.s.target != "mask":
+            return self._say(self.REFUSED)
         if layer.locked or layer.is_group():
             return self._say("Calque verrouillé ou groupe : rien à remplir.")
         region = self._region(layer)
@@ -127,6 +131,8 @@ class Actions:
 
     def delete(self):
         layer = self.s.layer()
+        if layer.source and self.s.target != "mask":
+            return self._say(self.REFUSED)
         if layer.locked or layer.is_group() or layer.pix is None:
             return self._say("Calque verrouillé ou groupe : rien à effacer.")
         if self.s.target == "mask" and layer.mask is not None:
@@ -205,7 +211,7 @@ class Actions:
         ptr = image.constBits()
         array = np.frombuffer(ptr, np.uint8, image.height() * image.bytesPerLine()).reshape(image.height(),
                                                                                           image.bytesPerLine())
-        return np.ascontiguousarray(array[:, :image.width() * 4].reshape(image.height(), image.width(), 4))
+        return array[:, :image.width() * 4].reshape(image.height(), image.width(), 4).copy()   # COPIE : le tampon appartient a QImage
 
     def paste(self):
         """Colle dans un NOUVEAU calque : image du presse-papiers du système si elle y est, sinon la copie interne."""
@@ -235,6 +241,8 @@ class Actions:
 
     def layer_via_cut(self):
         layer = self.s.layer()
+        if layer.source:
+            return self._say(self.REFUSED)
         got = self._selected_pixels(layer)
         if got is None or layer.locked:
             return self._say("Rien à couper dans un nouveau calque.")
@@ -250,6 +258,8 @@ class Actions:
     # -- réglages et filtres --
     def apply_effect(self, name, params=None, seed=0):
         layer = self.s.layer()
+        if layer.source:
+            return self._say(self.REFUSED)
         if layer.locked or layer.is_group() or layer.pix is None:
             return self._say("Choisissez un calque de pixels non verrouillé.")
         got = adjust.run(layer, name, params, self.s.selection, self.doc.rect(), seed)
@@ -265,6 +275,8 @@ class Actions:
         layer = self.s.layer()
         if layer.locked:
             return self._say("Le calque est verrouillé.")
+        if layer.source:
+            return self._say(self.REFUSED)
         session = T.TransformSession(layer)
         session.render(matrix, quality)
         return self.s.do(session.command(quality, label))
@@ -277,6 +289,86 @@ class Actions:
         cx, cy = (rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0
         return self.transform_layer(T.flip(horizontal, cx, cy), "nearest",
                                     "Symétrie horizontale du calque" if horizontal else "Symétrie verticale du calque")
+
+    # -- texte et formes --
+    def _insert_source_layer(self, source, name):
+        from . import vector
+        index = self.doc.parent_list(self.s.layer())[1] + 1
+        layer, command = ops.add_layer(self.doc, name, parent=self.doc.parent_of(self.s.layer()), index=index)
+        vector.apply_source(layer, source)
+        return layer, command
+
+    def add_text(self, source: dict):
+        """Nouveau calque de texte éditable (une étape d'annulation)."""
+        from . import vector
+        source = vector.normalize(dict(source, kind="text"))
+        name = (source["content"].strip().splitlines() or ["Texte"])[0][:24] or "Texte"
+        layer, command = self._insert_source_layer(source, name)
+        self.s.do(command)
+        self.s.select_layer(layer)
+        return layer
+
+    def add_shape(self, source: dict):
+        from . import vector
+        source = vector.normalize(dict(source, kind="shape"))
+        name = {"rect": "Rectangle", "ellipse": "Ellipse", "line": "Ligne"}[source["shape"]]
+        layer, command = self._insert_source_layer(source, name)
+        self.s.do(command)
+        self.s.select_layer(layer)
+        return layer
+
+    def edit_source(self, layer, new_source: dict, label="Modifier le calque"):
+        """Remplace la source d'un calque de texte / forme et refait ses pixels (une étape)."""
+        from . import vector
+        old = self._source_state(layer)
+        vector.apply_source(layer, new_source)
+        new = self._source_state(layer)
+        if old[0] == new[0]:
+            return None
+        rect = ops.layer_rect(layer)
+        for state in (old, new):
+            if state[2] is not None:
+                r = (state[1][0], state[1][1], state[1][0] + state[2].shape[1], state[1][1] + state[2].shape[0])
+                rect = r if rect is None else (min(rect[0], r[0]), min(rect[1], r[1]), max(rect[2], r[2]),
+                                               max(rect[3], r[3]))
+        from .history import CallCommand
+        command = CallCommand(label, lambda: self._restore_source(layer, new), lambda: self._restore_source(layer, old),
+                              rect=rect)
+        self.s.notify("edit", rect)
+        return self.s.do(command, notified=True)
+
+    @staticmethod
+    def _source_state(layer):
+        import copy
+        data = None if layer.pix.data is None else layer.pix.data.copy()
+        return copy.deepcopy(layer.source), (layer.pix.x, layer.pix.y), data, layer.name
+
+    @staticmethod
+    def _restore_source(layer, state):
+        import copy
+        source, (x, y), data, name = state
+        layer.source = copy.deepcopy(source)
+        layer.name = name
+        if data is None:
+            layer.pix.clear()
+        else:
+            layer.pix.set_all(x, y, data.copy())
+
+    def rasterize(self, layer=None):
+        """Conversion EXPLICITE en pixels : le calque perd sa source (plus modifiable comme texte / forme)."""
+        layer = layer or self.s.layer()
+        if not layer.source:
+            return self._say("Ce calque est déjà en pixels.")
+        old = layer.source
+        from .history import CallCommand
+
+        def do():
+            layer.source = None
+
+        def undo():
+            layer.source = old
+        do()
+        return self.s.do(CallCommand("Convertir en pixels", do, undo))
 
     def image_size(self, width, height, quality="bicubic"):
         return self.s.do(T.resize_image(self.doc, width, height, quality))

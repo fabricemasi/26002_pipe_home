@@ -61,6 +61,7 @@ def _clone(layer: Layer) -> Layer:
     for key in Layer.PROPS:
         setattr(twin, key, getattr(layer, key))
     twin.extra = copy.deepcopy(layer.extra)
+    twin.source = copy.deepcopy(layer.source)
     if layer.pix is not None:
         if layer.pix.data is not None:
             twin.pix.set_all(layer.pix.x, layer.pix.y, layer.pix.data.copy())
@@ -139,8 +140,14 @@ def group_layers(doc, layers: list, name: str = "Groupe"):
 
 
 def shift_layer(layer: Layer, sx: int, sy: int):
-    """Déplace les pixels (et le masque) du calque de (sx, sy), sans étape d'annulation (geste en cours)."""
+    """Déplace les pixels (et le masque) du calque de (sx, sy), sans étape d'annulation (geste en cours). La source d'un
+    calque de texte ou de forme suit (sinon sa modification le ferait revenir à l'ancienne place)."""
     for node in layer.walk():
+        if node.source:
+            for kx, ky in (("x", "y"), ("x1", "y1")):
+                if kx in node.source:
+                    node.source[kx] = node.source[kx] + sx
+                    node.source[ky] = node.source[ky] + sy
         if node.pix is not None and node.pix.data is not None:
             node.pix.shift(sx, sy)
         if node.mask is not None and node.mask.plane.data is not None:

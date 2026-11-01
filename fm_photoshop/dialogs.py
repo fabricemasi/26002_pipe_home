@@ -452,3 +452,211 @@ class ValueDialog(QDialog):
 
     def value(self) -> int:
         return self.field.value()
+
+
+class _SourceDialog(QDialog):
+    """Base des fenêtres de texte / forme : aperçu en direct dans le calque, validation = UNE étape, annulation = retour
+    exact à l'état d'avant."""
+    KIND = "text"
+
+    def __init__(self, session, actions, layer, new_source, parent=None):
+        super().__init__(parent)
+        self.session, self.actions = session, actions
+        self.creating = layer is None
+        self._finished = False
+        if self.creating:
+            from . import vector
+            layer, self.add_command = actions._insert_source_layer(vector.normalize(new_source), "Texte")
+            session.notify("structure", None)
+        self.layer = layer
+        self.old = actions._source_state(layer)
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(50)
+        self._timer.timeout.connect(self._apply)
+        self.box = QVBoxLayout(self)
+
+    def _buttons(self):
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        self.box.addWidget(buttons)
+
+    def schedule(self, *_):
+        self._timer.start()
+
+    def source(self) -> dict:
+        raise NotImplementedError
+
+    def title_of(self, source) -> str:
+        return self.layer.name
+
+    def _apply(self):
+        from . import vector
+        before = ops.layer_rect(self.layer)
+        vector.apply_source(self.layer, self.source())
+        self.layer.name = self.title_of(self.layer.source)
+        self.session.notify("edit", rect_union(before, ops.layer_rect(self.layer)) or (0, 0, 1, 1))
+
+    def accept(self):
+        if self._finished:
+            return                                  # déjà validée ou annulée : jamais deux étapes
+        self._finished = True
+        if self._timer.isActive():
+            self._timer.stop()
+        self._apply()
+        empty = self.layer.pix.data is None
+        if self.creating and empty:
+            self.reject()
+            return
+        super().accept()
+        if self.creating:
+            self.session.do(self.add_command)
+            self.session.select_layer(self.layer)
+        else:
+            final = self.layer.source
+            self.actions._restore_source(self.layer, self.old)
+            self.actions.edit_source(self.layer, final, "Modifier le texte" if self.KIND == "text" else
+                                     "Modifier la forme")
+            self.layer.name = self.title_of(self.layer.source)
+
+    def reject(self):
+        if self._finished and not self.isVisible():
+            return
+        self._finished = True
+        self._timer.stop()
+        if self.creating:
+            self.add_command.undo()
+        else:
+            self.actions._restore_source(self.layer, self.old)
+        self.session.notify("structure", None)
+        super().reject()
+
+
+class TextDialog(_SourceDialog):
+    KIND = "text"
+
+    def __init__(self, session, actions, layer, pos, parent=None):
+        from PySide6.QtGui import QFont
+        from PySide6.QtWidgets import QFontComboBox, QPlainTextEdit, QSpinBox
+        from .panels import Swatch
+        from . import vector
+        base = dict(layer.source) if layer is not None else {
+            "kind": "text", "x": pos[0], "y": pos[1], "color": list(session.fg) + [255]}
+        base = vector.normalize(base)
+        super().__init__(session, actions, layer, base, parent)
+        self.setWindowTitle("Texte")
+        s = self.layer.source or base
+        self.content = QPlainTextEdit(s["content"])
+        self.content.setMinimumHeight(90)
+        self.font_box = QFontComboBox()
+        self.font_box.setCurrentFont(QFont(s["font"]))
+        self.size = QSpinBox()
+        self.size.setRange(1, 2000)
+        self.size.setValue(int(s["size"]))
+        self.bold, self.italic = QCheckBox("Gras"), QCheckBox("Italique")
+        self.bold.setChecked(s["bold"])
+        self.italic.setChecked(s["italic"])
+        self.align = QComboBox()
+        for text, value in (("Gauche", "left"), ("Centré", "center"), ("Droite", "right")):
+            self.align.addItem(text, value)
+        self.align.setCurrentIndex(["left", "center", "right"].index(s["align"]))
+        self.width_box = QSpinBox()
+        self.width_box.setRange(0, 30000)
+        self.width_box.setValue(int(s["width"]))
+        self.width_box.setSpecialValueText("Automatique")
+        self.line_height = QSpinBox()
+        self.line_height.setRange(50, 300)
+        self.line_height.setSuffix(" %")
+        self.line_height.setValue(int(s["line_height"]))
+        self.color = list(s["color"])
+        self.swatch = Swatch(lambda: tuple(self.color[:3]), self._set_color, "Couleur du texte", self)
+        self._pos = (s["x"], s["y"])
+        form = QFormLayout()
+        form.addRow("Texte", self.content)
+        form.addRow("Police", self.font_box)
+        form.addRow("Corps (px)", self.size)
+        row = QHBoxLayout()
+        row.addWidget(self.bold)
+        row.addWidget(self.italic)
+        row.addWidget(self.swatch)
+        form.addRow("Style", row)
+        form.addRow("Alignement", self.align)
+        form.addRow("Largeur du bloc", self.width_box)
+        form.addRow("Interligne", self.line_height)
+        self.box.addLayout(form)
+        self._buttons()
+        for signal in (self.content.textChanged, self.font_box.currentFontChanged, self.size.valueChanged,
+                       self.bold.toggled, self.italic.toggled, self.align.currentIndexChanged,
+                       self.width_box.valueChanged, self.line_height.valueChanged):
+            signal.connect(self.schedule)
+        self._apply()
+
+    def _set_color(self, rgb):
+        self.color = list(rgb) + [255]
+        self.schedule()
+
+    def source(self) -> dict:
+        return {"kind": "text", "content": self.content.toPlainText(), "font": self.font_box.currentFont().family(),
+                "size": self.size.value(), "bold": self.bold.isChecked(), "italic": self.italic.isChecked(),
+                "color": self.color, "align": self.align.currentData(), "width": self.width_box.value(),
+                "line_height": self.line_height.value(), "x": self._pos[0], "y": self._pos[1]}
+
+    def title_of(self, source) -> str:
+        return ((source or {}).get("content", "").strip().splitlines() or ["Texte"])[0][:24] or "Texte"
+
+
+class ShapeDialog(_SourceDialog):
+    KIND = "shape"
+
+    def __init__(self, session, actions, layer, parent=None):
+        from PySide6.QtWidgets import QDoubleSpinBox
+        from .panels import Swatch
+        super().__init__(session, actions, layer, None, parent)
+        self.setWindowTitle("Forme")
+        s = self.layer.source
+        self.base = dict(s)
+        self.fill_on = QCheckBox("Remplissage")
+        self.fill_on.setChecked(bool(s["fill"]))
+        self.stroke_on = QCheckBox("Contour")
+        self.stroke_on.setChecked(bool(s["stroke"]))
+        self.fill_color = list(s["fill"] or [0, 0, 0, 255])
+        self.stroke_color = list(s["stroke"] or [0, 0, 0, 255])
+        self.fill_swatch = Swatch(lambda: tuple(self.fill_color[:3]), lambda c: self._color("fill_color", c),
+                                  "Couleur de remplissage", self)
+        self.stroke_swatch = Swatch(lambda: tuple(self.stroke_color[:3]), lambda c: self._color("stroke_color", c),
+                                    "Couleur du contour", self)
+        self.width_box = QDoubleSpinBox()
+        self.width_box.setRange(0, 500)
+        self.width_box.setValue(s["stroke_width"])
+        self.radius = QDoubleSpinBox()
+        self.radius.setRange(0, 5000)
+        self.radius.setValue(s["radius"])
+        self.radius.setEnabled(s["shape"] == "rect")
+        form = QFormLayout()
+        row1, row2 = QHBoxLayout(), QHBoxLayout()
+        row1.addWidget(self.fill_on)
+        row1.addWidget(self.fill_swatch)
+        row2.addWidget(self.stroke_on)
+        row2.addWidget(self.stroke_swatch)
+        form.addRow(row1)
+        form.addRow(row2)
+        form.addRow("Épaisseur du contour", self.width_box)
+        form.addRow("Angles arrondis", self.radius)
+        self.box.addLayout(form)
+        self._buttons()
+        for signal in (self.fill_on.toggled, self.stroke_on.toggled, self.width_box.valueChanged,
+                       self.radius.valueChanged):
+            signal.connect(self.schedule)
+        self.fill_on.setEnabled(s["shape"] != "line")
+
+    def _color(self, attr, rgb):
+        setattr(self, attr, list(rgb) + [255])
+        self.schedule()
+
+    def source(self) -> dict:
+        out = dict(self.base)
+        out.update(fill=self.fill_color if self.fill_on.isChecked() and self.base["shape"] != "line" else None,
+                   stroke=self.stroke_color if self.stroke_on.isChecked() else None,
+                   stroke_width=self.width_box.value(), radius=self.radius.value())
+        return out

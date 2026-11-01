@@ -20,7 +20,8 @@ from .brush import Stroke
 from .planes import rect_intersect, rect_union
 
 TOOLS = ("brush", "eraser", "eyedropper", "move", "hand", "rect_select", "ellipse_select", "lasso", "poly_lasso",
-         "wand")
+         "wand", "text", "shape_rect", "shape_ellipse", "shape_line")
+SHAPE_TOOLS = {"shape_rect": "rect", "shape_ellipse": "ellipse", "shape_line": "line"}
 SELECT_TOOLS = ("rect_select", "ellipse_select", "lasso", "poly_lasso", "wand")
 
 
@@ -204,7 +205,7 @@ class CanvasView(QWidget):
             self.setCursor(Qt.ClosedHandCursor if self._pan else Qt.OpenHandCursor)
         elif tool in ("brush", "eraser") and look.LOOK["cursor_outline"]:
             self.setCursor(Qt.BlankCursor)
-        elif tool == "eyedropper" or tool in SELECT_TOOLS:
+        elif tool == "eyedropper" or tool in SELECT_TOOLS or tool in SHAPE_TOOLS or tool == "text":
             self.setCursor(Qt.CrossCursor)
         else:
             self.setCursor(Qt.ArrowCursor)
@@ -234,6 +235,10 @@ class CanvasView(QWidget):
             self.begin_stroke(x, y, self._pressure)
         elif tool in SELECT_TOOLS:
             self.begin_select(tool, x, y, mods)
+        elif tool == "text":
+            self.text_at(x, y)
+        elif tool in SHAPE_TOOLS:
+            self._gesture = {"tool": tool, "mode": "replace", "points": [(x, y), (x, y)], "moved": False}
         elif tool == "move":
             self.begin_move(x, y, bool(QApplication.keyboardModifiers() & Qt.ControlModifier))
 
@@ -364,6 +369,10 @@ class CanvasView(QWidget):
             self.set_tool("poly_lasso" if s.tool == "lasso" else "lasso")
         elif key == Qt.Key_W:
             self.set_tool("wand")
+        elif key == Qt.Key_T:
+            self.set_tool("text")
+        elif key == Qt.Key_U:
+            self.set_tool({"shape_rect": "shape_ellipse", "shape_ellipse": "shape_line"}.get(s.tool, "shape_rect"))
         elif key == Qt.Key_X:
             s.fg, s.bg = s.bg, s.fg
             self.colorsChanged.emit()
@@ -488,6 +497,35 @@ class CanvasView(QWidget):
         self.session.do(command, notified=True)
         return command
 
+    # -- texte et formes --
+    def text_at(self, x, y):
+        """Outil Texte : un clic sur un calque de texte le modifie, ailleurs il en crée un (fenêtre de texte)."""
+        from .dialogs import TextDialog
+        layer = self.session.layer()
+        source = layer.source if layer.source and layer.source.get("kind") == "text" else None
+        dialog = TextDialog(self.session, self.actions, layer if source else None, (x, y), self.window())
+        self._dialog = dialog
+        dialog.exec()
+        return dialog
+
+    def create_shape(self, shape, start, end):
+        s = self.session
+        if shape == "line":
+            if (abs(end[0] - start[0]) + abs(end[1] - start[1])) < 2:
+                return None
+            source = {"shape": "line", "x": start[0], "y": start[1], "x1": end[0], "y1": end[1], "fill": None,
+                      "stroke": list(s.fg) + [255], "stroke_width": s.shape_options["stroke_width"]}
+        else:
+            x0, y0, x1, y1 = min(start[0], end[0]), min(start[1], end[1]), max(start[0], end[0]), max(start[1], end[1])
+            if x1 - x0 < 2 or y1 - y0 < 2:
+                return None
+            o = s.shape_options
+            source = {"shape": shape, "x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0,
+                      "fill": list(s.fg) + [255] if o["fill"] else None,
+                      "stroke": list(s.bg) + [255] if o["stroke"] else None, "stroke_width": o["stroke_width"],
+                      "radius": o["radius"]}
+        return self.actions.add_shape(source)
+
     # -- sélections : outils, contour animé --
     @staticmethod
     def _mode_of(mods) -> str:
@@ -529,6 +567,10 @@ class CanvasView(QWidget):
             return                                          # le polygone se poursuit : clics, double-clic ou Entrée
         self._gesture = None
         rect = self.session.doc.rect()
+        if g["tool"] in SHAPE_TOOLS:
+            self.create_shape(SHAPE_TOOLS[g["tool"]], g["points"][0], (x, y))
+            self.update()
+            return
         if g["tool"] in ("rect_select", "ellipse_select"):
             (x0, y0), (x1, y1) = g["points"][0], (x, y)
             box = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
@@ -606,10 +648,12 @@ class CanvasView(QWidget):
         if g is not None:
             painter.save()
             painter.setPen(QPen(QColor(look.LOOK["selection_color"]), 1, Qt.DashLine))
-            if g["tool"] in ("rect_select", "ellipse_select") and len(g["points"]) == 2:
+            if g["tool"] in ("rect_select", "ellipse_select", "shape_rect", "shape_ellipse") and len(g["points"]) == 2:
                 a, b = self.to_widget(*g["points"][0]), self.to_widget(*g["points"][1])
                 box = QRectF(a, b).normalized()
-                (painter.drawRect if g["tool"] == "rect_select" else painter.drawEllipse)(box)
+                (painter.drawRect if g["tool"] in ("rect_select", "shape_rect") else painter.drawEllipse)(box)
+            elif g["tool"] == "shape_line" and len(g["points"]) == 2:
+                painter.drawLine(self.to_widget(*g["points"][0]), self.to_widget(*g["points"][1]))
             elif g["tool"] in ("lasso", "poly_lasso"):
                 pts = [self.to_widget(*p) for p in g["points"]]
                 if g["tool"] == "poly_lasso" and g.get("cursor"):

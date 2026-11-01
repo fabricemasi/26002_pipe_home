@@ -81,6 +81,8 @@ class Stroke:
             raise ValueError("Un groupe n'a pas de pixels : peignez dans un calque.")
         if layer.locked:
             raise ValueError("Le calque est verrouillé.")
+        if layer.source and target == "pixels":
+            raise ValueError("Calque de texte ou de forme : convertissez-le d'abord en pixels (menu Calque).")
         self.layer, self.target, self.brush = layer, target, brush
         self.plane = layer.pix if target == "pixels" else layer.mask.plane
         self.doc_rect = tuple(doc_rect)
