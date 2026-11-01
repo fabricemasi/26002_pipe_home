@@ -338,6 +338,15 @@ class CanvasView(QWidget):
             x, y = self.to_doc(event.position())
             self.end_select(x, y)
 
+    def contextMenuEvent(self, event):
+        """Clic droit : le menu Édition (copier, coller, remplir, effacer…) ou, sur une sélection, le menu Sélection."""
+        factory = getattr(self, "context_menu_factory", None)
+        if factory is None or self._stroke is not None or self._move is not None:
+            return
+        menu = factory("selection" if self.session.selection is not None else "edit")
+        self._context_menu = menu
+        menu.popup(event.globalPos())
+
     def mouseDoubleClickEvent(self, event):
         if self._gesture is not None and self._gesture["tool"] == "poly_lasso":
             self.close_polygon()

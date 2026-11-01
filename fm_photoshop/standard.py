@@ -118,6 +118,10 @@ class StandardPane(QWidget):
         layout.addLayout(body, 1)
         self.menubar = MenuBar(self)
         layout.insertWidget(1, self.menubar)
+        self.canvas.context_menu_factory = self.menubar.menu_for                    # clic droit sur l'établi
+        self.layers_panel.list.setContextMenuPolicy(Qt.CustomContextMenu)          # clic droit sur la liste des calques
+        self.layers_panel.list.customContextMenuRequested.connect(
+            lambda pos: self.menubar.menu_for("layer").popup(self.layers_panel.list.mapToGlobal(pos)))
         self.canvas.toolChanged.connect(self._sync_tools)
         self.canvas.message.connect(self.status.setText)
         self.session.listeners.append(self._on_session)

@@ -156,6 +156,35 @@ class EditActionsTest(PsCase):
         self.assertEqual((s.doc.width, s.doc.height), (64, 48))
 
 
+class ContextAndColorRangeTest(PsCase):
+    def test_context_menus_and_color_range(self):
+        from PySide6.QtGui import QContextMenuEvent
+        _item, std = self.editor(64, 48)
+        canvas, s = std.canvas, std.session
+        s.layer().pix.write((10, 10, 20, 20), np.full((10, 10, 4), (255, 0, 0, 255), np.uint8))
+        s.layer().pix.write((40, 30, 50, 40), np.full((10, 10, 4), (250, 5, 5, 255), np.uint8))
+        s.fg = (255, 0, 0)
+        # menu de la barre : plage de couleurs (tolérance 32 : les deux rectangles rouges, contigus ou non)
+        action = next(a for a in std.menubar.menu_for("selection").actions() if a.text().startswith("Plage de couleurs"))
+        action.trigger()
+        settle()
+        self.assertEqual(float(s.selection.coverage((0, 0, 64, 48)).sum()), 200.0)
+        self.assertEqual(s.history.labels()[0], "Plage de couleurs")
+        # clic droit sur l'établi : menu Sélection (une sélection existe), sinon Édition
+        event = QContextMenuEvent(QContextMenuEvent.Mouse, self.at(canvas, 30, 20), canvas.mapToGlobal(self.at(canvas, 30, 20)))
+        QApplication.sendEvent(canvas, event)
+        texts = [a.text() for a in canvas._context_menu.actions()]
+        self.assertTrue(any(t.startswith("Inverser") for t in texts))
+        canvas._context_menu.close()
+        canvas.actions.deselect()
+        QApplication.sendEvent(canvas, event)
+        texts = [a.text() for a in canvas._context_menu.actions()]
+        self.assertTrue(any(t.startswith("Coller") for t in texts))
+        canvas._context_menu.close()
+        self.assertEqual(std.layers_panel.list.contextMenuPolicy(), Qt.CustomContextMenu)
+        self.assertTrue(any(a.text().startswith("Transformer") for a in std.menubar.menu_for("layer").actions()))
+
+
 class DialogsTest(PsCase):
     def test_effect_dialog_preview_apply_cancel_and_stale_results(self):
         _item, std = self.editor(32, 32)

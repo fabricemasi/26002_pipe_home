@@ -6,7 +6,7 @@ Sixième module du Board (après Miro, CAD, Design, Tableur, Illustrator), comme
 ressource d'Adobe. **Aucune compatibilité PSD en écriture** (lecture seule, voir « Formats »). À ne pas confondre avec
 `fm_cad/cad_photoshop.py` (ENVOI d'entités CAD vers l'application Adobe Photoshop installée : autre responsabilité).
 
-**Tests** : `python tests/run.py fm_photoshop` (15 fichiers `tests/test_photoshop_*.py`, 149 tests, ~35 s) ; `python tests/run.py
+**Tests** : `python tests/run.py fm_photoshop` (15 fichiers `tests/test_photoshop_*.py`, 151 tests, ~35 s) ; `python tests/run.py
 fm_board` (coque + tous les modules) pour tout changement des crochets. **Mesures** : `python tools/bench_photoshop.py [petit|4k|grand]`
 (calcul, mémoire, conteneur) et `python tools/probe_photoshop_latency.py [petit|4k]` (latence visible : évènements réels + peinture).
 
@@ -145,7 +145,7 @@ Légende : **Terminé et testé** / **Partiel** / **Non commencé** / **Bloqué*
 | Miniatures de calques (refaites seulement si le plan a changé, 300 ms après le geste) | Terminé et testé | `LayersPanel._thumb` |
 | Sélection de PLUSIEURS calques ; réorganisation par glisser dans la liste | Non commencé | ordre par boutons Monter / Descendre (règle Ctrl + glisser à définir pour la liste) |
 | Pinceau rond dur / doux, taille, dureté, opacité, débit, espacement, lissage, pression, pipette, permutation, curseur à taille réelle, gomme, présélections persistantes | Terminé et testé | pression testée en simulant la valeur (`canvas._pressure`) : évènements de stylet réels non testables ici |
-| Sélections : rectangle, ellipse, lasso, polygonal, baguette (tolérance, contiguë), plage de couleurs, 4 modes, tout / rien / inverser, adoucir, agrandir, contracter, copier / couper / coller, calque via copier / couper, remplir, effacer | Terminé et testé | « Plage de couleurs » : fonction + non reliée à un bouton (baguette non contiguë équivalente) ; agrandir / contracter = octogone |
+| Sélections : rectangle, ellipse, lasso, polygonal, baguette (tolérance, contiguë), plage de couleurs, 4 modes, tout / rien / inverser, adoucir, agrandir, contracter, copier / couper / coller, calque via copier / couper, remplir, effacer | Terminé et testé | « Plage de couleurs » = menu Sélection (couleur de premier plan, tolérance de la baguette) ; agrandir / contracter = octogone |
 | Transformation numérique (décalage, échelle, rotation, symétries, qualité), aperçu, annulation | Terminé et testé | |
 | Transformation libre avec poignées sur l'établi | Partiel | numérique + Ctrl + glisser seulement |
 | Recadrage (sur la sélection), taille de l'image, taille de la zone de travail (ancrage), symétries du document | Terminé et testé | recadrage = suppression des pixels hors cadre |
@@ -157,14 +157,14 @@ Légende : **Terminé et testé** / **Partiel** / **Non commencé** / **Bloqué*
 | Couleur : profil ICC assigner / convertir, alpha préservé, profil dans les exports | Terminé et testé | 8 bits ; 16 bits et flottant : Non commencé |
 | Import PSD | Terminé et testé | lecture seule ; PSD en écriture : Non commencé |
 | Menus, raccourcis, indicateur « modifié » (barre du Board), diagnostic, réglages du module | Terminé et testé | |
-| Menus contextuels (clic droit) de l'établi | Non commencé | tout est dans les menus de l'éditeur |
+| Menus contextuels (clic droit) de l'établi et de la liste des calques | Terminé et testé | mêmes entrées que les menus de l'éditeur (Édition ou Sélection selon l'état, Calque) |
 | Sauvegarde de secours | Partiel | `.bak` pour `.fmps` ; dans le Board, l'ancien conteneur (nom d'empreinte) reste jusqu'au nettoyage après enregistrement réussi ; restauration automatique après plantage : non (le Board enregistre 800 ms après chaque changement) |
 | Écriture du conteneur du Board dans un fil de fond | Partiel | `before_save` encode sur le fil de l'interface (seuls les calques modifiés sont réencodés : 4K × 24 calques ≈ 0,6 s) |
 | Opacité / visibilité d'un calque : fluidité | Partiel | ~35 ms par cran en 4K × 24 calques (voir Mesures) ; cache des calques inférieurs à faire |
 
 ## Tests et référence
 
-- `python tests/run.py fm_photoshop` : 15 fichiers, 149 tests, tous OK (2026-11-01). Chaque fichier commence par `import _isolate`.
+- `python tests/run.py fm_photoshop` : 15 fichiers, 151 tests, tous OK (2026-11-01). Chaque fichier commence par `import _isolate`.
   `tests/_photoshop_case.py` : Board réel (`BoardPane`), VRAI chemin (icône de la barre des modules -> bouton de la barre du module ->
   fenêtre « Nouveau document » -> double-clic -> Standard). Piège de test : `QTest` laisse les modificateurs d'un clic tenus pour
   l'application (`release_modifiers`).
@@ -232,7 +232,7 @@ Prochain travail PRÉCIS, par ordre de valeur :
 3. **Calques de réglage non destructifs** : `Layer.kind = "adjustment"` + `adjust.EFFECTS` appliqué dans `compose` (sur l'accumulateur,
    avec le masque du calque) ; conteneur : paramètres dans `source`.
 4. **Miniatures de calques** (image réduite gardée par `Plane.rev`), **sélection multiple** de calques (déplacer, grouper, aligner),
-   **menu contextuel** de l'établi et de la liste des calques (briques `settings_menu`).
+   (le menu contextuel existe déjà : il réutilise les menus de l'éditeur).
 5. 16 bits (dtype `uint16` dans `Plane`, composition float32 inchangée) puis export TIFF 16 bits ; PSD en écriture (psd-tools sait
    modifier un PSD existant) seulement si une demande l'exige.
 6. Commiter les 3 lignes de la barre des modules avec la session qui possède `fm_board/modulebar.py` (voir « Crochets »).

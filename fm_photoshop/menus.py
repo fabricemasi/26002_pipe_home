@@ -57,6 +57,8 @@ class MenuBar(QWidget):
             add("Calque via copier\tCtrl+J", a.layer_via_copy)
             add("Calque via couper\tCtrl+Maj+J", a.layer_via_cut)
             menu.addSeparator()
+            add("Plage de couleurs (couleur de premier plan)", lambda: a.select_color_range(
+                self.session.options["tolerance"]))
             add("Baguette : tolérance…", self._wand_options)
         elif key == "image":
             add("Taille de l'image…", lambda: self._size(False))

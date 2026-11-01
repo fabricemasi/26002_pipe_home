@@ -96,6 +96,15 @@ class Actions:
         new = S.wand(rect, rgba, int(x), int(y), tolerance, contiguous)
         return self.combine_selection(new, mode, "Baguette magique")
 
+    def select_color_range(self, tolerance=32, mode="replace"):
+        """Sélection par couleur : tous les pixels du calque proches de la couleur de premier plan (contigus ou non)."""
+        layer = self.s.layer()
+        if layer.is_group() or layer.pix is None or layer.pix.rect() is None:
+            return self._say("Choisissez un calque de pixels.")
+        rgba = layer.pix.read(self.doc.rect())
+        return self.combine_selection(S.color_range(self.doc.rect(), rgba, self.s.fg, int(tolerance)), mode,
+                                      "Plage de couleurs")
+
     # -- remplir / effacer --
     def fill(self, color, label="Remplir"):
         layer = self.s.layer()
