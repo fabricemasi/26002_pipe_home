@@ -66,6 +66,25 @@ def layer_premult(layer, rect) -> np.ndarray:
     return out
 
 
+def _apply_adjustment(acc: np.ndarray, layer, rect) -> np.ndarray:
+    """Calque de réglage : l'effet (réglages « rgb » de `adjust`) est appliqué à ce qui est DESSOUS (couleurs droites),
+    dosé par l'opacité du calque et son masque ; l'alpha n'est jamais modifié. Effet inconnu : calque sans effet."""
+    from . import adjust
+    name = (layer.adjustment or {}).get("effect")
+    spec = adjust.EFFECTS.get(name)
+    if spec is None or spec[1] != "rgb":
+        return acc
+    params = adjust.clean_params(name, layer.adjustment.get("params"))
+    straight = to_straight_u8(acc)
+    out = straight.copy()
+    out[..., :3] = spec[3](straight[..., :3], **params)
+    new = premultiplied(out)
+    amount = np.float32(layer.opacity)
+    if layer.mask is not None and layer.mask.enabled:
+        amount = amount * (layer.mask.plane.read(rect).astype(np.float32) * np.float32(1.0 / 255.0))
+    return acc * (1.0 - amount) + new * amount
+
+
 def _direct_group(layer) -> bool:
     return (layer.is_group() and layer.passthrough and layer.opacity >= 1.0 and layer.blend == "normal"
             and (layer.mask is None or not layer.mask.enabled))
@@ -102,6 +121,9 @@ def compose(layers, rect, acc: np.ndarray | None = None) -> np.ndarray:
             i += 1
         if not base.visible:
             continue
+        if base.is_adjustment():
+            acc = _apply_adjustment(acc, base, rect)
+            continue
         if _direct_group(base) and not followers:
             acc = compose(base.children, rect, acc)
             continue
@@ -110,7 +132,7 @@ def compose(layers, rect, acc: np.ndarray | None = None) -> np.ndarray:
             continue
         src, sub = got
         for follower in followers:
-            if not follower.visible:
+            if not follower.visible or follower.is_adjustment():
                 continue
             piece = layer_premult(follower, sub)
             piece *= src[..., 3:4]                                  # limité à l'alpha de la base (0..1, base entière)

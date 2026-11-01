@@ -110,8 +110,8 @@ class Actions:
         layer = self.s.layer()
         if layer.source and self.s.target != "mask":
             return self._say(self.REFUSED)
-        if layer.locked or layer.is_group():
-            return self._say("Calque verrouillé ou groupe : rien à remplir.")
+        if layer.locked or layer.is_group() or (layer.pix is None and self.s.target != "mask"):
+            return self._say("Calque verrouillé, groupe ou réglage : rien à remplir.")
         region = self._region(layer)
         if region is None:
             return None
@@ -378,6 +378,11 @@ class Actions:
             layer.source = old
         do()
         return self.s.do(CallCommand("Convertir en pixels", do, undo))
+
+    def add_adjustment(self, effect: str, params: dict | None = None):
+        """Nouveau calque de réglage au-dessus du calque actif ; rend (calque, étape non poussée)."""
+        index = self.doc.parent_list(self.s.layer())[1] + 1
+        return ops.add_adjustment(self.doc, effect, params, self.doc.parent_of(self.s.layer()), index)
 
     def image_size(self, width, height, quality="bicubic"):
         return self.s.do(T.resize_image(self.doc, width, height, quality))

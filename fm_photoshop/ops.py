@@ -41,6 +41,28 @@ def add_layer(doc, name: str = "Calque", parent: Layer | None = None, index: int
     return layer, cmd
 
 
+def add_adjustment(doc, effect: str, params: dict | None = None, parent: Layer | None = None, index: int | None = None):
+    """Nouveau calque de RÉGLAGE non destructif (voir `compose._apply_adjustment`). Rend (calque, étape)."""
+    from . import adjust
+    if effect not in adjust.EFFECTS or adjust.EFFECTS[effect][1] != "rgb":
+        raise ValueError(f"Réglage non utilisable en calque de réglage : {effect}")
+    layer, cmd = add_layer(doc, adjust.EFFECTS[effect][0], parent=parent, index=index, kind="adjustment")
+    layer.adjustment = {"effect": effect, "params": adjust.clean_params(effect, params)}
+    return layer, cmd
+
+
+def set_adjustment(layer: Layer, params: dict, label="Modifier le réglage"):
+    """Nouveaux paramètres d'un calque de réglage (une étape)."""
+    import copy as _copy
+    from . import adjust
+    old = _copy.deepcopy(layer.adjustment)
+    new = {"effect": old["effect"], "params": adjust.clean_params(old["effect"], params)}
+
+    def apply(value):
+        layer.adjustment = _copy.deepcopy(value)
+    return _call(label, lambda: apply(new), lambda: apply(old))
+
+
 def add_layer_with_pixels(doc, rgba: np.ndarray, x: int, y: int, name: str, index: int | None = None):
     layer, cmd = add_layer(doc, name, index=index)
     layer.pix.set_all(x, y, rgba)
@@ -62,6 +84,7 @@ def _clone(layer: Layer) -> Layer:
         setattr(twin, key, getattr(layer, key))
     twin.extra = copy.deepcopy(layer.extra)
     twin.source = copy.deepcopy(layer.source)
+    twin.adjustment = copy.deepcopy(layer.adjustment)
     if layer.pix is not None:
         if layer.pix.data is not None:
             twin.pix.set_all(layer.pix.x, layer.pix.y, layer.pix.data.copy())
@@ -185,7 +208,7 @@ def merge_down(doc, layer: Layer):
     if at <= 0:
         raise ValueError("Aucun calque en dessous.")
     below = siblings[at - 1]
-    if below.is_group() or layer.is_group():
+    if below.pix is None or layer.pix is None:
         raise ValueError("Fusion possible entre deux calques (pas de groupe) : fusionnez le groupe d'abord.")
     rect = rect_union(_content_rect(below), _content_rect(layer))
     old_pix = (below.pix.x, below.pix.y, None if below.pix.data is None else below.pix.data.copy())

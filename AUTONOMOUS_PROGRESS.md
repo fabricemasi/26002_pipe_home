@@ -10,12 +10,13 @@ numériques, texte/formes, ICC, PSD (lecture), export fond, réglages catalogue,
 - [x] Cache « pivot » des réglages de calque en direct (opacité) : recomposition du calque vers le haut, tuiles en retard
   affichées en version précédente (temporaire) puis exactes. Mesure honnête : les anciens « 35 ms » étaient plafonnés par le budget
   de peinture ; le coût réel d'un cran = tuiles visibles × 5-15 ms ; une tuile par image au minimum (granularité 256²).
-- [ ] Transformation libre à poignées sur l'établi
+- [x] Transformation libre à poignées (Ctrl+T), tests `test_photoshop_freetransform`
 - [ ] Sélection multiple de calques (déplacer, grouper)
-- [ ] Calques de réglage non destructifs
+- [x] Calques de réglage non destructifs, tests `test_photoshop_adjustment_layers`
 - [ ] 16 bits
 
 ## Bugs trouvés / corrigés
+- Fin de test : un test dont le DERNIER état garde une fenêtre de réglage faisait planter le processus à `os._exit` (suppressions en attente) : `PsCase.tearDown` exécute maintenant les `DeferredDelete` et vide le pool de fils. `EffectDialog.reject` arrête sa minuterie.
 - Tampon QImage libéré (copie obligatoire) ; Alt de QTest tenu ; crochets non idempotents (doublons) — corrigés.
 
 ## Tests

@@ -92,6 +92,11 @@ class MenuBar(QWidget):
                 if (key == "adjust") == (kind == "rgb"):
                     add(label + "…" if adjust.EFFECTS[name][2] or name in ("curves", "color_balance") else label,
                         lambda n=name: self.effect(n))
+            if key == "adjust":
+                menu.addSeparator()
+                for name, (label, kind, *_rest) in adjust.EFFECTS.items():
+                    if kind == "rgb":
+                        add("Nouveau calque de réglage : " + label + "…", lambda n=name: self.adjustment_layer(n))
         return menu
 
     def show_menu(self, key: str):
@@ -148,8 +153,22 @@ class MenuBar(QWidget):
     def _export_layer(self):
         self.pane.export(None, self.session.layer())
 
+    def adjustment_layer(self, name: str):
+        """Nouveau calque de réglage (non destructif) au-dessus du calque actif, avec sa fenêtre."""
+        layer, command = self.actions.add_adjustment(name)
+        self.session.notify("structure", None)
+        dialog = dialogs.AdjustmentLayerDialog(self.session, self.actions, layer, command, self.pane)
+        self._dialog = dialog
+        dialog.exec()
+        return dialog
+
     def _edit_source(self):
         layer = self.session.layer()
+        if layer.is_adjustment():
+            dialog = dialogs.AdjustmentLayerDialog(self.session, self.actions, layer, None, self.pane)
+            self._dialog = dialog
+            dialog.exec()
+            return
         kind = (layer.source or {}).get("kind")
         if kind == "text":
             dialog = dialogs.TextDialog(self.session, self.actions, layer, (0, 0), self.pane)

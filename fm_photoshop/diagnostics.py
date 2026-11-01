@@ -13,7 +13,7 @@ def diagnose(doc, session=None) -> list:
     if session is not None and session.error:
         out.append(("erreur", session.error))
     layers = list(doc.walk())
-    rasters = [l for l in layers if not l.is_group()]
+    rasters = [l for l in layers if l.pix is not None]
     out.append(("info", f"{doc.width} × {doc.height} px, {doc.dpi:g} ppp, {len(rasters)} calque(s) de pixels, "
                         f"{len(layers) - len(rasters)} groupe(s), {doc.nbytes() / 1e6:.1f} Mo de pixels."))
     out.append(("info", "Profil : " + (color.describe(doc.icc_profile) if doc.icc_profile else "aucun (sRVB supposé)")

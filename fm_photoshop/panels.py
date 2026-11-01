@@ -321,7 +321,7 @@ class LayersPanel(QWidget):
             self.list.clear()
             row_active = 0
             for row, (layer, depth) in enumerate(self._flat()):
-                label = ("    " * depth) + ("▸ " if layer.is_group() else "") + layer.name + \
+                label = ("    " * depth) + ("▸ " if layer.is_group() else "◐ " if layer.is_adjustment() else "") + layer.name + \
                         ("  [masque]" if layer.mask is not None else "") + ("  ⛓" if layer.clip else "") + \
                         ("  🔒" if layer.locked else "")
                 item = QListWidgetItem(label)
@@ -339,8 +339,8 @@ class LayersPanel(QWidget):
     SIZE = 36
 
     def _version_key(self, layer):
-        if layer.is_group():
-            return ("g", tuple(self._version_key(c) for c in layer.children))
+        if layer.pix is None:
+            return ("g", tuple(self._version_key(c) for c in layer.children), repr(layer.adjustment))
         return (layer.pix.rev, layer.pix.x, layer.pix.y, layer.mask.plane.rev if layer.mask is not None else -1,
                 layer.source is not None)
 
@@ -356,9 +356,9 @@ class LayersPanel(QWidget):
         for y in range(0, size, 6):
             for x in range(0, size, 6):
                 painter.fillRect(x, y, 6, 6, QColor("#ffffff" if (x // 6 + y // 6) % 2 == 0 else "#c8c8c8"))
-        if layer.is_group():
+        if layer.pix is None:
             painter.setPen(QColor("#303030"))
-            painter.drawText(image.rect(), Qt.AlignCenter, "▸▸")
+            painter.drawText(image.rect(), Qt.AlignCenter, "◐" if layer.is_adjustment() else "▸▸")
         elif layer.pix.data is not None:
             import numpy as np
             from PIL import Image

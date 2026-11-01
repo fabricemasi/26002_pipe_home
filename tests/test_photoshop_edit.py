@@ -225,7 +225,7 @@ class DialogsTest(PsCase):
         s.layer().pix.write((4, 4, 20, 20), np.random.default_rng(1).integers(0, 255, (16, 16, 4), dtype=np.uint8))
         for key in ("adjust", "filter"):
             for action in std.menubar.menu_for(key).actions():
-                self.assertTrue(action.text())
+                self.assertTrue(action.isSeparator() or action.text())
         for name in adjust.EFFECTS:
             dialog = dialogs.EffectDialog(s, name, std)
             dialog.settle()

@@ -85,8 +85,8 @@ Crochets dans la COQUE (minimaux ; Miro / CAD / Design / Tableur / Illustrator i
   ni collage ni simple flou, mais PAS une reconstruction de Poisson), flou local, netteté locale, doigt, densité - / +. Clone /
   correcteur / flou / netteté lisent une copie du plan prise UNE fois au début du trait.
 - **Réglages et filtres DESTRUCTIFS, explicitement** (annulables) : toujours calculés depuis l'original (`adjust.run` ne modifie
-  rien), aperçu en fil de fond, résultat périmé rejeté, sélection partielle respectée, une seule étape à la validation. Aucun
-  réglage non destructif (calque de réglage) : non commencé.
+  rien), aperçu en fil de fond, résultat périmé rejeté, sélection partielle respectée, une seule étape à la validation. Les
+  calques de réglage (non destructifs) existent en plus pour les 8 réglages « rgb ».
 - **Texte et formes** : `Layer.source` (contenu, police, corps, couleur, alignement, bloc, interligne ; rectangle / ellipse / ligne,
   remplissage, contour, arrondi) + `pix` = rendu enregistré aussi. Peindre / remplir / filtrer / transformer est REFUSÉ tant que
   le calque n'est pas converti en pixels (menu Calque > Convertir en pixels, annulable) ; le déplacer entraîne la source.
@@ -147,11 +147,11 @@ Légende : **Terminé et testé** / **Partiel** / **Non commencé** / **Bloqué*
 | Pinceau rond dur / doux, taille, dureté, opacité, débit, espacement, lissage, pression, pipette, permutation, curseur à taille réelle, gomme, présélections persistantes | Terminé et testé | pression testée en simulant la valeur (`canvas._pressure`) : évènements de stylet réels non testables ici |
 | Sélections : rectangle, ellipse, lasso, polygonal, baguette (tolérance, contiguë), plage de couleurs, 4 modes, tout / rien / inverser, adoucir, agrandir, contracter, copier / couper / coller, calque via copier / couper, remplir, effacer | Terminé et testé | « Plage de couleurs » = menu Sélection (couleur de premier plan, tolérance de la baguette) ; agrandir / contracter = octogone |
 | Transformation numérique (décalage, échelle, rotation, symétries, qualité), aperçu, annulation | Terminé et testé | |
-| Transformation libre avec poignées sur l'établi | Partiel | numérique + Ctrl + glisser seulement |
+| Transformation libre avec poignées sur l'établi (Ctrl+T : échelle autour du centre, Maj proportions, rotation, Ctrl + glisser, Entrée / Échap) | Terminé et testé | `freetransform.py` ; aperçu bilinéaire regroupé, validation bicubique ; échelle ancrée au CENTRE (pas au coin opposé) |
 | Recadrage (sur la sélection), taille de l'image, taille de la zone de travail (ancrage), symétries du document | Terminé et testé | recadrage = suppression des pixels hors cadre |
 | Tampon (source explicite), correcteur (texture), flou, netteté, doigt, densité | Terminé et testé | correcteur ≠ Poisson (documenté) ; échantillonnage sur le calque actif seulement |
 | Réglages : luminosité / contraste, niveaux, courbes, exposition, teinte / saturation, balance, N&B, négatif | Terminé et testé | destructifs, aperçu + annuler ; courbes et niveaux : canal maître seulement |
-| Réglages NON destructifs (calques de réglage) | Non commencé | |
+| Réglages NON destructifs (calques de réglage : 8 réglages « rgb », opacité, masque) | Terminé et testé | `compose._apply_adjustment`, `ops.add_adjustment`, `dialogs.AdjustmentLayerDialog` ; pas de filtre de voisinage ni d'écrêtage en calque de réglage |
 | Filtres : gaussien, accentuation, bruit | Terminé et testé | |
 | Texte et formes éditables, conversion en pixels | Terminé et testé | un seul style par calque de texte |
 | Couleur : profil ICC assigner / convertir, alpha préservé, profil dans les exports | Terminé et testé | 8 bits ; 16 bits et flottant : Non commencé |
@@ -214,7 +214,7 @@ d'où `movepreview.py` ; (4) formules de fusion avec divisions : 5× plus lentes
 - 8 bits par canal uniquement (pas de 16 bits, pas de flottant, pas de CMJN / Lab de travail) ; espace de composition = espace
   encodé du document.
 - Pas de PSD en écriture ; l'import PSD ne reprend ni styles, ni réglages, ni masques vectoriels, ni profil.
-- Pas de réglages non destructifs, pas de calques de réglage ni d'objets dynamiques.
+- Pas d'objets dynamiques ; calques de réglage limités aux réglages « rgb » (pas de flou, netteté, bruit).
 - Opacité / visibilité d'un calque : 35 ms par cran dans le pire cas mesuré (pas de cache des calques inférieurs).
 - L'écriture du conteneur à l'enregistrement du Board est sur le fil de l'interface (incrémentale par calque).
 - Pression de stylet : lue via `tabletEvent` mais jamais testée avec un vrai stylet.
@@ -224,13 +224,10 @@ d'où `movepreview.py` ; (4) formules de fusion avec divisions : 5× plus lentes
 
 Reprise : lire d'abord cette doc, puis `docs/agents/fm_board.md` (coque) ; les tests du module sont la spécification.
 Prochain travail PRÉCIS, par ordre de valeur :
-1. **Cache des calques inférieurs** pour l'opacité / visibilité / mode (`render.TileCache` : `begin_pivot(layer)` mémorise, par tuile
-   visible, la composition SOUS le calque ; un changement de propriété ne recompose que du calque vers le haut ; `LayersPanel.commit_live`
-   le termine). Objectif : < 16 ms par cran en 4K × 24.
-2. **Transformation libre à poignées** sur l'établi (utiliser `transform.TransformSession` : `render` en bilinéaire pendant le geste,
-   `command("bicubic")` à la validation ; Ctrl + glisser pour déplacer, poignées sans Ctrl).
-3. **Calques de réglage non destructifs** : `Layer.kind = "adjustment"` + `adjust.EFFECTS` appliqué dans `compose` (sur l'accumulateur,
-   avec le masque du calque) ; conteneur : paramètres dans `source`.
+1. FAIT (2e passe) : cache pivot (`TileCache.begin_pivot`) pour l'opacité en direct ; transformation libre ; calques de réglage. Reste pour
+   la fluidité : une tuile 256² coûte 5-27 ms selon les calques qui la recouvrent, donc un cran de curseur converge en plusieurs images
+   (tuiles en retard affichées en version précédente) ; pistes : tuiles plus petites pendant un réglage, composition en fil de fond
+   sur un instantané.
 4. **Miniatures de calques** (image réduite gardée par `Plane.rev`), **sélection multiple** de calques (déplacer, grouper, aligner),
    (le menu contextuel existe déjà : il réutilise les menus de l'éditeur).
 5. 16 bits (dtype `uint16` dans `Plane`, composition float32 inchangée) puis export TIFF 16 bits ; PSD en écriture (psd-tools sait

@@ -628,7 +628,7 @@ class CanvasView(QWidget):
         layer = s.layer()
         if self._xf is not None:
             return self._xf
-        if layer.locked or layer.is_group():
+        if layer.locked or layer.is_group() or layer.pix is None:
             self.message.emit("Choisissez un calque de pixels non verrouillé.")
             return None
         if layer.source:

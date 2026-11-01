@@ -287,6 +287,7 @@ class EffectDialog(QDialog):
             self.session.do(TilesCommand(self.label, self.layer, "pixels", [(rect, before, after)]), notified=True)
 
     def reject(self):
+        self._timer.stop()                      # (sinon un calcul démarrerait APRÈS la fermeture de la fenêtre)
         self._generation += 1
         QThreadPool.globalInstance().waitForDone(20000)
         self._revert()
@@ -714,3 +715,82 @@ class ProfileDialog(QDialog):
             return
         self.session.do(command)
         self.state.setText(f"Converti en « {name} ».")
+
+
+class AdjustmentLayerDialog(EffectDialog):
+    """Paramètres d'un calque de RÉGLAGE (non destructif) : le calque est modifié en direct, l'image dessous ne l'est jamais.
+    Valider = UNE étape (création comprise pour un calque neuf) ; annuler = retour exact."""
+
+    def __init__(self, session, actions, layer, add_command=None, parent=None):
+        import copy
+        self.add_command = add_command
+        self._session_ref = session
+        session_layer_before = session.active_uid
+        session.active_uid = layer.uid                           # (la base lit session.layer() pour son calque)
+        try:
+            super().__init__(session, layer.adjustment["effect"], parent)
+        finally:
+            session.active_uid = session_layer_before
+        self.layer = layer
+        self.old = copy.deepcopy(layer.adjustment)
+        self.setWindowTitle("Calque de réglage : " + self.label)
+        self.preview.hide()
+        params = layer.adjustment.get("params") or {}
+        for key, (field, scale) in self.fields.items():
+            if key in params:
+                field.blockSignals(True)
+                field.setValue(round(float(params[key]) * scale))
+                field.blockSignals(False)
+        if self.name == "curves" and params.get("points"):
+            self.curve.points = [tuple(p) for p in params["points"]]
+        if self.name == "color_balance":
+            for key in ("shadows", "midtones", "highlights"):
+                if key in params:
+                    self._balance[key] = list(params[key])
+            self._range_changed(0)
+            self.keep_luminosity.setChecked(bool(params.get("preserve_luminosity", True)))
+        self._timer.timeout.disconnect()
+        self._timer.timeout.connect(self._apply_live)
+        self._done = False
+
+    def _apply_live(self):
+        self.layer.adjustment = {"effect": self.name, "params": self.params()}
+        self._session_ref.notify("structure", None)
+
+    def settle(self):
+        if self._timer.isActive():
+            self._timer.stop()
+        self._apply_live()
+
+    def accept(self):
+        if self._done:
+            return
+        self._done = True
+        self.settle()
+        final = self.layer.adjustment
+        import copy
+        if self.add_command is not None:
+            super(EffectDialog, self).accept()
+            self._session_ref.do(self.add_command)
+            self._session_ref.select_layer(self.layer)
+            return
+        old, new = copy.deepcopy(self.old), copy.deepcopy(final)
+        super(EffectDialog, self).accept()
+        if old != new:
+            from .history import CallCommand
+
+            def apply(value, layer=self.layer):
+                layer.adjustment = copy.deepcopy(value)
+            self._session_ref.do(CallCommand("Modifier le réglage", lambda: apply(new), lambda: apply(old)))
+
+    def reject(self):
+        if self._done:
+            return
+        self._done = True
+        self._timer.stop()
+        if self.add_command is not None:
+            self.add_command.undo()
+        else:
+            self.layer.adjustment = self.old
+        self._session_ref.notify("structure", None)
+        super(EffectDialog, self).reject()

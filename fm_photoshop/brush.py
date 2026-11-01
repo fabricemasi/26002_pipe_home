@@ -90,7 +90,7 @@ class Stroke:
     def __init__(self, layer, target: str, brush: Brush, doc_rect, selection=None, retouch: dict | None = None):
         if target == "mask" and layer.mask is None:
             raise ValueError("Ce calque n'a pas de masque.")
-        if layer.is_group() and target == "pixels":
+        if (layer.is_group() or layer.pix is None) and target == "pixels":
             raise ValueError("Un groupe n'a pas de pixels : peignez dans un calque.")
         if layer.locked:
             raise ValueError("Le calque est verrouillé.")

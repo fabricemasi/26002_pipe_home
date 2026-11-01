@@ -31,7 +31,7 @@ VERSION = 1
 MAX_PIXELS = 600_000_000
 RES_NAME = re.compile(r"^(layers|masks)/[0-9a-f]{16}\.png$")
 KNOWN_LAYER = {"id", "name", "kind", "visible", "opacity", "blend", "locked", "clip", "passthrough", "x", "y", "w",
-               "h", "png", "mask", "children", "source"}
+               "h", "png", "mask", "children", "source", "adjustment"}
 KNOWN_DOC = {"width", "height", "name", "dpi", "icc_name", "depth", "meta", "uid"}
 KNOWN_TOP = {"format", "version", "document", "layers", "icc", "extra", "saved_by"}
 
@@ -63,6 +63,8 @@ def _layer_entry(layer: Layer, files: dict) -> dict:
     entry.update(layer.extra)
     if layer.source:
         entry["source"] = layer.source
+    if layer.adjustment:
+        entry["adjustment"] = layer.adjustment
     if layer.pix is not None and layer.pix.data is not None:
         h, w = layer.pix.data.shape[:2]
         entry.update(x=layer.pix.x, y=layer.pix.y, w=w, h=h, png=f"layers/{layer.uid}.png")
@@ -170,7 +172,8 @@ def _load_layer(entry: dict, archive, depth=0) -> Layer:
     if not isinstance(entry, dict) or depth > 64:
         raise ContainerError("Manifeste invalide : calque.")
     uid = str(entry.get("id") or "")
-    layer = Layer(str(entry.get("name") or "Calque"), "group" if entry.get("kind") == "group" else "raster",
+    kind = entry.get("kind")
+    layer = Layer(str(entry.get("name") or "Calque"), kind if kind in ("group", "adjustment") else "raster",
                   uid if re.match(r"^[0-9a-f]{16}$", uid) else None)
     layer.visible = bool(entry.get("visible", True))
     layer.opacity = min(1.0, max(0.0, float(entry.get("opacity", 1.0))))
@@ -184,6 +187,8 @@ def _load_layer(entry: dict, archive, depth=0) -> Layer:
     layer.extra.update({k: v for k, v in entry.items() if k not in KNOWN_LAYER})
     if isinstance(entry.get("source"), dict):
         layer.source = entry["source"]
+    if isinstance(entry.get("adjustment"), dict):
+        layer.adjustment = entry["adjustment"]
     if entry.get("png") and layer.pix is not None:
         w, h = _int(entry.get("w"), "w", 1, MAX_SIDE), _int(entry.get("h"), "h", 1, MAX_SIDE)
         layer.pix.set_all(_int(entry.get("x", 0), "x"), _int(entry.get("y", 0), "y"),

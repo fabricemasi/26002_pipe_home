@@ -65,7 +65,11 @@ class PsCase(unittest.TestCase):
                 pass
         _PANES.clear()
         self.host.deleteLater()
-        settle(0.02)
+        settle(0.05)
+        from PySide6.QtCore import QEvent, QThreadPool
+        QApplication.sendPostedEvents(None, QEvent.DeferredDelete)       # destructions en attente exécutées AVANT la fin du processus
+        QThreadPool.globalInstance().waitForDone(5000)
+        settle(0.05)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def create_via_ui(self, w=64, h=48, name="Essai", background="Blanc"):
