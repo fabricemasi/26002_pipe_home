@@ -77,7 +77,7 @@ class CanvasView(QWidget):
     def _on_session(self, kind, rect):
         if kind in ("edit", "paint") and rect is not None:
             self.update_rect(rect)
-        elif kind in ("structure", "reload", "view"):
+        elif kind in ("structure", "reload", "view", "props"):
             self.update()
         elif kind == "selection":
             self._outline = None
@@ -154,12 +154,14 @@ class CanvasView(QWidget):
             rect = rect_intersect(self._rect_of(event.rect(), 2), doc.rect())
             keys = self.cache.keys_for(rect) if rect else []
             for key in keys:                                  # zones modifiées (peu de pixels) : toujours à jour
-                if key in self.cache.tiles:
+                if key in self.cache.tiles and key not in self.cache.pending_props:
                     self.cache.tile(key)
-            missing = [k for k in keys if k not in self.cache.tiles]
-            if missing:                                       # jamais calculées : en tranches de temps
-                self.cache.pump(missing, 25.0)
-                if not all(k in self.cache.tiles for k in missing):
+            # jamais calculées, ou réglage de calque en direct : en tranches de temps (la version précédente de la
+            # tuile reste affichée un instant : approximation TEMPORAIRE remplacée par le résultat exact)
+            late = [k for k in keys if k not in self.cache.tiles or k in self.cache.pending_props]
+            if late:
+                self.cache.pump(late, 12.0)
+                if not all(self.cache.is_ready(k) for k in late):
                     self._pump.start(1)
             preview = self._move["preview"] if self._move else None
             for key in keys:

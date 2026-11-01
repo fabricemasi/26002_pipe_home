@@ -36,6 +36,8 @@ class TileCache:
         self.tiles: dict = {}                       # (tx, ty) -> (tableau BGRA prémultiplié, QImage)
         self.pending: dict = {}                     # (tx, ty) -> sous-rectangle du document à recomposer
         self.version = 0                            # +1 à chaque invalidation (les aperçus gardés se comparent dessus)
+        self.pivot = None                           # réglage au curseur d'UN calque : composition SOUS lui gardée par tuile
+        self.pending_props: set = set()             # tuiles à recomposer du calque vers le haut (pivot actif)
         self.computed = 0                           # compteur : tuiles / zones recomposées (tests, mesures)
         session.listeners.append(self._on_change)
 
@@ -46,13 +48,38 @@ class TileCache:
     def _on_change(self, kind, rect):
         if kind in ("edit", "paint") and rect is not None:
             self.invalidate(rect)
-        elif kind in ("structure", "reload"):
+        elif kind == "props" and self.pivot is not None:
+            self.pending_props |= set(self.tiles)
+            self.version += 1
+        elif kind in ("structure", "reload", "props"):
             self.clear()
 
     # -- invalidation --
+    def begin_pivot(self, layer) -> bool:
+        """Prépare les réglages en direct de `layer` (calque du niveau supérieur, non écrêté). Les tuiles ne
+        recomposent alors que du calque vers le haut ; la composition dessous est calculée une fois par tuile."""
+        doc = self.session.doc
+        if layer.clip or not any(l is layer for l in doc.layers):
+            return False
+        if self.pivot is not None and self.pivot["layer"] is layer:
+            return True
+        self.end_pivot()
+        self.pivot = {"layer": layer, "below": {}}
+        return True
+
+    def end_pivot(self):
+        """Fin du réglage : les tuiles pas encore recomposées sont jetées (recalcul complet à la demande)."""
+        for key in self.pending_props:
+            self.tiles.pop(key, None)
+        self.pending_props.clear()
+        self.pivot = None
+
     def clear(self):
         self.tiles.clear()
         self.pending.clear()
+        self.pending_props.clear()
+        if self.pivot is not None:
+            self.pivot["below"].clear()
         self.version += 1
 
     def invalidate(self, rect):
@@ -86,6 +113,20 @@ class TileCache:
             entry = self.tiles[key] = (array, image)
             self.pending.pop(key, None)
             self.computed += 1
+        elif key in self.pending_props and self.pivot is not None:
+            layers = doc.layers
+            index = next(i for i, l in enumerate(layers) if l is self.pivot["layer"])
+            below = self.pivot["below"].get(key)
+            if below is None:
+                below = self.pivot["below"][key] = C.compose(layers[:index], rect)
+            array = entry[0]
+            array[...] = C.to_premult_u8(C.compose(layers[index:], rect, below.copy()))
+            self.pending_props.discard(key)
+            self.pending.pop(key, None)
+            self.computed += 1
+            image = QImage(array.data, array.shape[1], array.shape[0], array.shape[1] * 4,
+                           QImage.Format_ARGB32_Premultiplied)
+            entry = self.tiles[key] = (array, image)
         elif key in self.pending:
             sub = self.pending.pop(key)
             part = np.ascontiguousarray(C.to_premult_u8(C.compose(doc.layers, sub)))
@@ -105,7 +146,7 @@ class TileCache:
                 for tx in range(rect[0] // TILE, (rect[2] - 1) // TILE + 1)]
 
     def is_ready(self, key) -> bool:
-        return key in self.tiles and key not in self.pending
+        return key in self.tiles and key not in self.pending and key not in self.pending_props
 
     def pump(self, keys, budget_ms: float = 10.0) -> bool:
         """Calcule des tuiles manquantes / périmées pendant `budget_ms` ; vrai quand tout est prêt."""

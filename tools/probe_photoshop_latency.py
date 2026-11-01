@@ -97,7 +97,7 @@ def run(name):
 
     def opacity(i):
         target.opacity = 0.3 + 0.7 * ((i % 10) / 10.0)
-        session.notify("structure", None)
+        session.notify("props" if canvas.cache.begin_pivot(target) else "structure", None)
         canvas.repaint()
     measure("opacité d'un calque (curseur, par cran)", 20, opacity)
 

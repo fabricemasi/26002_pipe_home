@@ -503,12 +503,15 @@ class LayersPanel(QWidget):
             self.commit_live()
             self._live = (layer, layer.opacity)
         layer.opacity = value / 100.0
-        s.notify("structure", None)
+        from . import render
+        s.notify("props" if render.cache_for(s).begin_pivot(layer) else "structure", None)
         self._live_timer.start()
 
     def commit_live(self):
         live, self._live = self._live, None
         self._live_timer.stop()
+        from . import render
+        render.cache_for(self.session).end_pivot()
         if live is None:
             return
         layer, before = live

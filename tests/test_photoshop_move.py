@@ -150,3 +150,40 @@ class CanvasMoveTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PivotTest(unittest.TestCase):
+    def test_live_opacity_recomposes_from_the_layer_up_and_stays_exact(self):
+        doc, top, middle = make_doc("multiply", 0.8)
+        session = Session(doc)
+        cache = render.cache_for(session)
+        cache.tile((0, 0))
+        self.assertTrue(cache.begin_pivot(middle))
+        for value in (0.2, 0.55, 0.9):
+            middle.opacity = value
+            session.notify("props", None)
+            self.assertFalse(cache.is_ready((0, 0)))
+            cache.tile((0, 0))
+            exact = C.to_premult_u8(C.compose(doc.layers, (0, 0, 256, 256)))
+            self.assertTrue(np.array_equal(cache.tiles[(0, 0)][0], exact), value)
+        self.assertIn((0, 0), cache.pivot["below"])
+        middle.opacity = 0.1
+        session.notify("props", None)
+        cache.end_pivot()                                           # tuile non demandée : jetée, recalcul complet ensuite
+        self.assertNotIn((0, 0), cache.tiles)
+        cache.tile((0, 0))
+        self.assertTrue(np.array_equal(cache.tiles[(0, 0)][0], C.to_premult_u8(C.compose(doc.layers, (0, 0, 256, 256)))))
+
+    def test_pivot_refused_for_clipped_or_nested_layers(self):
+        doc, top, middle = make_doc()
+        session = Session(doc)
+        cache = render.cache_for(session)
+        top.clip = True
+        self.assertFalse(cache.begin_pivot(top))
+        group = M.Layer("g", "group")
+        child = M.Layer("c")
+        group.children = [child]
+        doc.layers.append(group)
+        self.assertFalse(cache.begin_pivot(child))
+        session.notify("props", None)                               # sans pivot : tout est invalidé, rien ne casse
+        self.assertEqual(len(cache.tiles), 0)
