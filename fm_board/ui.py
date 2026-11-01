@@ -50,7 +50,9 @@ MODULES = [("miro", "Miro", "Module Miro : post-it, textes, formes, dessin, comm
            ("tableur", "Tableur", "Module Tableur : classeurs, formules, graphiques, import / export Excel (à la manière "
                                   "d'Excel)"),
            ("illustrator", "Illustrator", "Module Illustrator : illustration vectorielle, plans de travail, plume, "
-                                          "formes, export SVG (à la manière d'Adobe Illustrator)")]
+                                          "formes, export SVG (à la manière d'Adobe Illustrator)"),
+           ("photoshop", "Photoshop", "Module Photoshop : retouche et composition d'images matricielles (calques, masques, "
+                                      "brosses, export PNG / TIFF)")]
 DRAW_BAR = [("pen", "Stylo"), ("highlighter", "Surligneur"), ("smart", "Dessin intelligent (formes reconnues)"),
             ("eraser", "Gomme (traits entiers)"), ("precision_eraser", "Gomme de précision (coupe les traits)"),
             ("lasso", "Lasso (sélection à main levée)")]
@@ -98,6 +100,21 @@ def paint_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
     if kind == "illustrator" or kind.startswith("ill_"):
         from fm_illustrator.glyphs import paint_ill_glyph      # module Illustrator : ses icones
         paint_ill_glyph(painter, kind, rect, color)
+        return
+    if kind == "photoshop":                                     # module Photoshop : une image (cadre, montagnes, soleil)
+        painter.setPen(QPen(color, 1.4))
+        painter.setBrush(Qt.NoBrush)
+        s = min(rect.width(), rect.height()) * 0.28
+        c = rect.center()
+        box = QRectF(c.x() - s, c.y() - s * 0.8, 2 * s, 1.6 * s)
+        painter.drawRect(box)
+        painter.drawPolyline([QPointF(box.left(), box.bottom() - 1), QPointF(box.left() + box.width() * 0.38,
+                                                                              box.top() + box.height() * 0.45),
+                              QPointF(box.left() + box.width() * 0.62, box.bottom() - box.height() * 0.3),
+                              QPointF(box.left() + box.width() * 0.78, box.top() + box.height() * 0.62),
+                              QPointF(box.right(), box.bottom() - 1)])
+        painter.drawEllipse(QPointF(box.right() - box.width() * 0.22, box.top() + box.height() * 0.24), s * 0.13,
+                            s * 0.13)
         return
     if kind == "tableur":                                       # module Tableur : une grille
         pen = QPen(color, 1.4)
@@ -1163,6 +1180,7 @@ class BoardPane(QWidget):
         self.design = None                      # module Design (fm_design/controller.py), cree au 1er usage
         self.tableur = None                     # module Tableur (fm_tableur/board_ui.py), cree au 1er usage
         self.illustrator = None                 # module Illustrator (fm_illustrator/controller.py), cree au 1er usage
+        self.photoshop = None                   # module Photoshop (fm_photoshop/board_ui.py), cree au 1er usage
         self.module = None                      # module actif : "miro", "cad", "design" ou None (aucune barre)
         self._cad_export_units = "mm"           # unites du dernier export DXF / DWG (session)
         self.view.cad = None
@@ -1221,6 +1239,9 @@ class BoardPane(QWidget):
         from fm_illustrator import look as ill_look              # Reglages > Illustrator (sans Qt, leger)
         if ill_look.apply_settings(self._settings) and self.illustrator is not None:
             self.illustrator.apply_settings()
+        from fm_photoshop import look as ps_look                 # Reglages > Photoshop (sans Qt, leger)
+        if ps_look.apply_settings(self._settings) and self.photoshop is not None:
+            self.photoshop.refresh_look()
 
     def _on_gpu_failed(self, message: str):
         """Rendu GPU impossible : le reglage est remis a faux (pas de nouvel essai a chaque ouverture) et signale."""
@@ -1418,6 +1439,8 @@ class BoardPane(QWidget):
             self.tableur.deactivate()
         if name != "illustrator" and self.illustrator_active():
             self.illustrator.deactivate()
+        if name != "photoshop" and self.photoshop is not None and self.photoshop.active:
+            self.photoshop.deactivate()
         self.module = name
         if name == "cad":
             self.toggle_cad(True)
@@ -1444,6 +1467,12 @@ class BoardPane(QWidget):
                 self.illustrator = IllustratorController(self)
                 self.view.illustrator = self.illustrator
             self.illustrator.activate()
+        if name == "photoshop":
+            self._contextbar.hide()
+            if self.photoshop is None:
+                from fm_photoshop.board_ui import PhotoshopController
+                self.photoshop = PhotoshopController(self)
+            self.photoshop.activate()
         if name is None and self.view.tool != "hand":
             self.view.set_tool("select")
         self._sync_tools(self.view.tool)
@@ -1487,6 +1516,8 @@ class BoardPane(QWidget):
             self.tableur.deactivate()
         if on and self.illustrator_active():
             self.illustrator.deactivate()
+        if on and self.photoshop is not None and self.photoshop.active:
+            self.photoshop.deactivate()
         if on:
             self.module = "cad"
         elif self.module == "cad":
@@ -2323,6 +2354,8 @@ class BoardPane(QWidget):
             self.tableur.ui.place()
         if self.illustrator_active():
             self.illustrator.ui.place()
+        if self.photoshop is not None and self.photoshop.active:
+            self.photoshop.ui.place()
 
     def _sync_badge(self):
         """Rendu OpenGL : l'encart est peint par la couche GPU (le widget se cache) ; classique : le widget."""

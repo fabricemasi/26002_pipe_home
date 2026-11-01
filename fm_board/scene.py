@@ -29,6 +29,7 @@ from fm_cad import cad_items, cad_model  # noqa: F401 - cad_items : enregistre l
 from fm_design import items as design_items  # noqa: F401 - enregistre les types du module Design
 from fm_tableur import board_item as tableur_items  # noqa: F401 - enregistre le type « sheet » du module Tableur
 from fm_illustrator import items as ill_items  # noqa: F401 - enregistre les types du module Illustrator
+from fm_photoshop import board_item as ps_item  # noqa: F401 - enregistre le type du module Photoshop
 from . import model, serialization
 from fm_cad.cad_items import FADE_OPACITY, unit_of
 from .commands import StateCommand
@@ -41,7 +42,7 @@ INDEX_MIN = 2000.0                      # demi-etendue minimale de l'index de la
 PAGE = "__page__"
 # Modules du board (selecteur du board, `BoardPane.set_module`) : leurs elements se grisent ou se masquent a part
 # (demande de l'utilisateur). Grise = visible en transparence, ni selectionnable ni modifiable.
-MODULES = ("miro", "cad", "design", "tableur", "illustrator")
+MODULES = ("miro", "cad", "design", "tableur", "illustrator", "photoshop")
 CLIPBOARD_MIME = "application/x-pipeline-board"
 SNAP_DEFAULTS = {"enabled": True, "objects": True, "grid": False, "guides": True, "resize": True, "distance": 6}
 
@@ -609,6 +610,10 @@ class BoardScene(QGraphicsScene):
         if view:
             board["view"] = view
         items = sorted(self._items.values(), key=lambda i: (i.kind != "frame", i.kind == "comment", i.zValue()))
+        for item in items:                                      # modules a ressources (Photoshop : conteneur du document)
+            hook = getattr(item, "before_save", None)
+            if hook is not None:
+                hook()
         board["items"] = [item.to_dict() for item in items] + copy.deepcopy(self._foreign)
         job = self._load_job
         if job is not None:                                     # jamais un board tronque (enregistrement pendant
@@ -624,7 +629,7 @@ class BoardScene(QGraphicsScene):
 
     def assets_in_use(self) -> set[str]:
         """Images referencees par l'etat actuel ET par tout etat encore accessible par l'annulation."""
-        names = {i.data.get("asset") for i in self._items.values() if i.kind == "image"}
+        names = {i.data.get("asset") for i in self._items.values() if i.kind == "image" or i.data.get("asset")}
         names |= model.referenced_assets({"foreign": self._foreign})
         for command in self.commands:
             for state in command.states():

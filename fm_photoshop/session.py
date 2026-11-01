@@ -53,12 +53,16 @@ class Session:
             callback(kind, rect)
 
     # -- édition --
-    def do(self, command):
-        """Pousse une étape DÉJÀ appliquée (None = rien n'a changé)."""
+    def do(self, command, notified: bool = False):
+        """Pousse une étape DÉJÀ appliquée (None = rien n'a changé). `notified` : les présentations ont déjà reçu
+        les zones modifiées au fil du geste (trait, déplacement) : elles ne reçoivent que « committed »."""
         if command is None:
             return None
         self.history.push(command)
-        self.notify("structure" if command.structural else "edit", command.rect)
+        if notified:
+            self.notify("committed", None)
+        else:
+            self.notify("structure" if command.structural else "edit", command.rect)
         return command
 
     def undo(self):

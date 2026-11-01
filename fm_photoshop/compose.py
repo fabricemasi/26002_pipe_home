@@ -19,8 +19,11 @@ from .planes import rect_intersect, rect_size
 
 def premultiplied(rgba: np.ndarray) -> np.ndarray:
     """uint8 droit (h, l, 4) -> float32 prémultiplié 0..1."""
-    out = rgba.astype(np.float32) * (1.0 / 255.0)
-    out[..., :3] *= out[..., 3:4]
+    out = np.empty(rgba.shape, np.float32)
+    alpha = rgba[..., 3:4].astype(np.float32)
+    alpha *= 1.0 / 255.0
+    np.multiply(rgba[..., :3], alpha * np.float32(1.0 / 255.0), out=out[..., :3], dtype=np.float32)
+    out[..., 3:4] = alpha
     return out
 
 
@@ -68,6 +71,22 @@ def _direct_group(layer) -> bool:
             and (layer.mask is None or not layer.mask.enabled))
 
 
+def _layer_part(layer, rect):
+    """(prémultiplié float32, sous-rectangle de `rect` couvert) ou None si le calque n'y touche pas : on ne
+    traite JAMAIS les pixels hors du calque (une tuile ne paie que les calques qui la recouvrent)."""
+    if layer.is_group():
+        part, sub = compose(layer.children, rect), rect
+    else:
+        mine = layer.pix.rect()
+        sub = rect_intersect(rect, mine) if mine is not None else None
+        if sub is None:
+            return None
+        part = premultiplied(layer.pix.read(sub))
+    if layer.mask is not None and layer.mask.enabled:
+        part *= layer.mask.plane.read(sub).astype(np.float32) * np.float32(1.0 / 255.0)
+    return part, sub
+
+
 def compose(layers, rect, acc: np.ndarray | None = None) -> np.ndarray:
     """Compose `layers` (du bas vers le haut) dans `rect`, sur `acc` (prémultiplié) ou sur du transparent."""
     w, h = rect_size(rect)
@@ -86,19 +105,30 @@ def compose(layers, rect, acc: np.ndarray | None = None) -> np.ndarray:
         if _direct_group(base) and not followers:
             acc = compose(base.children, rect, acc)
             continue
-        src = layer_premult(base, rect)
+        got = _layer_part(base, rect)
+        if got is None:
+            continue
+        src, sub = got
         for follower in followers:
             if not follower.visible:
                 continue
-            piece = layer_premult(follower, rect)
+            piece = layer_premult(follower, sub)
             piece *= src[..., 3:4]                                  # limité à l'alpha de la base (0..1, base entière)
             piece *= follower.opacity
             merged = blend_over(src, piece, follower.blend)
             keep = np.where(merged[..., 3:4] > 1e-6, src[..., 3:4] / np.maximum(merged[..., 3:4], 1e-6), 0.0)
             src = merged * keep                                      # l'alpha de la base reste celui de la base
         if base.opacity < 1.0:
-            src = src * base.opacity
-        acc = blend_over(acc, src, base.blend)
+            src *= np.float32(base.opacity)
+        window = acc[sub[1] - rect[1]:sub[3] - rect[1], sub[0] - rect[0]:sub[2] - rect[0]]
+        if base.blend == "normal":                                   # chemin rapide, en place
+            if float(src[..., 3].min()) >= 0.9999:
+                window[...] = src                                    # opaque : le dessous disparaît
+            else:
+                window *= 1.0 - src[..., 3:4]
+                window += src
+        else:
+            window[...] = blend_over(window, src, base.blend)
     return acc
 
 

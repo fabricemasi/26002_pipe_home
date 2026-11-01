@@ -47,8 +47,7 @@ class Plane:
 
     def shift(self, dx: int, dy: int):
         self.x += dx
-        self.y += dy
-        self.rev += 1
+        self.y += dy                        # (le PNG gardé reste valable : seule la position du manifeste change)
 
     # -- lecture --
     def read(self, rect) -> np.ndarray:

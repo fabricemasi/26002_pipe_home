@@ -138,15 +138,29 @@ def group_layers(doc, layers: list, name: str = "Groupe"):
     return group, _call("Grouper les calques", do, undo)
 
 
+def shift_layer(layer: Layer, sx: int, sy: int):
+    """Déplace les pixels (et le masque) du calque de (sx, sy), sans étape d'annulation (geste en cours)."""
+    for node in layer.walk():
+        if node.pix is not None and node.pix.data is not None:
+            node.pix.shift(sx, sy)
+        if node.mask is not None and node.mask.plane.data is not None:
+            node.mask.plane.shift(sx, sy)
+
+
 def translate_layer(layer: Layer, dx: int, dy: int):
-    """Déplace les pixels (et le masque) du calque de (dx, dy) : rien n'est rééchantillonné."""
-    def move(sx, sy):
-        for node in layer.walk():
-            if node.pix is not None and node.pix.data is not None:
-                node.pix.shift(sx, sy)
-            if node.mask is not None and node.mask.plane.data is not None:
-                node.mask.plane.shift(sx, sy)
-    return _call("Déplacer le calque", lambda: move(dx, dy), lambda: move(-dx, -dy))
+    """Déplace le calque de (dx, dy) : rien n'est rééchantillonné."""
+    return _call("Déplacer le calque", lambda: shift_layer(layer, dx, dy), lambda: shift_layer(layer, -dx, -dy))
+
+
+def translation_done(layer: Layer, dx: int, dy: int, rect):
+    """Étape d'annulation d'un déplacement DÉJÀ fait (geste interactif) ; `rect` = zone touchée."""
+    return CallCommand("Déplacer le calque", lambda: shift_layer(layer, dx, dy),
+                       lambda: shift_layer(layer, -dx, -dy), rect=rect)
+
+
+def layer_rect(layer: Layer):
+    """Zone couverte par les pixels du calque (ou de ses descendants)."""
+    return _content_rect(layer)
 
 
 # -- fusion --
