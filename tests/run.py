@@ -34,6 +34,7 @@ MODULES = {
     "fm_design": ["test_design*.py"],
     "fm_tableur": ["test_tableur*.py"],
     "fm_illustrator": ["test_illustrator*.py"],
+    "fm_photoshop": ["test_photoshop*.py"],
     "apercus": ["test_abr_preview.py", "test_ai_preview.py", "test_alembic_conversion.py",
                 "test_automatic_tasks.py", "test_cube_lut.py", "test_dwg_thumbnail.py", "test_hip_preview.py",
                 "test_manual_file_preview.py", "test_previews_modules.py", "test_render_log.py", "test_turntable*.py", "test_lightroom_*.py"],
