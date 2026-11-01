@@ -111,7 +111,7 @@ class BoardPathTest(PsCase):
         again[0].setSelected(True)
         for name in ("sortie.png", "sortie.tif"):
             target = self.tmp / name
-            pane2.photoshop.export(str(target))
+            pane2.photoshop.export(str(target), wait=True)
             buf = oiio.ImageBuf(str(target))
             self.assertFalse(buf.has_error, buf.geterror())
             pixels = np.array(buf.get_pixels(oiio.UINT8), np.uint8).reshape(48, 64, -1)

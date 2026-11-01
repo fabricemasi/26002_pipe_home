@@ -180,19 +180,31 @@ class StandardPane(QWidget):
             self.status.setText(" ".join(notes))
         return layer
 
-    def export(self, path: str | None = None, layer=None):
+    def export(self, path: str | None = None, layer=None, wait: bool = False):
+        """Exporte la composition (ou un calque) EN TÂCHE DE FOND, sur un instantané : on peut continuer à peindre."""
         if path is None:
             path, _f = QFileDialog.getSaveFileName(self, "Exporter", f"{self.session.doc.name}.png",
                                                    io_images.SAVE_FILTER)
             if not path:
                 return None
+        self.layers_panel.commit_live()
+        from . import exporter
+        job = exporter.start(self.session.doc, path, layer, self)
+        self.status.setText(f"Export de {Path(path).name} en cours…")
+        job.finished.connect(lambda p, notes, error, name=Path(path).name: self._export_done(name, notes, error))
+        if wait:
+            job.wait()
+        return job
+
+    def _export_done(self, name, notes, error):
         try:
-            notes = io_images.export_document(self.session.doc, path, layer=layer)
-        except (io_images.ImageError, OSError) as exc:
-            QMessageBox.warning(self, "Export impossible", f"{Path(path).name} :\n{exc}")
-            return None
-        self.status.setText(" ".join(notes) or f"Exporté : {Path(path).name}")
-        return notes
+            if error is not None:
+                QMessageBox.warning(self, "Export impossible", f"{name} :\n{error}")
+                self.status.setText(f"Export de {name} : échec.")
+            else:
+                self.status.setText(" ".join(notes) or f"Exporté : {name}")
+        except RuntimeError:
+            pass
 
     def eventFilter(self, obj, event):
         if obj is self.board and event.type() == QEvent.Resize:

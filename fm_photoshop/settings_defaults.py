@@ -10,8 +10,8 @@ PS_DEFAULTS = {
     "board_ps_frame_color": "#000000",
     "board_ps_selection_color": "#ffffff",
     # Comportement
-    "board_ps_zoom_step": 1.15,
-    "board_ps_max_zoom": 32.0,
+    "board_ps_zoom_pct": 15,
+    "board_ps_max_zoom_pct": 3200,
     "board_ps_cursor_outline": True,
     "board_ps_history_mb": 384,
     # Présélections de brosses de l'utilisateur (état temps réel, partagé par tous les boards) : liste de brosses

@@ -212,7 +212,8 @@ class PhotoshopController(QObject):
         if item is not None:
             item.open_standard()
 
-    def export(self, path: str | None = None):
+    def export(self, path: str | None = None, wait: bool = False):
+        """Exporte la composition du document choisi en tâche de fond (instantané), écriture atomique."""
         item = self._need_doc("Exporter")
         if item is None:
             return None
@@ -221,8 +222,14 @@ class PhotoshopController(QObject):
                                                    io_images.SAVE_FILTER)
             if not path:
                 return None
-        try:
-            return io_images.export_document(item.session.doc, path)
-        except (io_images.ImageError, OSError) as exc:
-            QMessageBox.warning(self.pane, "Export impossible", f"{Path(path).name} :\n{exc}")
-            return None
+        from . import exporter
+        job = exporter.start(item.session.doc, path, None, self)
+        name = Path(path).name
+
+        def done(_p, notes, error):
+            if error is not None:
+                QMessageBox.warning(self.pane, "Export impossible", f"{name} :\n{error}")
+        job.finished.connect(done)
+        if wait:
+            job.wait()
+        return job

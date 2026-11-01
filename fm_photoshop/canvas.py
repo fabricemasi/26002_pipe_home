@@ -55,6 +55,14 @@ class CanvasView(QWidget):
         self.actions = Actions(session)
         self._gesture = None                # sélection en cours : {"tool", "mode", "points": [...]}
         self._outline = None                # contour des « fourmis » : QPainterPath (doc), refait si la sélection change
+        self._zooming = False                       # zoom continu : dessin rapide, puis lissé 150 ms après le dernier cran
+        self._zoom_done = QTimer(self)
+        self._zoom_done.setSingleShot(True)
+        self._zoom_done.setInterval(150)
+        self._zoom_done.timeout.connect(self._zoom_settled)
+        self._prefetch = QTimer(self)               # tuiles voisines de la vue, calculées pendant les temps morts
+        self._prefetch.setSingleShot(True)
+        self._prefetch.timeout.connect(self._prefetch_tiles)
         self._ants = QTimer(self)
         self._ants.setInterval(160)
         self._ants.timeout.connect(self._tick_ants)
@@ -142,7 +150,7 @@ class CanvasView(QWidget):
             painter.save()
             painter.translate(origin)
             painter.scale(z, z)
-            painter.setRenderHint(QPainter.SmoothPixmapTransform, z < 1.0)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform, z < 1.0 and not self._zooming)
             rect = rect_intersect(self._rect_of(event.rect(), 2), doc.rect())
             keys = self.cache.keys_for(rect) if rect else []
             for key in keys:                                  # zones modifiées (peu de pixels) : toujours à jour
@@ -153,11 +161,19 @@ class CanvasView(QWidget):
                 self.cache.pump(missing, 25.0)
                 if not all(k in self.cache.tiles for k in missing):
                     self._pump.start(1)
+            preview = self._move["preview"] if self._move else None
             for key in keys:
-                image = self.cache.tiles[key][1] if key in self.cache.tiles else None
+                if preview is not None and key in preview.touched:      # déplacement en cours : aperçu (movepreview.py)
+                    image = preview.base_image(key)
+                else:
+                    image = self.cache.tiles[key][1] if key in self.cache.tiles else None
                 if image is not None:
                     painter.drawImage(key[0] * render.TILE, key[1] * render.TILE, image)
+            if preview is not None:
+                painter.setClipRect(QRectF(0, 0, doc.width, doc.height))
+                preview.paint_layer(painter)
             painter.restore()
+            self._prefetch.start(40)
             painter.setPen(QPen(QColor(look.LOOK["frame_color"]), 1))
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(area.adjusted(-0.5, -0.5, 0.5, 0.5))
@@ -165,6 +181,17 @@ class CanvasView(QWidget):
         self._paint_clone_source(painter)
         self._paint_cursor(painter)
         painter.end()
+
+    def _prefetch_tiles(self):
+        """Une couronne de tuiles autour de la vue, par tranches de 8 ms : déplacer la vue n'attend plus leur calcul."""
+        if not self.isVisible() or self._stroke is not None or self._move is not None:
+            return
+        v = self.visible_doc_rect()
+        ring = rect_intersect((v[0] - render.TILE, v[1] - render.TILE, v[2] + render.TILE, v[3] + render.TILE),
+                              self.session.doc.rect())
+        keys = [k for k in self.cache.keys_for(ring) if not self.cache.is_ready(k)] if ring else []
+        if keys and not self.cache.pump(keys, 8.0):
+            self._prefetch.start(5)
 
     def _rect_of(self, widget_rect, margin=0):
         x0, y0 = self.to_doc(QPointF(widget_rect.left(), widget_rect.top()))
@@ -326,8 +353,14 @@ class CanvasView(QWidget):
     def wheelEvent(self, event):
         steps = event.angleDelta().y() / 120.0
         if steps:
+            self._zooming = True                    # approximation TEMPORAIRE (rapide) remplacée par le lissage exact
+            self._zoom_done.start()
             self.set_zoom(self.zoom() * (look.LOOK["zoom_step"] ** steps), event.position())
         event.accept()
+
+    def _zoom_settled(self):
+        self._zooming = False
+        self.update()
 
     def tabletEvent(self, event):
         self._pressure = max(0.0, min(1.0, event.pressure())) if event.pointerType() != event.pointerType().Unknown \
@@ -517,30 +550,36 @@ class CanvasView(QWidget):
         rect = ops.layer_rect(layer)
         if rect is None:
             return
-        self._move = {"layer": layer, "start": (x, y), "applied": (0, 0), "rect": rect}
-        self._move_pending = None
+        from .movepreview import MovePreview
+        # Les pixels du modèle ne bougent PAS pendant le geste (aperçu : voir movepreview.py) ; décalage à la fin.
+        preview = MovePreview(s.doc, layer)
+        preview.warm(self.visible_doc_rect())
+        self._move = {"layer": layer, "start": (x, y), "applied": (0, 0), "rect": rect, "preview": preview}
 
     def extend_move(self, x, y):
         m = self._move
         if m is None:
             return
         dx, dy = round(x - m["start"][0]), round(y - m["start"][1])
-        ax, ay = m["applied"]
-        if (dx, dy) == (ax, ay):
+        if (dx, dy) == m["applied"]:
             return
-        before = ops.layer_rect(m["layer"])
-        ops.shift_layer(m["layer"], dx - ax, dy - ay)
         m["applied"] = (dx, dy)
-        after = ops.layer_rect(m["layer"])
-        m["rect"] = rect_union(m["rect"], rect_union(before, after))
-        self.session.notify("paint", rect_union(before, after))
+        dirty = m["preview"].set_offset(dx, dy)
+        if dirty is not None:
+            m["rect"] = rect_union(m["rect"], dirty)
+            self.update_rect(dirty)
 
     def end_move(self):
         m, self._move = self._move, None
         if m is None or m["applied"] == (0, 0):
+            self.update()
             return None
-        command = ops.translation_done(m["layer"], m["applied"][0], m["applied"][1], m["rect"])
+        dx, dy = m["applied"]
+        ops.shift_layer(m["layer"], dx, dy)                         # le modèle est décalé UNE fois, à la fin
+        command = ops.translation_done(m["layer"], dx, dy, m["rect"])
+        self.session.notify("edit", m["rect"])                      # le cache recompose le résultat exact
         self.session.do(command, notified=True)
+        self.update()
         return command
 
     # -- texte et formes --

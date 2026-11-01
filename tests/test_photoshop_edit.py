@@ -241,8 +241,9 @@ class DialogsTest(PsCase):
         s = std.session
         s.layer().pix.write((0, 0, 16, 16), np.full((16, 16, 4), (1, 2, 3, 255), np.uint8))
         target = self.tmp / "calque.png"
-        notes = std.export(str(target), s.layer())
-        self.assertEqual(notes, [])
+        job = std.export(str(target), s.layer(), wait=True)
+        self.assertTrue(job.done and job.error is None)
+        self.assertEqual(job.notes, [])
         self.assertTrue(target.exists())
 
 

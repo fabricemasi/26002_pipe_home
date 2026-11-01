@@ -111,7 +111,7 @@ class EndToEndTest(PsCase):
         self.assertGreater(int((final[..., 3] == 0).sum()), 100)                               # il y a de la vraie transparence
         for name in ("parcours.png", "parcours.tif"):
             target = self.tmp / name
-            pane2.photoshop.export(str(target))
+            pane2.photoshop.export(str(target), wait=True)
             buf = oiio.ImageBuf(str(target))
             self.assertFalse(buf.has_error, buf.geterror())
             read = np.array(buf.get_pixels(oiio.UINT8), np.uint8).reshape(64, 96, -1)

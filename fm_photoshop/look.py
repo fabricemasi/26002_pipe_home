@@ -45,8 +45,8 @@ def values(settings: dict | None) -> dict:
         "bench_color": _color(get("bench_color"), d["bench_color"]),
         "frame_color": _color(get("frame_color"), d["frame_color"]),
         "selection_color": _color(get("selection_color"), d["selection_color"]),
-        "zoom_step": _float(get("zoom_step"), d["zoom_step"], 1.02, 2.0),
-        "max_zoom": _float(get("max_zoom"), d["max_zoom"], 1.0, 64.0),
+        "zoom_step": 1.0 + _int(get("zoom_pct"), d["zoom_pct"], 2, 100) / 100.0,
+        "max_zoom": _int(get("max_zoom_pct"), d["max_zoom_pct"], 100, 6400) / 100.0,
         "cursor_outline": bool(get("cursor_outline")),
         "history_mb": _int(get("history_mb"), d["history_mb"], 16, 4096),
     }

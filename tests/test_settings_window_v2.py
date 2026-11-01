@@ -212,7 +212,7 @@ class WiringTest(WindowTestCase):
         self.assertEqual([label for label, _t in v2.SCOPES], ["General"])
         self.assertEqual({m: [label for label, _t in s] for m, s in v2.MODULE_SCOPES.items()},
                          {"video": [v2.VIDEO_TAB], "markdown": [v2.MARKDOWN_TAB], "board": [v2.MRO_TAB, v2.CAD_TAB, v2.DESIGN_TAB,
-                                                                                    v2.TABLEUR_TAB, v2.ILL_TAB],
+                                                                                    v2.TABLEUR_TAB, v2.ILL_TAB, v2.PS_TAB],
                           "viewer": [v2.VIEWER_TAB], "font": [v2.TYPO_TAB],          # font : fm_font
                           "theme": [v2.THEME_TAB]})                                    # theme : editeur fm_theme
         self.assertEqual(v2.MARKDOWN_TAB, "Markdown")
@@ -636,7 +636,7 @@ class CadTabAndIconTablesTest(WindowTestCase):
         d'origine (clé déclarée dans DEFAULT_SETTINGS, même défaut)."""
         import copy
         self.assertEqual([label for label, _t in v2.MODULE_SCOPES["board"]][2:], [v2.DESIGN_TAB, v2.TABLEUR_TAB,
-                                                                              v2.ILL_TAB])
+                                                                              v2.ILL_TAB, v2.PS_TAB])
         self.assertNotIn("MRO : Tableur", v2.CATALOG)
         settings = copy.deepcopy(settings_store.DEFAULT_SETTINGS)
         for tree in (v2.DESIGN_TREE, v2.TABLEUR_TREE):

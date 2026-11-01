@@ -91,6 +91,7 @@ from fm_cad.settings import CAD_TAB, CAD_TREE
 from fm_design.settings import DESIGN_TAB, DESIGN_TREE
 from fm_tableur.settings import TABLEUR_TAB, TABLEUR_TREE
 from fm_illustrator.settings import ILL_TAB, ILL_TREE
+from fm_photoshop.settings import PS_TAB, PS_TREE
 from fm_font.settings import TYPO_TAB, TYPO_TREE
 from fm_visionneuse.settings import VIEWER_TAB, VIEWER_TREE
 from app_style import SEMANTIC_COLOR_SLOTS
@@ -825,7 +826,7 @@ def tab_tree(label: str, settings: dict | None = None) -> tuple:
 
 # Onglets de reglages generaux a part (pas une colonne) : leur arbre.
 STANDALONE_TABS = {MARKDOWN_TAB: MARKDOWN_TREE, VIDEO_TAB: VIDEO_TREE, MRO_TAB: MRO_TREE, CAD_TAB: CAD_TREE,
-                   DESIGN_TAB: DESIGN_TREE, TABLEUR_TAB: TABLEUR_TREE, ILL_TAB: ILL_TREE, VIEWER_TAB: VIEWER_TREE,
+                   DESIGN_TAB: DESIGN_TREE, TABLEUR_TAB: TABLEUR_TREE, ILL_TAB: ILL_TREE, PS_TAB: PS_TREE, VIEWER_TAB: VIEWER_TREE,
                    TYPO_TAB: TYPO_TREE}
 
 # Groupes repris de la v1 : leurs tableaux ont une cle de dimensions a eux (voir build_group).
@@ -845,7 +846,7 @@ SCOPES: list[tuple[str, str | None]] = [("General", None)]
 MODULE_SCOPES: dict[str, list[tuple[str, str | None]]] = {
     "video": [(VIDEO_TAB, None)],
     "markdown": [(MARKDOWN_TAB, None)],
-    "board": [(MRO_TAB, None), (CAD_TAB, None), (DESIGN_TAB, None), (TABLEUR_TAB, None), (ILL_TAB, None)],
+    "board": [(MRO_TAB, None), (CAD_TAB, None), (DESIGN_TAB, None), (TABLEUR_TAB, None), (ILL_TAB, None), (PS_TAB, None)],
     "viewer": [(VIEWER_TAB, None)],
     "font": [(TYPO_TAB, None)],             # module typographique (fm_font)
     "theme": [(THEME_TAB, None)],          # editeur fm_theme (pas dans la rangee de la fenetre generale)
@@ -854,7 +855,7 @@ MODULE_TITLES = {"video": "Vidéo", "markdown": "Markdown", "board": "Board", "v
                  "font": "Typographie"}
 # Libelle AFFICHE d'un onglet quand il differe de son identifiant (cles retenues, tests).
 TAB_LABELS = {MARKDOWN_TAB: "Module Markdown", MRO_TAB: "MRO", CAD_TAB: "CAD", DESIGN_TAB: "Design",
-              TABLEUR_TAB: "Tableur", ILL_TAB: "Illustrator"}
+              TABLEUR_TAB: "Tableur", ILL_TAB: "Illustrator", PS_TAB: "Photoshop"}
 
 
 # ==========================================================================
@@ -2909,7 +2910,7 @@ def _markdown_reset_menu_extra(widget: QWidget, menu) -> None:
     while node is not None and not isinstance(node, _LazyNode):
         node = node.parentWidget()
     if node is None or node._values.name not in (MARKDOWN_TAB, VIDEO_TAB, MRO_TAB, CAD_TAB, DESIGN_TAB,
-                                                         TABLEUR_TAB, ILL_TAB, TYPO_TAB):
+                                                         TABLEUR_TAB, ILL_TAB, PS_TAB, TYPO_TAB):
         return
     title = node.node.title
     menu.addAction(f"Restaurer les valeurs d'origine de « {title} »").triggered.connect(
