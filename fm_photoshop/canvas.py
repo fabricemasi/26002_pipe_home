@@ -53,6 +53,11 @@ class CanvasView(QWidget):
         self._pump.setSingleShot(True)
         self._pump.timeout.connect(self.update)
         self.actions = Actions(session)
+        self._xf = None                     # transformation libre en cours (freetransform.FreeTransform)
+        self._xf_dragging = False
+        self._xf_timer = QTimer(self)       # aperçu regroupé : un seul rendu par tour, quel que soit le nombre d'évènements
+        self._xf_timer.setSingleShot(True)
+        self._xf_timer.timeout.connect(self._xf_render)
         self._gesture = None                # sélection en cours : {"tool", "mode", "points": [...]}
         self._outline = None                # contour des « fourmis » : QPainterPath (doc), refait si la sélection change
         self._zooming = False                       # zoom continu : dessin rapide, puis lissé 150 ms après le dernier cran
@@ -82,6 +87,8 @@ class CanvasView(QWidget):
         elif kind == "selection":
             self._outline = None
             self.update()
+        if self._xf is not None and kind in ("structure", "view") and self.session.layer() is not self._xf.job.layer:
+            self.commit_free_transform()                     # un autre calque est choisi : la transformation est validée
 
     # -- repère --
     def zoom(self) -> float:
@@ -180,6 +187,7 @@ class CanvasView(QWidget):
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(area.adjusted(-0.5, -0.5, 0.5, 0.5))
         self._paint_selection(painter)
+        self._paint_free_transform(painter)
         self._paint_clone_source(painter)
         self._paint_cursor(painter)
         painter.end()
@@ -284,6 +292,9 @@ class CanvasView(QWidget):
         tool = self.session.tool
         x, y = self.to_doc(pos)
         mods = event.modifiers()
+        if self._xf is not None:
+            self._xf_press(x, y)
+            return
         if tool in ("clone", "heal") and mods & Qt.AltModifier:
             self.set_clone_source(x, y)                          # source choisie EXPLICITEMENT (Alt + clic)
         elif tool == "eyedropper" or (tool in ("brush", "eraser") and mods & Qt.AltModifier):
@@ -312,6 +323,12 @@ class CanvasView(QWidget):
             self.session.center = (cx - (pos.x() - start.x()) / z, cy - (pos.y() - start.y()) / z)
             self.update()
             return
+        if self._xf_dragging:
+            x, y = self.to_doc(pos)
+            self._xf.drag(x, y, bool(event.modifiers() & Qt.ShiftModifier))
+            self._xf_timer.start(0)
+            self.update()
+            return
         if self._stroke is not None:
             x, y = self.to_doc(pos)
             self.extend_stroke(x, y, self._pressure)
@@ -330,6 +347,11 @@ class CanvasView(QWidget):
             self._refresh_cursor()
             return
         if event.button() != Qt.LeftButton:
+            return
+        if self._xf_dragging:
+            self._xf_dragging = False
+            self._xf.end()
+            self._xf_render()
             return
         if self._stroke is not None:
             x, y = self.to_doc(event.position())
@@ -391,6 +413,12 @@ class CanvasView(QWidget):
             self.undo()
         elif ctrl and (key == Qt.Key_Y or (key == Qt.Key_Z and mods & Qt.ShiftModifier)):
             self.redo()
+        elif self._xf is not None and key in (Qt.Key_Return, Qt.Key_Enter):
+            self.commit_free_transform()
+        elif self._xf is not None and key == Qt.Key_Escape:
+            self.cancel_free_transform()
+        elif ctrl and key == Qt.Key_T:
+            self.start_free_transform()
         elif ctrl and key == Qt.Key_A:
             self.actions.select_all()
         elif ctrl and key == Qt.Key_D:
@@ -484,13 +512,13 @@ class CanvasView(QWidget):
 
     # -- actions (appelées par les évènements, les barres et les tests) --
     def undo(self):
-        if self._stroke is not None:
+        if self._stroke is not None or self._xf is not None:
             return
         command = self.session.undo()
         self.message.emit(f"Annulé : {command.label}" if command else "Rien à annuler")
 
     def redo(self):
-        if self._stroke is not None:
+        if self._stroke is not None or self._xf is not None:
             return
         command = self.session.redo()
         self.message.emit(f"Rétabli : {command.label}" if command else "Rien à rétablir")
@@ -592,6 +620,94 @@ class CanvasView(QWidget):
         self.session.do(command, notified=True)
         self.update()
         return command
+
+    # -- transformation libre (Ctrl+T) : poignées sans Ctrl, déplacer le corps avec Ctrl --
+    def start_free_transform(self):
+        from .freetransform import FreeTransform
+        s = self.session
+        layer = s.layer()
+        if self._xf is not None:
+            return self._xf
+        if layer.locked or layer.is_group():
+            self.message.emit("Choisissez un calque de pixels non verrouillé.")
+            return None
+        if layer.source:
+            self.message.emit(self.actions.REFUSED)
+            return None
+        try:
+            self._xf = FreeTransform(layer)
+        except ValueError as exc:
+            self.message.emit(str(exc))
+            return None
+        self.message.emit("Transformation libre : poignées = échelle (Maj : proportions), cercle = rotation, "
+                          "Ctrl + glisser = déplacer ; Entrée valide, Échap annule.")
+        self.update()
+        return self._xf
+
+    def _xf_press(self, x, y):
+        name = self._xf.hit(x, y, self.zoom())
+        if name == "body" and not QApplication.keyboardModifiers() & Qt.ControlModifier:
+            self.message.emit("Déplacer : Ctrl + glisser")
+            return
+        if name:
+            self._xf.begin(name, x, y)
+            self._xf_dragging = True
+
+    def _xf_render(self):
+        if self._xf is None:
+            return
+        dirty = self._xf.preview()
+        if dirty is not None:
+            self.session.notify("paint", dirty)
+
+    def commit_free_transform(self):
+        xf, self._xf, self._xf_dragging = self._xf, None, False
+        if xf is None:
+            return None
+        self._xf_timer.stop()
+        if xf.is_identity():
+            self.session.notify("paint", xf.cancel())
+            self.update()
+            return None
+        command = xf.command("bicubic")
+        self.session.do(command)
+        self.update()
+        return command
+
+    def cancel_free_transform(self):
+        xf, self._xf, self._xf_dragging = self._xf, None, False
+        if xf is not None:
+            self._xf_timer.stop()
+            rect = xf.cancel()
+            self.session.notify("paint", rect)
+            self.session.notify("structure", None)
+        self.update()
+
+    def _paint_free_transform(self, painter):
+        xf = self._xf
+        if xf is None:
+            return
+        from PySide6.QtGui import QPolygonF
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        corners = [self.to_widget(*p) for p in xf.corners()]
+        painter.setBrush(Qt.NoBrush)
+        for pen in (QPen(QColor(0, 0, 0, 200), 3), QPen(QColor(255, 255, 255), 1)):
+            painter.setPen(pen)
+            painter.drawPolygon(QPolygonF(corners))
+        points = xf.handle_points(self.zoom())
+        top, rot = self.to_widget(*points["n"]), self.to_widget(*points["rot"])
+        painter.setPen(QPen(QColor(255, 255, 255), 1))
+        painter.drawLine(top, rot)
+        painter.setBrush(QColor(255, 255, 255))
+        painter.setPen(QPen(QColor(0, 0, 0), 1))
+        for name, p in points.items():
+            w = self.to_widget(*p)
+            if name == "rot":
+                painter.drawEllipse(w, 5, 5)
+            else:
+                painter.drawRect(QRectF(w.x() - 4, w.y() - 4, 8, 8))
+        painter.restore()
 
     # -- texte et formes --
     def text_at(self, x, y):

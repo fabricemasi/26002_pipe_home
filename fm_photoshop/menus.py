@@ -73,7 +73,8 @@ class MenuBar(QWidget):
             menu.addSeparator()
             add("Aplatir l'image", self.pane.layers_panel.flatten)
         elif key == "layer":
-            add("Transformer…", self._transform)
+            add("Transformation libre\tCtrl+T", self.canvas.start_free_transform)
+            add("Transformer (valeurs)…", self._transform)
             add("Modifier le texte / la forme…", self._edit_source)
             add("Convertir en pixels", a.rasterize)
             add("Symétrie horizontale du calque", lambda: a.layer_flip(True))
