@@ -63,6 +63,9 @@ class MenuBar(QWidget):
             add("Taille de la zone de travail…", lambda: self._size(True))
             add("Recadrer sur la sélection", a.crop_to_selection)
             menu.addSeparator()
+            add("Profil colorimétrique…", self._profile)
+            add("Informations et diagnostic…", self._diagnostic)
+            menu.addSeparator()
             add("Symétrie horizontale du document", lambda: a.flip_document(True))
             add("Symétrie verticale du document", lambda: a.flip_document(False))
             menu.addSeparator()
@@ -154,3 +157,14 @@ class MenuBar(QWidget):
             return
         self._dialog = dialog
         dialog.exec()
+
+    def _profile(self):
+        dialog = dialogs.ProfileDialog(self.session, self.pane)
+        self._dialog = dialog
+        dialog.exec()
+
+    def _diagnostic(self):
+        from PySide6.QtWidgets import QMessageBox
+        from . import diagnostics
+        QMessageBox.information(self.pane, "Informations et diagnostic",
+                                diagnostics.report(self.session.doc, self.session))

@@ -660,3 +660,57 @@ class ShapeDialog(_SourceDialog):
                    stroke=self.stroke_color if self.stroke_on.isChecked() else None,
                    stroke_width=self.width_box.value(), radius=self.radius.value())
         return out
+
+
+class ProfileDialog(QDialog):
+    """Profil colorimétrique du document : ASSIGNER (aucun pixel ne change) ou CONVERTIR (pixels recalculés)."""
+
+    def __init__(self, session, parent=None):
+        super().__init__(parent)
+        from . import color
+        self.session, self.color = session, color
+        self.setWindowTitle("Profil colorimétrique")
+        box = QVBoxLayout(self)
+        doc = session.doc
+        box.addWidget(QLabel("Profil actuel : " + (color.describe(doc.icc_profile) if doc.icc_profile else
+                                                   "aucun (sRVB supposé)")))
+        self.profiles = color.system_profiles()
+        self.choice = QComboBox()
+        for name, _data in self.profiles:
+            self.choice.addItem(name)
+        box.addWidget(self.choice)
+        self.intent = QComboBox()
+        for key, (label, _v) in color.INTENTS.items():
+            self.intent.addItem(label, key)
+        self.intent.setCurrentIndex(1)
+        form = QFormLayout()
+        form.addRow("Intention de rendu (conversion)", self.intent)
+        box.addLayout(form)
+        buttons = QDialogButtonBox()
+        self.assign_button = buttons.addButton("Assigner (sans toucher aux pixels)", QDialogButtonBox.ActionRole)
+        self.convert_button = buttons.addButton("Convertir (recalcule les pixels)", QDialogButtonBox.ActionRole)
+        buttons.addButton(QDialogButtonBox.Close)
+        self.assign_button.clicked.connect(self.assign)
+        self.convert_button.clicked.connect(self.convert)
+        buttons.rejected.connect(self.reject)
+        box.addWidget(buttons)
+        self.state = QLabel("")
+        box.addWidget(self.state)
+
+    def _selected(self):
+        return self.profiles[self.choice.currentIndex()]
+
+    def assign(self):
+        name, data = self._selected()
+        self.session.do(self.color.assign(self.session.doc, data, name))
+        self.state.setText(f"Profil « {name} » assigné.")
+
+    def convert(self):
+        name, data = self._selected()
+        try:
+            command = self.color.convert(self.session.doc, data, name, self.intent.currentData())
+        except ValueError as exc:
+            self.state.setText(str(exc))
+            return
+        self.session.do(command)
+        self.state.setText(f"Converti en « {name} ».")

@@ -161,7 +161,13 @@ class StandardPane(QWidget):
                 return None
         from . import ops
         try:
-            rgba, _dpi, _icc, notes = io_images.import_image(path)
+            if Path(path).suffix.lower() == ".psd":                      # PSD comme calque : sa composition aplatie
+                from . import compose as C, io_psd
+                psd_doc, notes = io_psd.read_psd(Path(path))
+                rgba = C.flatten_u8(psd_doc)
+                notes = notes + [f"{Path(path).name} : composition aplatie importée comme UN calque."]
+            else:
+                rgba, _dpi, _icc, notes = io_images.import_image(path)
         except io_images.ImageError as exc:
             QMessageBox.warning(self, "Import impossible", str(exc))
             return None

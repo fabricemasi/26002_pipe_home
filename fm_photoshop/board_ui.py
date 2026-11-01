@@ -145,6 +145,8 @@ class PhotoshopController(QObject):
             path, _f = QFileDialog.getOpenFileName(self.pane, "Importer une image", "", io_images.OPEN_FILTER)
             if not path:
                 return None
+        if Path(path).suffix.lower() == ".psd":
+            return self.import_psd(path)
         try:
             rgba, dpi, icc, notes = io_images.import_image(path)
         except io_images.ImageError as exc:
@@ -165,6 +167,26 @@ class PhotoshopController(QObject):
         session.notify("committed", None)
         if notes:
             QMessageBox.information(self.pane, "Import", "\n".join(notes))
+        return item
+
+    def import_psd(self, path):
+        """Fichier PSD (lecture seule, psd-tools) : un NOUVEAU document avec ses calques, groupes, masques, modes."""
+        from . import io_psd
+        try:
+            doc, notes = io_psd.read_psd(Path(path))
+        except io_images.ImageError as exc:
+            QMessageBox.warning(self.pane, "Import PSD impossible", str(exc))
+            return None
+        item = self.new_document(doc.width, doc.height, doc.name, doc.dpi, None)
+        if item is None:
+            return None
+        session = item.session
+        session.doc = doc
+        session.active_uid = doc.layers[-1].uid
+        session.notify("reload", None)
+        session.notify("committed", None)
+        if notes:
+            QMessageBox.information(self.pane, "Import PSD", "\n".join(notes))
         return item
 
     def selected_doc(self):

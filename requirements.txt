@@ -47,3 +47,6 @@ ttfautohint-py
 afdko
 # Contrôle qualité FontBakery (page Diagnostic du module fm_font, Apache-2.0), facultatif.
 fontbakery
+# Module Photoshop (paquet fm_photoshop/) : import de fichiers PSD en LECTURE SEULE (psd-tools, MIT) ; Pillow (calculs
+# d'images, profils ICC par LittleCMS) et NumPy sont déjà requis. Sans psd-tools, l'import PSD le dit (aucune autre fonction touchée).
+psd-tools

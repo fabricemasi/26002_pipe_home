@@ -19,9 +19,9 @@ from PIL import Image, ImageOps
 from .compose import flatten_u8
 from .container import write_atomic
 
-READ_SUFFIXES = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".webp", ".bmp")
+READ_SUFFIXES = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".webp", ".bmp", ".psd")
 WRITE_FORMATS = {".png": "PNG", ".tif": "TIFF", ".tiff": "TIFF", ".jpg": "JPEG", ".jpeg": "JPEG", ".webp": "WEBP"}
-OPEN_FILTER = "Images (*.png *.jpg *.jpeg *.tif *.tiff *.webp *.bmp)"
+OPEN_FILTER = "Images (*.png *.jpg *.jpeg *.tif *.tiff *.webp *.bmp);;Photoshop PSD (*.psd)"
 SAVE_FILTER = "PNG (*.png);;TIFF (*.tif *.tiff);;JPEG (*.jpg *.jpeg);;WebP (*.webp)"
 
 
