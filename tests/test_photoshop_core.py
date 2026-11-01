@@ -164,6 +164,25 @@ class ComposeTest(unittest.TestCase):
         self.assertTrue(np.array_equal(full[5:12, 3:9], part))
 
 
+class BlendFormulaTest(unittest.TestCase):
+    def test_division_free_formulas_match_the_straight_color_reference(self):
+        """Les formules en prémultiplié (rapides) donnent les mêmes valeurs que la définition W3C en couleurs droites."""
+        from fm_photoshop import blend
+        rng = np.random.default_rng(7)
+
+        def random_premult():
+            alpha = rng.random((40, 40, 1), dtype=np.float32)
+            alpha[:4] = 0.0                                                     # zones transparentes
+            alpha[4:8] = 1.0                                                    # zones opaques
+            rgb = rng.random((40, 40, 3), dtype=np.float32) * alpha
+            return np.concatenate([rgb, alpha], axis=2)
+        dest, src = random_premult(), random_premult()
+        for mode in blend.FUNCTIONS:
+            fast = blend.blend_over(dest, src, mode)
+            ref = blend.blend_over_reference(dest, src, mode)
+            self.assertTrue(np.allclose(fast, ref, atol=2e-5), mode)
+
+
 class BrushTest(unittest.TestCase):
     def setUp(self):
         self.doc = M.new_document(64, 64, background=None)

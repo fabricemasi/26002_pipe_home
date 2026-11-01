@@ -33,8 +33,10 @@ def rss_mb() -> float:
                     ("PeakPagefileUsage", ctypes.c_size_t)]
     counters = Counters()
     counters.cb = ctypes.sizeof(Counters)
-    ctypes.windll.psapi.GetProcessMemoryInfo(ctypes.windll.kernel32.GetCurrentProcess(), ctypes.byref(counters),
-                                             counters.cb)
+    kernel = ctypes.windll.kernel32
+    kernel.GetCurrentProcess.restype = ctypes.c_void_p
+    ctypes.windll.psapi.GetProcessMemoryInfo.argtypes = [ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD]
+    ctypes.windll.psapi.GetProcessMemoryInfo(kernel.GetCurrentProcess(), ctypes.byref(counters), counters.cb)
     return counters.WorkingSetSize / 1e6
 
 
@@ -70,7 +72,7 @@ def run(name):
     doc = build(width, height, count, share)
     session = Session(doc)
     print(f"pixels des calques : {doc.nbytes() / 1e6:.0f} Mo ; processus +{rss_mb() - before:.0f} Mo")
-    tile = (1024, 1024, 1280, 1280)
+    tile = (512, 512, 768, 768)
     print("composition d'une tuile 256 × 256 : médiane %.1f ms, max %.1f ms" % ms(lambda: C.compose(doc.layers, tile)))
     if name != "grand":
         print("composition COMPLÈTE : médiane %.0f ms, max %.0f ms" % ms(lambda: C.compose(doc.layers, doc.rect()), 2))
