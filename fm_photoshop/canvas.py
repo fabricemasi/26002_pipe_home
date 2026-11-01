@@ -419,6 +419,8 @@ class CanvasView(QWidget):
             self.cancel_free_transform()
         elif ctrl and key == Qt.Key_T:
             self.start_free_transform()
+        elif ctrl and key == Qt.Key_G:
+            self.actions.group_selected()
         elif ctrl and key == Qt.Key_A:
             self.actions.select_all()
         elif ctrl and key == Qt.Key_D:
@@ -582,18 +584,22 @@ class CanvasView(QWidget):
         if not ctrl:
             self.message.emit("Déplacer un calque : Ctrl + glisser")
             return
-        layer = s.layer()
-        if layer.locked:
-            self.message.emit("Le calque est verrouillé.")
+        layers = s.selected_layers()
+        layer = layers[0]
+        if any(l.locked for l in layers):
+            self.message.emit("Un calque sélectionné est verrouillé.")
             return
-        rect = ops.layer_rect(layer)
+        rect = None
+        for l in layers:
+            rect = rect_union(rect, ops.layer_rect(l))
         if rect is None:
             return
         from .movepreview import MovePreview
         # Les pixels du modèle ne bougent PAS pendant le geste (aperçu : voir movepreview.py) ; décalage à la fin.
-        preview = MovePreview(s.doc, layer)
+        preview = MovePreview(s.doc, layers)
         preview.warm(self.visible_doc_rect())
-        self._move = {"layer": layer, "start": (x, y), "applied": (0, 0), "rect": rect, "preview": preview}
+        self._move = {"layer": layer, "layers": layers, "start": (x, y), "applied": (0, 0), "rect": rect,
+                      "preview": preview}
 
     def extend_move(self, x, y):
         m = self._move
@@ -614,8 +620,12 @@ class CanvasView(QWidget):
             self.update()
             return None
         dx, dy = m["applied"]
-        ops.shift_layer(m["layer"], dx, dy)                         # le modèle est décalé UNE fois, à la fin
-        command = ops.translation_done(m["layer"], dx, dy, m["rect"])
+        commands = []
+        for layer in m["layers"]:                                   # le modèle est décalé UNE fois, à la fin
+            ops.shift_layer(layer, dx, dy)
+            commands.append(ops.translation_done(layer, dx, dy, m["rect"]))
+        from .history import Compound
+        command = commands[0] if len(commands) == 1 else Compound("Déplacer les calques", commands)
         self.session.notify("edit", m["rect"])                      # le cache recompose le résultat exact
         self.session.do(command, notified=True)
         self.update()

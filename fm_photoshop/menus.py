@@ -81,7 +81,7 @@ class MenuBar(QWidget):
             add("Symétrie verticale du calque", lambda: a.layer_flip(False))
             menu.addSeparator()
             add("Nouveau calque", self.pane.layers_panel.add)
-            add("Nouveau groupe", self.pane.layers_panel.add_group)
+            add("Nouveau groupe / grouper la sélection\tCtrl+G", self.pane.layers_panel.add_group)
             add("Dupliquer le calque", self.pane.layers_panel.duplicate)
             add("Supprimer le calque", self.pane.layers_panel.remove)
             add("Fusionner avec le calque inférieur", self.pane.layers_panel.merge)

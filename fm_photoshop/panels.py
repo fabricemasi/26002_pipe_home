@@ -238,7 +238,9 @@ class LayersPanel(QWidget):
         box.addWidget(_title("Calques"))
         self.list = QListWidget(self)
         self.list.setIconSize(QSize(36, 36))
-        self.list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.list.setSelectionMode(QAbstractItemView.ExtendedSelection)      # Ctrl / Maj + clic : plusieurs calques
+        self.list.itemSelectionChanged.connect(self._selection_changed)
+        self.actions = canvas.actions
         self.list.setMinimumHeight(150)
         self.list.currentRowChanged.connect(self._row_changed)
         self.list.itemChanged.connect(self._item_changed)
@@ -333,6 +335,10 @@ class LayersPanel(QWidget):
                 if layer is active:
                     row_active = row
             self.list.setCurrentRow(row_active)
+            if len(s.multi) > 1:
+                for row in range(self.list.count()):
+                    if self.list.item(row).data(Qt.UserRole) in s.multi:
+                        self.list.item(row).setSelected(True)
         self._sync_props(active)
 
     # -- miniatures --
@@ -410,8 +416,19 @@ class LayersPanel(QWidget):
     def _row_changed(self, row):
         flat = self._flat()
         if 0 <= row < len(flat):
-            self.session.select_layer(flat[row][0])
-            self._sync_props(flat[row][0])
+            chosen = [i.data(Qt.UserRole) for i in self.list.selectedItems()]
+            layer = flat[row][0]
+            if len(chosen) > 1 and layer.uid in chosen:
+                self.session.active_uid = layer.uid                 # sélection multiple : le courant est actif
+            else:
+                self.session.select_layer(layer)
+            self._sync_props(layer)
+
+    def _selection_changed(self):
+        chosen = [i.data(Qt.UserRole) for i in self.list.selectedItems()]
+        if len(chosen) > 1:
+            order = [l.uid for l, _d in reversed(self._flat())]
+            self.session.multi = sorted(chosen, key=order.index)
 
     def _item_changed(self, item):
         layer = self.session.doc.find(item.data(Qt.UserRole))
@@ -443,18 +460,27 @@ class LayersPanel(QWidget):
 
     def add_group(self):
         s = self.session
+        if len(s.selected_layers()) > 1:
+            self.actions.group_selected()                          # plusieurs calques choisis : on les groupe
+            return
         _siblings, at = self._insert_index()
         group, cmd = ops.add_layer(s.doc, "Groupe", parent=s.doc.parent_of(s.layer()), index=at + 1, kind="group")
         s.do(cmd)
         s.select_layer(group)
 
     def duplicate(self):
+        if len(self.session.selected_layers()) > 1:
+            self.actions.duplicate_selected()
+            return
         twin, cmd = ops.duplicate_layer(self.session.doc, self.session.layer())
         self.session.do(cmd)
         self.session.select_layer(twin)
 
     def remove(self):
         s = self.session
+        if len(s.selected_layers()) > 1:
+            self.actions.remove_selected()
+            return
         layer = s.layer()
         siblings, at = s.doc.parent_list(layer)
         cmd = self._run(lambda: ops.remove_layer(s.doc, layer))

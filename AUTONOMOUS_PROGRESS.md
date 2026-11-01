@@ -11,7 +11,7 @@ numériques, texte/formes, ICC, PSD (lecture), export fond, réglages catalogue,
   affichées en version précédente (temporaire) puis exactes. Mesure honnête : les anciens « 35 ms » étaient plafonnés par le budget
   de peinture ; le coût réel d'un cran = tuiles visibles × 5-15 ms ; une tuile par image au minimum (granularité 256²).
 - [x] Transformation libre à poignées (Ctrl+T), tests `test_photoshop_freetransform`
-- [ ] Sélection multiple de calques (déplacer, grouper)
+- [x] Sélection multiple de calques (grouper, dupliquer, supprimer, déplacer), `test_photoshop_multi`
 - [x] Calques de réglage non destructifs, tests `test_photoshop_adjustment_layers`
 - [ ] 16 bits
 

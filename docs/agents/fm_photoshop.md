@@ -6,7 +6,7 @@ Sixième module du Board (après Miro, CAD, Design, Tableur, Illustrator), comme
 ressource d'Adobe. **Aucune compatibilité PSD en écriture** (lecture seule, voir « Formats »). À ne pas confondre avec
 `fm_cad/cad_photoshop.py` (ENVOI d'entités CAD vers l'application Adobe Photoshop installée : autre responsabilité).
 
-**Tests** : `python tests/run.py fm_photoshop` (15 fichiers `tests/test_photoshop_*.py`, 151 tests, ~35 s) ; `python tests/run.py
+**Tests** : `python tests/run.py fm_photoshop` (18 fichiers `tests/test_photoshop_*.py`, ~165 tests, ~35 s) ; `python tests/run.py
 fm_board` (coque + tous les modules) pour tout changement des crochets. **Mesures** : `python tools/bench_photoshop.py [petit|4k|grand]`
 (calcul, mémoire, conteneur) et `python tools/probe_photoshop_latency.py [petit|4k]` (latence visible : évènements réels + peinture).
 
@@ -143,7 +143,8 @@ Légende : **Terminé et testé** / **Partiel** / **Non commencé** / **Bloqué*
 | Calques : créer, supprimer, dupliquer, ordre (boutons), visibilité, opacité, verrou, groupes, fusionner, aplatir, 10 modes + normal | Terminé et testé | |
 | Écrêtage, masques (ajouter, peindre, activer, inverser, appliquer, supprimer, cible pixels / masque) | Terminé et testé | |
 | Miniatures de calques (refaites seulement si le plan a changé, 300 ms après le geste) | Terminé et testé | `LayersPanel._thumb` |
-| Sélection de PLUSIEURS calques ; réorganisation par glisser dans la liste | Non commencé | ordre par boutons Monter / Descendre (règle Ctrl + glisser à définir pour la liste) |
+| Sélection de PLUSIEURS calques (Ctrl / Maj + clic) : grouper (Ctrl+G), dupliquer, supprimer, déplacer ensemble (une étape) | Terminé et testé | aperçu du déplacement groupé = groupe isolé temporaire |
+| Réorganisation des calques par glisser dans la liste | Non commencé | ordre par boutons Monter / Descendre (règle Ctrl + glisser à définir pour la liste) |
 | Pinceau rond dur / doux, taille, dureté, opacité, débit, espacement, lissage, pression, pipette, permutation, curseur à taille réelle, gomme, présélections persistantes | Terminé et testé | pression testée en simulant la valeur (`canvas._pressure`) : évènements de stylet réels non testables ici |
 | Sélections : rectangle, ellipse, lasso, polygonal, baguette (tolérance, contiguë), plage de couleurs, 4 modes, tout / rien / inverser, adoucir, agrandir, contracter, copier / couper / coller, calque via copier / couper, remplir, effacer | Terminé et testé | « Plage de couleurs » = menu Sélection (couleur de premier plan, tolérance de la baguette) ; agrandir / contracter = octogone |
 | Transformation numérique (décalage, échelle, rotation, symétries, qualité), aperçu, annulation | Terminé et testé | |
@@ -164,7 +165,7 @@ Légende : **Terminé et testé** / **Partiel** / **Non commencé** / **Bloqué*
 
 ## Tests et référence
 
-- `python tests/run.py fm_photoshop` : 15 fichiers, 151 tests, tous OK (2026-11-01). Chaque fichier commence par `import _isolate`.
+- `python tests/run.py fm_photoshop` : 18 fichiers, tous OK (2026-11-01). Chaque fichier commence par `import _isolate`.
   `tests/_photoshop_case.py` : Board réel (`BoardPane`), VRAI chemin (icône de la barre des modules -> bouton de la barre du module ->
   fenêtre « Nouveau document » -> double-clic -> Standard). Piège de test : `QTest` laisse les modificateurs d'un clic tenus pour
   l'application (`release_modifiers`).

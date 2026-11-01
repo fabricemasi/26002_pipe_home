@@ -27,15 +27,15 @@ MODES = {"normal": QPainter.CompositionMode_SourceOver, "multiply": QPainter.Com
          "add": QPainter.CompositionMode_Plus}
 
 
-def _without(layers, target):
-    """Copie de la liste des calques sans `target` (groupes recopiés, pixels partagés)."""
+def _without(layers, targets):
+    """Copie de la liste des calques sans ceux de `targets` (groupes recopiés, pixels partagés)."""
     out = []
     for layer in layers:
-        if layer is target:
+        if id(layer) in targets:
             continue
         if layer.children:
             clone = ops._shallow(layer)
-            clone.children = _without(layer.children, target)
+            clone.children = _without(layer.children, targets)
             out.append(clone)
         else:
             out.append(layer)
@@ -49,15 +49,22 @@ def _image_of(array: np.ndarray) -> tuple:
 
 
 class MovePreview:
-    def __init__(self, doc, layer):
-        self.doc, self.layer = doc, layer
+    def __init__(self, doc, layers):
+        """`layers` : un calque ou une liste (déplacement groupé : aperçu comme UN groupe isolé temporaire)."""
+        from .model import Layer
+        layers = list(layers) if isinstance(layers, (list, tuple)) else [layers]
+        layer = layers[0]
+        if len(layers) > 1:
+            layer = Layer("_sélection", "group")
+            layer.children, layer.passthrough = layers, False
+        self.doc, self.layer, self.members = doc, layer, layers
         self.rect = ops.layer_rect(layer)             # zone du calque au début du geste (repère du document)
         part = C._layer_part(layer, self.rect) if self.rect is not None else None
         self._keep = None
         self.layer_image = None
         if part is not None:
             self._keep, self.layer_image = _image_of(C.to_premult_u8(part[0]))
-        self.layers_without = _without(doc.layers, layer)
+        self.layers_without = _without(doc.layers, {id(l) for l in layers})
         self.bases: dict = {}                         # (tx, ty) -> (tableau, QImage) : tuile SANS le calque
         self.touched: set = set()                     # tuiles que l'aperçu a pris en charge
         self.offset = (0, 0)

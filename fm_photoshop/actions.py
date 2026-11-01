@@ -384,6 +384,48 @@ class Actions:
         index = self.doc.parent_list(self.s.layer())[1] + 1
         return ops.add_adjustment(self.doc, effect, params, self.doc.parent_of(self.s.layer()), index)
 
+    # -- plusieurs calques sélectionnés --
+    def group_selected(self):
+        layers = self.s.selected_layers()
+        if len(layers) < 2:
+            return self._say("Sélectionnez au moins deux calques (Ctrl + clic dans la liste).")
+        try:
+            group, command = ops.group_layers(self.doc, layers)
+        except ValueError as exc:
+            return self._say(str(exc))
+        self.s.do(command)
+        self.s.select_layer(group)
+        return group
+
+    def remove_selected(self):
+        layers = self.s.selected_layers()
+        commands = []
+        for layer in layers:
+            try:
+                commands.append(ops.remove_layer(self.doc, layer))
+            except ValueError as exc:
+                self._say(str(exc))
+                break
+        if not commands:
+            return None
+        self.s.do(commands[0] if len(commands) == 1 else Compound("Supprimer les calques", commands))
+        self.s.select_layer(self.doc.layers[-1])
+        return len(commands)
+
+    def duplicate_selected(self):
+        twins, commands = [], []
+        for layer in self.s.selected_layers():
+            twin, command = ops.duplicate_layer(self.doc, layer)
+            twins.append(twin)
+            commands.append(command)
+        if not commands:
+            return None
+        self.s.do(commands[0] if len(commands) == 1 else Compound("Dupliquer les calques", commands))
+        self.s.select_layer(twins[-1])
+        self.s.multi = [t.uid for t in twins]
+        self.s.notify("view", None)
+        return twins
+
     def image_size(self, width, height, quality="bicubic"):
         return self.s.do(T.resize_image(self.doc, width, height, quality))
 

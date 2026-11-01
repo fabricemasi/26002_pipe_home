@@ -26,6 +26,7 @@ class Session:
         self.bg = (255, 255, 255)
         self.target = "pixels"                     # cible des outils : "pixels" ou "mask"
         self.active_uid = doc.layers[-1].uid
+        self.multi: list = [self.active_uid]       # calques sélectionnés (liste de calques, ordre de la pile) ; le calque actif en fait partie
         self.zoom = None                           # None = ajusté à la zone (premier affichage)
         self.center = None                         # point du document au centre de la vue
         self.selection = None                      # `selection.Selection` ou None (rien de sélectionné)
@@ -44,8 +45,15 @@ class Session:
             self.active_uid = found.uid
         return found
 
+    def selected_layers(self) -> list:
+        """Calques sélectionnés (au moins le calque actif), sans ceux dont un ANCÊTRE est aussi sélectionné."""
+        layers = [l for l in (self.doc.find(u) for u in self.multi) if l is not None] or [self.layer()]
+        inside = {id(n) for l in layers for n in l.walk() if n is not l}
+        return [l for l in layers if id(l) not in inside]
+
     def select_layer(self, layer):
         self.active_uid = layer.uid
+        self.multi = [layer.uid]
         if self.target == "mask" and layer.mask is None:
             self.target = "pixels"
         self.notify("view", None)
