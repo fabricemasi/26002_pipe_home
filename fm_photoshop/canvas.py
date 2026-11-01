@@ -9,15 +9,19 @@ from __future__ import annotations
 import math
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QApplication, QWidget
 
 from . import compose as C
 from . import look, ops, render
+from . import selection as SEL
+from .actions import Actions
 from .brush import Stroke
 from .planes import rect_intersect, rect_union
 
-TOOLS = ("brush", "eraser", "eyedropper", "move", "hand")
+TOOLS = ("brush", "eraser", "eyedropper", "move", "hand", "rect_select", "ellipse_select", "lasso", "poly_lasso",
+         "wand")
+SELECT_TOOLS = ("rect_select", "ellipse_select", "lasso", "poly_lasso", "wand")
 
 
 class CanvasView(QWidget):
@@ -45,6 +49,13 @@ class CanvasView(QWidget):
         self._pump = QTimer(self)
         self._pump.setSingleShot(True)
         self._pump.timeout.connect(self.update)
+        self.actions = Actions(session)
+        self._gesture = None                # sélection en cours : {"tool", "mode", "points": [...]}
+        self._outline = None                # contour des « fourmis » : QPainterPath (doc), refait si la sélection change
+        self._ants = QTimer(self)
+        self._ants.setInterval(160)
+        self._ants.timeout.connect(self._tick_ants)
+        self._phase = 0
         session.listeners.append(self._on_session)
 
     def detach(self):
@@ -55,9 +66,10 @@ class CanvasView(QWidget):
     def _on_session(self, kind, rect):
         if kind in ("edit", "paint") and rect is not None:
             self.update_rect(rect)
-        elif kind in ("structure", "reload"):
+        elif kind in ("structure", "reload", "view"):
             self.update()
-        elif kind == "view":
+        elif kind == "selection":
+            self._outline = None
             self.update()
 
     # -- repère --
@@ -146,6 +158,7 @@ class CanvasView(QWidget):
             painter.setPen(QPen(QColor(look.LOOK["frame_color"]), 1))
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(area.adjusted(-0.5, -0.5, 0.5, 0.5))
+        self._paint_selection(painter)
         self._paint_cursor(painter)
         painter.end()
 
@@ -191,7 +204,7 @@ class CanvasView(QWidget):
             self.setCursor(Qt.ClosedHandCursor if self._pan else Qt.OpenHandCursor)
         elif tool in ("brush", "eraser") and look.LOOK["cursor_outline"]:
             self.setCursor(Qt.BlankCursor)
-        elif tool == "eyedropper":
+        elif tool == "eyedropper" or tool in SELECT_TOOLS:
             self.setCursor(Qt.CrossCursor)
         else:
             self.setCursor(Qt.ArrowCursor)
@@ -219,6 +232,8 @@ class CanvasView(QWidget):
             self.pick_color(x, y, background=bool(mods & Qt.ShiftModifier) if tool == "eyedropper" else False)
         elif tool in ("brush", "eraser"):
             self.begin_stroke(x, y, self._pressure)
+        elif tool in SELECT_TOOLS:
+            self.begin_select(tool, x, y, mods)
         elif tool == "move":
             self.begin_move(x, y, bool(QApplication.keyboardModifiers() & Qt.ControlModifier))
 
@@ -239,6 +254,9 @@ class CanvasView(QWidget):
         elif self._move is not None:
             x, y = self.to_doc(pos)
             self.extend_move(x, y)
+        elif self._gesture is not None:
+            x, y = self.to_doc(pos)
+            self.extend_select(x, y)
         if self._hover is not None:
             self.update(self._cursor_rect())
 
@@ -254,6 +272,15 @@ class CanvasView(QWidget):
             self.end_stroke(x, y, self._pressure)
         elif self._move is not None:
             self.end_move()
+        elif self._gesture is not None:
+            x, y = self.to_doc(event.position())
+            self.end_select(x, y)
+
+    def mouseDoubleClickEvent(self, event):
+        if self._gesture is not None and self._gesture["tool"] == "poly_lasso":
+            self.close_polygon()
+            return
+        super().mouseDoubleClickEvent(event)
 
     def leaveEvent(self, event):
         if self._hover is not None:
@@ -285,6 +312,31 @@ class CanvasView(QWidget):
             self.undo()
         elif ctrl and (key == Qt.Key_Y or (key == Qt.Key_Z and mods & Qt.ShiftModifier)):
             self.redo()
+        elif ctrl and key == Qt.Key_A:
+            self.actions.select_all()
+        elif ctrl and key == Qt.Key_D:
+            self.actions.deselect()
+        elif ctrl and mods & Qt.ShiftModifier and key == Qt.Key_I:
+            self.actions.invert_selection()
+        elif ctrl and key == Qt.Key_C:
+            self.actions.copy()
+        elif ctrl and key == Qt.Key_X:
+            self.actions.cut()
+        elif ctrl and key == Qt.Key_V:
+            self.actions.paste()
+        elif ctrl and key == Qt.Key_J:
+            (self.actions.layer_via_cut if mods & Qt.ShiftModifier else self.actions.layer_via_copy)()
+        elif key in (Qt.Key_Delete, Qt.Key_Backspace) and not ctrl and not mods & Qt.AltModifier:
+            self.actions.delete()
+        elif key == Qt.Key_Backspace and mods & Qt.AltModifier:
+            self.actions.fill_foreground()
+        elif key == Qt.Key_Backspace and ctrl:
+            self.actions.fill_background()
+        elif key in (Qt.Key_Return, Qt.Key_Enter) and self._gesture is not None:
+            self.close_polygon()
+        elif key == Qt.Key_Escape and self._gesture is not None:
+            self._gesture = None
+            self.update()
         elif ctrl and key == Qt.Key_0:
             self.fit()
         elif ctrl and key == Qt.Key_1:
@@ -306,6 +358,12 @@ class CanvasView(QWidget):
             self.set_tool("move")
         elif key == Qt.Key_H:
             self.set_tool("hand")
+        elif key == Qt.Key_M:
+            self.set_tool("ellipse_select" if s.tool == "rect_select" else "rect_select")
+        elif key == Qt.Key_L:
+            self.set_tool("poly_lasso" if s.tool == "lasso" else "lasso")
+        elif key == Qt.Key_W:
+            self.set_tool("wand")
         elif key == Qt.Key_X:
             s.fg, s.bg = s.bg, s.fg
             self.colorsChanged.emit()
@@ -429,3 +487,132 @@ class CanvasView(QWidget):
         command = ops.translation_done(m["layer"], m["applied"][0], m["applied"][1], m["rect"])
         self.session.do(command, notified=True)
         return command
+
+    # -- sélections : outils, contour animé --
+    @staticmethod
+    def _mode_of(mods) -> str:
+        shift, alt = bool(mods & Qt.ShiftModifier), bool(mods & Qt.AltModifier)
+        return "intersect" if shift and alt else "add" if shift else "subtract" if alt else "replace"
+
+    def begin_select(self, tool, x, y, mods):
+        mode = self._mode_of(mods)
+        if tool == "wand":
+            o = self.session.options
+            self.actions.wand_at(x, y, o["tolerance"], o["contiguous"], mode, o["sample"])
+            return
+        if tool == "poly_lasso" and self._gesture is not None:
+            points = self._gesture["points"]
+            first = self.to_widget(*points[0])
+            if (self.to_widget(x, y) - first).manhattanLength() < 8 and len(points) >= 3:
+                self.close_polygon()
+            else:
+                points.append((x, y))
+                self.update()
+            return
+        self._gesture = {"tool": tool, "mode": mode, "points": [(x, y)], "moved": False}
+
+    def extend_select(self, x, y):
+        g = self._gesture
+        if g["tool"] == "poly_lasso":
+            g["cursor"] = (x, y)
+        elif g["tool"] == "lasso":
+            if (x, y) != g["points"][-1]:
+                g["points"].append((x, y))
+        else:
+            g["points"] = [g["points"][0], (x, y)]
+        g["moved"] = True
+        self.update()
+
+    def end_select(self, x, y):
+        g = self._gesture
+        if g["tool"] == "poly_lasso":
+            return                                          # le polygone se poursuit : clics, double-clic ou Entrée
+        self._gesture = None
+        rect = self.session.doc.rect()
+        if g["tool"] in ("rect_select", "ellipse_select"):
+            (x0, y0), (x1, y1) = g["points"][0], (x, y)
+            box = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+            if box[2] - box[0] < 1.5 and box[3] - box[1] < 1.5:
+                if g["mode"] == "replace":
+                    self.actions.deselect()                 # simple clic : désélectionne (comme Photoshop)
+                self.update()
+                return
+            new = SEL.rectangle(rect, box) if g["tool"] == "rect_select" else SEL.ellipse(rect, box)
+            self.actions.combine_selection(new, g["mode"], "Rectangle de sélection" if g["tool"] == "rect_select"
+                                           else "Ellipse de sélection")
+        elif len(g["points"]) >= 3:
+            self.actions.combine_selection(SEL.polygon(rect, g["points"]), g["mode"], "Lasso")
+        self.update()
+
+    def close_polygon(self):
+        g, self._gesture = self._gesture, None
+        if g is not None and len(g["points"]) >= 3:
+            self.actions.combine_selection(SEL.polygon(self.session.doc.rect(), g["points"]), g["mode"],
+                                           "Lasso polygonal")
+        self.update()
+
+    def _selection_path(self):
+        sel = self.session.selection
+        if sel is None or sel.is_empty():
+            return None
+        if self._outline is None:
+            segments = SEL.outline_segments(self.session.doc.rect(), sel)
+            path = QPainterPath()
+            if segments is None:
+                b = sel.bounds()
+                path.addRect(b[0], b[1], b[2] - b[0], b[3] - b[1])
+            else:
+                for x0, y0, x1, y1 in segments:
+                    path.moveTo(x0, y0)
+                    path.lineTo(x1, y1)
+            self._outline = path
+        return self._outline
+
+    def _tick_ants(self):
+        self._phase = (self._phase + 1) % 8
+        sel = self.session.selection
+        if sel is None or sel.is_empty() or not self.isVisible():
+            self._ants.stop()
+            return
+        bounds = sel.bounds()
+        if bounds:
+            self.update_rect(bounds)
+
+    def _paint_selection(self, painter):
+        path = self._selection_path()
+        sel = self.session.selection
+        if path is not None:
+            z = self.zoom()
+            painter.save()
+            painter.translate(self.to_widget(0, 0))
+            painter.scale(z, z)
+            painter.setRenderHint(QPainter.Antialiasing, False)
+            black = QPen(QColor(0, 0, 0), 1)
+            black.setCosmetic(True)
+            painter.setPen(black)
+            painter.drawPath(path)
+            white = QPen(QColor(look.LOOK["selection_color"]), 1, Qt.CustomDashLine)
+            white.setCosmetic(True)
+            white.setDashPattern([4, 4])
+            white.setDashOffset(self._phase)
+            painter.setPen(white)
+            painter.drawPath(path)
+            painter.restore()
+            if not self._ants.isActive():
+                self._ants.start()
+        elif sel is None and self._ants.isActive():
+            self._ants.stop()
+        g = self._gesture
+        if g is not None:
+            painter.save()
+            painter.setPen(QPen(QColor(look.LOOK["selection_color"]), 1, Qt.DashLine))
+            if g["tool"] in ("rect_select", "ellipse_select") and len(g["points"]) == 2:
+                a, b = self.to_widget(*g["points"][0]), self.to_widget(*g["points"][1])
+                box = QRectF(a, b).normalized()
+                (painter.drawRect if g["tool"] == "rect_select" else painter.drawEllipse)(box)
+            elif g["tool"] in ("lasso", "poly_lasso"):
+                pts = [self.to_widget(*p) for p in g["points"]]
+                if g["tool"] == "poly_lasso" and g.get("cursor"):
+                    pts.append(self.to_widget(*g["cursor"]))
+                painter.drawPolyline(pts)
+            painter.restore()

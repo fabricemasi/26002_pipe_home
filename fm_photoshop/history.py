@@ -72,6 +72,21 @@ class TilesCommand(Command):
         return sum(int(b.nbytes + a.nbytes) for _r, b, a in self.pieces)
 
 
+class SelectionCommand(Command):
+    """Changement de sélection (annulable, comme Photoshop) : ni pixels ni structure -> aucune tuile à refaire."""
+    structural = False
+    rect = None
+
+    def __init__(self, label, apply, before, after):
+        self.label, self._apply, self.before, self.after = label, apply, before, after
+
+    def undo(self):
+        self._apply(self.before)
+
+    def redo(self):
+        self._apply(self.after)
+
+
 class CallCommand(Command):
     structural = True
 

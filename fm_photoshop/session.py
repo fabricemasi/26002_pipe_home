@@ -28,7 +28,8 @@ class Session:
         self.active_uid = doc.layers[-1].uid
         self.zoom = None                           # None = ajusté à la zone (premier affichage)
         self.center = None                         # point du document au centre de la vue
-        self.selection = None
+        self.selection = None                      # `selection.Selection` ou None (rien de sélectionné)
+        self.options = {"tolerance": 32, "contiguous": True, "sample": "layer"}      # baguette magique
         self.asset: str | None = None              # dernier conteneur écrit dans le dossier du Board
         self.flushed_version = -1
         self.error: str | None = None              # ressource absente / illisible (diagnostic)
@@ -62,7 +63,7 @@ class Session:
         if notified:
             self.notify("committed", None)
         else:
-            self.notify("structure" if command.structural else "edit", command.rect)
+            self.notify(self._kind_of(command), command.rect)
         return command
 
     def undo(self):
@@ -77,13 +78,18 @@ class Session:
             self._after_history(command)
         return command
 
+    @staticmethod
+    def _kind_of(command):
+        from .history import SelectionCommand
+        return "selection" if isinstance(command, SelectionCommand) else "structure" if command.structural else "edit"
+
     def _after_history(self, command):
         if self.doc.find(self.active_uid) is None:
             self.active_uid = self.doc.layers[-1].uid
         layer = self.layer()
         if self.target == "mask" and layer.mask is None:
             self.target = "pixels"
-        self.notify("structure" if command.structural else "edit", command.rect)
+        self.notify(self._kind_of(command), command.rect)
 
     def is_dirty(self) -> bool:
         return self.history.dirty()

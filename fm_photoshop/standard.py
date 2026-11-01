@@ -13,11 +13,16 @@ from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QMessageBox, QVB
 
 from . import io_images
 from .canvas import CanvasView
+from .menus import MenuBar
 from .panels import BrushPanel, LayersPanel, _button
 
 TOOL_ROWS = (("brush", "Pinceau", "Pinceau (B)"), ("eraser", "Gomme", "Gomme (E)"),
              ("eyedropper", "Pipette", "Pipette (I) — Alt + clic avec le pinceau"),
-             ("move", "Déplacer", "Déplacer le calque (V) : Ctrl + glisser"), ("hand", "Main", "Main (H, ou Espace)"))
+             ("move", "Déplacer", "Déplacer le calque (V) : Ctrl + glisser"), ("hand", "Main", "Main (H, ou Espace)"),
+             ("rect_select", "Rectangle", "Rectangle de sélection (M) — Maj : ajouter, Alt : soustraire"),
+             ("ellipse_select", "Ellipse", "Ellipse de sélection (M)"), ("lasso", "Lasso", "Lasso à main levée (L)"),
+             ("poly_lasso", "Lasso poly.", "Lasso polygonal (L) : clics, double-clic ou Entrée pour fermer"),
+             ("wand", "Baguette", "Baguette magique (W) : tolérance dans le menu Sélection"))
 
 
 class StandardPane(QWidget):
@@ -97,6 +102,8 @@ class StandardPane(QWidget):
         holder.setFixedWidth(330)
         body.addWidget(holder)
         layout.addLayout(body, 1)
+        self.menubar = MenuBar(self)
+        layout.insertWidget(1, self.menubar)
         self.canvas.toolChanged.connect(self._sync_tools)
         self.canvas.message.connect(self.status.setText)
         self.session.listeners.append(self._on_session)

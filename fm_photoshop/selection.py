@@ -221,3 +221,38 @@ def resize(doc_rect, sel: Selection, pixels: int) -> Selection:
     for _ in range(abs(int(pixels))):
         arr = _shift_extreme(arr, pixels > 0)
     return Selection.from_array(doc_rect, arr)
+
+
+def outline_segments(doc_rect, sel: Selection, threshold: int = 128, limit: int = 40000):
+    """Contour de la sélection pour les « fourmis en marche » : segments horizontaux et verticaux fusionnés
+    (x0, y0, x1, y1) entre pixels sélectionnés (couverture >= seuil) et non sélectionnés. Rend None au-delà de
+    `limit` segments (sélection trop morcelée : l'appelant dessine alors le cadre englobant)."""
+    bounds = sel.bounds()
+    if bounds is None:
+        return []
+    box = (max(doc_rect[0], bounds[0] - 1), max(doc_rect[1], bounds[1] - 1), min(doc_rect[2], bounds[2] + 1),
+           min(doc_rect[3], bounds[3] + 1))
+    inside = sel.plane.read(box)[..., 0] >= threshold
+    padded = np.zeros((inside.shape[0] + 2, inside.shape[1] + 2), bool)
+    padded[1:-1, 1:-1] = inside
+    segments = []
+    # arêtes horizontales : entre la ligne y-1 et y ; verticales : entre la colonne x-1 et x
+    horizontal = padded[1:, 1:-1] != padded[:-1, 1:-1]                # (h + 1, w)
+    vertical = padded[1:-1, 1:] != padded[1:-1, :-1]                  # (h, w + 1)
+    for edges, is_h in ((horizontal, True), (vertical, False)):
+        grid = edges if is_h else edges.T
+        pad = np.zeros((grid.shape[0], grid.shape[1] + 2), np.int8)
+        pad[:, 1:-1] = grid
+        diff = np.diff(pad, axis=1)
+        sr, sc = np.nonzero(diff == 1)
+        _er, ec = np.nonzero(diff == -1)
+        if len(sr) > limit:
+            return None
+        for r, a, b in zip(sr.tolist(), sc.tolist(), ec.tolist()):
+            if is_h:
+                segments.append((box[0] + a, box[1] + r, box[0] + b, box[1] + r))
+            else:
+                segments.append((box[0] + r, box[1] + a, box[0] + r, box[1] + b))
+        if len(segments) > limit:
+            return None
+    return segments
