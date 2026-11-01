@@ -50,11 +50,32 @@ class CurveEditor(QWidget):
     """Courbe maîtresse : glisser un point, clic = ajouter, double-clic = retirer (les extrémités restent)."""
     changed = Signal()
 
+    IDENTITY = ((0.0, 0.0), (255.0, 255.0))
+    COLORS = {"m": "#e8e8e8", "r": "#ff6b6b", "g": "#6bff8a", "b": "#6b9bff"}
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.points = [(0.0, 0.0), (255.0, 255.0)]
+        self.sets = {k: [tuple(p) for p in self.IDENTITY] for k in "mrgb"}      # courbes : maître, rouge, vert, bleu
+        self.channel = "m"
         self.setFixedSize(264, 264)
         self._drag = None
+
+    @property
+    def points(self):
+        return self.sets[self.channel]
+
+    @points.setter
+    def points(self, value):
+        self.sets[self.channel] = [tuple(float(v) for v in p) for p in value]
+
+    def set_channel(self, channel: str):
+        self.channel = channel
+        self.update()
+
+    def extra_params(self) -> dict:
+        """Courbes de couleur MODIFIÉES seulement (les identités ne sont pas envoyées)."""
+        names = {"r": "red", "g": "green", "b": "blue"}
+        return {names[k]: list(self.sets[k]) for k in "rgb" if [tuple(p) for p in self.sets[k]] != list(self.IDENTITY)}
 
     def _to_widget(self, p):
         return QPointF(4 + p[0], 4 + 255 - p[1])
@@ -70,7 +91,7 @@ class CurveEditor(QWidget):
             painter.drawLine(4 + i * 64, 4, 4 + i * 64, 259)
             painter.drawLine(4, 4 + i * 64, 259, 4 + i * 64)
         lut = adjust.curve_lut(self.points)
-        painter.setPen(QPen(QColor("#e8e8e8"), 1.5))
+        painter.setPen(QPen(QColor(self.COLORS[self.channel]), 1.5))
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.drawPolyline([self._to_widget((i, float(lut[i]))) for i in range(256)])
         for p in self.points:
@@ -153,6 +174,11 @@ class EffectDialog(QDialog):
         if name == "curves":
             self.curve = CurveEditor(self)
             self.curve.changed.connect(self.schedule)
+            self.curve_channel = QComboBox()
+            for key, text in (("m", "RVB (maître)"), ("r", "Rouge"), ("g", "Vert"), ("b", "Bleu")):
+                self.curve_channel.addItem(text, key)
+            self.curve_channel.currentIndexChanged.connect(lambda _i: self.curve.set_channel(self.curve_channel.currentData()))
+            box.addWidget(self.curve_channel)
             box.addWidget(self.curve)
         if name == "color_balance":
             self._build_balance(box)
@@ -207,7 +233,8 @@ class EffectDialog(QDialog):
     def params(self) -> dict:
         out = {key: field.value() / scale for key, (field, scale) in self.fields.items()}
         if self.name == "curves":
-            out["points"] = list(self.curve.points)
+            out["points"] = list(self.curve.sets["m"])
+            out.update(self.curve.extra_params())
         if self.name == "color_balance":
             out.update(shadows=tuple(self._balance["shadows"]), midtones=tuple(self._balance["midtones"]),
                        highlights=tuple(self._balance["highlights"]),
@@ -219,7 +246,7 @@ class EffectDialog(QDialog):
             field, scale = self.fields[p.key]
             field.setValue(round(p.default * scale))
         if self.name == "curves":
-            self.curve.points = [(0.0, 0.0), (255.0, 255.0)]
+            self.curve.sets = {k: [tuple(p) for p in CurveEditor.IDENTITY] for k in "mrgb"}
             self.curve.update()
         self.schedule()
 
@@ -741,8 +768,10 @@ class AdjustmentLayerDialog(EffectDialog):
                 field.blockSignals(True)
                 field.setValue(round(float(params[key]) * scale))
                 field.blockSignals(False)
-        if self.name == "curves" and params.get("points"):
-            self.curve.points = [tuple(p) for p in params["points"]]
+        if self.name == "curves":
+            for key, name in (("m", "points"), ("r", "red"), ("g", "green"), ("b", "blue")):
+                if params.get(name):
+                    self.curve.sets[key] = [tuple(float(v) for v in p) for p in params[name]]
         if self.name == "color_balance":
             for key in ("shadows", "midtones", "highlights"):
                 if key in params:

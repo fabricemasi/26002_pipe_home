@@ -101,3 +101,31 @@ class MultiTest(PsCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReorderTest(PsCase):
+    def test_ctrl_drag_in_the_layer_list_reorders_in_one_step(self):
+        _item, std = self.editor(60, 40)
+        s, panel = std.session, std.layers_panel
+        panel.add(); panel.add()
+        settle(0.05)
+        names = [l.name for l in s.doc.layers]                      # bas -> haut
+        self.assertEqual(panel.list.count(), 3)
+        top_item = panel.list.item(0)                                # ligne du haut = dernier de la pile
+        bottom_item = panel.list.item(2)
+        from PySide6.QtCore import QPoint
+        pos = lambda item: panel.list.visualItemRect(item).center()
+        n = len(s.history.done)
+        QTest.mousePress(panel.list.viewport(), Qt.LeftButton, Qt.NoModifier, pos(top_item))      # sans Ctrl : sélection seule
+        QTest.mouseRelease(panel.list.viewport(), Qt.LeftButton, Qt.NoModifier, pos(bottom_item))
+        self.assertEqual([l.name for l in s.doc.layers], names)
+        self.assertEqual(len(s.history.done), n)
+        QTest.mousePress(panel.list.viewport(), Qt.LeftButton, Qt.ControlModifier, pos(top_item))
+        QTest.mouseRelease(panel.list.viewport(), Qt.LeftButton, Qt.ControlModifier, pos(bottom_item))
+        self.release_modifiers(panel.list.viewport())
+        self.assertEqual([l.name for l in s.doc.layers], [names[2], names[0], names[1]])
+        self.assertEqual(len(s.history.done), n + 1)
+        s.undo()
+        self.assertEqual([l.name for l in s.doc.layers], names)
+        s.redo()
+        self.assertEqual(s.doc.layers[0].name, names[2])

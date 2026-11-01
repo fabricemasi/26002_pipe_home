@@ -13,7 +13,8 @@ numériques, texte/formes, ICC, PSD (lecture), export fond, réglages catalogue,
 - [x] Transformation libre à poignées (Ctrl+T), tests `test_photoshop_freetransform`
 - [x] Sélection multiple de calques (grouper, dupliquer, supprimer, déplacer), `test_photoshop_multi`
 - [x] Calques de réglage non destructifs, tests `test_photoshop_adjustment_layers`
-- [ ] 16 bits
+- [x] Réorganisation par Ctrl + glisser dans la liste ; courbes par canal
+- [ ] 16 bits (refonte de `Plane` : NON entrepris — risque de régression élevé, aucune demande d'export 16 bits testable ici)
 
 ## Bugs trouvés / corrigés
 - Fin de test : un test dont le DERNIER état garde une fenêtre de réglage faisait planter le processus à `os._exit` (suppressions en attente) : `PsCase.tearDown` exécute maintenant les `DeferredDelete` et vide le pool de fils. `EffectDialog.reject` arrête sa minuterie.

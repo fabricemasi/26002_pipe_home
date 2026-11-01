@@ -71,6 +71,14 @@ class TableAdjustTest(unittest.TestCase):
         apply_effect(doc, layer, "curves", {"points": [(0, 0), (64, 200), (255, 255)]})
         self.assertEqual(px(layer)[0], 200)
 
+    def test_per_channel_curves(self):
+        doc = M.new_document(2, 1, background=None)
+        layer = doc.layers[0]
+        layer.pix.set_all(0, 0, np.full((1, 2, 4), (64, 64, 64, 255), np.uint8))
+        apply_effect(doc, layer, "curves", {"points": [(0, 0), (255, 255)], "red": [(0, 0), (64, 200), (255, 255)]})
+        r, g, b, a = px(layer)
+        self.assertEqual((r, g, b, a), (200, 64, 64, 255))                               # seul le rouge est modifié
+
     def test_exposure_one_stop_in_linear_light(self):
         doc, layer = gray_layer(128)
         apply_effect(doc, layer, "exposure", {"ev": 1.0})

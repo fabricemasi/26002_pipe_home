@@ -144,14 +144,14 @@ Légende : **Terminé et testé** / **Partiel** / **Non commencé** / **Bloqué*
 | Écrêtage, masques (ajouter, peindre, activer, inverser, appliquer, supprimer, cible pixels / masque) | Terminé et testé | |
 | Miniatures de calques (refaites seulement si le plan a changé, 300 ms après le geste) | Terminé et testé | `LayersPanel._thumb` |
 | Sélection de PLUSIEURS calques (Ctrl / Maj + clic) : grouper (Ctrl+G), dupliquer, supprimer, déplacer ensemble (une étape) | Terminé et testé | aperçu du déplacement groupé = groupe isolé temporaire |
-| Réorganisation des calques par glisser dans la liste | Non commencé | ordre par boutons Monter / Descendre (règle Ctrl + glisser à définir pour la liste) |
+| Réorganisation des calques par Ctrl + glisser dans la liste (en plus de Monter / Descendre) | Terminé et testé | `_ReorderList` ; le calque prend la place de la ligne visée |
 | Pinceau rond dur / doux, taille, dureté, opacité, débit, espacement, lissage, pression, pipette, permutation, curseur à taille réelle, gomme, présélections persistantes | Terminé et testé | pression testée en simulant la valeur (`canvas._pressure`) : évènements de stylet réels non testables ici |
 | Sélections : rectangle, ellipse, lasso, polygonal, baguette (tolérance, contiguë), plage de couleurs, 4 modes, tout / rien / inverser, adoucir, agrandir, contracter, copier / couper / coller, calque via copier / couper, remplir, effacer | Terminé et testé | « Plage de couleurs » = menu Sélection (couleur de premier plan, tolérance de la baguette) ; agrandir / contracter = octogone |
 | Transformation numérique (décalage, échelle, rotation, symétries, qualité), aperçu, annulation | Terminé et testé | |
 | Transformation libre avec poignées sur l'établi (Ctrl+T : échelle autour du centre, Maj proportions, rotation, Ctrl + glisser, Entrée / Échap) | Terminé et testé | `freetransform.py` ; aperçu bilinéaire regroupé, validation bicubique ; échelle ancrée au CENTRE (pas au coin opposé) |
 | Recadrage (sur la sélection), taille de l'image, taille de la zone de travail (ancrage), symétries du document | Terminé et testé | recadrage = suppression des pixels hors cadre |
 | Tampon (source explicite), correcteur (texture), flou, netteté, doigt, densité | Terminé et testé | correcteur ≠ Poisson (documenté) ; échantillonnage sur le calque actif seulement |
-| Réglages : luminosité / contraste, niveaux, courbes, exposition, teinte / saturation, balance, N&B, négatif | Terminé et testé | destructifs, aperçu + annuler ; courbes et niveaux : canal maître seulement |
+| Réglages : luminosité / contraste, niveaux, courbes, exposition, teinte / saturation, balance, N&B, négatif | Terminé et testé | destructifs, aperçu + annuler ; courbes : maître + une courbe par canal R/V/B ; niveaux : canal maître seulement |
 | Réglages NON destructifs (calques de réglage : 8 réglages « rgb », opacité, masque) | Terminé et testé | `compose._apply_adjustment`, `ops.add_adjustment`, `dialogs.AdjustmentLayerDialog` ; pas de filtre de voisinage ni d'écrêtage en calque de réglage |
 | Filtres : gaussien, accentuation, bruit | Terminé et testé | |
 | Texte et formes éditables, conversion en pixels | Terminé et testé | un seul style par calque de texte |

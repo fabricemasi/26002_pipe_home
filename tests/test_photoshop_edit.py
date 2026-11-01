@@ -219,6 +219,24 @@ class DialogsTest(PsCase):
         dialog.reject()
         self.assertTrue(np.array_equal(s.layer().pix.read(s.doc.rect()), original))
 
+    def test_curves_dialog_has_one_curve_per_channel(self):
+        _item, std = self.editor(16, 16)
+        s = std.session
+        s.layer().pix.write((0, 0, 16, 16), np.full((16, 16, 4), (64, 64, 64, 255), np.uint8))
+        dialog = dialogs.EffectDialog(s, "curves", std)
+        dialog.curve_channel.setCurrentIndex(1)                                   # Rouge
+        self.assertEqual(dialog.curve.channel, "r")
+        dialog.curve.points = [(0, 0), (64, 200), (255, 255)]
+        dialog.curve.changed.emit()
+        dialog.settle()
+        params = dialog.params()
+        self.assertEqual(list(params["red"][1]), [64.0, 200.0])
+        self.assertNotIn("green", params)                                            # les identités ne sont pas envoyées
+        dialog.accept()
+        self.assertEqual(tuple(s.layer().pix.read((3, 3, 4, 4))[0, 0]), (200, 64, 64, 255))
+        s.undo()
+        self.assertEqual(tuple(s.layer().pix.read((3, 3, 4, 4))[0, 0]), (64, 64, 64, 255))
+
     def test_every_effect_menu_entry_opens_and_applies(self):
         _item, std = self.editor(24, 24)
         s = std.session

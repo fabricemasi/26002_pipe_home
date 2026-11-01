@@ -4,7 +4,7 @@ Briques du Board et des réglages (`_slider`, `_TextButton`, `_ColorPickerPopup`
 Réglage d'un curseur (opacité…) : appliqué en direct, UNE seule étape d'annulation à la fin du geste."""
 from __future__ import annotations
 
-from PySide6.QtCore import QSignalBlocker, QSize, Qt, QTimer
+from PySide6.QtCore import QSignalBlocker, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QGridLayout, QHBoxLayout, QLabel, QListWidget,
                                QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
@@ -214,6 +214,37 @@ class BrushPanel(QWidget):
         self.canvas.update()
 
 
+class _ReorderList(QListWidget):
+    """Liste des calques : Ctrl + glisser une ligne la déplace (règle de l'appli : tout déplacement démarre avec Ctrl) ;
+    sans Ctrl, clic et sélection habituels."""
+    reordered = Signal(str, str)                    # (uid déplacé, uid de la ligne visée)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._source = None
+
+    def mousePressEvent(self, event):
+        item = self.itemAt(event.position().toPoint())
+        if item is not None and event.button() == Qt.LeftButton and event.modifiers() & Qt.ControlModifier                 and not event.modifiers() & Qt.ShiftModifier:
+            self._source = item.data(Qt.UserRole)
+            self.setCursor(Qt.ClosedHandCursor)
+            event.accept()
+            return
+        self._source = None
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._source is not None:
+            target = self.itemAt(event.position().toPoint())
+            source, self._source = self._source, None
+            self.unsetCursor()
+            if target is not None and target.data(Qt.UserRole) != source:
+                self.reordered.emit(source, target.data(Qt.UserRole))
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
 class LayersPanel(QWidget):
     def __init__(self, session, canvas, parent=None):
         super().__init__(parent)
@@ -236,7 +267,8 @@ class LayersPanel(QWidget):
         box.setContentsMargins(0, 0, 0, 0)
         box.setSpacing(4)
         box.addWidget(_title("Calques"))
-        self.list = QListWidget(self)
+        self.list = _ReorderList(self)
+        self.list.reordered.connect(self.reorder)
         self.list.setIconSize(QSize(36, 36))
         self.list.setSelectionMode(QAbstractItemView.ExtendedSelection)      # Ctrl / Maj + clic : plusieurs calques
         self.list.itemSelectionChanged.connect(self._selection_changed)
@@ -488,6 +520,23 @@ class LayersPanel(QWidget):
             s.do(cmd)
             s.active_uid = (siblings[max(0, at - 1)].uid if siblings else s.doc.layers[-1].uid)
             s.select_layer(s.layer())
+
+    def reorder(self, uid: str, target_uid: str):
+        """Ctrl + glisser dans la liste : le calque prend la place du calque visé (même parent que lui)."""
+        s = self.session
+        layer, target = s.doc.find(uid), s.doc.find(target_uid)
+        if layer is None or target is None:
+            return None
+        parent = s.doc.parent_of(target)
+        siblings, at = s.doc.parent_list(target)
+        try:
+            command = ops.move_layer(s.doc, layer, parent, at)
+        except ValueError as exc:
+            self.canvas.message.emit(str(exc))
+            return None
+        s.do(command)
+        s.select_layer(layer)
+        return command
 
     def move(self, direction: int):
         s = self.session
