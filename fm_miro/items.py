@@ -153,6 +153,7 @@ ZVALUE_HAS_CHANGED = _GIC.ItemZValueHasChanged
 SCENE_CHANGE = _GIC.ItemSceneChange
 SCENE_HAS_CHANGED = _GIC.ItemSceneHasChanged
 VISIBLE_HAS_CHANGED = _GIC.ItemVisibleHasChanged
+VISIBLE_CHANGE = _GIC.ItemVisibleChange
 # Sans effet pour les elements du board : rendus tels quels, sans passer par le reste de `itemChange`.
 QUIET_CHANGES = (_GIC.ItemFlagsChange, _GIC.ItemFlagsHaveChanged, _GIC.ItemCursorChange,
                  _GIC.ItemCursorHasChanged, _GIC.ItemToolTipChange, _GIC.ItemToolTipHasChanged)
@@ -166,18 +167,25 @@ class BoardItem(QGraphicsObject):
     KEEP_RATIO = False
     CONNECTABLE = True
     TEXT_KEY: str | None = None          # champ de `data` montre / modifie par le texte sur place
+    # Drapeaux, survol et cache poses UNE fois a la creation (une sous-classe les change ici, pas apres coup :
+    # chaque `setFlags` repasse par `itemChange` en Python, ~5 µs ; 81 000 entites CAD a l'ouverture d'un DWG).
+    ITEM_FLAGS = (QGraphicsItem.ItemIsSelectable | QGraphicsItem.ItemIsMovable
+                  | QGraphicsItem.ItemSendsGeometryChanges)
+    HOVER = True
+    # Fluidite : chaque element est garde en image a l'echelle de l'ecran ; deplacer le canvas ne fait que
+    # les reposer (mesure, 400 elements en 2400 x 1300 : ~32 -> ~15 ms par image). Refait au zoom.
+    CACHE_MODE = QGraphicsItem.DeviceCoordinateCache
 
     def __init__(self, data: dict):
         super().__init__()
         self.data = clone_data(data)
         self.item_id = self.data["id"]
         self.kind = self.data["type"]
-        self.setFlags(QGraphicsItem.ItemIsSelectable | QGraphicsItem.ItemIsMovable
-                      | QGraphicsItem.ItemSendsGeometryChanges)
-        self.setAcceptHoverEvents(True)
-        # Fluidite : chaque element est garde en image a l'echelle de l'ecran ; deplacer le canvas ne fait que
-        # les reposer (mesure, 400 elements en 2400 x 1300 : ~32 -> ~15 ms par image). Refait au zoom.
-        self.setCacheMode(QGraphicsItem.DeviceCoordinateCache)
+        self.setFlags(self.ITEM_FLAGS)
+        if self.HOVER:
+            self.setAcceptHoverEvents(True)
+        if self.CACHE_MODE != QGraphicsItem.NoCache:
+            self.setCacheMode(self.CACHE_MODE)
         self._gesture = None            # ("resize", poignee, ...) | ("rotate", ...)
         self._edit_before = None
         self._laying = False
@@ -247,8 +255,14 @@ class BoardItem(QGraphicsObject):
         """Zone peinte au-dela du contenu (ombre des post-it...)."""
         return self.content_rect()
 
+    def _pad_zoom(self) -> float:
+        """Zoom des marges hors selection : par paliers (`BoardScene.set_zoom` previent l'index de Qt a chaque
+        palier ; une zone qui suit le zoom sans le prevenir laisse un pointeur mort dans l'index = plantage)."""
+        scene = self.scene()
+        return float(getattr(scene, "pad_zoom", 1.0)) if scene is not None else 1.0
+
     def boundingRect(self) -> QRectF:
-        m = self._margin() if self.isSelected() else 3 / self._zoom()
+        m = self._margin() if self.isSelected() else 3 / self._pad_zoom()
         return self.paint_margin().united(self.content_rect()).adjusted(-m, -m, m, m)
 
     def shape(self) -> QPainterPath:
@@ -950,15 +964,19 @@ class FrameItem(BoardItem):
         item.document().setDefaultTextOption(option)
         item.setTextWidth(-1)
         item.setPos(0, -item.boundingRect().height() - self.TITLE_GAP / self._zoom())
+        box = item.mapRectToParent(item.boundingRect())
+        if box != self._title_box:                       # zone du cadre : Qt prevenu AVANT (voir BoardScene.set_zoom)
+            self.prepareGeometryChange()
+            self._title_box = box
 
     def zoom_changed(self):
         super().zoom_changed()
         self.layout_text()
 
+    _title_box = QRectF()   # zone du titre GARDEE : lue en direct, elle changeait a la frappe sans prevenir Qt
+
     def boundingRect(self) -> QRectF:
-        rect = super().boundingRect()
-        title = self.text_item.mapRectToParent(self.text_item.boundingRect()) if self.text_item else QRectF()
-        return rect.united(title)
+        return super().boundingRect().united(self._title_box)
 
     def shape(self) -> QPainterPath:
         path = super().shape()
@@ -1005,52 +1023,231 @@ class FrameItem(BoardItem):
         return result
 
 
-_PIXMAPS: "OrderedDict[tuple, QPixmap | None]" = OrderedDict()
-_PIXMAP_LIMIT = 64
+# Images des assets (2026-11-02, signale : images « tres mal lissees » au dezoom, board d'images lent) :
+# - DECODEES DANS UN FIL (`_decode`, deux a la fois) : l'ouverture d'un board de 36 images figeait ~250 ms et
+#   chaque image qui entrait a l'ecran pour la premiere fois ~5-10 ms ; en attendant, un fond gris clair ;
+# - NIVEAUX REDUITS (mipmaps : moities successives en lissage par moyenne, `QImage.scaled` Smooth, ~5 ms pour
+#   2400 px, faits dans le fil) : l'image est peinte depuis le plus petit niveau encore AU MOINS aussi grand
+#   que sa taille a l'ecran — le lissage bilineaire seul, de 2400 px vers 120, sautait des pixels (crenelage) ;
+#   c'est aussi moins de pixels a lire a chaque peinture (zoom continu, sans image gardee) ;
+# - memoire bornee en OCTETS (`IMAGE_CACHE_BYTES`), plus en nombre d'images (au-dela de 64 images, chaque
+#   peinture redecodait celles qui sortaient du cache).
+IMAGE_CACHE_BYTES = 1 << 30
+IMAGE_MIP_MIN = 24     # plus petit niveau (pixels du grand cote)
+_IMAGES: "OrderedDict[tuple, _ImageEntry]" = OrderedDict()
+_IMAGE_BYTES = [0]
+_POOL = None
+_NOTIFIER = None
+
+
+class _ImageEntry:
+    __slots__ = ("levels", "state", "waiting", "pixmap", "size")
+
+    def __init__(self):
+        self.levels: list = []          # QImage : niveau 0 = image decodee (au plus IMAGE_MAX_SIDE), puis moities
+        self.state = "loading"          # "loading" | "ready" | "missing"
+        self.waiting: list = []         # elements a repeindre quand l'image arrive
+        self.pixmap = None              # QPixmap du niveau 0 (asset_pixmap : autres modules)
+        self.size = 0
+
+
+def _read_levels(path: str) -> list:
+    """Decode + niveaux reduits (sans Qt de l'interface : appelable depuis un fil)."""
+    reader = QImageReader(path)
+    reader.setAutoTransform(True)
+    natural = reader.size()
+    if natural.isValid() and max(natural.width(), natural.height()) > IMAGE_MAX_SIDE:
+        natural.scale(IMAGE_MAX_SIDE, IMAGE_MAX_SIDE, Qt.KeepAspectRatio)
+        reader.setScaledSize(natural)
+    image = reader.read()
+    if image.isNull():
+        return []
+    image = image.convertToFormat(QImage.Format_ARGB32_Premultiplied if image.hasAlphaChannel()
+                                  else QImage.Format_RGB32)       # formats peints sans conversion
+    levels = [image]
+    while max(levels[-1].width(), levels[-1].height()) > 2 * IMAGE_MIP_MIN:
+        last = levels[-1]
+        levels.append(last.scaled(max(1, last.width() // 2), max(1, last.height() // 2),
+                                  Qt.IgnoreAspectRatio, Qt.SmoothTransformation))
+    return levels
+
+
+def _asset_file(board_path, name: str):
+    from fm_board.serialization import asset_path, is_asset_name
+    return str(asset_path(board_path, name)) if is_asset_name(name) else None
+
+
+def _store_levels(key, entry: _ImageEntry, levels: list):
+    entry.levels = levels
+    entry.state = "ready" if levels else "missing"
+    entry.size = sum(i.sizeInBytes() for i in levels)
+    _IMAGE_BYTES[0] += entry.size
+    if _IMAGE_BYTES[0] > IMAGE_CACHE_BYTES:                 # les moins recemment peintes d'abord
+        for old_key in [k for k, e in _IMAGES.items() if k != key and e.state != "loading"]:
+            if _IMAGE_BYTES[0] <= IMAGE_CACHE_BYTES:
+                break
+            _IMAGE_BYTES[0] -= _IMAGES.pop(old_key).size
+
+
+def _entry(board_path, name: str) -> tuple[tuple, _ImageEntry]:
+    key = (str(board_path), name)
+    entry = _IMAGES.get(key)
+    if entry is None:
+        entry = _IMAGES[key] = _ImageEntry()
+    else:
+        _IMAGES.move_to_end(key)
+    return key, entry
+
+
+def _decoded(key, entry, levels):
+    """Fil de l'interface : image decodee par le fil de fond."""
+    if _IMAGES.get(key) is entry and entry.state == "loading":   # sinon : oubliee ou decodee entre-temps
+        _store_levels(key, entry, levels)
+    waiting, entry.waiting = entry.waiting, []
+    for item in waiting:
+        try:
+            if item.scene() is not None:
+                item.update()
+        except RuntimeError:                                 # element detruit entre-temps
+            pass
+
+
+def _start_decode(key, entry, path: str):
+    global _POOL, _NOTIFIER
+    if _POOL is None:
+        from concurrent.futures import ThreadPoolExecutor
+        from PySide6.QtCore import QObject, Signal
+
+        class _Notifier(QObject):
+            done = Signal(object, object, object)
+        _POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="board-images")
+        _NOTIFIER = _Notifier()
+        _NOTIFIER.done.connect(_decoded)                     # emis depuis le fil : file d'attente du fil principal
+
+    def work():
+        try:
+            levels = _read_levels(path)
+        except Exception:                                    # noqa: BLE001 - fichier abime : « introuvable »
+            levels = []
+        _NOTIFIER.done.emit(key, entry, levels)
+    _POOL.submit(work)
+
+
+def image_levels(board_path, name: str, waiter=None) -> list | None:
+    """Niveaux d'un asset ([] : introuvable) ; None tant qu'il se decode en fond (`waiter` repeint a l'arrivee)."""
+    key, entry = _entry(board_path, name)
+    if entry.state == "loading":
+        if waiter is None:
+            _decode_now(key, entry)
+        else:
+            if not entry.waiting:
+                path = _asset_file(board_path, name)
+                if path is None:
+                    _store_levels(key, entry, [])
+                    return entry.levels
+                _start_decode(key, entry, path)
+            if waiter not in entry.waiting:
+                entry.waiting.append(waiter)
+            return None
+    return entry.levels
+
+
+def _decode_now(key, entry):
+    path = _asset_file(*key)
+    _store_levels(key, entry, _read_levels(path) if path else [])
+    waiting, entry.waiting = entry.waiting, []
+    for item in waiting:
+        try:
+            item.update()
+        except RuntimeError:
+            pass
+
+
+def wait_images(timeout: float = 5.0) -> bool:
+    """Tests, export : attend la fin des decodages en cours (traite les evenements). True si tout est arrive."""
+    import time
+    from PySide6.QtCore import QCoreApplication
+    end = time.monotonic() + timeout
+    while any(e.state == "loading" and e.waiting for e in _IMAGES.values()):
+        if time.monotonic() > end:
+            return False
+        QCoreApplication.processEvents()
+        time.sleep(0.002)
+    return True
 
 
 def asset_pixmap(board_path, name: str) -> QPixmap | None:
-    """Image d'un asset, decodee une fois (partagee par les copies d'une meme image) : les peintures suivantes
-    ne lisent plus le disque."""
-    key = (str(board_path), name)
-    if key in _PIXMAPS:
-        _PIXMAPS.move_to_end(key)
-        return _PIXMAPS[key]
-    from fm_board.serialization import asset_path, is_asset_name
-    pixmap = None
-    if is_asset_name(name):
-        reader = QImageReader(str(asset_path(board_path, name)))
-        reader.setAutoTransform(True)
-        natural = reader.size()
-        if natural.isValid() and max(natural.width(), natural.height()) > IMAGE_MAX_SIDE:
-            natural.scale(IMAGE_MAX_SIDE, IMAGE_MAX_SIDE, Qt.KeepAspectRatio)
-            reader.setScaledSize(natural)
-        image = reader.read()
-        if not image.isNull():
-            pixmap = QPixmap.fromImage(image)
-    _PIXMAPS[key] = pixmap
-    while len(_PIXMAPS) > _PIXMAP_LIMIT:
-        _PIXMAPS.popitem(last=False)
-    return pixmap
+    """Image d'un asset (niveau 0), decodee une fois (partagee par les copies d'une meme image) : les peintures
+    suivantes ne lisent plus le disque. Synchrone (export, Design, Illustrator)."""
+    levels = image_levels(board_path, name)
+    if not levels:
+        return None
+    entry = _IMAGES[(str(board_path), name)]
+    if entry.pixmap is None:
+        entry.pixmap = QPixmap.fromImage(levels[0])
+    return entry.pixmap
+
+
+def pick_level(levels: list, pixels: float):
+    """Plus petit niveau dont le grand cote couvre encore `pixels` pixels d'ecran."""
+    best = levels[0]
+    for image in levels[1:]:
+        if max(image.width(), image.height()) < pixels:
+            break
+        best = image
+    return best
 
 
 class ImageItem(BoardItem):
+    """Image : peinte dans son image gardee (une fois par zoom) a sa taille EXACTE en pixels de l'ecran, reduite
+    par moyenne (`QImage.scaled` Smooth) et posee sur la grille des pixels. Le lissage du peintre seul est
+    bilineaire des qu'echelle et decalage ne sont pas entiers (le cas du board) : il saute des pixels et crenele
+    (mesure, damier d'un pixel : ecart au gris 32 sur 128, 1 apres). Zoom continu, rotation, export : le niveau
+    reduit le plus proche, lisse par le peintre."""
+
     KEEP_RATIO = True
+    _exact = None           # (cle, QImage) : image a la taille exacte de l'ecran, refaite quand cette taille change
 
     def paint_content(self, painter):
         scene = self.scene()
         board_path = getattr(scene, "board_path", None)
-        pixmap = asset_pixmap(board_path, self.data.get("asset", "")) if board_path is not None else None
         rect = self.content_rect()
-        if pixmap is None:
+        levels = None
+        if board_path is not None:
+            exporting = getattr(scene, "exporting", False)
+            levels = image_levels(board_path, self.data.get("asset", ""), None if exporting else self)
+            if levels is None:                               # en cours de decodage : fond neutre
+                painter.fillRect(rect, QColor(0, 0, 0, 14))
+                return
+        if not levels:
             painter.setPen(QPen(QColor(0, 0, 0, 90), 1 / self._zoom(), Qt.DashLine))
             painter.setBrush(QColor(0, 0, 0, 12))
             painter.drawRect(rect)
             painter.setFont(_plain_font(13 / self._zoom()))
             painter.drawText(rect, Qt.AlignCenter, "image introuvable")
             return
+        t = painter.deviceTransform()
+        scale = math.sqrt(abs(t.m11() * t.m22() - t.m12() * t.m21())) or 1.0
+        image = pick_level(levels, max(rect.width(), rect.height()) * scale)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        painter.drawPixmap(rect, pixmap, QRectF(pixmap.rect()))
+        if (self.cacheMode() != QGraphicsItem.NoCache and not exporting and t.m11() > 0 and t.m22() > 0
+                and abs(t.m12()) < 1e-9 and abs(t.m21()) < 1e-9):
+            box = t.mapRect(rect)
+            w, h = max(1, round(box.width())), max(1, round(box.height()))
+            if (w, h) != (image.width(), image.height()):
+                key = (image.cacheKey(), w, h)
+                if self._exact is None or self._exact[0] != key:
+                    self._exact = (key, image.scaled(w, h, Qt.IgnoreAspectRatio, Qt.SmoothTransformation))
+                image = self._exact[1]
+            painter.save()
+            painter.setWorldTransform(QTransform())
+            base = painter.deviceTransform()                 # echelle de l'appareil (ecran a plus de 100 %)
+            ratio = base.m11() or 1.0
+            painter.drawImage(QRectF((round(box.left()) - base.dx()) / ratio, (round(box.top()) - base.dy()) / ratio,
+                                     w / ratio, h / ratio), image, QRectF(image.rect()))
+            painter.restore()
+            return
+        painter.drawImage(rect, image, QRectF(image.rect()))
 
 
 def ink_path(points) -> QPainterPath:
@@ -1096,7 +1293,7 @@ class InkItem(BoardItem):
         return self._path.boundingRect().adjusted(-width / 2, -width / 2, width / 2, width / 2)
 
     def boundingRect(self) -> QRectF:
-        m = 3 / self._zoom()
+        m = 3 / (self._zoom() if self.isSelected() else self._pad_zoom())
         return self.content_rect().adjusted(-m, -m, m, m)
 
     def ink_shape(self, tolerance_px: float = 10.0) -> QPainterPath:

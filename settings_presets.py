@@ -1,11 +1,13 @@
 """Presets : choix dans la fenetre principale (menu deroulant + bouton « Gerer les presets… ») et fenetre de
-gestion (liste de tous les presets : nouveau, dupliquer, renommer, supprimer, preset par defaut).
+gestion (liste de tous les presets : actif, preset par defaut, « Enregistrer » le preset a l'ecran).
 
-Couche reglages : ne depend d'aucun code propre a l'appli. Donnees et regles dans settings_store
-(`apply_preset`, `save_preset`, `duplicate_preset`, `rename_preset`, `delete_preset`,
-`set_default_preset`, `preset_in_use`) ; c'est l'appelant qui applique les reglages a l'ecran (signal
-`presetChosen` / `presetsChanged`). Habillage = briques de la fenetre de reglages v2 (`_SelectField`,
-`_Btn`, `_TextField`, `_Toggle`, `build_cells_table`, `_PanelFrame`, `_SettingsTitleBar`)."""
+La liste est CELLE DE fm_theme, a l'identique : un preset se cree, se renomme et se supprime SEULEMENT dans
+fm_theme (demande de l'utilisateur, 2026-10-30) ; fm_browser n'enregistre que sa couche de reglages propres
+(settings_store, « Presets »). Donnees et regles dans settings_store (`apply_preset`, `save_preset`,
+`set_default_preset`, `preset_in_use`, `preset_names`) ; c'est l'appelant qui applique les reglages a l'ecran
+et suit le dossier des presets fm_theme (signaux `presetChosen` / `presetsChanged` / `themeEditorRequested`).
+Habillage = briques de la fenetre de reglages v2 (`_SelectField`, `_Btn`, `_Toggle`, `build_cells_table`,
+`_PanelFrame`, `_SettingsTitleBar`)."""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -33,8 +35,8 @@ def _accent_btn(text: str) -> _Btn:
 
 
 class PresetPicker(QWidget):
-    """Menu deroulant des presets (le preset actif) + bouton « Gerer les presets… ». `presetChosen(nom)`
-    ("" = aucun) ; `manageRequested()`."""
+    """Menu deroulant des presets fm_theme (le preset actif) + bouton « Gerer les presets… ». `presetChosen(nom)` ;
+    `manageRequested()`."""
 
     presetChosen = Signal(str)
     manageRequested = Signal()
@@ -46,8 +48,8 @@ class PresetPicker(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         self.select = _SelectField([NO_PRESET], NO_PRESET, width=150)
-        self.select.setToolTip("Preset")
-        self.select.changed.connect(lambda name: self.presetChosen.emit("" if name == NO_PRESET else name))
+        self.select.setToolTip("Preset (liste de fm_theme)")
+        self.select.changed.connect(lambda name: name != NO_PRESET and self.presetChosen.emit(name))
         layout.addWidget(self.select)
         self.manage = _plain_btn("Gérer les presets…")
         self.manage.clicked.connect(self.manageRequested.emit)
@@ -58,9 +60,9 @@ class PresetPicker(QWidget):
         settings = settings if settings is not None else load_settings()
         names = store.preset_names()
         active = store.preset_in_use(settings)
-        self.select.setOptions([NO_PRESET] + names)
+        self.select.setOptions(names or [NO_PRESET])
         self.select.blockSignals(True)
-        self.select._value = active if active in names else NO_PRESET
+        self.select._value = active if active in names else (names[0] if names else NO_PRESET)
         self.select._sync_text()
         self.select.blockSignals(False)
 
@@ -73,12 +75,12 @@ class PresetPicker(QWidget):
 
 
 class PresetManagerWindow(QDialog):
-    """Fenetre outil sans cadre, non modale : un tableau, une ligne par preset (nom modifiable, actif,
-    preset par defaut, Dupliquer / Supprimer), puis « Nouveau preset » (depuis les reglages a l'ecran).
-    `presetsChanged()` : la liste, un nom ou le preset par defaut a change."""
+    """Fenetre outil sans cadre, non modale : un tableau, une ligne par preset fm_theme (nom, actif, preset par
+    defaut, couche fm_browser, « Enregistrer » sur le preset a l'ecran), puis « Ouvrir fm_theme » (creer, renommer,
+    supprimer). `presetsChanged()` : le preset par defaut a change ; `refresh()` : la liste de fm_theme a change."""
 
     presetsChanged = Signal()
-    themeChanged = Signal(str)       # le preset fm_theme lie a ce preset de l'appli a change
+    themeEditorRequested = Signal()  # « Ouvrir fm_theme » : seul endroit ou les presets se creent / suppriment
 
     _SAVE_DELAY = 400
 
@@ -92,11 +94,6 @@ class PresetManagerWindow(QDialog):
         saved = (settings.get("table_dims") or {}).get(self._dims_key)
         if saved:
             _TABLE_DIMS[self._dims_key] = saved
-        self._armed: str | None = None       # « Supprimer » : 1er clic = confirmer, 2e clic = supprimer
-        self._disarm = QTimer(self)
-        self._disarm.setSingleShot(True)
-        self._disarm.setInterval(3000)
-        self._disarm.timeout.connect(self._rebuild)
         self._dims_timer = QTimer(self)
         self._dims_timer.setSingleShot(True)
         self._dims_timer.setInterval(self._SAVE_DELAY)
@@ -124,10 +121,12 @@ class PresetManagerWindow(QDialog):
         foot = QHBoxLayout()
         foot.setContentsMargins(0, 0, 0, 0)
         foot.setSpacing(8)
-        new = _accent_btn("Nouveau preset")
-        new.setToolTip("Nouveau preset, avec les réglages à l'écran")
-        new.clicked.connect(self._new)
-        foot.addWidget(new)
+        theme = _accent_btn("Ouvrir fm_theme")
+        theme.setToolTip("Les presets se créent, se renomment et se suppriment dans fm_theme")
+        theme.clicked.connect(self.themeEditorRequested.emit)
+        foot.addWidget(theme)
+        note = v2._label("Créer, renommer, supprimer un preset : dans fm_theme.")
+        foot.addWidget(note)
         foot.addStretch(1)
         self.foot = foot
         self._rebuild()
@@ -136,103 +135,58 @@ class PresetManagerWindow(QDialog):
 
     # -- tableau --
 
+    def refresh(self):
+        """Liste de fm_theme ou preset actif changes (dossier surveille par la fenetre principale)."""
+        self._rebuild()
+
     def _rebuild(self):
-        self._disarm.stop()
         settings = load_settings()
         names = store.preset_names()
         active = store.preset_in_use(settings)
         default = settings.get("default_preset") or ""
+        layers = store._load_presets()
         rows = []
-        self._names = {}
         self._defaults = {}
-        import fm_theme.presets as theme_presets
-        themes = list(theme_presets.list_presets()) or [""]
-        app_presets = store._load_presets()
         for name in names:
-            field = v2._TextField(name, width=200)
-            field.editingFinished.connect(lambda f=field, n=name: self._rename(n, f.text()))
-            self._names[name] = field
             state = QLabel("actif" if name == active else "")
             state.setStyleSheet(f"color: {M['accent']}; background: transparent;")
             toggle = _Toggle(name == default, style_override="toggle2", show_label=False)
             toggle.toggled.connect(lambda checked, n=name: self._set_default(n, checked))
             self._defaults[name] = toggle
-            actions = QWidget()
-            actions.setStyleSheet("background: transparent;")
-            box = QHBoxLayout(actions)
-            box.setContentsMargins(0, 0, 0, 0)
-            box.setSpacing(6)
-            duplicate = _plain_btn("Dupliquer")
-            duplicate.clicked.connect(lambda _c=False, n=name: self._duplicate(n))
-            box.addWidget(duplicate)
-            armed = self._armed == name
-            delete = (_Btn("Confirmer la suppression", M["accent"], M["accent_border"], M["accent_fg"],
-                           M["accent_hover"], height=25, padding="0 11px") if armed else _plain_btn("Supprimer"))
-            delete.clicked.connect(lambda _c=False, n=name: self._delete(n))
-            box.addWidget(delete)
-            box.addStretch(1)
-            # Thème (aspect generique) lie a ce preset : un preset fm_theme (alias compris).
-            linked = app_presets.get(name, {}).get("theme_preset") or ""
-            path = theme_presets.find_preset(linked) if linked else None
-            linked = theme_presets.load_preset(path)["nom"] if path else themes[0]
-            theme = _SelectField(themes, linked, width=150)
-            theme.changed.connect(lambda value, n=name: self._set_theme(n, value))
-            rows.append([field, (state, "center", "center"), (toggle, "center", "center"), theme,
-                         actions])
+            if name == active:
+                action = _plain_btn("Enregistrer")
+                action.setToolTip("Enregistre les réglages à l'écran dans ce preset (couche fm_browser et thème)")
+                action.clicked.connect(lambda _c=False, n=name: self._save(n))
+            else:
+                action = QLabel("")
+            rows.append([v2._label(name), (state, "center", "center"), (toggle, "center", "center"),
+                         (v2._label("enregistrée" if name in layers else "—"), "center", "center"), action])
         if not rows:
-            empty = v2._label("Aucun preset : « Nouveau preset » enregistre les réglages à l'écran.")
+            empty = v2._label("Aucun preset : créez-en un dans fm_theme.")
             rows.append([empty, QLabel(""), QLabel(""), QLabel(""), QLabel("")])
         frame, _head, _cells = build_cells_table(
-            [("Preset", 230), ("Actif", 84), ("Par défaut", 112), ("Thème", 170), ("Actions", 280)], rows)
+            [("Preset", 230), ("Actif", 84), ("Par défaut", 112), ("Couche fm_browser", 160), ("Actions", 140)],
+            rows)
         frame._dims_key = self._dims_key
         normalize_toggles(frame)
         frame.dimsChanged.connect(self._dims_timer.start)
         if self.table is not None:
             self.body_l.replaceWidget(self.table, frame)
+            self.table.hide()
+            self.table.setParent(None)
             self.table.deleteLater()
         else:
             self.body_l.insertWidget(0, frame, 0, Qt.AlignLeft | Qt.AlignTop)
         self.table = frame
-        if self._armed:
-            self._disarm.start()
         QTimer.singleShot(0, self.adjustSize)
 
     # -- actions (enregistrees aussitot) --
 
-    def _changed(self):
+    def _save(self, name: str):
+        """« Enregistrer » : les reglages a l'ecran dans le preset (jamais un preset cree ici)."""
+        import ui_state
+        store.save_preset(name, ui_state.APPLIED_SETTINGS or load_settings())
         self._rebuild()
-        self.presetsChanged.emit()
-
-    def _new(self):
-        name = store.unique_preset_name("Nouveau preset")
-        store.save_preset(name, load_settings())
-        self._changed()
-        field = self._names.get(name)
-        if field is not None:
-            field.setFocus()
-            field.selectAll()
-
-    def _duplicate(self, name: str):
-        store.duplicate_preset(name)
-        self._changed()
-
-    def _rename(self, old: str, new: str):
-        if (new or "").strip() and new.strip() != old:
-            store.rename_preset(old, new)
-            QTimer.singleShot(0, self._changed)   # pas pendant le signal du champ qu'on detruit
-
-    def _delete(self, name: str):
-        if self._armed != name:
-            self._armed = name                 # 1er clic : demande de confirmation (3 s)
-            self._rebuild()
-            return
-        self._armed = None
-        store.delete_preset(name)
-        self._changed()
-
-    def _set_theme(self, name: str, theme: str):
-        store.set_preset_theme(name, theme)
-        self.themeChanged.emit(name)
 
     def _set_default(self, name: str, checked: bool):
         """Un seul preset par defaut : les autres toggles s'eteignent SUR PLACE (pas de tableau refait,

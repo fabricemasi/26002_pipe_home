@@ -27,6 +27,9 @@ class ChromeMixin:
     def _sync_collapse_button(self):
         """Icone / infobulle / disponibilite du bouton de repli des colonnes de la barre : replie ou deplie
         selon l'etat, grise quand les colonnes sont masquees (visionneuse)."""
+        sync_back = getattr(self, "_sync_mouse_back", None)
+        if sync_back is not None:
+            sync_back()                         # bouton « precedent » : suit l'ouverture / fermeture des modules
         button = getattr(self, "btn_collapse", None)
         if button is None:
             return
@@ -94,6 +97,16 @@ class ChromeMixin:
         on_font = getattr(self, "_font", None) is not None
         self._set_button_usable(self.btn_font, on_font or "font" in keys)
         self.btn_font.set_alert(self._mode_on_color() if on_font else None)
+        btn_pdf = getattr(self, "btn_pdf", None)                       # éditeur PDF (fm_pdf)
+        if btn_pdf is not None:
+            on_pdf = getattr(self, "_pdf", None) is not None
+            self._set_button_usable(btn_pdf, on_pdf or "pdf" in keys)
+            btn_pdf.set_alert(self._mode_on_color() if on_pdf else None)
+        btn_agenda = getattr(self, "btn_agenda", None)                 # agenda (fm_agenda) : toujours actif
+        if btn_agenda is not None:
+            on_agenda = self._agenda_open() if hasattr(self, "_agenda_open") else False
+            self._set_button_usable(btn_agenda, True)
+            btn_agenda.set_alert(self._mode_on_color() if on_agenda else None)
 
     @staticmethod
     def _mode_on_color() -> str:
@@ -102,6 +115,21 @@ class ChromeMixin:
         return color.name(QColor.HexArgb)
 
     # -- Bouton « visionneuse » de la barre --
+
+    def _toggle_columns_shown(self):
+        """Bouton de la barre : masque / montre toutes les colonnes (pas pendant un module ni la visionneuse, qui
+        les recouvrent déjà)."""
+        host = self.scroll.widget()
+        if (host is None or self._project_columns_hidden or getattr(self, "_md_open", False)
+                or getattr(self, "_board", None) is not None or getattr(self, "_font", None) is not None
+                or (hasattr(self, "_agenda_open") and self._agenda_open())):
+            return
+        hidden = not host.isHidden()
+        host.setVisible(not hidden)
+        self._columns_user_hidden = hidden
+        self.btn_columns.set_kind("show_columns" if hidden else "fade_columns")
+        self.btn_columns.setToolTip("Montrer les colonnes" if hidden else "Masquer les colonnes")
+        self._set_button_usable(self.btn_columns, True)
 
     def _on_viewer_button(self):
         """Visionneuse ouverte : retour aux colonnes. Sinon elle s'ouvre sur la selection : un fichier a apercu
@@ -114,6 +142,9 @@ class ChromeMixin:
         if self._board is not None and not self._close_board():
             return
         self._close_video()
+        leave_agenda = getattr(self, "_leave_agenda", None)        # agenda ouvert : rangé d'abord (fm_agenda)
+        if leave_agenda is not None:
+            leave_agenda()
         from column import opens_in_viewer
         column, path = self._selected_path()
         if path is None:
@@ -145,19 +176,37 @@ class ChromeMixin:
         self.root_field.setFixedWidth(scaled(190))
         self.preset_picker.select.setFixedHeight(self._nav_input_height())
 
+    def _refresh_theme_button(self):
+        theme = getattr(self, "btn_theme", None)
+        if theme is not None:                    # engrenage fm_theme : sa couleur (fm_theme > Barre de navigation)
+            color = (ui_state.APPLIED_SETTINGS or {}).get("navbar_theme_button_color") or "#f28c28"
+            theme.set_colors(color, QColor(color).lighter(130).name())
+
+    def refresh_navbar(self):
+        """Barre de navigation seule (fm_theme > Barre de navigation : hauteur, bordure, titre, bouton fm_theme) :
+        chemin rapide des apercus en direct, sans toucher aux colonnes."""
+        self.titlebar.refresh_sizes()
+        self.titlebar.refresh_look()
+        self._refresh_theme_button()
+
+    def refresh_status_bar(self):
+        """Barre d'etat : fm_theme > Barre d'etat (hauteur, fond, bordure, marges, textes), `fm_theme.status_bar`."""
+        from fm_theme.status_bar import apply_status_bar
+        apply_status_bar(self.statusbar, {"path": self.path_label, "info": self.status_right},
+                         ui_state.APPLIED_SETTINGS or {})
+
     def refresh_chrome_fonts(self):
         """Reapplique les polices de role aux widgets permanents de la
         fenetre (topbar, statut, panneau de detail), qui contrairement aux
         colonnes ne sont pas recrees par reload()."""
         self.titlebar.refresh_look()
         self.root_field.setFont(role_font("info", 11, 400))
-        for btn in (self.btn_browse, self.btn_presets, self.btn_settings, self.btn_style, self.btn_collapse,
-                    self.btn_viewer, self.btn_text_editor, self.btn_board, self.btn_video, self.btn_font):
+        for btn in (self.btn_browse, self.btn_presets, self.btn_settings, self.btn_style, self.btn_collapse, self.btn_columns,
+                    self.btn_viewer, self.btn_text_editor, self.btn_board, self.btn_video, self.btn_font,
+                    getattr(self, "btn_pdf", self.btn_font), getattr(self, "btn_agenda", self.btn_font)):
             btn.set_colors(role_color("buttons", "#c4cacf"), C["text"])
-        self.path_label.setFont(role_font("info", 11, 400))
-        self.path_label.setStyleSheet(f"color: {role_color('info', C['text_mono'])}; background: transparent;")
-        self.status_right.setFont(role_font("info2", 11, 400))
-        self.status_right.setStyleSheet(f"color: {role_color('info2', C['dim'])}; background: transparent;")
+        self._refresh_theme_button()
+        self.refresh_status_bar()
         for column in self.columns:
             column.refresh_header()
         self.detail.refresh_header()
@@ -188,13 +237,14 @@ class ChromeMixin:
         rafraichissement."""
         if rebuild_stylesheet:
             self._apply_global_stylesheet()
-        self.central.update()          # cadre central peint (CentralFrame) : fond, filet et coins relus
+        self.central.sync_margins()    # cadre central peint (CentralFrame) : fond, bordure et coins relus
+        self.central.update()
         _set_qss(self.columns_host, f"#ColumnsHost {{ background: {C['window']}; }}")
         self.titlebar.refresh_look()
         for btn in (self.titlebar.btn_min, self.titlebar.btn_max, self.titlebar.btn_close):
             btn.set_colors(C["label"], C["text"])
         self._refresh_button_shadows()
-        _set_qss(self.statusbar, f"#StatusBar {{ background: {C['chrome']}; border-top: 1px solid {C['border']}; }}")
+        self.refresh_status_bar()
         for column in self.columns:
             column.refresh_colors()
         for column in self.group_columns:

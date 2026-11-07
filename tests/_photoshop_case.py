@@ -59,6 +59,10 @@ class PsCase(unittest.TestCase):
                 std = getattr(pane, "_photoshop_standard", None)
                 if std is not None:
                     std.close_pane()
+                for item in pane.scene.board_items():                    # enregistrement en arrière-plan : aucun fil n'écrit après le nettoyage
+                    cancel = getattr(getattr(item, "_session", None), "cancel_flush", None)
+                    if cancel is not None:
+                        cancel()
                 pane._autosave.stop()
                 pane.deleteLater()
             except RuntimeError:
@@ -78,12 +82,14 @@ class PsCase(unittest.TestCase):
         settle()
         ctl = self.pane.photoshop
         self.assertIsNotNone(ctl)
-        self.assertTrue(ctl.active and ctl.bar.isVisible())
+        standard_open = getattr(self.pane, "_photoshop_standard", None) is not None          # (éditeur plein cadre : ses barres, pas « Document »)
+        self.assertTrue(ctl.active and (ctl.bar.isVisible() or standard_open))
 
         def fill():
             for widget in QApplication.topLevelWidgets():
                 if isinstance(widget, NewDocumentDialog):
                     widget.name.setText(name)
+                    widget.preset.setCurrentIndex(0)             # « Personnalisé » : jamais la taille / l'image d'un presse-papiers resté d'un autre test
                     widget.width_box.setValue(w)
                     widget.height_box.setValue(h)
                     widget.background.setCurrentText(background)

@@ -79,6 +79,8 @@ class BoardModuleMixin:
         from fm_cad import cad_import
         from previews import _oda_file_converter
         fm_cad.cad_export.ODA_PROVIDER = _oda_file_converter     # avant la lecture : meme recherche que les apercus
+        import ui_state
+        cad_import.NATIVE_BLOCKS = bool((ui_state.APPLIED_SETTINGS or {}).get("board_cad_import_blocks", True))
         path = Path(path)
         if self._board is not None and self._board.source == path:
             return
@@ -88,13 +90,13 @@ class BoardModuleMixin:
         self.path_label.setText(f"Lecture de {path.name}…")
 
         def work():
-            from fm_board import model
             from fm_board.scene import hold_gc
             key = ("lecture", id(relay))
             hold_gc(key, True)                      # passes completes du ramasse-miettes : a-coups de l'interface
             try:
-                data, report = cad_import.read_drawing(path)
-                data = model.normalize(data)        # ici, pas sur le fil de l'interface (~1 s a 40 000 lignes)
+                # Lu, converti et normalise ici (pas sur le fil de l'interface), ou repris du cache disque des
+                # dessins convertis (`fm_cad/cad_cache.py` : ~11 s -> ~0,2 s pour 81 000 entites).
+                data, report = cad_import.open_drawing(path)
                 relay.done.emit(data, report, None)
             except cad_import.DrawingError as exc:
                 relay.done.emit(None, None, str(exc))
@@ -140,6 +142,12 @@ class BoardModuleMixin:
         self._close_video()
         if not self._leave_font():
             return False
+        leave_pdf = getattr(self, "_leave_pdf", None)          # éditeur PDF ouvert : fermé d'abord (fm_pdf)
+        if leave_pdf is not None and not leave_pdf():
+            return False
+        leave_agenda = getattr(self, "_leave_agenda", None)    # agenda ouvert : rangé d'abord (fm_agenda)
+        if leave_agenda is not None:
+            leave_agenda()
         if self._board is not None:
             if (self._board.source if imported is not None else self._board.path) == Path(path):
                 return True
@@ -153,13 +161,44 @@ class BoardModuleMixin:
         pane.scene.loadProgress.connect(lambda done, total, name=Path(path).name:
                                         self._board_load_progress(name, done, total))
         pane.closeRequested.connect(self._close_board)
+        # Fluidite (journal des blocages, 2026-11-05) : les colonnes restaient affichees SOUS le board ; chaque
+        # repeinture d'un element transparent du board (reticule CAD, barres flottantes) repeignait aussi les
+        # colonnes dessous, a travers leurs effets de coins arrondis (image complete de chaque carte) : 50 a 100 ms
+        # par geste. Cachees une fois le fondu fini, remontrees avant le fondu de fermeture.
+        pane.coveringShown.connect(lambda p=pane: self._board is p and self.columns_host.hide())
         pane.stateChanged.connect(self._layout_board_buttons)
         pane.dirtyChanged.connect(lambda _d: self._layout_board_buttons())
+        pane.saveStateChanged.connect(self._show_board_state)
+        self._show_board_state(*pane.save_state())
+        self._attach_render_badge(pane)
         pane.fade_in()
         self._layout_board_buttons()
         self._sync_collapse_button()
         self.path_label.setText(str(path))
         return True
+
+    def _show_board_state(self, text: str | None, dirty: bool):
+        """Etat d'enregistrement du board (« modifié », « enregistré »…, sans le nom du fichier) a la place de
+        « read-only » dans la barre d'etat ; None : « read-only » revient (board ferme)."""
+        from settings_store import M
+        color = M["dirty_frame"] if (dirty and text) else role_color("info2", C["dim"])
+        self.status_right.setStyleSheet(f"color: {color}; background: transparent;")
+        self.status_right.setText("read-only" if text is None else text)
+
+    def _attach_render_badge(self, pane):
+        """Encart du mode de rendu (OPEN GL / CLASSIQUE) accroche en bas de la barre de navigation, coins du bas
+        droits ; celui du board se cache."""
+        from fm_board.ui import RenderBadge
+        badge = getattr(self, "_board_render_badge", None)
+        if badge is None:
+            badge = self._board_render_badge = RenderBadge(self.titlebar, hanging=True)
+            badge.clicked.connect(lambda: self._board is not None and self._board.toggle_render_mode())
+        pane.view.renderModeChanged.connect(badge.set_gl)
+        pane.view.renderModeChanged.connect(lambda _gl: self.titlebar.place_bottom_badge())
+        badge.set_gl(pane.view.gpu_active())
+        pane.set_external_badge(True)
+        badge.show()
+        self.titlebar.set_bottom_badge(badge)
 
     def _board_load_progress(self, name: str, done: int, total: int):
         """Gros board / dessin charge par tranches (`BoardScene.load_data`) : avancement dans la barre du bas,
@@ -180,6 +219,9 @@ class BoardModuleMixin:
             return False
         self._board = None
         self.titlebar.board_group().hide()
+        self.titlebar.set_bottom_badge(None)
+        self._show_board_state(None, False)
+        self.columns_host.show()                 # cachees pendant le board (voir _open_board)
         pane.fade_out(pane.deleteLater)
         self._sync_collapse_button()
         column, _path = self._selected_path()

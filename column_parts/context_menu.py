@@ -24,8 +24,8 @@ class ColumnContextMenuMixin:
             menu.setFont(font(11, 400))
             act_new_folder = menu.addAction("Nouveau dossier")
             act_new_text_file = menu.addAction("Nouveau document texte") if self._show_files else None
-            # Board facon Miro (paquet board/) : fichier .mro (JSON), ouvert dans l'appli au double-clic.
-            act_new_board = menu.addAction("Créer un mro") if self._show_files else None
+            # Board facon Miro (paquet board/) : fichier .brd (JSON ; anciens .mro lus), ouvert dans l'appli au double-clic.
+            act_new_board = menu.addAction("Créer un board") if self._show_files else None
             # Module typographique (paquet fm_font/) : source UFO 3 (dossier .ufo), ouverte au double-clic.
             act_new_font = menu.addAction("Créer un projet typographique") if self._show_files else None
             act_add_shortcut = menu.addAction("Ajouter un raccourci...")

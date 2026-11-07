@@ -237,9 +237,7 @@ def _sync_default_preset_override(settings: dict, apply_override) -> None:
     if not default_preset:
         return
     presets = _load_presets()
-    preset = presets.get(default_preset)
-    if preset is None:
-        return
+    preset = presets.setdefault(default_preset, {})     # couche de fm_browser du preset fm_theme a l'ecran
     apply_override(preset)
     _save_presets(presets)
 
@@ -304,6 +302,32 @@ def _register_settings_hooks() -> None:
     HOOKS["lut_image_kind"] = _pv.lut_image_kind
     HOOKS["lut_curve_choices"] = _pv.lut_curve_choices
     HOOKS["lut_test_image"] = _pv.lut_test_image_for
+
+def apply_window_border(settings: dict) -> None:
+    """Theme > General > « Bordure des fenetres » : bordure du pourtour de la fenetre principale, resolue dans
+    `ui_state.WINDOW_BORDER` (peinte par main_window.helpers.CentralFrame) ; seule : chemin rapide du glisser."""
+    from settings_store import _resolve_color_value
+    colors = settings.get("colors") or {}
+    ui_state.WINDOW_BORDER = {
+        "sides": _coerce_side_enabled(settings.get("window_border_enabled", True)),
+        "colors": {k: _resolve_color_value(v, colors) for k, v in (settings.get("window_border") or {}).items()},
+        "thickness": max(0, int(settings.get("window_border_thickness", 1) or 0))}
+
+
+FOLDER_ICON_KINDS = ("standard", "shortcut", "lightroom")
+
+
+def apply_folder_icon_colors(settings: dict) -> None:
+    """Couleurs des dossiers par sorte (Settings > Icones > Couleur des dossiers) : teinte de l'icone et couleur du
+    texte (seulement si son toggle est allume ; « Couleur icone » = celle de l'icone), seules : chemin rapide du
+    glisser."""
+    ui_state.FOLDER_ICON_COLORS = {kind: settings.get(f"folder_icon_color_{kind}") or "#ffffff"
+                                   for kind in FOLDER_ICON_KINDS}
+    ui_state.FOLDER_TEXT_COLORS = {
+        kind: (ui_state.FOLDER_ICON_COLORS[kind] if settings.get(f"folder_text_color_{kind}_from_icon")
+               else settings.get(f"folder_text_color_{kind}") or "#d6d9dc")
+        for kind in FOLDER_ICON_KINDS if settings.get(f"folder_text_color_{kind}_enabled")}
+
 
 def apply_all_settings(settings: dict) -> None:
     """Point d'entree unique qui recopie un dict de reglages (voir
@@ -401,11 +425,11 @@ def apply_all_settings(settings: dict) -> None:
         "font_family": settings.get("shortcut_font_family", ""),
         "font_bold": bool(settings.get("shortcut_font_bold", False)),
         "font_italic": bool(settings.get("shortcut_font_italic", False)),
-        "color": settings.get("shortcut_color", "#8fb4d5"),
         "font_size": int(settings.get("shortcut_font_size", 11)),
         "font_smoothing_enabled": bool(settings.get("shortcut_font_smoothing_enabled", False)),
         "font_smoothing": settings.get("shortcut_font_smoothing", "current"),
     }
+    apply_folder_icon_colors(settings)
     ui_state.DETAIL_PANEL_WIDTH = int(settings.get("detail_panel_width", 300))
 
     # Habillage des sliders peints a la main (voir settings_window.
@@ -475,6 +499,7 @@ def apply_all_settings(settings: dict) -> None:
     ui_state.HEADER_HEIGHT = settings.get("header_height", ui_state.HEADER_HEIGHT)
     ui_state.HEADER_PADDING = settings.get("header_padding", ui_state.HEADER_PADDING)
     ui_state.WINDOW_RADIUS = settings.get("window_radius", ui_state.WINDOW_RADIUS)
+    apply_window_border(settings)
     ui_state.BUTTON_RADIUS = settings.get("button_radius", ui_state.BUTTON_RADIUS)
     set_button_radius(ui_state.BUTTON_RADIUS)
     set_button_frame(settings.get("button_frame", True))

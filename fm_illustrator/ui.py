@@ -1,17 +1,22 @@
-"""Interface du module Illustrator (briques du board et des réglages, aucun style inventé) :
-- barre d'OUTILS à gauche (`fm_board.ui._bar` vertical) : outils groupés comme la barre d'Illustrator, puis le
-  témoin fond / contour (`FillStroke`) ;
-- barre de CONTRÔLE en haut : fond, contour, épaisseur, opacité de la sélection (ou du style courant), symétries,
-  plans de travail, export / import SVG.
-Contenu mis à jour seulement quand la sélection ou l'outil change (`stateChanged`, regroupé par passage de boucle)."""
+"""Interface du module Illustrator (briques du board et des réglages, aucun style inventé) : BARRES FLOTTANTES du système
+de fm_theme (`fm_board.bars.BoardBars`, disposition dans `bars.py`, enregistrée sous `board_bars["illustrator"]`) :
+- barres d'OUTILS (« Sélection », « Tracé », « Créer », « Transformer ») clipsées à gauche, puis « Couleur » : le témoin
+  fond / contour (`bars.FillStrokeTool`) et l'échange ;
+- barre « Propriétés » en haut : titre de la sélection, fond, contour, épaisseur, opacité de la sélection (ou du style
+  courant) ; barre « Objet » : disposition, pinceaux, aligner, Pathfinder, effets, plans de travail, calques, export ;
+- barre « Texte » (police, corps, paragraphe) : visible seulement quand la sélection contient un texte.
+Contenu mis à jour seulement quand la sélection ou l'outil change (`stateChanged`, regroupé par passage de boucle) ;
+les textes des boutons changent par `set_text` (rien n'est refait). Le panneau Calques reste un panneau (liste)."""
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QPointF, QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtCore import QObject, QRect, QTimer
 from PySide6.QtWidgets import QFileDialog, QInputDialog, QWidget
 
-from fm_board.ui import _bar, _GlyphButton, _menu, _panel, _slider, _SwatchGrid, _TextButton
+from fm_board.bars import BoardBars, BoardTool
+from fm_board.ui import _GlyphButton, _menu, _panel, _slider, _SwatchGrid
+from fm_theme.palette import PaletteSliderBar, PaletteTextButton
 from . import look, model, paint
+from .bars import FillStrokeTool, StatusText, default_state
 
 TOOL_GROUPS = [
     [("select", "ill_select"), ("direct", "ill_direct")],
@@ -27,154 +32,89 @@ TOOL_GROUPS = [
 STROKE_WIDTHS = [0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 15.0, 20.0, 30.0, 50.0]
 
 
-class FillStroke(QWidget):
-    """Témoin fond / contour d'Illustrator : carré plein (fond) et carré évidé (contour), celui au premier plan
-    dessus ; clic = le mettre au premier plan, clic sur celui qui y est déjà = choisir sa couleur ; « aucun » = barre
-    rouge."""
-
-    def __init__(self, ctl, parent=None):
-        super().__init__(parent)
-        self.ctl = ctl
-        self.setFixedSize(QSize(40, 40))
-        self.setCursor(Qt.ArrowCursor)
-        self.setToolTip("Fond et contour (X : premier plan, Maj+X : intervertir, D : par défaut, / : aucun) ; "
-                        "clic sur celui au premier plan : sa couleur")
-
-    def _rects(self):
-        return QRectF(2, 2, 24, 24), QRectF(14, 14, 24, 24)
-
-    def paintEvent(self, _event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, True)
-        fill_rect, stroke_rect = self._rects()
-        values = self.ctl.ui.current_values()
-        order = ["stroke", "fill"] if self.ctl.focus == "fill" else ["fill", "stroke"]
-        for which in order:
-            rect = fill_rect if which == "fill" else stroke_rect
-            color = values.get(which, "")
-            p.setPen(QPen(QColor("#9a9a9a"), 1))
-            if which == "fill":
-                p.setBrush(QColor(color) if color else QColor("#ffffff"))
-                p.drawRect(rect)
-            else:
-                p.setBrush(QColor("#ffffff") if not color else Qt.NoBrush)
-                p.drawRect(rect)
-                if color:
-                    p.setPen(QPen(QColor(color), 6))
-                    p.drawRect(rect.adjusted(3, 3, -3, -3))
-                    p.setPen(QPen(QColor("#9a9a9a"), 1))
-                    p.setBrush(QColor("#2b2b2b"))
-                    p.drawRect(rect.adjusted(7, 7, -7, -7))
-            gradient = values.get(f"{which}_gradient")
-            if gradient:
-                from PySide6.QtGui import QLinearGradient
-                g = QLinearGradient(rect.topLeft(), rect.topRight())
-                for offset, c in gradient["stops"]:
-                    g.setColorAt(offset, QColor(c))
-                p.setPen(QPen(QColor("#9a9a9a"), 1))
-                p.setBrush(g)
-                p.drawRect(rect if which == "fill" else rect.adjusted(0, 0, 0, 0))
-                if which == "stroke":
-                    p.setBrush(QColor("#2b2b2b"))
-                    p.drawRect(rect.adjusted(7, 7, -7, -7))
-            if not color:
-                p.setPen(QPen(QColor("#e0281e"), 2))
-                p.drawLine(rect.bottomLeft() + QPointF(2, -2), rect.topRight() + QPointF(-2, 2))
-        p.end()
-
-    def mousePressEvent(self, event):
-        fill_rect, stroke_rect = self._rects()
-        pos = QPointF(event.position())
-        front, back = (fill_rect, stroke_rect) if self.ctl.focus == "fill" else (stroke_rect, fill_rect)
-        which = self.ctl.focus if front.contains(pos) else (
-            ("stroke" if self.ctl.focus == "fill" else "fill") if back.contains(pos) else None)
-        if which is None:
-            return
-        if which != self.ctl.focus:
-            self.ctl.focus = which
-            self.ctl.stateChanged.emit()
-            return
-        self.ctl.ui.pick_color(which, self)
-
-
 class IllustratorChrome(QObject):
     def __init__(self, pane, ctl):
         super().__init__(pane)
         self.pane = pane
         self.ctl = ctl
-        self.tools, tools = _bar(pane, True)
-        tools.setAlignment(Qt.AlignHCenter)
+        # Barres FLOTTANTES (fm_theme/bar_manager.py, fm_board/bars.py) : leur aspect est celui de fm_theme (section
+        # « Palette » de l'éditeur), la disposition est retenue par l'utilisateur (`board_bars["illustrator"]`).
+        self._no_bar = QWidget(pane)               # (à la place d'une barre supprimée : `tools` et `control` restent utilisables)
+        self._no_bar.hide()
+        self.bars = BoardBars(pane, "illustrator", default_state())
+        register = self.bars.register
         self._tool_buttons = {}
-        for index, group in enumerate(TOOL_GROUPS):
-            if index:
-                tools.addSpacing(8)
+        for group in TOOL_GROUPS:
             for name, glyph in group:
-                button = _GlyphButton(glyph, ctl.tools[name].label, self.tools, 30)
+                button = BoardTool(glyph, ctl.tools[name].label, key=name)
                 button.clicked.connect(lambda _c=False, n=name: ctl.set_tool(n))
-                tools.addWidget(button, 0, Qt.AlignHCenter)
+                register(name, button)
                 self._tool_buttons[name] = button
-        tools.addSpacing(8)
-        self.fill_stroke = FillStroke(ctl, self.tools)
-        tools.addWidget(self.fill_stroke, 0, Qt.AlignHCenter)
-        swap = _GlyphButton("ill_swap", "Intervertir fond et contour (Maj+X)", self.tools, 26)
-        swap.clicked.connect(ctl.swap_fill_stroke)
-        tools.addWidget(swap, 0, Qt.AlignHCenter)
+        self.fill_stroke = FillStrokeTool(ctl, self.current_values, self.pick_color)
+        register("fill_stroke", self.fill_stroke)
+        self.swap_button = BoardTool("ill_swap", "Intervertir fond et contour (Maj+X)", key="swap")
+        self.swap_button.clicked.connect(ctl.swap_fill_stroke)
+        register("swap", self.swap_button)
 
-        self.control, bar = _bar(pane, False)
-        self.title = _TextButton("Aucune sélection", "Sélection", self.control)
-        self.title.setEnabled(False)
-        bar.addWidget(self.title)
-        bar.addSpacing(6)
-        self.fill_button = _GlyphButton("fill", "Fond", self.control, 30)
+        self.title = StatusText("title", "Aucune sélection", "Sélection", cells=3)
+        register("title", self.title)
+        self.fill_button = BoardTool("fill", "Fond", key="fill")
         self.fill_button.clicked.connect(lambda: self.pick_color("fill", self.fill_button))
-        self.stroke_button = _GlyphButton("border", "Contour", self.control, 30)
+        register("fill", self.fill_button)
+        self.stroke_button = BoardTool("border", "Contour", key="stroke")
         self.stroke_button.clicked.connect(lambda: self.pick_color("stroke", self.stroke_button))
-        self.width_button = _TextButton("1 pt", "Épaisseur du contour", self.control, 64)
+        register("stroke", self.stroke_button)
+        self.width_button = PaletteTextButton("stroke_width", "1 pt", "Épaisseur du contour", cells=2)
         self.width_button.clicked.connect(self.width_menu)
-        for widget in (self.fill_button, self.stroke_button, self.width_button):
-            bar.addWidget(widget)
-        bar.addSpacing(6)
-        self.opacity = _slider(0, 100, 100, unit="%")
-        self.opacity.setParent(self.control)
+        register("stroke_width", self.width_button)
+        self.opacity = PaletteSliderBar("opacity", "Opacité", 0, 100, 100, "%")
         self.opacity.setToolTip("Opacité")
         self.opacity.valueChanged.connect(lambda v: ctl.live_style("opacity", v / 100.0, "Opacité"))
-        bar.addWidget(self.opacity)
-        bar.addSpacing(6)
-        self.object_button = _TextButton("Objet", "Disposition, groupe, symétries, tracés", self.control)
+        register("opacity", self.opacity)
+
+        self.object_button = PaletteTextButton("object", "Objet", "Disposition, groupe, symétries, tracés", cells=2)
         self.object_button.clicked.connect(lambda: self.object_menu(self.object_button))
-        self.board_button = _TextButton("Plans de travail", "Nouveau plan de travail, formats", self.control)
-        self.board_button.clicked.connect(lambda: self.artboard_menu(self.board_button))
-        self.export_button = _GlyphButton("ill_export", "Exporter (SVG, PDF) / importer", self.control, 30)
-        self.export_button.clicked.connect(lambda: self.export_menu(self.export_button))
-        # Texte choisi : police, taille, paragraphe (montrés seulement quand la sélection contient un texte).
-        self.font_button = _TextButton("Police", "Police", self.control, 120)
-        self.font_button.clicked.connect(lambda: self.font_menu(self.font_button))
-        self.size_button = _TextButton("12 pt", "Corps (taille du texte)", self.control, 66)
-        self.size_button.clicked.connect(lambda: self.size_menu(self.size_button))
-        self.paragraph_button = _TextButton("Paragraphe", "Alignement, interligne, approche, style",
-                                            self.control)
-        self.paragraph_button.clicked.connect(lambda: self.paragraph_menu(self.paragraph_button))
-        for widget in (self.font_button, self.size_button, self.paragraph_button):
-            bar.addWidget(widget)
-            widget.hide()
-        self.pathfinder_button = _GlyphButton("ill_pathfinder", "Pathfinder (modes de forme, division…)",
-                                              self.control, 30)
-        self.pathfinder_button.clicked.connect(lambda: self.pathfinder_menu(self.pathfinder_button))
-        self.brush_button = _GlyphButton("ill_brush", "Pinceau : profil de largeur, pointe calligraphique, "
-                                         "forme de tache", self.control, 30)
+        register("object", self.object_button)
+        self.brush_button = BoardTool("ill_brush", "Pinceau : profil de largeur, pointe calligraphique, "
+                                      "forme de tache", key="brush")
         self.brush_button.clicked.connect(lambda: self.brush_menu(self.brush_button))
-        self.align_button = _GlyphButton("ill_align", "Aligner et répartir", self.control, 30)
+        register("brush", self.brush_button)
+        self.align_button = BoardTool("ill_align", "Aligner et répartir", key="align")
         self.align_button.clicked.connect(lambda: self.align_menu(self.align_button))
-        self.effects_button = _GlyphButton("ill_fx", "Effets et aspect (ombre, lueur, flou, décalage, arrondis, "
-                                           "contours supplémentaires)", self.control, 30)
+        register("align", self.align_button)
+        self.pathfinder_button = BoardTool("ill_pathfinder", "Pathfinder (modes de forme, division…)", key="pathfinder")
+        self.pathfinder_button.clicked.connect(lambda: self.pathfinder_menu(self.pathfinder_button))
+        register("pathfinder", self.pathfinder_button)
+        self.effects_button = BoardTool("ill_fx", "Effets et aspect (ombre, lueur, flou, décalage, arrondis, "
+                                        "contours supplémentaires)", key="effects")
         self.effects_button.clicked.connect(lambda: self._effects(self.effects_button))
-        self.layers_button = _GlyphButton("ill_layers", "Calques", self.control, 30)
+        register("effects", self.effects_button)
+        self.board_button = PaletteTextButton("artboards", "Plans de travail", "Nouveau plan de travail, formats", cells=3)
+        self.board_button.clicked.connect(lambda: self.artboard_menu(self.board_button))
+        register("artboards", self.board_button)
+        self.layers_button = BoardTool("ill_layers", "Calques", key="layers")
         self.layers_button.clicked.connect(self.toggle_layers)
-        for widget in (self.object_button, self.brush_button, self.align_button, self.pathfinder_button,
-                       self.effects_button,
-                       self.board_button,
-                       self.layers_button, self.export_button):
-            bar.addWidget(widget)
+        register("layers", self.layers_button)
+        self.export_button = BoardTool("ill_export", "Exporter (SVG, PDF) / importer", key="export")
+        self.export_button.clicked.connect(lambda: self.export_menu(self.export_button))
+        register("export", self.export_button)
+        # Texte choisi : police, taille, paragraphe (montrés seulement quand la sélection contient un texte ; la barre
+        # « Texte » disparaît quand ils sont cachés).
+        self.font_button = PaletteTextButton("font", "Police", "Police", cells=4)
+        self.font_button.clicked.connect(lambda: self.font_menu(self.font_button))
+        register("font", self.font_button)
+        self.size_button = PaletteTextButton("size", "12 pt", "Corps (taille du texte)", cells=2)
+        self.size_button.clicked.connect(lambda: self.size_menu(self.size_button))
+        register("size", self.size_button)
+        self.paragraph_button = PaletteTextButton("paragraph", "Paragraphe", "Alignement, interligne, approche, style",
+                                                  cells=3)
+        self.paragraph_button.clicked.connect(lambda: self.paragraph_menu(self.paragraph_button))
+        register("paragraph", self.paragraph_button)
+        self.bars.restore()
+        self._text_widgets = (self.font_button, self.size_button, self.paragraph_button)
+        for widget in self._text_widgets:
+            widget.hide()
+
         from settings_theme import _text_label
         from .layers import LayersPanel
         self.layers, layers = _panel(pane, True)
@@ -200,17 +140,30 @@ class IllustratorChrome(QObject):
         ctl.stateChanged.connect(self._sync_timer.start)
         self.hide()
 
+    # Compatibilité : les anciennes barres sont des barres flottantes du gestionnaire (celle qui porte « Sélection » et celle
+    # qui porte l'opacité) ; une barre supprimée ou vidée par l'utilisateur est remplacée par un widget caché.
+    def _bar_of(self, key: str):
+        bar = self.bars.manager.bar_of(key)
+        return bar if bar is not None else self._no_bar
+
+    @property
+    def tools(self):
+        return self._bar_of("select")
+
+    @property
+    def control(self):
+        return self._bar_of("opacity")
+
     # -- visibilité / place --
     def show(self):
-        self.tools.show()
-        self.control.show()
+        self.bars.set_visible(True)
+        self.bars.raise_all()
         self.layers.setVisible(self.layers_open)
         self.sync()
         self.place()
 
     def hide(self):
-        self.tools.hide()
-        self.control.hide()
+        self.bars.set_visible(False)
         self.layers.hide()
 
     def brush_menu(self, anchor):
@@ -260,6 +213,7 @@ class IllustratorChrome(QObject):
     def toggle_layers(self):
         self.layers_open = not self.layers_open
         self.layers.setVisible(self.layers_open)
+        self.layers_button.set_on(self.layers_open)
         self.sync_layers()
         self.place()
 
@@ -270,17 +224,21 @@ class IllustratorChrome(QObject):
             self.layers.resize(self.layers.sizeHint())
 
     def place(self):
+        """Zone des barres (le board à droite de la barre des modules) et panneau Calques : à droite, sous les barres qu'il
+        croiserait."""
         margin = 16
-        for panel in (self.tools, self.control):
-            panel.layout().activate()
-            panel.resize(panel.sizeHint())
-            panel.raise_()
-        self.tools.move(margin, max(margin + 50, (self.pane.height() - self.tools.height()) // 2))
-        top = self.pane.title_area().bottom() + 8
-        self.control.move(max(margin, (self.pane.width() - self.control.width()) // 2), top)
+        self.bars.set_area(self.pane.left_edge())
         if self.layers.isVisible():
             self.layers.resize(self.layers.sizeHint())
-            self.layers.move(self.pane.width() - self.layers.width() - margin, top + self.control.height() + 8)
+            box = QRect(self.pane.width() - self.layers.width() - margin, self.pane.title_area().bottom() + 8,
+                        self.layers.width(), self.layers.height())
+            for _ in range(len(self.bars.manager.bars) + 1):
+                below = [bar.geometry().bottom() + 8 for bar in self.bars.manager.bars
+                         if bar.isVisible() and bar.geometry().intersects(box)]
+                if not below or max(below) <= box.top():
+                    break
+                box.moveTop(max(below))
+            self.layers.move(box.topLeft())
             self.layers.raise_()
 
     # -- état --
@@ -295,30 +253,32 @@ class IllustratorChrome(QObject):
             button.set_on(ctl.tool == name)
         values = self.current_values()
         items = ctl.selection()
+        texts = ctl.texts()
         if items:
-            self.title.setText(f"{len(items)} objet{'s' if len(items) > 1 else ''}"
-                               if len(items) > 1 else "Tracé")
+            title = f"{len(items)} objets" if len(items) > 1 else ("Texte" if texts else "Tracé")
         elif ctl.selected_artboard() is not None:
-            self.title.setText(str(ctl.selected_artboard().data.get("name", "Plan de travail")))
+            title = str(ctl.selected_artboard().data.get("name", "Plan de travail"))
         else:
-            self.title.setText("Aucune sélection")
+            title = "Aucune sélection"
+        self.title.set_text(title)
         self.fill_button.set_swatch(values.get("fill") or "#ffffff")
         self.stroke_button.set_swatch(values.get("stroke") or "#ffffff", ring=min(18.0, 3 + float(
             values.get("stroke_width", 1.0)) * 2) if values.get("stroke") else None)
-        self.width_button.setText(look.to_display(float(values.get("stroke_width", 1.0)))
-                                  if values.get("stroke") else "aucun")
+        self.width_button.set_text(look.to_display(float(values.get("stroke_width", 1.0)))
+                                   if values.get("stroke") else "aucun")
         self.opacity.blockSignals(True)
         self.opacity.setValue(round(float(values.get("opacity", 1.0)) * 100))
         self.opacity.blockSignals(False)
-        texts = ctl.texts()
-        for widget in (self.font_button, self.size_button, self.paragraph_button):
-            widget.setVisible(bool(texts))
+        shown = bool(texts)
+        if self.font_button.isHidden() == shown:               # barre « Texte » : visible seulement avec un texte choisi
+            for widget in self._text_widgets:
+                widget.setVisible(shown)
+            self.bars.sync()
         if texts:
             from .text import base_font
             first = texts[-1].data
-            self.font_button.setText(base_font(first).family()[:18])
-            self.size_button.setText(look.to_display(float(first["font_size"])))
-            self.title.setText("Texte" if len(items) == 1 else self.title.text())
+            self.font_button.set_text(base_font(first).family()[:18])
+            self.size_button.set_text(look.to_display(float(first["font_size"])))
         self.fill_stroke.update()
         self.layers_button.set_on(self.layers_open)
         if self.layers_open:

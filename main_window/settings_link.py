@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QApplication
 from app_style import C, STYLESHEET_COLOR_KEYS, column_gap, scaled
 from config import GLOBAL_OMIT_DIR_NAMES, GLOBAL_OMIT_FILE_EXTENSIONS, GLOBAL_OMIT_FILE_NAMES
 from settings_store import load_settings
-from browser_core import COLUMN_SETTINGS, _is_globally_omitted_path, apply_all_settings
+from browser_core import COLUMN_SETTINGS, _is_globally_omitted_path, apply_all_settings, apply_folder_icon_colors
 from column import Column
 import ui_state
 
@@ -21,7 +21,7 @@ from .helpers import _AppInputWatch
 
 
 # Aspect des briques (fm_theme) : chemin rapide de _apply_settings, seuls ces widgets sont refaits.
-_BRICK_PREFIXES = ("slider_", "title_level", "table_", "toggle", "ctx_", "extra_window_")
+_BRICK_PREFIXES = ("slider_", "title_level", "table_", "toggle", "ctx_", "extra_window_", "palette_")
 
 
 def settings_window_v2_preload_enabled() -> bool:
@@ -32,10 +32,25 @@ def settings_window_v2_preload_enabled() -> bool:
 class SettingsLinkMixin:
     """Méthodes de PipelineBrowser : presets, fenêtre de réglages (ouverture, préchargement sur inactivité), application des réglages."""
 
+    def _open_fm_theme(self):
+        """Engrenage orange de la barre : fm_theme (éditeur de l'aspect), dans son propre processus comme
+        `fm_theme.bat` (l'aspect de l'appli suit le preset lié en direct : fm_theme/live.py)."""
+        import subprocess
+        import sys
+        from pathlib import Path
+        exe = Path(sys.executable)
+        windowed = exe.with_name("pythonw.exe")
+        try:
+            subprocess.Popen([str(windowed if windowed.exists() else exe), "-m", "fm_theme"],
+                             cwd=str(Path(__file__).resolve().parent.parent),
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except OSError as error:
+            self.path_label.setText(f"fm_theme : {error}")
+
     # -- Presets (menu deroulant de la barre du haut, fenetre « Gerer les presets ») --
 
     def _choose_preset(self, name: str):
-        """Menu deroulant : `name` devient le preset actif ("" = aucun) ; ses valeurs sont appliquees a
+        """Menu deroulant : `name` (preset fm_theme) devient le preset actif ; ses valeurs sont appliquees a
         toute l'appli et enregistrees (pipeline_settings.json)."""
         from settings_store import apply_preset
         settings = apply_preset(name)
@@ -65,6 +80,28 @@ class SettingsLinkMixin:
         self._theme_live = live.LiveClient(self)
         self._theme_live.received.connect(self._on_theme_live)
         self._sync_theme_watch(ui_state.APPLIED_SETTINGS or load_settings())
+        # Liste des presets = celle de fm_theme : un preset cree / renomme / supprime dans fm_theme apparait ou
+        # disparait aussitot ici (demande de l'utilisateur, 2026-10-30).
+        import fm_theme.presets as theme_presets
+        self._theme_list_watcher = live.PresetListWatcher(theme_presets.PRESETS_DIR, self)
+        self._theme_list_watcher.changed.connect(self._on_theme_list_changed)
+
+    def _on_theme_list_changed(self):
+        """Liste des presets fm_theme changee : menu deroulant et « Gerer les presets » relus ; si le preset a
+        l'ecran a ete supprime ou renomme, le preset que choisit settings_store (`preset_in_use`) est applique."""
+        from settings_store import preset_in_use
+        settings = load_settings()
+        name = preset_in_use(settings)
+        if name != (ui_state.APPLIED_SETTINGS or {}).get("theme_preset"):
+            self._choose_preset(name)               # refait aussi le menu deroulant
+        else:
+            self._refresh_preset_ui(settings)
+        window = getattr(self, "_preset_manager", None)
+        try:
+            if window is not None and window.isVisible():
+                window.refresh()
+        except RuntimeError:
+            pass
 
     def _sync_theme_watch(self, settings: dict):
         """Surveille le fichier du preset fm_theme lie (change avec le preset choisi). Rien si inchange."""
@@ -79,14 +116,21 @@ class SettingsLinkMixin:
 
     def _on_theme_file_changed(self):
         """Preset fm_theme enregistre ailleurs : relu et applique (seul ce qui a change est refait)."""
+        import fm_theme.presets as theme_presets
         settings = load_settings()
         self._apply_settings(settings)
-        dialog = getattr(self, "_settings_dialog_v2", None)
-        try:
-            if dialog is not None and dialog.isVisible():
-                dialog.external_values(settings)        # ses champs ouverts suivent
-        except RuntimeError:
-            pass
+        self._theme_to_settings_windows({k: v for k, v in settings.items() if theme_presets.theme_key(k)})
+
+    def _theme_to_settings_windows(self, values: dict):
+        """Aspect venu de l'editeur fm_theme : les fenetres de reglages de fm_browser (ouvertes, ou cachees
+        prechargees : a leur reouverture) le suivent aussi. L'editeur lui-meme (module « theme ») est exclu."""
+        import settings_window_v2 as v2
+        for window in QApplication.topLevelWidgets():
+            try:
+                if isinstance(window, v2.SettingsWindowV2) and window.module != "theme":
+                    window.follow_theme(values)
+            except RuntimeError:
+                pass
 
     def _on_theme_live(self, preset: str, values: dict, variants: dict | None = None):
         """Valeurs diffusees PENDANT un geste dans l'editeur (au plus une fois par image) : appliquees tout de
@@ -107,6 +151,7 @@ class SettingsLinkMixin:
         settings = dict(current)
         settings.update(values)
         self._apply_settings(settings, set(values))
+        self._theme_to_settings_windows(values)
 
     def open_theme_editor(self):
         """Editeur fm_theme (aspect generique) sur le preset fm_theme lie, dans ce processus : ses gestes
@@ -144,8 +189,7 @@ class SettingsLinkMixin:
             pass
         window = self._preset_manager = PresetManagerWindow(ui_state.APPLIED_SETTINGS or load_settings(), parent=self)
         window.presetsChanged.connect(lambda: self.preset_picker.refresh())
-        # Theme d'un preset change : s'il est a l'ecran, l'aspect suit tout de suite.
-        window.themeChanged.connect(lambda _n: self._apply_settings(load_settings()))
+        window.themeEditorRequested.connect(self.open_theme_editor)
         window.destroyed.connect(lambda *_a: setattr(self, "_preset_manager", None))
         window.adjustSize()
         anchor = self.preset_picker.mapToGlobal(QPoint(0, self.preset_picker.height() + 6))
@@ -464,12 +508,73 @@ class SettingsLinkMixin:
             if getattr(self, "_font", None) is not None:
                 self._font.apply_settings(ui_state.APPLIED_SETTINGS or settings)
             return
+        if changed and all(k.startswith("pdf_") for k in changed):
+            # Reglages : PDF : seul l'editeur PDF ouvert (plein cadre ou dans le Board) applique ce qui a change.
+            if isinstance(ui_state.APPLIED_SETTINGS, dict):
+                ui_state.APPLIED_SETTINGS.update({k: settings.get(k) for k in changed})
+            applied = ui_state.APPLIED_SETTINGS or settings
+            if getattr(self, "_pdf", None) is not None:
+                self._pdf.apply_settings(applied)
+            board_pdf = getattr(getattr(self, "_board", None), "pdf", None)
+            if board_pdf is not None:
+                board_pdf.apply_settings(applied)
+            return
+        if changed and all(k.startswith("agenda_") for k in changed):
+            # Reglages : Agenda : seuls l'agenda (s'il est construit) et son service appliquent ce qui a change.
+            if isinstance(ui_state.APPLIED_SETTINGS, dict):
+                ui_state.APPLIED_SETTINGS.update({k: settings.get(k) for k in changed})
+            applied = ui_state.APPLIED_SETTINGS or settings
+            if "agenda_width" in changed:
+                self._sync_agenda_width_slider()                 # curseur de la barre d'état
+            if getattr(self, "_agenda", None) is not None:
+                self._agenda.apply_settings(applied)
+            elif getattr(self, "_agenda_service", None) is not None:
+                self._agenda_service.apply_settings({k: applied.get(k) for k in changed})
+            for name in ("_agenda_reminders", "_agenda_service"):
+                target = getattr(self, name, None)
+                hook = getattr(target, "settings_changed", None) if name == "_agenda_reminders" else None
+                if callable(hook):
+                    hook(applied)
+            manager = getattr(getattr(self, "_agenda_service", None), "sync", None)
+            if manager is not None and hasattr(manager, "settings_changed"):
+                manager.settings_changed(applied)
+            return
         if changed and all(k.startswith(("board_", "tableur_")) for k in changed):
             # Reglages > Module MRO (magnetisme du board, module Tableur) : rien d'autre a refaire que le board ouvert.
             if isinstance(ui_state.APPLIED_SETTINGS, dict):
                 ui_state.APPLIED_SETTINGS.update({k: settings.get(k) for k in changed})
             if getattr(self, "_board", None) is not None:
                 self._board.apply_settings(ui_state.APPLIED_SETTINGS or settings)
+            return
+        if changed and all(k.startswith("window_border") for k in changed):
+            # Theme > General > « Bordure des fenetres » : cadre de la fenetre principale repeint (les fenetres
+            # additionnelles suivent par leur propre habillage, `seed_extra_window_look`).
+            if isinstance(ui_state.APPLIED_SETTINGS, dict):
+                ui_state.APPLIED_SETTINGS.update({k: settings.get(k) for k in changed})
+            from browser_core import apply_window_border
+            from settings_window_v2 import seed_extra_window_look
+            apply_window_border(settings)
+            seed_extra_window_look(ui_state.APPLIED_SETTINGS or settings)
+            self.central.sync_margins()
+            self.central.update()
+            self._apply_native_frame()
+            return
+        if changed and all(k.startswith(("folder_icon_color_", "folder_text_color_")) for k in changed):
+            # Couleurs des dossiers (Icones > Couleur des dossiers : icone, texte) : les lignes sont seulement repeintes.
+            if isinstance(ui_state.APPLIED_SETTINGS, dict):
+                ui_state.APPLIED_SETTINGS.update({k: settings.get(k) for k in changed})
+            apply_folder_icon_colors(settings)
+            for column in self.columns:
+                column.list.viewport().update()
+            return
+        if changed and all(k.startswith(("navbar_", "statusbar_")) for k in changed):
+            # fm_theme > Barre de navigation / Barre d'etat : seules ces deux barres sont rhabillees.
+            if isinstance(ui_state.APPLIED_SETTINGS, dict):
+                ui_state.APPLIED_SETTINGS.update({k: settings.get(k) for k in changed})
+            if any(k.startswith("navbar_") for k in changed):
+                self.refresh_navbar()
+            if any(k.startswith("statusbar_") for k in changed):
+                self.refresh_status_bar()
             return
         if changed and all(k.startswith(_BRICK_PREFIXES) for k in changed):
             self._restyle_bricks(settings, changed)
@@ -582,6 +687,9 @@ class SettingsLinkMixin:
                     restyle(root, merged)
         if any(k.startswith("extra_window_") for k in changed):
             v2.seed_extra_window_look(merged)        # fenetres additionnelles ouvertes : reprises aussitot
+        if any(k.startswith("palette_") for k in changed):
+            from fm_theme.palette import restyle_palettes_in      # barres flottantes du board : suivent la section « Palette »
+            restyle_palettes_in(self, merged)
         if any(k.startswith("table_") for k in changed):
             style_key = self._style_key(merged)      # rayon des tableaux : lu aussi par la feuille de style
             if style_key != self._last_style_key:

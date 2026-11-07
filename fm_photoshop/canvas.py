@@ -7,9 +7,10 @@ partie (`render.TileCache`). Tuiles jamais calculées : en tranches de temps (le
 from __future__ import annotations
 
 import math
+import time
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QApplication, QWidget
 
 from . import compose as C
@@ -18,6 +19,7 @@ from . import selection as SEL
 from .actions import Actions
 from .brush import Stroke
 from .planes import rect_intersect, rect_union
+from .stroke_feed import StrokeFeed
 
 TOOLS = ("brush", "eraser", "eyedropper", "move", "hand", "rect_select", "ellipse_select", "lasso", "poly_lasso",
          "wand", "text", "shape_rect", "shape_ellipse", "shape_line", "clone", "heal", "blur", "sharpen", "smudge",
@@ -25,9 +27,15 @@ TOOLS = ("brush", "eraser", "eyedropper", "move", "hand", "rect_select", "ellips
 RETOUCH_TOOLS = ("clone", "heal", "blur", "sharpen", "smudge", "dodge", "burn")      # outil = mode de la brosse
 SHAPE_TOOLS = {"shape_rect": "rect", "shape_ellipse": "ellipse", "shape_line": "line"}
 SELECT_TOOLS = ("rect_select", "ellipse_select", "lasso", "poly_lasso", "wand")
+FEED_FIRST_MS = 4.0          # moteur de trait dans le gestionnaire de souris lui-même (charge légère : tout passe ici)
+FEED_TICK_MS = 9.0           # moteur de trait à chaque tour de boucle suivant : le cercle est repeint entre deux tranches (voir stroke_feed.py)
+FEED_CATCH_MS = 13.0         # tranche plus longue quand le trait a pris du retard sur le curseur (> FEED_LAG_SOFT_MS)
+FEED_LAG_SOFT_MS = 150.0
+FEED_LAG_HARD_MS = 350.0     # retard maximal du trait sur le curseur : au-delà, le moteur rattrape sans rendre la main
 
 
 class CanvasView(QWidget):
+    zoomChanged = Signal(float)         # zoom affiché (1.0 = 100 %), émis à la peinture quand il change
     message = Signal(str)               # texte d'état (calque verrouillé, outil refusé…)
     toolChanged = Signal(str)
     colorsChanged = Signal()
@@ -37,6 +45,7 @@ class CanvasView(QWidget):
         self.session = session
         self.cache = render.cache_for(session)
         self.setMouseTracking(True)
+        self.setAttribute(Qt.WA_TabletTracking, True)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setAttribute(Qt.WA_OpaquePaintEvent, True)
         self.setMinimumSize(160, 120)
@@ -47,11 +56,32 @@ class CanvasView(QWidget):
         self._space = False
         self._hover = None                  # dernière position de la souris (widget) : curseur de brosse
         self._pressure = 1.0
+        self._zoom_shown = -1
+        self._pen_active = False                  # des évènements tablette ont accompagné le geste en cours
+        self.pen_log = None                       # `pen_log.PenLog` quand le journal du stylet est activé (panneau Brosse)
+        self._last_row = None
+        self.debug_trace = False                  # diagnostic : points bruts / filtrés / centres des empreintes du dernier trait
+        self._last_trace = None
+        self._bicubic_key = None                  # affichage bicubique mis en cache (voir `_draw_bicubic`)
+        self._bicubic_image = None
+        self._tablet_t = None                     # horodatage (ms) du dernier évènement tablette : il tient alors le curseur
         self._checker = None
         self._checker_key = None
         self._pump = QTimer(self)
         self._pump.setSingleShot(True)
         self._pump.timeout.connect(self.update)
+        self._catch_up = QTimer(self)               # rattrapage du lissage pendant une pause (Stroke Catch-up)
+        self._catch_up.setInterval(16)
+        self._catch_up.timeout.connect(self._catch_up_tick)
+        self._air_timer = QTimer(self)              # aérographe : dépose le TEMPS écoulé, même stylet immobile (voir Stroke.air_tick)
+        self._air_timer.setInterval(16)
+        self._air_timer.setTimerType(Qt.PreciseTimer)
+        self._air_timer.timeout.connect(self._air_tick)
+        self._feed = StrokeFeed()                   # points du curseur pas encore donnés au moteur (tranches de temps, voir stroke_feed.py)
+        self._feed_timer = QTimer(self)
+        self._feed_timer.setSingleShot(True)
+        self._feed_timer.setTimerType(Qt.PreciseTimer)
+        self._feed_timer.timeout.connect(self._feed_tick)
         self.actions = Actions(session)
         self._xf = None                     # transformation libre en cours (freetransform.FreeTransform)
         self._xf_dragging = False
@@ -147,6 +177,9 @@ class CanvasView(QWidget):
         painter = QPainter(self)
         painter.fillRect(event.rect(), QColor(look.LOOK["bench_color"]))
         z = self.zoom()
+        if round(z * 100) != self._zoom_shown:
+            self._zoom_shown = round(z * 100)
+            self.zoomChanged.emit(z)
         doc = self.session.doc
         origin = self.to_widget(0, 0)
         area = QRectF(origin, self.to_widget(doc.width, doc.height))
@@ -154,12 +187,14 @@ class CanvasView(QWidget):
         if not shown.isEmpty():
             painter.setBrush(Qt.NoBrush)
             painter.fillRect(shown, self._checker_brush())
+            bicubic = self._draw_bicubic(painter, shown)           # affichage bicubique (diagnostic) : remplace les tuiles
             painter.save()
             painter.translate(origin)
             painter.scale(z, z)
-            painter.setRenderHint(QPainter.SmoothPixmapTransform, z < 1.0 and not self._zooming)
+            smooth = z < 1.0 or self.session.display_filter in ("bilinear", "bicubic")      # (jamais en cours de zoom continu)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform, smooth and not self._zooming)
             rect = rect_intersect(self._rect_of(event.rect(), 2), doc.rect())
-            keys = self.cache.keys_for(rect) if rect else []
+            keys = self.cache.keys_for(rect) if rect and not bicubic else []
             for key in keys:                                  # zones modifiées (peu de pixels) : toujours à jour
                 if key in self.cache.tiles and key not in self.cache.pending_props:
                     self.cache.tile(key)
@@ -189,8 +224,29 @@ class CanvasView(QWidget):
         self._paint_selection(painter)
         self._paint_free_transform(painter)
         self._paint_clone_source(painter)
+        self._paint_trace(painter)
         self._paint_cursor(painter)
         painter.end()
+
+    def _draw_bicubic(self, painter, shown) -> bool:
+        """Mode d'affichage « bicubique » à fort zoom (présentation seulement, mise en cache tant que ni le document ni la
+        vue ne changent). Repli sur le bilinéaire pendant un trait, un déplacement, un zoom continu ou une zone énorme."""
+        z = self.zoom()
+        if self.session.display_filter != "bicubic" or z <= 1.0 or self._stroke is not None or self._move is not None                 or self._zooming:
+            return False
+        x0, y0 = int(math.floor(shown.left())), int(math.floor(shown.top()))
+        x1, y1 = int(math.ceil(shown.right())), int(math.ceil(shown.bottom()))
+        if x1 <= x0 or y1 <= y0 or (x1 - x0) * (y1 - y0) > 1_500_000:
+            return False
+        key = (self.cache.version, x0, y0, x1, y1, round(z, 6), tuple(round(v, 4) for v in self.center()))
+        if key != self._bicubic_key:
+            from . import display
+            first = self.to_doc(QPointF(x0 + 0.5, y0 + 0.5))
+            pixels = display.bicubic_view(self.session.doc, first, 1.0 / z, (x1 - x0, y1 - y0))
+            image = QImage(pixels.data, x1 - x0, y1 - y0, (x1 - x0) * 4, QImage.Format.Format_RGBA8888_Premultiplied).copy()
+            self._bicubic_key, self._bicubic_image = key, image
+        painter.drawImage(x0, y0, self._bicubic_image)
+        return True
 
     def _prefetch_tiles(self):
         """Une couronne de tuiles autour de la vue, par tranches de 8 ms : déplacer la vue n'attend plus leur calcul."""
@@ -223,6 +279,22 @@ class CanvasView(QWidget):
         painter.drawEllipse(self._hover, radius, radius)
         painter.setPen(QPen(QColor(255, 255, 255, 230), 1))
         painter.drawEllipse(self._hover, radius, radius)
+
+    def _paint_trace(self, painter):
+        """Diagnostic : points BRUTS (rouge), trajectoire FILTRÉE (vert), centres des EMPREINTES (bleu) du dernier trait."""
+        trace = self._last_trace
+        if not self.debug_trace or not trace:
+            return
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setBrush(Qt.NoBrush)
+        for key, color, radius in (("dabs", QColor(40, 120, 255, 200), 1.5), ("used", QColor(0, 200, 90, 230), 2.5),
+                                   ("raw", QColor(255, 40, 40, 230), 2.5)):
+            painter.setPen(QPen(color, 1))
+            for point in trace[key][-4000:]:
+                p = self.to_widget(point[0], point[1])
+                painter.drawEllipse(p, radius, radius)
+        painter.restore()
 
     def _paint_clone_source(self, painter):
         clone = self.session.clone
@@ -300,7 +372,13 @@ class CanvasView(QWidget):
         elif tool == "eyedropper" or (tool in ("brush", "eraser") and mods & Qt.AltModifier):
             self.pick_color(x, y, background=bool(mods & Qt.ShiftModifier) if tool == "eyedropper" else False)
         elif tool in ("brush", "eraser") or tool in RETOUCH_TOOLS:
-            self.begin_stroke(x, y, self._pressure)
+            pressure = self._pressure_of(event)
+            self._log_input("press", self._mouse_source(event), event, pressure)
+            self.begin_stroke(x, y, pressure)
+            self._log_engine((x, y))
+            if self._pen_active or event.source() != Qt.MouseEventNotSynthesized:   # diagnostic du stylet
+                self.message.emit(f"Stylet : pression {pressure:.2f} au premier contact"
+                                  + ("" if self._pen_active else " (aucun évènement tablette reçu : Windows Ink ?)"))
         elif tool in SELECT_TOOLS:
             self.begin_select(tool, x, y, mods)
         elif tool == "text":
@@ -312,9 +390,9 @@ class CanvasView(QWidget):
 
     def mouseMoveEvent(self, event):
         pos = event.position()
-        if self._hover is not None:
-            self.update(self._cursor_rect())
-        self._hover = pos
+        if not self._tablet_owns_hover(event):
+            self._set_hover(pos)
+        self._log_hover(event, self._mouse_source(event), self._pressure_of(event) if self._stroke is not None else 1.0)
         if self.session.tool in ("clone", "heal") and self.session.clone["source"] is not None:
             self.update()                                          # la croix de la source suit le pointeur
         if self._pan is not None:
@@ -331,7 +409,15 @@ class CanvasView(QWidget):
             return
         if self._stroke is not None:
             x, y = self.to_doc(pos)
-            self.extend_stroke(x, y, self._pressure)
+            pressure = self._pressure_of(event)
+            self._log_input("move", self._mouse_source(event), event, pressure)
+            if self._feed_direct():
+                self.extend_stroke(x, y, pressure, event.timestamp() / 1000.0)
+                self._log_engine((x, y))
+            else:
+                self._feed.push(x, y, pressure, event.timestamp() / 1000.0)      # le cercle d'abord, le moteur par tranches
+                if not self._feed_timer.isActive() or self._feed.lag_ms() > FEED_LAG_HARD_MS:
+                    self._feed_run(FEED_FIRST_MS)       # (ou le retard maximal est atteint : rattrapage tout de suite)
         elif self._move is not None:
             x, y = self.to_doc(pos)
             self.extend_move(x, y)
@@ -355,7 +441,11 @@ class CanvasView(QWidget):
             return
         if self._stroke is not None:
             x, y = self.to_doc(event.position())
-            self.end_stroke(x, y, self._pressure)
+            pressure = self._pressure_of(event)
+            self._log_input("release", self._mouse_source(event), event, pressure)
+            self.end_stroke(x, y, pressure)
+            self._pressure = 1.0
+            self._pen_active = False                                 # (réinitialisée APRÈS le trait : pas de bout gonflé)
         elif self._move is not None:
             self.end_move()
         elif self._gesture is not None:
@@ -395,11 +485,97 @@ class CanvasView(QWidget):
         self._zooming = False
         self.update()
 
+    def _pressure_of(self, event) -> float:
+        """Pression du geste : celle des évènements tablette, sinon (stylet livré seulement en souris synthétisée par
+        Qt / le système) celle que porte le point de l'évènement ; la vraie souris donne 1."""
+        if self._pen_active:
+            return self._pressure                    # (aucun plancher : le diamètre minimum se règle dans la brosse)
+        if event.source() == Qt.MouseEventNotSynthesized:
+            return 1.0                               # vraie souris : pression constante explicite
+        points = event.points()
+        value = points[0].pressure() if points else 1.0
+        if 0.0 < value < 1.0 and not self.session.pen_seen:
+            self.session.pen_seen = True
+            self.session.brush.pressure_size = True
+            self.colorsChanged.emit()
+        return max(0.0, min(1.0, value)) if value > 0.0 else self._pressure
+
+    def _log_input(self, kind, source, event, pressure=None, **extra):
+        """Journal du stylet (désactivé par défaut) : l'évènement REÇU, brut, avec son horodatage et sa position flottante."""
+        log = self.pen_log
+        if log is None:
+            return None
+        pos = event.position()
+        self._last_row = log.add(kind, source, event.timestamp() / 1000.0, pos.x(), pos.y(), p_raw=pressure, **extra)
+        return self._last_row
+
+    @staticmethod
+    def _mouse_source(event) -> str:
+        return "mouse" if event.source() == Qt.MouseEventNotSynthesized else "mouse_synth"
+
+    def _log_engine(self, doc_xy):
+        """Complète la dernière ligne du journal avec ce que le moteur en a fait (valeurs filtrées et résultantes)."""
+        row, stroke = self._last_row, self._stroke
+        if self.pen_log is None or row is None:
+            return
+        row["doc"] = [doc_xy[0], doc_xy[1]]
+        info = stroke.info if stroke is not None else None
+        if info:
+            row.update(p_filtered=round(info["p_filtered"], 5), size=round(info["size"], 4),
+                       opacity=round(info["opacity"], 5), flow=round(info["flow"], 5),
+                       used=[round(v, 4) for v in info["used"]], proc_ms=round(info["seconds"] * 1000.0, 4))
+
+    # -- curseur de brosse : chemin PROPRE, indépendant du moteur de trait (aucun filtre, aucun arrondi) --
+    def _set_hover(self, pos):
+        """Position FLOTTANTE du curseur (coordonnées du widget). Ni lissage, ni pression, ni alignement sur la grille."""
+        if self._hover is not None:
+            self.update(self._cursor_rect())
+        self._hover = QPointF(pos)
+        self.update(self._cursor_rect())
+
+    def _tablet_owns_hover(self, event) -> bool:
+        """Une souris SYNTHÉTISÉE juste après un évènement tablette porte la même position : la tablette tient déjà le
+        curseur (une seule source de coordonnées ; deux sources qui alternent le feraient trembler)."""
+        return (event.source() != Qt.MouseEventNotSynthesized and self._tablet_t is not None
+                and 0 <= event.timestamp() - self._tablet_t <= 100)
+
+    def _log_hover(self, event, source, pressure):
+        """Journal du survol : position locale / globale / document / curseur affiché, périphérique, boutons, zoom, DPR."""
+        log = self.pen_log
+        if log is None:
+            return
+        pos, glob = event.position(), event.globalPosition()
+        device = event.pointingDevice()
+        doc = self.to_doc(pos)
+        hover = self._hover
+        log.add("hover", source, event.timestamp() / 1000.0, pos.x(), pos.y(), p_raw=pressure, gx=glob.x(), gy=glob.y(),
+                doc=[doc[0], doc[1]], cursor=None if hover is None else [hover.x(), hover.y()], buttons=int(event.buttons().value),
+                zoom=self.zoom(), dpr=self.devicePixelRatioF(), device=device.name() if device is not None else "",
+                device_type=str(device.type()) if device is not None else "",
+                device_id=int(device.uniqueId().numericId()) if device is not None else 0,
+                device_system_id=int(device.systemId()) if device is not None else 0)
+
     def tabletEvent(self, event):
-        self._pressure = max(0.0, min(1.0, event.pressure())) if event.pointerType() != event.pointerType().Unknown \
-            else 1.0
-        if event.type() == event.type().TabletRelease:
+        if event.type() in (event.type().TabletMove, event.type().TabletPress, event.type().TabletRelease):
+            self._tablet_t = event.timestamp()
+            self._set_hover(event.position())
+            self._log_hover(event, "tablet", event.pressure())
+        if self.pen_log is not None:
+            kind = {event.type().TabletPress: "press", event.type().TabletRelease: "release"}.get(event.type(), "move")
+            device = event.pointingDevice()
+            self._log_input(kind, "tablet", event, event.pressure(), tilt_x=event.xTilt(), tilt_y=event.yTilt(),
+                            rotation=event.rotation(), tangential=event.tangentialPressure(),
+                            device=device.name() if device is not None else "", pointer=str(event.pointerType()))
+        pen = event.pointerType() != event.pointerType().Unknown
+        self._pressure = max(0.0, min(1.0, event.pressure())) if pen else 1.0
+        self._pen_active = pen and event.type() != event.type().TabletLeaveProximity   # (hors de portée : retour à la souris)
+        if not self._pen_active:
             self._pressure = 1.0
+        if pen and not self.session.pen_seen:
+            # premier contact d'un stylet : la pression pilote la taille (sinon « non prise en compte » : case décochée)
+            self.session.pen_seen = True
+            self.session.brush.pressure_size = True
+            self.colorsChanged.emit()
         event.ignore()                                         # Qt rejoue l'évènement en souris : une seule logique
 
     def keyPressEvent(self, event):
@@ -428,7 +604,7 @@ class CanvasView(QWidget):
         elif ctrl and mods & Qt.ShiftModifier and key == Qt.Key_I:
             self.actions.invert_selection()
         elif ctrl and key == Qt.Key_C:
-            self.actions.copy()
+            (self.actions.copy_merged if mods & Qt.ShiftModifier else self.actions.copy)()     # Ctrl+Maj+C : image finale (tous les calques)
         elif ctrl and key == Qt.Key_X:
             self.actions.cut()
         elif ctrl and key == Qt.Key_V:
@@ -553,16 +729,71 @@ class CanvasView(QWidget):
         except ValueError as exc:
             self.message.emit(str(exc))
             return None
-        dirty = self._stroke.begin(x, y, pressure)
+        self._stroke.zoom = self.zoom()
+        if self.debug_trace:
+            self._last_trace = self._stroke.trace = {"raw": [], "used": [], "dabs": []}
+        dirty = self._stroke.begin(x, y, pressure, air_now=time.monotonic())
+        self._feed.start(x, y, pressure)
         self._notify_dirty(dirty)
+        if self._stroke._air:
+            self._air_timer.start()
+        from .brush import TUNING
+        if TUNING.catch_up_pause and self._stroke.brush.smoothing > 0:
+            self._catch_up.start()
         return self._stroke
 
-    def extend_stroke(self, x, y, pressure=1.0):
+    def _catch_up_tick(self):
+        if self._stroke is None:
+            self._catch_up.stop()
+            return
+        if self._feed.pending():
+            return                                  # le moteur a encore des points du curseur à poser
+        self._notify_dirty(self._stroke.idle())
+
+    def _air_tick(self):
+        if self._stroke is None or not self._stroke._air:
+            self._air_timer.stop()                  # (jamais de minuterie orpheline : elle ne vit que pendant un trait d'aérographe)
+            return
+        self._notify_dirty(self._stroke.air_tick(time.monotonic()))
+
+    def extend_stroke(self, x, y, pressure=1.0, t=None):
+        """Point suivant du geste, donné tout de suite au moteur (synchrone : tests, aérographe, journal du stylet)."""
         if self._stroke is not None:
-            self._notify_dirty(self._stroke.move(x, y, pressure))
+            self._notify_dirty(self._stroke.move(x, y, pressure, t, air_now=time.monotonic()))
+            self._feed.note(x, y, pressure, t)
+
+    def _feed_direct(self) -> bool:
+        """Mesure exacte plutôt que file : aérographe (horloge réelle), journal du stylet, tracé de diagnostic."""
+        return self._stroke._air or self.pen_log is not None or self.debug_trace
+
+    def _feed_point(self, x, y, pressure, t):
+        stroke = self._stroke
+        if stroke is not None:
+            self._notify_dirty(stroke.move(x, y, pressure, t, air_now=time.monotonic()))
+
+    def _feed_run(self, budget_ms):
+        if self._stroke is None:
+            self._feed.clear()
+            return
+        lag = self._feed.lag_ms()
+        if lag > FEED_LAG_HARD_MS:
+            budget_ms += lag - FEED_LAG_HARD_MS               # retard borné : l'excédent est rattrapé tout de suite (le relâchement ne bloque pas)
+        elif lag > FEED_LAG_SOFT_MS:
+            budget_ms = max(budget_ms, FEED_CATCH_MS)
+        self._feed.run(self._feed_point, budget_ms)
+        if self._feed.pending():
+            self._feed_timer.start(1)                # la main revient à la boucle : évènements et peinture passent avant la suite
+
+    def _feed_tick(self):
+        self._feed_run(FEED_TICK_MS)
 
     def end_stroke(self, x, y, pressure=1.0):
+        self._feed_timer.stop()
+        if self._stroke is not None and self._feed.pending():
+            self._feed.run(self._feed_point, None)  # relâchement : tous les points du curseur sont posés avant la fin du trait
         stroke, self._stroke = self._stroke, None
+        self._catch_up.stop()
+        self._air_timer.stop()                      # relâchement : le dépôt temporel s'arrête immédiatement
         if stroke is None:
             return None
         self._notify_dirty(stroke.finish_to(x, y, pressure))

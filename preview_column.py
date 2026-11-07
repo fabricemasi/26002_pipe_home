@@ -1445,6 +1445,33 @@ class IconButton(QPushButton):
             painter.setBrush(QColor(color))
             painter.drawRect(QRectF(cx - s * 0.32, top - s * 0.32, s * 0.64, s * 0.64))
             painter.setBrush(Qt.NoBrush)
+        elif self._kind == "pdf":
+            # Module PDF : une page au coin plie, deux lignes de texte et un champ de formulaire.
+            painter.setBrush(Qt.NoBrush)
+            x0, y0, x1, y1 = cx - s * 1.25, cy - s * 1.6, cx + s * 1.25, cy + s * 1.6
+            fold = s * 0.75
+            painter.drawPolygon(QPolygonF([QPointF(x0, y0), QPointF(x1 - fold, y0), QPointF(x1, y0 + fold),
+                                           QPointF(x1, y1), QPointF(x0, y1)]))
+            painter.drawPolyline(QPolygonF([QPointF(x1 - fold, y0), QPointF(x1 - fold, y0 + fold),
+                                            QPointF(x1, y0 + fold)]))
+            painter.drawLine(QPointF(x0 + s * 0.45, cy - s * 0.35), QPointF(x1 - s * 0.45, cy - s * 0.35))
+            painter.drawLine(QPointF(x0 + s * 0.45, cy + s * 0.25), QPointF(cx + s * 0.2, cy + s * 0.25))
+            painter.drawRect(QRectF(x0 + s * 0.45, cy + s * 0.7, x1 - x0 - s * 0.9, s * 0.5))
+        elif self._kind == "agenda":
+            # Module agenda (fm_agenda) : une page de calendrier, ses deux anneaux, sa bande de titre et ses jours.
+            painter.setBrush(Qt.NoBrush)
+            page = QRectF(cx - s * 1.6, cy - s * 1.25, s * 3.2, s * 2.85)
+            painter.drawRoundedRect(page, s * 0.35, s * 0.35)
+            painter.drawLine(QPointF(page.left(), cy - s * 0.35), QPointF(page.right(), cy - s * 0.35))
+            for ox in (-0.75, 0.75):
+                painter.drawLine(QPointF(cx + s * ox, cy - s * 1.65), QPointF(cx + s * ox, cy - s * 0.95))
+            painter.setBrush(QColor(color))
+            painter.setPen(Qt.NoPen)
+            for gx in (-0.85, 0.0, 0.85):
+                for gy in (0.35, 1.0):
+                    painter.drawEllipse(QPointF(cx + s * gx, cy + s * gy), s * 0.2, s * 0.2)
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
         elif self._kind == "video":
             # Module video : une pellicule et son triangle de lecture.
             painter.setBrush(Qt.NoBrush)
@@ -1471,6 +1498,9 @@ class IconButton(QPushButton):
             painter.setBrush(QColor(color))
             painter.drawEllipse(QPointF(cx, cy - s * 0.75), s * 0.12, s * 0.12)
             painter.setBrush(Qt.NoBrush)
+        elif self._kind == "pin":
+            from fm_theme.window import paint_pin
+            paint_pin(painter, QPointF(cx, cy), s, QColor(color))
         elif self._kind == "fullscreen":
             # Plein ecran : quatre coins tournes vers l'exterieur.
             for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
@@ -1507,7 +1537,7 @@ class IconButton(QPushButton):
         if self._kind == "sliders":
             return custom_ui_icon_pixmap(UI_ICON_SETTINGS_STYLE, size)
         if self._kind in ("min", "max", "close", "browse", "presets", "viewer", "text_editor", "board", "video",
-                          "font"):
+                          "font", "pdf", "pin"):
             return custom_ui_icon_pixmap(f"ui_navbar_{self._kind}", size)
         viewer_key = VIEWER_BUTTON_ICONS.get(self._kind)
         if viewer_key is not None:

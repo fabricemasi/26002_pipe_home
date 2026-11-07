@@ -45,20 +45,19 @@ class SettingsTest(IllTestCase):
         self.assertFalse(look.apply_settings(self.pane._settings))       # rien de changé : rien à faire
         self.apply(board_ill_accent="#ff0000", board_ill_handle_size=14, board_ill_anchor_size=8,
                    board_ill_snap_px=12, board_ill_nudge_big=25, board_ill_pencil_fidelity=50,
-                   board_ill_pdf_dpi=150, board_ill_guide_color="#00ff00", board_ill_units="mm",
+                   board_ill_pdf_dpi=150, board_ill_units="mm",
                    board_ill_artboard_format="Carré 1080", board_ill_text_size=24,
                    board_ill_handle_size_inconnu=3)
         self.assertEqual(im.ACCENT, "#ff0000")
         self.assertEqual((tools.HANDLE_PX, tools.ANCHOR_PX, overlay.ANCHOR_SIDE), (7.0, 8.0, 8.0))
-        self.assertEqual((tools_xform.SNAP_PX, controller.NUDGE_BIG, pdf.DPI, overlay.GUIDE_COLOR),
-                         (12.0, 25.0, 150, "#00ff00"))
+        self.assertEqual((tools_xform.SNAP_PX, controller.NUDGE_BIG, pdf.DPI), (12.0, 25.0, 150))
         self.assertEqual(tools_draw.PencilTool.FIDELITY_PX, 5.0)
         a = self.rect(100, 100, 40, 40)
         self.ctl.select([a])
         self.key(Qt.Key_Right, Qt.ShiftModifier)
         self.assertEqual(a.geometry_rect().x(), 125)
         self.ctl.ui.sync()
-        self.assertTrue(self.ctl.ui.width_button.text().endswith("mm"))
+        self.assertTrue(self.ctl.ui.width_button.text_value().endswith("mm"))
         board = self.ctl.add_artboard()
         self.assertEqual(board.size(), (1080.0, 1080.0))
         text = self.ctl.new_text(QPointF(0, 0), text="T")
@@ -72,10 +71,11 @@ class SettingsTest(IllTestCase):
         from PySide6.QtGui import QColor, QPixmap
         from fm_board import ui as board_ui
         from fm_board.model import ICON_ROWS
+        from fm_board.bars import BoardTool
         ui = self.ctl.ui
-        kinds = {b.kind for b in ui.tools.findChildren(board_ui._GlyphButton)}
-        kinds |= {b.kind for b in ui.control.findChildren(board_ui._GlyphButton) if b.kind.startswith("ill_")}
-        self.assertTrue({"ill_pen", "ill_fx", "ill_export", "ill_shape_builder"} <= kinds)
+        buttons = [w for w in ui.bars.manager.widgets.values() if isinstance(w, BoardTool)]
+        kinds = {b.kind for b in buttons if b.kind.startswith("ill_")}
+        self.assertTrue({"ill_pen", "ill_fx", "ill_export", "ill_shape_builder", "ill_swap"} <= kinds)
         self.assertEqual(kinds - {kind for kind, _label in ICON_ROWS}, set())
         asked = []
 
@@ -85,7 +85,8 @@ class SettingsTest(IllTestCase):
             pixmap.fill(QColor("#00ff00"))
             return pixmap
         with mock.patch.object(board_ui, "ICON_PROVIDER", provider):
-            ui.tools.repaint()
+            for button in buttons:
+                button.grab()                                   # peint la case (image gardée : l'habillage a changé)
         self.assertIn("ill_pen", asked)
 
     def test_invalid_values_fall_back(self):

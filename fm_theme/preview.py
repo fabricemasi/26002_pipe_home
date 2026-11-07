@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QPoint, Qt, QTimer, Signal
 from PySide6.QtWidgets import QDialog, QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from fm_theme.cells import _TextField, build_cells_table
@@ -22,7 +22,36 @@ from fm_theme.widgets import _Btn, _MiniSlider, _SelectField, _Toggle
 from fm_theme.window import _PanelFrame, _SettingsTitleBar, install_extra_window
 
 WIDTH = 290
+MIN_WIDTH, MAX_WIDTH = 220, 900            # largeur réglable à la souris (bord gauche du panneau)
 GALLERY = "Tous les éléments"
+
+
+class _WidthGrip(QWidget):
+    """Bord gauche du panneau : le tirer change sa largeur (demande de l'utilisateur, 2026-11-02)."""
+
+    def __init__(self, panel):
+        super().__init__(panel)
+        self.panel = panel
+        self.setCursor(Qt.SizeHorCursor)
+        self.setFixedWidth(6)
+        self._start = None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._start = (event.globalPosition().x(), self.panel.width())
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._start is not None:
+            x0, w0 = self._start
+            self.panel.set_panel_width(round(w0 - (event.globalPosition().x() - x0)))
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if self._start is not None:
+            self._start = None
+            self.panel.widthChanged.emit(self.panel.width())
+            event.accept()
 
 
 def _label(text: str, role: str = "row_label") -> QLabel:
@@ -86,15 +115,24 @@ class SampleWindow(QDialog):
 
 
 class PreviewPanel(QFrame):
-    """Panneau d'aperçu : `show_section(titre)` montre les éléments de cette section (planche si inconnue)."""
+    """Panneau d'aperçu : `show_section(titre)` montre les éléments de cette section (planche si inconnue). Sa largeur
+    se règle en tirant son bord gauche (`set_panel_width`, `widthChanged(largeur)` en fin de geste : l'hôte la retient)."""
 
-    def __init__(self, settings: Callable[[], dict], parent=None):
+    widthChanged = Signal(int)
+
+    def __init__(self, settings: Callable[[], dict], parent=None, width: int = WIDTH):
         super().__init__(parent)
         self._settings = settings
         self._section = None
+        self._w = max(MIN_WIDTH, min(MAX_WIDTH, int(width or WIDTH)))
+        self._rebuild = QTimer(self)                      # contenu refait à la nouvelle largeur, une fois le geste posé
+        self._rebuild.setSingleShot(True)
+        self._rebuild.setInterval(120)
+        self._rebuild.timeout.connect(lambda: self.show_section(self._section, force=True))
         self.setObjectName("ThemePreview")
-        self.setFixedWidth(WIDTH)
-        self.setStyleSheet(f"#ThemePreview {{ background: {M['panel_bg']}; border-right: 1px solid "
+        self.setFixedWidth(self._w)
+        self._grip = _WidthGrip(self)
+        self.setStyleSheet(f"#ThemePreview {{ background: {M['panel_bg']}; border-left: 1px solid "
                            f"{M['panel_border']}; }}")
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -118,10 +156,23 @@ class PreviewPanel(QFrame):
         scroll.setWidget(self._body)
         self._builders = {
             "Toggles": self._toggles, "Sliders": self._sliders, "Zone de saisie": self._inputs,
-            "Bouton": self._buttons, "Tableaux": self._table, "Tabs": self._tabs, "TITRES": self._titles,
-            "Menu contextuel": self._menu, "Fenêtres additionnelles": self._window,
+            "Bouton": self._buttons, "Tableaux": self._table, "Tabs": self._tabs, "Palette": self._palette,
+            "TITRES": self._titles, "Menu contextuel": self._menu, "Fenêtres additionnelles": self._window,
         }
         self.show_section(None)
+
+    def set_panel_width(self, width: int) -> None:
+        """Nouvelle largeur (bornée) : le panneau suit tout de suite, son contenu est refait au repos (120 ms)."""
+        width = max(MIN_WIDTH, min(MAX_WIDTH, int(width)))
+        if width != self._w:
+            self._w = width
+            self.setFixedWidth(width)
+            self._rebuild.start()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._grip.setGeometry(0, 0, self._grip.width(), self.height())
+        self._grip.raise_()
 
     def set_tools(self, widget: QWidget | None) -> None:
         """Remplace les outils affichés sous le titre (None : aucun)."""
@@ -170,12 +221,12 @@ class PreviewPanel(QFrame):
             self._add(_row(_Toggle(True, style_override=style["key"]), _Toggle(False, style_override=style["key"])))
 
     def _sliders(self):
-        self._add(_MiniSlider(0, 100, 35, width=WIDTH - 60))
-        self._add(_MiniSlider(0, 100, 80, width=WIDTH - 60))
+        self._add(_MiniSlider(0, 100, 35, width=self._w - 60))
+        self._add(_MiniSlider(0, 100, 80, width=self._w - 60))
 
     def _inputs(self):
-        self._add(_TextField("Texte saisi", width=WIDTH - 60))
-        self._add(_SelectField(["Choix A", "Choix B", "Choix C"], "Choix A", width=WIDTH - 60))
+        self._add(_TextField("Texte saisi", width=self._w - 60))
+        self._add(_SelectField(["Choix A", "Choix B", "Choix C"], "Choix A", width=self._w - 60))
 
     def _buttons(self):
         self._add(_row(_plain_btn("Bouton"), _accent_btn("Valider")))
@@ -188,6 +239,20 @@ class PreviewPanel(QFrame):
 
     def _tabs(self):
         self._add(_TabStrip(["Onglet 1", "Onglet 2"]))
+
+    def _palette(self):
+        """Barres flottantes : un mini espace de travail avec trois barres (le prototype de l'utilisateur) ; tous les
+        gestes y marchent, pour juger les réglages en situation."""
+        from fm_theme.bar_manager import sample_workspace
+        from fm_theme.palette import set_look
+        set_look(self._settings())                       # habillage courant avant de construire
+        self._add(_row(sample_workspace(self._w - 32)))
+        note = _label("Titre : glisser (s'aimante aux bords et aux barres) ; Ctrl + clic : renommer ; double-clic : "
+                      "pivoter. Bords : redimensionner, de case en case. Icône (ou poignée d'un contrôle) : glisser "
+                      "vers une case libre, d'une barre à l'autre, ou dans le vide : nouvelle barre. Trait de droite "
+                      "d'un contrôle : largeur.", "note")
+        note.setWordWrap(True)
+        self._add(note)
 
     def _titles(self):
         titles = [_Section("Titre niveau 1")] + [_SubSection(f"Titre niveau {n}", level=n) for n in (2, 3, 4)]

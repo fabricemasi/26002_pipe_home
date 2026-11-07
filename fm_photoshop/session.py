@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 
 from . import container, ops
+from .flush import FlushJob
 from .brush import Brush
 from .history import History
 from .model import Document, new_document
@@ -22,6 +23,8 @@ class Session:
         self.listeners: list = []                  # callables (kind, rect) : "edit" / "structure" / "view" / "reload"
         self.tool = "brush"
         self.brush = Brush()
+        self.display_filter = "nearest"             # affichage seulement (voir `display.py`) : jamais enregistré, ne touche pas aux pixels
+        self.pen_seen = False                      # un stylet a déjà touché la zone (active la pression une fois)
         self.fg = (0, 0, 0)
         self.bg = (255, 255, 255)
         self.target = "pixels"                     # cible des outils : "pixels" ou "mask"
@@ -35,6 +38,7 @@ class Session:
         self.shape_options = {"fill": True, "stroke": False, "stroke_width": 4, "radius": 0}      # outils de forme
         self.asset: str | None = None              # dernier conteneur écrit dans le dossier du Board
         self.flushed_version = -1
+        self._flush_job = None                      # enregistrement en arrière-plan en cours (`flush.FlushJob`)
         self.error: str | None = None              # ressource absente / illisible (diagnostic)
 
     # -- accès --
@@ -105,16 +109,57 @@ class Session:
         return self.history.dirty()
 
     # -- sauvegarde --
+    def _asset_current(self) -> bool:
+        return self.asset is not None and (self.flushed_version == self.history.version
+                                           or bool(self.error and self.history.version == 0))
+
     def flush(self, store) -> str:
         """Conteneur à jour dans le dossier du Board. `store(octets, suffixe) -> nom` écrit (atomiquement) sous un
-        nom d'empreinte. Rien n'est refait tant que le document n'a pas changé."""
-        if self.asset is not None and (self.flushed_version == self.history.version
-                                       or (self.error and self.history.version == 0)):
+        nom d'empreinte. Rien n'est refait tant que le document n'a pas changé ; un travail d'arrière-plan en cours
+        (`flush_async`) est ATTENDU plutôt que refait."""
+        job = self._flush_job
+        if job is not None:
+            job.join()
+            self.collect_flush()
+        if self._asset_current():
             return self.asset                      # (session en erreur et intacte : on garde la référence d'origine)
         payload = container.dumps(self.doc, preview=False)
         name = store(payload, ".fmps")
         self.asset, self.flushed_version = name, self.history.version
         return name
+
+    # -- enregistrement en arrière-plan : le fil de l'interface (donc le curseur) n'attend jamais l'encodage --
+    def flush_async(self, store) -> bool:
+        """Lance le même travail que `flush` DANS UN FIL (encodage PNG des plans modifiés, empreinte, écriture). Fil
+        principal : manifeste + copie des plans modifiés seulement. False si rien à faire ou si un travail tourne."""
+        if self._flush_job is not None or self._asset_current():
+            return False
+        prepared = container.prepare(self.doc, snapshot=True)
+        self._flush_job = FlushJob(self.history.version, prepared, store).start()
+        return True
+
+    def flush_running(self) -> bool:
+        job = self._flush_job
+        return job is not None and not job.finished()
+
+    def collect_flush(self) -> bool:
+        """Fil principal : adopte le résultat d'un travail TERMINÉ (jamais d'un conteneur plus ancien que le nôtre).
+        Rend True tant qu'un travail tourne encore."""
+        job = self._flush_job
+        if job is None:
+            return False
+        if not job.finished():
+            return True
+        self._flush_job = None
+        if job.name is not None and job.version >= self.flushed_version:
+            self.asset, self.flushed_version = job.name, job.version
+        return False
+
+    def cancel_flush(self):
+        """Document fermé / retiré : le fil s'arrête avant d'écrire (le dossier du Board peut disparaître)."""
+        job, self._flush_job = self._flush_job, None
+        if job is not None:
+            job.cancel()
 
     def digest(self) -> str:
         return hashlib.sha1(container.dumps(self.doc)).hexdigest()[:16]

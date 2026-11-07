@@ -5,7 +5,7 @@ Cinquième module du board (après Miro, CAD, Design, Tableur), commencé le 202
 Board »). Activé par le bouton « Illustrator » du sélecteur de modules (`BoardPane.set_module("illustrator")`).
 Tout est LOCAL ; aucun code, icône ni ressource d'Adobe. **Aucune compatibilité `.ai` n'est annoncée** (non faite).
 
-**Tests** : `python tests/run.py fm_illustrator` (`tests/test_illustrator*.py`, 12 fichiers, ~20 s) ; `fm_board` les inclut.
+**Tests** : `python tests/run.py fm_illustrator` (`tests/test_illustrator*.py`, 13 fichiers, ~25 s) ; `fm_board` les inclut.
 **Mesures** : `python tools/bench_illustrator.py [N]` (offscreen, 2400 × 1300, N tracés ; défaut 2 000).
 
 ## Carte : fonctionnalité -> fichiers (à ouvrir directement)
@@ -39,7 +39,8 @@ n'importent PAS Qt.
 | Outils à origine (Rotation R, Mise à l'échelle S, Symétrie O ; Alt + clic = valeur), repères commentés (`Snapper`), aligner / répartir | `tools_xform.py` | `RotateTool`, `ScaleTool`, `ReflectTool`, `Snapper`, `align`, `distribute`, `reflect_matrix` |
 | Plume, points (ajout / suppression / conversion), formes, crayon, plan de travail, main, zoom, pipette, dégradé (G), texte (T) | `tools_draw.py` | `PenTool`, `ShapeTool`…, `PencilTool`, `ArtboardTool`, `make_tools` |
 | Dessin temporaire (sélection, poignées, cadre, ligne élastique, noms des plans, bulle) | `overlay.py` | `IllOverlay` |
-| Barre d'outils (gauche), témoin fond / contour, barre de contrôle (haut), menus couleur (nuancier, dégradé) / épaisseur / Pathfinder / plans / export, panneau Calques | `ui.py` | `IllustratorChrome`, `FillStroke` |
+| BARRES FLOTTANTES (fm_theme) : outils, fond / contour, propriétés, objet, texte ; menus couleur (nuancier, dégradé) / épaisseur / Pathfinder / plans / export, panneau Calques | `ui.py` | `IllustratorChrome` (`bars`, `tools`, `control`, `place`, `sync`, `show`, `hide`) |
+| Disposition par défaut des barres, témoin fond / contour (case de barre), texte d'état | `bars.py` | `default_state`, `TOOL_BARS`, `FillStrokeTool`, `StatusText` |
 | Menu Objet / clic droit | `menus.py` | `fill_object_menu`, `open_context_menu` |
 | Glyphes des boutons | `glyphs.py` | `paint_ill_glyph` (appelé par `fm_board.ui.paint_glyph`) |
 | Réglages (onglet « Illustrator » de « Réglages : Board », clés `board_ill_*`) : lignes et arbre ; défauts | `settings.py` ; `settings_defaults.py` | `ILL_TAB`, `ILL_TREE` ; `ILL_DEFAULTS` |
@@ -47,7 +48,7 @@ n'importent PAS Qt.
 
 Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
 - `fm_board/model.py` : `DEFAULTS` reçoit les types, `normalize_item` appelle `ill_model.normalize_entity`, `ICON_ROWS`
-  (`illustrator` + une ligne `ill_<genre>` par bouton du module : icône réglable dans Module MRO > Icônes, glyphe
+  (`illustrator` + une ligne `ill_<genre>` par bouton du module : icône réglable dans Réglages : Board > Illustrator > Icônes, glyphe
   peint sans icône choisie ; `test_every_button_icon_is_settable` vérifie qu'aucun bouton n'en manque).
 - `fm_board/scene.py` : import de `fm_illustrator.items` (enregistre les types), `MODULES` + « illustrator ».
 - `fm_board/view.py` : `view.illustrator` ; les crochets du module Design sont devenus GÉNÉRIQUES
@@ -73,9 +74,46 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
   copie ; poignées de la boîte et points / poignées de Bézier = géométrie, sans Ctrl. Sélection directe : Ctrl +
   glisser = déplacer l'objet entier. Plan de travail : Ctrl + glisser = le déplacer.
 - **Mutualisation** : crayon = `fm_font.shapes.fit_cubic`, `rdp`, `smooth_polyline` (fonctions pures, import
-  tardif) ; barres / menus / curseurs / sélecteur de couleur = briques du board et des réglages (`_bar`,
-  `_GlyphButton`, `_TextButton`, `_menu`, `_slider`, `_ColorPickerPopup`). Les contours UFO de fm_font ne sont PAS
+  tardif) ; barres = BARRES FLOTTANTES de fm_theme (voir ci-dessous), menus / curseurs / sélecteur de couleur =
+  briques du board et des réglages (`_menu`, `_slider`, `_ColorPickerPopup`). Les contours UFO de fm_font ne sont PAS
   réutilisés (autre modèle de points : couplage artificiel).
+- **BARRES FLOTTANTES** (2026-11-02, demande de l'utilisateur : « les palettes d'outils des différents modules doivent
+  être remplacées, toutes » ; la barre des modules n'est pas touchée). Système et recette : `docs/agents/fm_theme.md`
+  (« Barres flottantes »), `docs/agents/fm_board.md` (« MIRO CONVERTI »). Ici : `IllustratorChrome.bars =
+  BoardBars(pane, "illustrator", default_state())`, disposition enregistrée sous `board_bars["illustrator"]` (chaque
+  module a la sienne). TOUTES les palettes du module sont des barres (clé d'élément = clé enregistrée dans la
+  disposition de l'utilisateur : ne jamais renommer) :
+  - clipsées à gauche, l'une derrière l'autre (`after`), DEUX colonnes (25 outils en une colonne feraient ~1 000 px) :
+    « Sélection » (select, direct, artboard, hand, zoom), « Tracé » (pen, add_anchor, delete_anchor, convert,
+    paintbrush, blob, width, pencil), « Créer » (type, rect, ellipse, polygon, star, line), « Transformer » (rotate,
+    scale, reflect, shape_builder, gradient, eyedropper + le témoin `fill_stroke` et `swap`, comme au bas de la boîte à
+    outils) ; chaque outil = `BoardTool(glyphe « ill_… », libellé, key=nom de l'outil)`, `set_on` suit `ctl.tool` ;
+  - en haut (à droite des outils, `along` 120, `after`) : « Propriétés » (`title` = `StatusText`, texte d'état qui n'est
+    pas un bouton ; `fill`, `stroke` = `BoardTool` à pastille `set_swatch` ; `stroke_width` = `PaletteTextButton` ;
+    `opacity` = `PaletteSliderBar`) et « Objet » (`object`, `artboards` = `PaletteTextButton` ; `brush`, `align`,
+    `pathfinder`, `effects`, `layers`, `export` = `BoardTool`) ;
+  - « Texte » FLOTTANTE (`font`, `size`, `paragraph`) : ses trois éléments sont cachés tant que la sélection ne contient
+    pas de texte (`sync` : `bars.sync()` seulement quand l'état change) et la barre disparaît avec eux ; leurs textes
+    changent par `set_text`. `manager.set_dynamic` n'est PAS utilisé : aucun élément n'est refait (le contenu ne change
+    que par le texte des cases), contrairement à la barre contextuelle de Miro dont les boutons dépendent de la sélection.
+  - `FillStrokeTool` (`bars.py`) : `PaletteButton` dont `_paint_content` dessine les deux carrés à l'échelle de la case
+    (40 × 40 d'origine) ; clé de l'image gardée (`extra_key`) = fond, contour, dégradés, premier plan ; clic sur le carré
+    de derrière = premier plan, sur celui de devant = couleur (`pick_color`) ; glisser au-delà de 4 px = déplacer la case (spec des barres, sans Ctrl).
+  - Panneau « Calques » : reste un PANNEAU (liste d'objets, ce n'est pas une palette de boutons) ; à droite, il se pose
+    sous les barres qu'il croiserait (`place`) ; `layers_button` s'allume dès l'ouverture.
+  - Compatibilité : `ui.tools` / `ui.control` sont des propriétés (la barre qui porte « select » / l'opacité, ou un
+    widget caché si l'utilisateur l'a supprimée) ; les attributs `fill_button`, `stroke_button`, `width_button`,
+    `opacity`, `object_button`, `board_button`, `export_button`, `font_button`, `size_button`, `paragraph_button`,
+    `pathfinder_button`, `brush_button`, `align_button`, `effects_button`, `layers_button`, `title`, `fill_stroke`,
+    `_tool_buttons` gardent leur nom. Lire le texte d'un bouton à texte : `text_value()` (plus `text()`).
+  - Aspect = réglages `palette_*` de fm_theme (éditeur fm_theme, section « Palette ») ; les réglages `board_toolbar_*`
+    ne touchent plus Illustrator.
+  - PIÈGES : (a) clés d'éléments UNIQUES dans le gestionnaire : l'outil « width » (Largeur) et le contrôle d'épaisseur du
+    contour ne peuvent pas partager un nom (d'où `stroke_width`) ; « artboard » (outil) et « artboards » (menu). (b) Les
+    éléments de la barre « Texte » sont cachés à la construction APRÈS `restore()` (qui montre tout ce qu'il pose). (c) Une
+    barre de 1 ligne collée à gauche ne montre pas son titre couché (trop court) : le témoin fond / contour est donc dans
+    « Transformer ». (d) Un bouton dont l'icône personnalisée change doit être repeint (clé de l'image gardée :
+    `_GLYPH_GENERATION`, `ICON_PROVIDER`) : `BoardTool.extra_key` s'en charge.
 - Couleurs : « #rrggbb » ou « #aarrggbb », vide = aucun. Épaisseur en unités du board (1 pt = 4/3), affichée en pt.
 - **Dégradés** (`fill_gradient` / `stroke_gradient`, None = couleur unie) : points en FRACTIONS de la boîte de la
   géométrie (suivent déplacement et mise à l'échelle ; une rotation ne tourne pas le dégradé : limite connue). Une
@@ -101,7 +139,9 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
   (l'offscreen n'a sinon aucune police : des carrés).
 - **Réglages** (tranche 18) : onglet « Illustrator » de la fenêtre « Réglages : Board » (bouton engrenage du cadre
   Board), comme Design / Tableur : Sélection et repères (couleur de sélection, tailles des poignées et des points,
-  couleur et distance des repères commentés, repères actifs à l'ouverture), Nouveaux objets (format du plan de
+  distance des repères commentés, repères actifs à l'ouverture ; leur ASPECT — couleur, type de ligne du CAD,
+  échelle, affichés ou non — est dans Réglages > Module MRO > Magnétisme depuis 2026-11-06, `fm_board/snap_guides.py`),
+  Nouveaux objets (format du plan de
   travail, police et corps des textes, unité affichée pt / mm / px), Clavier et outils (flèches, Maj + flèches,
   fidélité du crayon / pinceau, détail de la vectorisation), Export (DPI des parties tramées du PDF). Appliqués EN
   DIRECT : `BoardPane.apply_settings` -> `look.apply_settings` (4 µs quand rien ne change : chemin rapide) ->
@@ -132,7 +172,9 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
   écart (pas et répétition d'Illustrator). Objet > Transformer : Déplacer… (« dx, dy »), Rotation…, Mise à
   l'échelle…, Symétrie…. Aligner / Répartir (bouton de la barre de contrôle, menu Objet) : sur la boîte de la
   sélection, un objet ou un groupe seul : sur son plan de travail ; un groupe compte pour un ; répartir les centres
-  ou l'espacement (3 unités au moins). Repères commentés (Ctrl+U, actifs par défaut, magenta) : pendant Ctrl +
+  ou l'espacement (3 unités au moins). Repères commentés (Ctrl+U, actifs par défaut ; aspect par SORTE : plan de
+  travail = « bords des documents », objet = « objets internes », `Snapper._closest` rend la sorte, un plan de
+  travail aligné l'emporte ; Réglages > Module MRO > Magnétisme) : pendant Ctrl +
   glisser et le glisser d'UN point en Sélection directe, bords et centres aimantés à ceux des objets VISIBLES et des
   plans de travail à 6 px d'écran ; relevé une fois au début du geste par l'index de la scène, en nombres simples,
   recherche par dichotomie ; ligne vers l'objet aligné le PLUS PROCHE (courte). Limites : pas de copie Alt pendant
@@ -248,6 +290,20 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
 | Mise en page d'un texte (à la validation, à l'annulation, pas pendant la frappe) : point 11 lettres / curviligne 200 lettres / captif 300 mots | — / — / 40 ms (un `addText` par mot) | 0,3 ms / 17 ms / 19 ms (36 ms justifié) |
 Clic de plume ~21 ms (p95 ~80 : premier clic, création de l'élément).
 
+### Barres flottantes (2026-11-02 ; offscreen, 1 400 × 900, 7 barres, médiane puis pire cas)
+
+| Geste | Mesure |
+|---|---|
+| `ui.sync()` quand rien ne change / clic sur un outil + `sync` | 0,04 ms (0,16) / 0,13-0,15 ms (0,3) |
+| Repeindre les 7 barres (images gardées) / `grab()` des 7 barres | 1,5 ms (2,7) / 0,85 ms (2,9) |
+| Choisir un texte : `select` / `sync` (la barre « Texte » apparaît) / boucle d'événements (peinture, mise en page du texte) | 0,1 / 0,26 / 5,5 ms la 1re fois, 1,7 ms ensuite (le pire cas de la sonde, ~100-190 ms, est la 1re mise en page d'un texte : police, hors barres) |
+| Déplacer une barre avec accrochage (10 pas) / un outil vers une autre barre (10 pas) | 13,8 ms soit ~1,4 ms par pas (17) / 0,5 ms (14 au 1er) |
+
+Les barres ne coûtent rien au zoom ni au Ctrl + glisser des objets : leurs cases sont des images gardées (`PaletteButton`),
+la vue ne les repeint que si une zone changée les croise. Non mesuré en vraie fenêtre Windows (aucune peinture de la vue
+n'a changé) ; sonde : `python tests/_probe_illustrator_bars.py` (venv) ; seuils larges vérifiés par
+`tests/test_illustrator_bars.py::FluidityTest` (`sync` < 4 ms, clic < 8 ms, repeinte < 16 ms).
+
 ### Vraie fenêtre Windows (tranche 19 ; 1 600 × 1 000, 2 000 tracés dont 1/7 en dégradé, zoom 80 %, ~1 300 visibles)
 
 Sonde temporaire (`QT_QPA_PLATFORM=windows`, événements envoyés au viewport + `repaint`, enregistrement automatique
@@ -287,11 +343,18 @@ coupé) ; l'offscreen sous-estimait le coût du zoom (sans image gardée pendant
 | Export PDF (plan courant, tous les plans, dessin entier ; vectoriel, images pleine résolution ; relu par QtPdf dans les tests) | Partiel (pas de PDF/X, fond perdu, traits de coupe, CMJN ; texte en contours) | `test_illustrator_pdf.py` |
 | Outils avancés : Rotation / Échelle / Symétrie à origine, saisies, Transformer de nouveau (pas et répétition), Aligner / Répartir, repères commentés | Partiel (pas de Transformation manuelle E, de repères d'angle / de points, de copie Alt pendant les outils à origine) | `test_illustrator_xform.py` |
 | Pinceaux : profils de largeur, outil Largeur, pointe calligraphique, Pinceau, Forme de tache, Vectoriser le contour, SVG / PDF | Partiel (pas de pinceaux Diffusion / Motif / Art / Soies, largeur asymétrique, pression) | `test_illustrator_brushes.py` |
-| Réglages du module (onglet Illustrator de Réglages : Board, en direct) ; icônes des boutons réglables (Module MRO > Icônes) | Terminé | `test_illustrator_settings.py` |
+| Réglages du module (onglet Illustrator de Réglages : Board, en direct) ; icônes des boutons réglables (Illustrator > Icônes) | Terminé | `test_illustrator_settings.py` |
+| Barres flottantes (toutes les palettes : outils, fond / contour, propriétés, objet, texte ; accrochage aux bords, éléments déplaçables d'une barre à l'autre, disposition retenue, aspect fm_theme) | Terminé (barres de 2 colonnes ; panneau Calques non converti : liste, pas palette) | `test_illustrator_bars.py` |
 | Fluidité en vraie fenêtre : images du zoom continu et du Ctrl + glisser de nombreux objets | Terminé | `SnapshotTest` (`test_illustrator_xform.py`) |
 | Outils restants (dégradé de forme libre, filet de dégradé, Transformation manuelle E, déformation / enveloppe, symboles, motifs, perspective, Largeur asymétrique, pinceaux Diffusion / Motif / Art), compatibilité .ai (non annoncée) | Non commencé | — |
 
 ## PASSATION (2026-10-31)
+
+- 2026-11-02 : palettes converties en BARRES FLOTTANTES (voir « Choix de conception »). Fichiers touchés : `ui.py`,
+  `bars.py` (nouveau), `tests/test_illustrator_bars.py` (25 tests, nouveau), `tests/test_illustrator_settings.py` (les
+  deux tests qui lisaient les anciens boutons : `text_value()`, boutons pris dans `ui.bars.manager.widgets`). Reste
+  pour les autres sessions : `docs/agents/fm_board.md` et `fm_theme.md` disent encore « Illustrator RESTE à convertir ».
+  Rien commité à cette date.
 
 - Commits (branche `nettoyage-code`, locaux, rien de poussé) : 27c3bf7 tranche 1-5 (intégration, document, plans
   de travail, formes, sélection, transformations, plume, sauvegarde, export / import SVG) ; e344fd5 tranche 6-8

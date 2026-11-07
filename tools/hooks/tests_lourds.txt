@@ -1,0 +1,4 @@
+# Fichiers de test LOURDS : jamais lancés en entier par l'agent pendant une requête (tools/hooks/garde_fous.py) ;
+# leurs tests se lancent par leur nom. Réécrit par `tools/fluidite.py` (fichiers de plus de 15 s).
+test_board                               # ~75 s (100 tests)
+test_design                              # ~20 s

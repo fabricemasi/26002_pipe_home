@@ -8,8 +8,8 @@ ILL_DEFAULTS: dict[str, Any] = {
     "board_ill_accent": "#2f7cf6",            # couleur de sélection (contours, points, boîte, plans choisis)
     "board_ill_handle_size": 9,               # côté des poignées de la boîte englobante
     "board_ill_anchor_size": 5,               # côté des points d'ancrage (et tolérance de leur clic)
-    "board_ill_guide_color": "#ff2fd0",       # repères commentés (magnétisme)
     "board_ill_smart_guides": True,           # repères commentés actifs à l'ouverture du module (Ctrl+U : la session)
+    # (leur aspect : Réglages > Module MRO > Magnétisme, fm_board/snap_guides.py)
     "board_ill_snap_px": 6,                   # distance d'aimantation des repères commentés
     # Nouveaux objets.
     "board_ill_artboard_format": "A4",        # nom de `model.ARTBOARD_FORMATS` : plan de travail par défaut

@@ -18,8 +18,6 @@ def _groups() -> dict:
         Spec("board_ill_handle_size", "Taille des poignées de la boîte (pixels d'écran)", "slider", 9,
              {"min": 5, "max": 20}),
         Spec("board_ill_anchor_size", "Taille des points d'ancrage (pixels d'écran)", "slider", 5, {"min": 3, "max": 12}),
-        Spec("board_ill_guide_color", "Couleur des repères commentés", "color", "#ff2fd0",
-             {"title": "Repères commentés"}),
         Spec("board_ill_smart_guides", "Repères commentés actifs à l'ouverture (Ctrl+U)", "bool", True),
         Spec("board_ill_snap_px", "Distance d'aimantation (pixels d'écran)", "slider", 6, {"min": 2, "max": 20}),
     ]
@@ -54,4 +52,5 @@ ILL_TREE = (
     Node("Nouveaux objets", "Illustrator : Nouveaux objets"),
     Node("Clavier et outils", "Illustrator : Clavier et outils"),
     Node("Export", "Illustrator : Export"),
+    Node("Icônes", "Illustrator : Icônes"),          # lignes : fm_board/settings.py (ICON_GROUPS_BY_MODULE)
 )

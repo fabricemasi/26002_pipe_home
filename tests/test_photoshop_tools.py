@@ -115,21 +115,75 @@ class NavigationTest(PsCase):
         self.assertEqual((s.layer().pix.x, s.layer().pix.y), (30, 20))
 
 
+class ZoomFieldTest(PsCase):
+    def test_zoom_field_shows_and_sets_percent(self):
+        _item, std = self.editor(120, 60, zoom=2.0, background="Transparent")
+        std.canvas.grab()                                                    # peinture : le champ suit le zoom
+        self.assertEqual(std.zoom_field.value_label.text(), "200")
+        std.zoom_field.value_label.setText("50")
+        std.zoom_field.value_label.editingFinished.emit()
+        self.assertAlmostEqual(std.session.zoom, 0.5)
+        std.canvas.grab()
+        self.assertEqual(std.zoom_field.value_label.text(), "50")
+        std.canvas.set_zoom(3.0)
+        std.canvas.grab()
+        self.assertEqual(std.zoom_field.value_label.text(), "300")
+
+
 class PaintingTest(PsCase):
     def test_pressure_changes_the_stroke_width(self):
         _item, std = self.editor(120, 60, zoom=3.0, background="Transparent")
         canvas, s = std.canvas, std.session
         s.fg = (0, 0, 0)
         s.brush.size, s.brush.hardness, s.brush.pressure_size = 30.0, 1.0, True
-        canvas._pressure = 1.0
+        canvas._pen_active, canvas._pressure = True, 1.0
         self.drag(canvas, [self.at(canvas, 10, 15), self.at(canvas, 50, 15)])
-        canvas._pressure = 0.2
+        canvas._pen_active, canvas._pressure = True, 0.2
         self.drag(canvas, [self.at(canvas, 10, 45), self.at(canvas, 50, 45)])
         flat = C.flatten_u8(s.doc)
         thick = int((flat[:, 30, 3] > 128)[:30].sum())
         thin = int((flat[:, 30, 3] > 128)[30:].sum())
         self.assertGreater(thick, thin * 2)
         self.assertGreaterEqual(thick, 28)
+
+    def test_pen_log_records_inputs_and_engine_stages(self):
+        import json, tempfile
+        from unittest import mock
+        from fm_photoshop import panels
+        _item, std = self.editor(120, 60, zoom=3.0, background="Transparent")
+        canvas, s, panel = std.canvas, std.session, std.brush_panel
+        s.brush.size, s.brush.hardness, s.brush.pressure_size = 12.0, 1.0, True
+        self.assertIsNone(canvas.pen_log)
+        panel.log_toggle.setChecked(True)
+        canvas._pen_active, canvas._pressure = True, 0.5
+        self.drag(canvas, [self.at(canvas, 10, 30), self.at(canvas, 30, 30), self.at(canvas, 50, 31)])
+        rows = canvas.pen_log.events
+        self.assertTrue(any(r["kind"] == "press" for r in rows) and any(r["kind"] == "release" for r in rows))
+        moves = [r for r in rows if r["kind"] == "move" and "p_filtered" in r]
+        self.assertTrue(moves)
+        self.assertAlmostEqual(moves[0]["p_raw"], 0.5)                       # pression brute
+        self.assertAlmostEqual(moves[0]["size"], 6.0, delta=0.05)            # diamètre résultant (courbe linéaire)
+        self.assertIn("proc_ms", moves[0])
+        self.assertIn("used", moves[0])
+        with tempfile.TemporaryDirectory() as folder, mock.patch.object(panels, "PEN_LOG_FOLDER", folder):
+            path = panel.save_log()
+            self.assertTrue(path and path.startswith(folder))
+            with open(path, encoding="utf-8") as handle:
+                self.assertIn("events", json.load(handle))
+        panel.log_toggle.setChecked(False)
+        self.assertIsNone(canvas.pen_log)
+
+    def test_smoothing_mode_combo_drives_the_brush(self):
+        _item, std = self.editor(40, 30)
+        panel, b = std.brush_panel, std.session.brush
+        self.assertEqual(b.smoothing_kind(), "none")                         # défaut : trajectoire du périphérique
+        panel.smoothing_mode.setCurrentIndex(panel.smoothing_mode.findData("adaptive"))
+        panel._mode_chosen(panel.smoothing_mode.currentIndex())
+        self.assertEqual((b.smoothing_kind(), b.smoothing > 0), ("adaptive", True))
+        panel._mode_chosen(panel.smoothing_mode.findData("none"))
+        self.assertEqual(b.smoothing_kind(), "none")
+        panel.pressure_opacity.setChecked(True)
+        self.assertTrue(b.pressure_opacity)
 
     def test_clone_with_explicit_source_through_the_canvas(self):
         _item, std = self.editor(80, 60, zoom=4.0, background="Transparent")
@@ -183,6 +237,24 @@ class ThumbnailsTest(PsCase):
 
 
 class PresetsTest(PsCase):
+    def test_tuning_panel_drives_the_engine(self):
+        from fm_photoshop import brush as brush_module
+        self.addCleanup(brush_module.TUNING.reset)
+        _item, std = self.editor(40, 30)
+        panel = std.brush_panel
+        panel.tuning_rows["rope_px"].field.setValue(250)
+        panel.tuning_rows["size_gamma"].field.setValue(150)
+        panel.tuning_flags["catch_up_end"].setChecked(True)
+        self.assertEqual((brush_module.TUNING.rope_px, brush_module.TUNING.size_gamma,
+                          brush_module.TUNING.catch_up_end), (250, 1.5, True))
+        panel._reset_tuning()
+        self.assertEqual(brush_module.TUNING, brush_module.Tuning())
+        self.assertEqual(panel.tuning_rows["rope_px"].field.value(), 100)
+        self.assertFalse(panel.tuning_flags["catch_up_end"].isChecked())
+        panel._copy_tuning()
+        from PySide6.QtGui import QGuiApplication
+        self.assertIn("rope_px=100", QGuiApplication.clipboard().text())
+
     def test_presets_are_persistent_and_factory_ones_protected(self):
         written = {}
         with mock.patch("fm_board.ui.SETTING_WRITER", lambda key, value: written.__setitem__(key, value)):

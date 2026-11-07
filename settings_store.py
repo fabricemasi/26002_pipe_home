@@ -146,13 +146,29 @@ def _theme_ui_icon(name: str, size: int):
     """Icone d'interface choisie par l'utilisateur, fournie a fm_theme (fm_theme/hooks.py) : import
     tardif de previews, rien n'est charge tant qu'aucune barre de titre ne la demande."""
     import previews as pb_previews
-    key = {"settings_gear": pb_previews.UI_ICON_SETTINGS_GEAR}.get(name)
+    key = {"settings_gear": pb_previews.UI_ICON_SETTINGS_GEAR, "navbar_pin": pb_previews.UI_ICON_NAVBAR_PIN}.get(name)
     return pb_previews.custom_ui_icon_pixmap(key, size) if key else None
 
 
 import fm_theme.hooks as _theme_hooks  # noqa: E402
 import fm_theme.presets as _theme_presets  # noqa: E402
+import fm_theme.toggle_states as _toggle_states  # noqa: E402
 _theme_hooks.HOOKS["ui_icon"] = _theme_ui_icon
+
+
+def _theme_save_setting(key: str, value) -> None:
+    """fm_theme a changé un réglage hors de la fenêtre de réglages (en-têtes des barres, clic droit) : il est écrit et
+    gardé dans les réglages appliqués (le prochain `apply_settings` ne le défait pas)."""
+    save_live_state(key, value)
+    try:
+        import ui_state
+        if isinstance(ui_state.APPLIED_SETTINGS, dict):
+            ui_state.APPLIED_SETTINGS[key] = value
+    except Exception:                                  # noqa: BLE001 - la valeur est écrite quand même
+        pass
+
+
+_theme_hooks.HOOKS["save_setting"] = _theme_save_setting
 
 # Visionneuse : défauts dans son paquet (source unique), fusionnés dans le dictionnaire ci-dessous.
 from fm_visionneuse.settings_defaults import VIEWER_DEFAULTS  # noqa: E402
@@ -180,6 +196,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "application_omit_extensions": [],
     "application_omit_dir_names": [],
     "window_radius": 0,
+    # Bordure du POURTOUR des fenetres (Theme > General, demande de l'utilisateur 2026-10-30) : fenetre
+    # principale ET fenetres additionnelles (reglages, presets, editeur fm_theme...). Defaut = l'ancien filet
+    # fixe de la fenetre principale (1 px « Bordures niveau 2 »).
+    "window_border_enabled": {"top": True, "right": True, "bottom": True, "left": True},
+    "window_border": {"top": "@border2", "right": "@border2", "bottom": "@border2", "left": "@border2"},
+    "window_border_thickness": 1,
     "header_visible": True,
     "header_height": 26,
     "header_padding": 0,
@@ -320,10 +342,24 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "shortcut_font_family": "",
     "shortcut_font_bold": False,
     "shortcut_font_italic": False,
-    "shortcut_color": "#8fb4d5",
     "shortcut_font_size": 11,
     "shortcut_font_smoothing_enabled": False,
     "shortcut_font_smoothing": "current",
+    # Teinte de l'icone des dossiers selon leur sorte (Icones : General) ; blanc = icone telle quelle.
+    "folder_icon_color_standard": "#ffffff",
+    "folder_icon_color_shortcut": "#ffffff",
+    "folder_icon_color_lightroom": "#ffffff",
+    # Couleur du texte des dossiers par sorte (Icones > Couleur des dossiers, colonne Texte) : coupee = celle de la colonne.
+    # « Couleur icone » (`_from_icon`) : le texte prend la couleur de l'icone.
+    "folder_text_color_standard_enabled": False,
+    "folder_text_color_standard_from_icon": False,
+    "folder_text_color_standard": "#d6d9dc",
+    "folder_text_color_shortcut_enabled": False,
+    "folder_text_color_shortcut_from_icon": False,
+    "folder_text_color_shortcut": "#8fb4d5",
+    "folder_text_color_lightroom_enabled": False,
+    "folder_text_color_lightroom_from_icon": False,
+    "folder_text_color_lightroom": "#87cefa",
     # Items texte des colonnes (voir SettingsWindow._section_items) — voir
     # la remarque de l'utilisateur, "ajoute un tableau pour les items
     # textes dans les colonnes". "" = police Systeme (meme convention que
@@ -398,6 +434,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "ctx_menu_hover_margin": {"top": 0, "right": 0, "bottom": 0, "left": 0},
     "ctx_menu_hover_margin_linked": True,
     "ctx_menu_disabled_color": "#7d858b",
+    "ctx_menu_ghost_color": "#e0a040",     # options fantomes (Ctrl+Maj + clic droit), voir fm_theme.menu
+    # Fond de l'element EN COURS d'un menu (ex. la couleur « app » choisie), distinct du survol, voir fm_theme.menu.
+    "ctx_menu_current_color": "#4d5f9bd0",
     "ctx_menu_icon_size": 16,
     "ctx_menu_control_gap": 16,        # entre le plus long texte et la colonne des controles
     "ctx_menu_slider_width": 140,      # rail des curseurs (tous les controles ont la meme largeur)
@@ -574,6 +613,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "button_frame": True,
     "button_radius": 0,
     "navbar_height": 32,
+    "navbar_theme_button_color": "#f28c28",     # bouton orange qui ouvre fm_theme (à côté des réglages)
+    "window_always_on_top": False,              # fenêtre principale « toujours au-dessus » (état temps réel)
     "navbar_bottom_enabled": True,
     "navbar_bottom_color": "#2c3034",
     "navbar_bottom_thickness": 1,
@@ -584,6 +625,29 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "navbar_title_font_color": "#7d858b",
     "navbar_title_font_smoothing_enabled": False,
     "navbar_title_font_smoothing": "current",
+    # Barre d'etat (fm_theme > Barre d'etat, 2026-11-05) : bas de la fenetre principale (chemin a gauche, infos a
+    # droite) ; valeurs par defaut = l'aspect d'avant (24 px, C['chrome'], filet C['border'], roles info / info2).
+    "statusbar_height": 24,
+    "statusbar_bg_color": "#202326",
+    "statusbar_top_enabled": True,
+    "statusbar_top_color": "#2c3034",
+    "statusbar_top_thickness": 1,
+    "statusbar_padding_x": 10,
+    "statusbar_spacing": 12,
+    "statusbar_path_font_family": "",
+    "statusbar_path_font_size": 11,
+    "statusbar_path_font_bold": False,
+    "statusbar_path_font_italic": False,
+    "statusbar_path_font_color": "#b9bfc4",
+    "statusbar_path_font_smoothing_enabled": False,
+    "statusbar_path_font_smoothing": "current",
+    "statusbar_info_font_family": "",
+    "statusbar_info_font_size": 11,
+    "statusbar_info_font_bold": False,
+    "statusbar_info_font_italic": False,
+    "statusbar_info_font_color": "#5f666b",
+    "statusbar_info_font_smoothing_enabled": False,
+    "statusbar_info_font_smoothing": "current",
     "button_bg_color": "#282c30",
     "button_border_enabled": True,
     "button_border": {side: "#383d42" for side in ("top", "right", "bottom", "left")},
@@ -745,47 +809,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # code en dur pour toggle1 (piste 29x14, coche 11x11) ; toggle2 recoit
     # un cadre carre 22x22 pour rester visuellement equilibre.
     "toggle_style": "toggle1",
-    "toggle1_outer_width": 29,
-    "toggle1_outer_height": 14,
-    "toggle1_outer_border_enabled": True,
-    "toggle1_outer_border_thickness": 1,
-    "toggle1_outer_border_radius": 0,
-    "toggle1_outer_border_radius_linked": True,
-    "toggle1_outer_border": {
-        "top": "#2e343a", "right": "#2e343a", "bottom": "#2e343a", "left": "#2e343a",
-    },
-    "toggle1_outer_bg": "#141618",
-    "toggle1_outer_bg_on": "#3f6f9f",
-    "toggle1_coche_width": 11,
-    # Pas de "toggle1_coche_height" : la hauteur de la coche est LIEE a
-    # celle du cadre (voir _sync_toggle_shape_style — remarque de
-    # l'utilisateur, "la hauteur de la coche doit etre liee a celle du
-    # toggle, tout en respectant la valeur de x sur le schema"). "x" lui,
-    # est reglable (voir Toggles > Coche > Distance du bord) — 1px ici (pas
-    # 4 comme "toggle2") : cadre "toggle1" bien plus BAS (14px) que large,
-    # une marge haute/basse de 4px y ecrasait la coche a 6px de haut, dont
-    # le creux (etat OFF) devenait quasi invisible — voir la remarque de
-    # l'utilisateur, capture a l'appui ("les etats OFF changent").
-    "toggle1_coche_margin": 1,
-    "toggle1_coche_border_enabled": True,
-    "toggle1_coche_border_thickness": 1,
-    "toggle1_coche_border_radius": 0,
-    "toggle1_coche_border_radius_linked": True,
-    "toggle1_coche_border": {
-        "top": "#2e343a", "right": "#2e343a", "bottom": "#2e343a", "left": "#2e343a",
-    },
-    "toggle1_coche_color": "#3f6f9f",
-    "toggle1_coche_skin": "none",            # habillage de la coche : "none" | "text" | "icon"
-    "toggle1_coche_text": "",
-    "toggle1_coche_text_font_family": "",
-    "toggle1_coche_text_font_bold": True,
-    "toggle1_coche_text_font_italic": False,
-    "toggle1_coche_text_font_size": 10,
-    "toggle1_coche_text_font_smoothing_enabled": False,
-    "toggle1_coche_text_font_smoothing": "current",
-    "toggle1_coche_text_font_color": "#ffffff",
-    "toggle1_coche_icon": "",                # nom d'un fichier de icons/ (voir Toggles > Coche > Icone)
-    "toggle1_coche_icon_color": "#ffffff",
+    # Fond et coche PAR ETAT (Toggles > <style> > Etat OFF / Etat ON, `<style>_off_*` / `<style>_on_*`) :
+    # ajoutes apres ce dict depuis fm_theme.toggle_states.defaults (les anciennes cles `_outer_*` /
+    # `_coche_*`, un seul cadre et une seule coche pour les deux etats, sont reprises a la lecture).
     # Type de toggle (Toggles > <nom> > Type) : "qt" (cadre + coche peints) ou "icons" (image ON /
     # image OFF, et une sequence d'images optionnelle jouee entre les deux). Images importees dans
     # data/toggle_icons/ (noms de fichiers).
@@ -795,38 +821,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "toggle1_icon_off": "",
     "toggle1_icon_frames": [],
     "toggle1_anim_ms": 140,
-    "toggle2_outer_width": 22,
-    "toggle2_outer_height": 22,
-    "toggle2_outer_border_enabled": True,
-    "toggle2_outer_border_thickness": 1,
-    "toggle2_outer_border_radius": 0,
-    "toggle2_outer_border_radius_linked": True,
-    "toggle2_outer_border": {
-        "top": "#2e343a", "right": "#2e343a", "bottom": "#2e343a", "left": "#2e343a",
-    },
-    "toggle2_outer_bg": "#141618",
-    "toggle2_outer_bg_on": "#3f6f9f",
-    "toggle2_coche_width": 11,
-    "toggle2_coche_margin": 4,
-    "toggle2_coche_border_enabled": True,
-    "toggle2_coche_border_thickness": 1,
-    "toggle2_coche_border_radius": 0,
-    "toggle2_coche_border_radius_linked": True,
-    "toggle2_coche_border": {
-        "top": "#2e343a", "right": "#2e343a", "bottom": "#2e343a", "left": "#2e343a",
-    },
-    "toggle2_coche_color": "#3f6f9f",
-    "toggle2_coche_skin": "none",            # habillage de la coche : "none" | "text" | "icon"
-    "toggle2_coche_text": "",
-    "toggle2_coche_text_font_family": "",
-    "toggle2_coche_text_font_bold": True,
-    "toggle2_coche_text_font_italic": False,
-    "toggle2_coche_text_font_size": 10,
-    "toggle2_coche_text_font_smoothing_enabled": False,
-    "toggle2_coche_text_font_smoothing": "current",
-    "toggle2_coche_text_font_color": "#ffffff",
-    "toggle2_coche_icon": "",                # nom d'un fichier de icons/ (voir Toggles > Coche > Icone)
-    "toggle2_coche_icon_color": "#ffffff",
     "toggle2_kind": "qt",
     "toggle2_motion": "fade",
     "toggle2_icon_on": "",
@@ -952,8 +946,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Preset ACTIF (choisi dans le menu deroulant de la fenetre principale) : ses valeurs sont celles a
     # l'ecran, les modifications l'enregistrent. None = jamais choisi (on suit `default_preset`).
     "active_preset": None,
-    # Preset fm_theme (aspect generique : fm_theme/presets/<nom>.json) lie au preset de l'appli : chaque preset
-    # de fm_browser retient le sien (choix de l'utilisateur, 2026-10-29). "" = aucun (l'aspect vient du fichier).
+    # Preset fm_theme a l'ecran (aspect generique : fm_theme/presets/<nom>.json) : TOUJOURS le preset de l'appli
+    # (meme nom, pose par load_settings, demande de l'utilisateur 2026-10-30). "" = aucun preset fm_theme.
     "theme_preset": "",
     # Variante d'un type d'element (titres, boutons, tableaux...) que fm_browser UTILISE a la place de la variante par
     # defaut du preset fm_theme : {type: variante} (decide par l'utilisateur, 2026-10-27). Le preset n'est pas modifie.
@@ -1040,15 +1034,19 @@ DEFAULT_SETTINGS["extra_window_shadow_enabled"] = {"top": True, "right": True, "
 DEFAULT_SETTINGS["extra_window_shadow"] = {s: "#73000000" for s in ("top", "right", "bottom", "left")}
 DEFAULT_SETTINGS["extra_window_shadow_size"] = 14
 
+# Toggles : fond et coche PAR ETAT (OFF / ON), `_linked` compris (fm_theme/toggle_states.py).
+for _p in ("toggle1", "toggle2"):
+    DEFAULT_SETTINGS.update(_toggle_states.defaults(_p))
+del _p
+
 # Etat « lier les 4 » des lignes Bordures (comme `<cle>_linked` des coins et du padding).
 for _sides_key in ("column_border_enabled", "header_border_enabled", "item_image_border_enabled",
                    "resize_badge_border_enabled", "table_border_enabled", "slider_thumb_border_enabled",
                    "slider_track_border_enabled",
                    *(f"viewer_film_{_part}_border_enabled" for _part in ("table", "image_cell", "image", "text_cell")),
                    "viewer_focus_image_border_enabled", "viewer_filter_row_border_enabled",
-                   "extra_window_border_enabled",
-                   *(f"item_selection{_state}_border_enabled" for _state in ("", "_unfocus", "_hover", "_idle")),
-                   *(f"toggle{_n}_{_part}_border_enabled" for _n in (1, 2) for _part in ("outer", "coche"))):
+                   "extra_window_border_enabled", "window_border_enabled",
+                   *(f"item_selection{_state}_border_enabled" for _state in ("", "_unfocus", "_hover", "_idle"))):
     DEFAULT_SETTINGS[f"{_sides_key}_linked"] = False
 del _sides_key
 
@@ -1077,6 +1075,9 @@ from fm_tableur.settings_defaults import TABLEUR_DEFAULTS  # noqa: E402
 DEFAULT_SETTINGS.update(TABLEUR_DEFAULTS)
 from fm_design.settings_defaults import DESIGN_DEFAULTS  # noqa: E402
 DEFAULT_SETTINGS.update(DESIGN_DEFAULTS)
+# Palette flottante à grille (type « palette » de fm_theme) : défauts dans fm_theme/palette_defaults.py.
+from fm_theme.palette_defaults import PALETTE_DEFAULTS  # noqa: E402
+DEFAULT_SETTINGS.update(PALETTE_DEFAULTS)
 from fm_illustrator.settings_defaults import ILL_DEFAULTS  # noqa: E402
 DEFAULT_SETTINGS.update(ILL_DEFAULTS)
 from fm_photoshop.settings_defaults import PS_DEFAULTS  # noqa: E402
@@ -1084,6 +1085,12 @@ DEFAULT_SETTINGS.update(PS_DEFAULTS)
 # Module typographique : défauts dans son paquet (fm_font/settings_defaults.py, source unique).
 from fm_font.settings_defaults import TYPO_DEFAULTS  # noqa: E402
 DEFAULT_SETTINGS.update(TYPO_DEFAULTS)
+# Module PDF (fm_pdf/settings_defaults.py)
+from fm_pdf.settings_defaults import PDF_DEFAULTS  # noqa: E402
+DEFAULT_SETTINGS.update(PDF_DEFAULTS)
+# Agenda (fm_agenda/settings_defaults.py)
+from fm_agenda.settings_defaults import AGENDA_DEFAULTS  # noqa: E402
+DEFAULT_SETTINGS.update(AGENDA_DEFAULTS)
 
 # Module vidéo : défauts dans son paquet (fm_video/settings_defaults.py, source unique).
 from fm_video.settings_defaults import VIDEO_DEFAULTS  # noqa: E402
@@ -1095,10 +1102,12 @@ _LIVE_STATE_KEYS = ("md_toolbar_font_color", "md_toolbar_background_color",
                     "element_spaces_below", "ui_spaces_below", "title_order", "element_style_overrides",
                     "viewer_film_text_ratio", "viewer_gallery_text_height", "context_menu_layouts",
                     "viewer_button_order", "viewer_recursive", "md_last_mode", "md_code_font_zoom",
-                    "board_pen_presets", "board_design_brand", "quick_style_positions", "interface_move_positions",
+                    "board_pen_presets", "board_design_brand", "board_modulebar_folded", "board_bars", "typo_bars", "window_always_on_top",
+                    "quick_style_positions", "interface_move_positions",
                     "interface_edit_appearance", "video_grade", "video_grade_presets", "video_export_last",
                     "video_info_enabled", "video_loop", "video_volume", "video_last_zoom",
-                    "video_time_display", "video_scopes", "video_timeline_thumb_height")
+                    "video_time_display", "video_scopes", "video_timeline_thumb_height",
+                    "agenda_theme", "agenda_default_calendar")
 
 
 
@@ -1109,14 +1118,16 @@ def import_toggle_image(source: str, style_key: str) -> str:
     """Copie une image choisie par l'utilisateur dans data/toggle_icons/ (pour ne pas dependre de
     son emplacement d'origine) ; renvoie le nom du fichier copie."""
     import shutil
+    from fm_theme import tokens            # lu a l'appel (dossier redirige par les tests)
+    folder = tokens._TOGGLE_ICONS_DIR
     src = Path(source)
-    _TOGGLE_ICONS_DIR.mkdir(parents=True, exist_ok=True)
+    folder.mkdir(parents=True, exist_ok=True)
     name = f"{style_key}_{src.stem}{src.suffix.lower()}"
-    target, n = _TOGGLE_ICONS_DIR / name, 1
+    target, n = folder / name, 1
     while target.exists() and target.resolve() != src.resolve():
         n += 1
         name = f"{style_key}_{src.stem}_{n}{src.suffix.lower()}"
-        target = _TOGGLE_ICONS_DIR / name
+        target = folder / name
     if target.resolve() != src.resolve():
         shutil.copyfile(src, target)
     return name
@@ -1153,7 +1164,8 @@ def load_settings(startup: bool = False) -> dict[str, Any]:
             # config de bordure d'entete au chargement.
             if "header_border_enabled" not in raw and "header_edges" in raw:
                 raw["header_border_enabled"] = raw["header_edges"]
-            _merge(json.loads(json.dumps(raw)))   # copie : _merge partage les sous-dicts, le preset les modifierait
+            # copie : _merge partage les sous-dicts, le preset les modifierait ; anciennes cles des toggles reprises
+            _merge(_toggle_states.fill_toggle_states(json.loads(json.dumps(raw))))
     except (OSError, ValueError):
         pass
     # Preset ACTIF (menu deroulant de la fenetre principale) applique PAR-DESSUS pipeline_settings.json
@@ -1163,15 +1175,16 @@ def load_settings(startup: bool = False) -> dict[str, Any]:
     default_preset = settings.get("default_preset")
     name = preset_in_use(settings, startup)
     if startup:
-        _link_theme_presets()
-        settings["active_preset"] = name if name and name in _load_presets() else ""
+        settings["active_preset"] = name
         if raw and raw.get("active_preset") != settings["active_preset"]:
             raw["active_preset"] = settings["active_preset"]
             save_settings(raw)
     if name:
         presets = _load_presets()
-        if name in presets:
-            _merge({k: v for k, v in presets[name].items() if k not in PRESET_EXCLUDED_KEYS})
+        layer = _layer(presets, name)
+        if layer is not None:
+            _merge(_toggle_states.fill_toggle_states(
+                {k: v for k, v in layer.items() if k not in PRESET_EXCLUDED_KEYS}))
             # "default_preset" fait lui-meme PARTIE des cles capturees par
             # un preset (voir _current_values, "je veux que absolument
             # tous les parametres soient enregistres dans les presets") —
@@ -1181,11 +1194,8 @@ def load_settings(startup: bool = False) -> dict[str, Any]:
             # des ce premier chargement, LEQUEL preset par defaut vient
             # justement d'etre applique.
             settings["default_preset"] = default_preset
-    # Etape 6 : l'aspect generique ne se regle plus que dans fm_theme ; sans preset fm_theme lie, l'aspect
-    # actuel en devient un (« Thème actuel »), lie au preset a l'ecran (ou au fichier, sans preset).
-    if startup and not theme_in_use(settings):
-        _link_current_theme(settings, name, raw)
-    # Aspect generique : le preset fm_theme lie (theme_preset) par-dessus.
+        settings["theme_preset"] = name          # un preset de l'appli = le preset fm_theme DE MEME NOM
+    # Aspect generique : le preset fm_theme (theme_preset) par-dessus.
     theme = _load_theme_values(settings.get("theme_preset") or "", settings.get("theme_default_variants"))
     if theme:
         _merge(theme)
@@ -1230,20 +1240,58 @@ def _prune_column_overrides(settings: dict, raw: dict) -> None:
             settings[key] = data
 
 # ---------------------------------------------------------------------------------------------------
-# Presets (data/pipeline_settings.presets.json, {nom: valeurs}) : menu deroulant de la fenetre
-# principale + fenetre « Gerer les presets » (settings_presets.py). Un preset = l'apparence et les
-# reglages de l'appli, jamais ce qui est propre a la machine ou a la mise en forme des fenetres.
+# Presets : la LISTE est celle de fm_theme (fm_theme/presets/<nom>.json), creee, renommee et supprimee
+# SEULEMENT dans fm_theme (demande de l'utilisateur, 2026-10-30). fm_browser y ajoute une COUCHE de
+# reglages propres a l'appli, par nom de preset (data/pipeline_settings.presets.json, {nom: valeurs}) :
+# choisir « neo » = l'aspect du preset fm_theme « neo » + la couche « neo » (absente : rien de plus).
+# Jamais ce qui est propre a la machine ou a la mise en forme des fenetres.
 # ---------------------------------------------------------------------------------------------------
 
-PRESET_EXCLUDED_KEYS = frozenset(("root_path", "default_preset", "active_preset", *_LIVE_STATE_KEYS))
+PRESET_EXCLUDED_KEYS = frozenset(("root_path", "default_preset", "active_preset", "theme_preset",
+                                  *_LIVE_STATE_KEYS))
+
+
+def _theme_name(name: str) -> str:
+    """Nom actuel du preset fm_theme `name` (un ancien nom garde en alias apres un renommage donne le nouveau) ;
+    "" s'il n'existe pas."""
+    path = _theme_presets.find_preset(name) if name else None
+    if path is None:
+        return ""
+    if path == _theme_presets.preset_path(name):
+        return name
+    try:
+        return _theme_presets.load_preset(path)["nom"]
+    except (OSError, ValueError, KeyError):
+        return ""
 
 
 def preset_in_use(settings: dict, startup: bool = False) -> str:
-    """Nom du preset dont les valeurs sont a l'ecran : l'actif (choisi dans le menu deroulant), ou le
-    preset par defaut au lancement / tant qu'aucun n'a ete choisi. "" = aucun."""
-    if startup or settings.get("active_preset") is None:
-        return settings.get("default_preset") or ""
-    return settings.get("active_preset") or ""
+    """Nom du preset a l'ecran, toujours un preset fm_theme existant : l'actif (choisi dans le menu deroulant),
+    ou le preset par defaut au lancement / tant qu'aucun n'a ete choisi ; a defaut (supprime dans fm_theme...)
+    le preset par defaut, le theme du fichier, puis le premier de la liste. "" = aucun preset fm_theme."""
+    wanted = settings.get("default_preset") if startup or settings.get("active_preset") is None         else settings.get("active_preset")
+    for candidate in (wanted, settings.get("default_preset"), settings.get("theme_preset")):
+        name = _theme_name(candidate or "")
+        if name:
+            return name
+    names = preset_names()
+    return names[0] if names else ""
+
+
+def _layer(presets: dict, name: str) -> dict | None:
+    """Couche de fm_browser du preset `name` ; celle d'un ancien nom (preset renomme dans fm_theme) passe sous
+    le nouveau. None : aucune."""
+    if name in presets:
+        return presets[name]
+    try:
+        aliases = _theme_presets.load_preset(_theme_presets.find_preset(name)).get("alias") or ()
+    except (OSError, ValueError, TypeError):
+        return None
+    for alias in aliases:
+        if alias in presets:
+            presets[name] = presets.pop(alias)
+            return presets[name]
+    return None
 
 
 def preset_values(settings: dict) -> dict:
@@ -1317,67 +1365,36 @@ def set_app_variant(type_name: str, variant: str) -> dict:
     # nouvellement choisie les valeurs a plat de l'ancienne (encore celles de `settings`).
     presets = _load_presets()
     name = preset_in_use(settings)
-    if name in presets:
-        presets[name]["theme_default_variants"] = chosen
+    if name:
+        layer = _layer(presets, name)
+        presets[name] = dict(layer or {}, theme_default_variants=chosen)
         _save_presets(presets)
     return load_settings()
 
 
-def _link_current_theme(settings: dict, preset_name: str, raw: dict) -> None:
-    """Cree un preset fm_theme de l'aspect a l'ecran et le lie (preset de l'appli a l'ecran, sinon le fichier)."""
-    theme = _theme_presets.new_preset("Thème actuel", settings)
-    settings["theme_preset"] = theme
-    presets = _load_presets()
-    if preset_name and preset_name in presets:
-        presets[preset_name]["theme_preset"] = theme
-        _save_presets(presets)
-    else:
-        raw["theme_preset"] = theme
-        save_settings(raw)
-
-
-def set_preset_theme(preset_name: str, theme: str) -> None:
-    """« Gérer les presets » : le preset fm_theme lie a un preset de l'appli."""
-    presets = _load_presets()
-    if preset_name in presets:
-        presets[preset_name]["theme_preset"] = theme
-        _save_presets(presets)
-
-
-def _link_theme_presets() -> None:
-    """Migration (une fois, au lancement) : un preset de l'appli sans `theme_preset` est lie au preset
-    fm_theme de MEME NOM s'il existe (ceux convertis a l'etape 3 de fm_theme)."""
-    presets = _load_presets()
-    changed = False
-    for preset_name, values in presets.items():
-        if (isinstance(values, dict) and not values.get("theme_preset")
-                and _theme_presets.find_preset(preset_name) is not None):
-            values["theme_preset"] = preset_name
-            changed = True
-    if changed:
-        _save_presets(presets)
+_PRESET_NAMES_CACHE: tuple = (None, [])
 
 
 def preset_names() -> list[str]:
-    return list(_load_presets().keys())
-
-
-def unique_preset_name(base: str, taken=None) -> str:
-    taken = set(_load_presets() if taken is None else taken)
-    base = (base or "Preset").strip() or "Preset"
-    if base not in taken:
-        return base
-    n = 2
-    while f"{base} {n}" in taken:
-        n += 1
-    return f"{base} {n}"
+    """Liste des presets : celle de fm_theme, a l'identique. Relue seulement si un fichier du dossier a change
+    (lire tous les presets coute ~30 ms ; le dossier seul, < 1 ms)."""
+    global _PRESET_NAMES_CACHE
+    folder = _theme_presets.PRESETS_DIR
+    try:
+        stamp = (str(folder), tuple(sorted((p.name, p.stat().st_mtime_ns) for p in folder.glob("*.json"))))
+    except OSError:
+        stamp = None
+    if stamp is None or stamp != _PRESET_NAMES_CACHE[0]:
+        _PRESET_NAMES_CACHE = (stamp, list(_theme_presets.list_presets()))
+    return list(_PRESET_NAMES_CACHE[1])
 
 
 def apply_preset(name: str) -> dict:
-    """`name` devient le preset ACTIF ("" : aucun) : ses valeurs passent dans pipeline_settings.json
-    (les autres reglages, et ce qui n'appartient pas aux presets, restent). Retourne les reglages."""
+    """`name` devient le preset ACTIF : ses valeurs (aspect fm_theme + couche de l'appli) passent dans
+    pipeline_settings.json (les autres reglages, et ce qui n'appartient pas aux presets, restent). Retourne les
+    reglages."""
     settings = load_settings()
-    settings["active_preset"] = name if name in _load_presets() else ""
+    settings["active_preset"] = _theme_name(name)
     save_settings(settings)
     merged = load_settings()               # fond le preset desormais actif
     save_settings(merged)
@@ -1385,67 +1402,28 @@ def apply_preset(name: str) -> dict:
 
 
 def save_preset(name: str, values: dict) -> None:
+    """« Enregistrer » : la couche de l'appli du preset `name` (fm_theme existant) retient `values` ; l'aspect
+    generique va dans le preset fm_theme (`update_theme_preset`). Jamais un preset cree ici."""
+    name = _theme_name(name)
+    if not name:
+        return
+    update_theme_preset(dict(values, theme_preset=name))
     presets = _load_presets()
-    presets[name] = preset_values(values)
+    _layer(presets, name)
+    presets[name] = preset_values(dict(values, theme_preset=name))
     _save_presets(presets)
 
 
 def update_active_preset(settings: dict) -> None:
     """Modifications enregistrees (fenetre de reglages, changement de style a la volee...) : le preset a
     l'ecran les retient aussi, sinon load_settings le rejouerait par-dessus au prochain chargement. L'aspect
-    generique va dans le preset fm_theme lie (`update_theme_preset`)."""
-    update_theme_preset(settings)
-    name = preset_in_use(settings)
-    presets = _load_presets()
-    if name and name in presets:
-        presets[name] = preset_values(settings)
-        _save_presets(presets)
-
-
-def duplicate_preset(source: str, name: str | None = None) -> str:
-    presets = _load_presets()
-    if source not in presets:
-        return ""
-    name = unique_preset_name(name or f"{source} copie", presets)
-    presets[name] = json.loads(json.dumps(presets[source]))
-    _save_presets(presets)
-    return name
-
-
-def rename_preset(old: str, new: str) -> str:
-    """Renomme (nom unique) ; le preset par defaut et l'actif suivent. Retourne le nom retenu."""
-    presets = _load_presets()
-    new = (new or "").strip()
-    if old not in presets or not new or new == old:
-        return old
-    new = unique_preset_name(new, set(presets) - {old})
-    presets = {(new if k == old else k): v for k, v in presets.items()}     # meme place dans la liste
-    _save_presets(presets)
-    settings = load_settings()
-    for key in ("default_preset", "active_preset"):
-        if settings.get(key) == old:
-            settings[key] = new
-    save_settings(settings)
-    return new
-
-
-def delete_preset(name: str) -> None:
-    """Supprime ; s'il etait le preset par defaut ou l'actif, plus aucun ne l'est (les valeurs a l'ecran
-    restent celles du fichier)."""
-    presets = _load_presets()
-    if presets.pop(name, None) is None:
-        return
-    settings = load_settings()
-    _save_presets(presets)
-    for key in ("default_preset", "active_preset"):
-        if settings.get(key) == name:
-            settings[key] = ""
-    save_settings(settings)
+    generique va dans le preset fm_theme (`update_theme_preset`)."""
+    save_preset(preset_in_use(settings), settings)
 
 
 def set_default_preset(name: str) -> None:
     settings = load_settings()
-    settings["default_preset"] = name if name in _load_presets() else ""
+    settings["default_preset"] = _theme_name(name)
     save_settings(settings)
 
 

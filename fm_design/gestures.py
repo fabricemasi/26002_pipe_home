@@ -6,8 +6,11 @@ from __future__ import annotations
 import copy
 import math
 
-from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
+from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QPolygonF, QTransform
+
+from fm_board import snap_guides
+from fm_board.snap_guides import GuideLine
 
 from . import design_model as dm, document as doc, geometry
 from .items import DesignElement, DesignImageItem, DesignShapeItem, DesignTextItem
@@ -162,18 +165,25 @@ class GestureMixin:
         return float(self.scene.snap.get("distance", 6)) / max(0.05, self.scene.zoom)
 
     def _guide_lines(self, page, guides):
+        """Lignes des guides, chacune avec sa SORTE d'aimantation (`fm_board.snap_guides`, Réglages > Module MRO >
+        Magnétisme) : bords et centre de la page et ses repères = « bords des documents » ; objets de la
+        page et espacements égaux = « objets internes » (un objet posé sur un bord de la page : le bord l'emporte)."""
         if page is None:
             return []
         w, h = page.size()
+        gx, gy = page_guides(page)
+        own = {"v": (0.0, w / 2, w, *gx), "h": (0.0, h / 2, h, *gy)}
         lines = []
         for guide in guides:
             if guide[0] == "seg":                               # espacement égal : le segment entre deux éléments
                 _kind, x1, y1, x2, y2 = guide
-                lines.append(QLineF(page.mapToScene(QPointF(x1, y1)), page.mapToScene(QPointF(x2, y2))))
+                lines.append(GuideLine(page.mapToScene(QPointF(x1, y1)), page.mapToScene(QPointF(x2, y2)),
+                                       kind=snap_guides.INNER))
                 continue
             axis, value = guide
+            kind = snap_guides.DOCUMENTS if any(abs(value - v) < 1e-6 for v in own[axis]) else snap_guides.INNER
             a, b = (QPointF(value, 0), QPointF(value, h)) if axis == "v" else (QPointF(0, value), QPointF(w, value))
-            lines.append(QLineF(page.mapToScene(a), page.mapToScene(b)))
+            lines.append(GuideLine(page.mapToScene(a), page.mapToScene(b), kind=kind))
         return lines
 
     def _do_move(self, g, scene_pos, mods):

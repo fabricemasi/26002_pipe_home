@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMenu, QPlainTextEdit,
     QSizePolicy, QSpacerItem, QSpinBox, QVBoxLayout, QWidget,
 )
-from PySide6.QtGui import QKeySequence, QShortcut, QTextCursor
+from PySide6.QtGui import QCursor, QKeySequence, QShortcut, QTextCursor
 
 from fm_theme.layout import (
     _Section, _SubSection, _ancestors, _reflow_chain,
@@ -38,10 +38,11 @@ from fm_theme.layout import (
     _TABLE_HEAD, _lock_min_height, _prestyle_flat_frame, _prestyle_flat_row, _register_cells_table,
     _ResizableTableHeader, _reflow_ancestors, _style_flat_table, _table_row, _wire_resizable_columns,
 )
+from fm_theme import table_selection
 from fm_theme.tokens import M, input_bg, input_border_decl, input_height
 from fm_theme.theme import _input_radius, _register_input, _set_text_role
 from fm_theme.widgets import (
-    Menu, menu_row,
+    Menu, ghost_action, menu_row,
     DRAG_GHOST_OPACITY, _TABLE_DIMS, _TABLE_INNER_BORDER, _SliderField, _Toggle, _hide_width_badges, _selection_color, _table_frame, _width_badges,
     add_context_extras,
 )
@@ -391,6 +392,11 @@ class _Cell(QWidget):
                     menu.addAction("Supprimer le texte au-dessus", lambda: state.set_above_text(row, ""))
                 else:
                     menu.addAction("Ajouter un texte au-dessus…", lambda: state.edit_above_text(row))
+            label = _cell_text_label(self)
+            if label is not None:                       # option fantome : Ctrl+Maj + clic droit
+                index = self.findChildren(QLabel).index(label)
+                ghost_action(menu, "Modifier le texte…", lambda: rename_inline(
+                    label, lambda text: state.set_cell_text(key, index, text)))
         floated = [c for c in self.findChildren(QWidget, options=Qt.FindDirectChildrenOnly)
                    if getattr(c, "_float_slot", None) is not None]
         if floated:
@@ -414,6 +420,17 @@ class _Cell(QWidget):
         add_context_extras(self, menu)
         menu.exec(event.globalPos())
         event.accept()
+
+
+def _cell_text_label(cell: _Cell) -> QLabel | None:
+    """Texte d'une cellule a renommer (« Modifier le texte… ») : le QLabel sous le curseur, sinon le premier ;
+    jamais une legende de sous-cellule (elle a son propre « Renommer le titre… »)."""
+    split = split_of(cell.content())
+    captions = split._cap_labels if split is not None else ()
+    labels = [lbl for lbl in cell.findChildren(QLabel)
+              if lbl.isVisibleTo(cell) and lbl.text() and lbl not in captions and not lbl.pixmap().width()]
+    under = QApplication.widgetAt(QCursor.pos())
+    return under if under in labels else (labels[0] if labels else None)
 
 
 # ==========================================================================
@@ -526,7 +543,8 @@ class SplitCell(QWidget):
 
     def _free_min(self) -> int:
         """Place mini des sous-cellules libres (non reglees) : leur contenu et leur legende."""
-        return sum(max(24, self._cells[k].minimumSizeHint().width(), self._cap_labels[k].minimumSizeHint().width())
+        return sum(max(24, self._cells[k].minimumSizeHint().width(), self._cells[k].minimumWidth(),
+                       self._cap_labels[k].minimumSizeHint().width())
                    for k, w in enumerate(self._widths) if not w)
 
     def naturalWidth(self) -> int:
@@ -655,6 +673,24 @@ class SplitCell(QWidget):
         else:
             self._selected = {index}
         self.update()
+        # Une seule selection a la fois dans l'appli (sans Maj), clic ailleurs = tout deselectionner.
+        table_selection.changed(self, exclusive=not shift)
+
+    # -- proprietaire de selection (fm_theme.table_selection) --
+    def has_selection(self) -> bool:
+        return bool(self._selected)
+
+    def clear_selection(self):
+        if self._selected:
+            self._selected = set()
+            self.update()
+
+    def owns_press(self, global_pos: QPoint) -> bool:
+        """Clic traite par la cellule elle-meme : sa legende (selection) ou une bordure a tirer."""
+        local = self.mapFromGlobal(global_pos)
+        if not self.rect().contains(local):
+            return False
+        return local.y() < self._CAPTION_H or self._edge_at(local.x()) is not None
 
     # Ecart entre deux controles EMPILES dans une sous-cellule (toggle d'un cote au-dessus de sa couleur) :
     # 4 px + la marge du dessin du toggle (1 px) + le retrait de la pastille dans son champ (2 px) = 7 px
@@ -1209,7 +1245,8 @@ def add_split_menu(widget: QWidget, menu: QMenu) -> None:
         menu.addSeparator()
     # Le libelle fait partie du controle : ainsi le layout du QMenu reserve
     # explicitement sa largeur avant le toggle, qui ne peut plus le recouvrir.
-    menu_row(menu, "", box)
+    action = menu_row(menu, "", box)
+    action.defaultWidget().text = SPLIT_TEXT    # identifiant stable de la ligne (menus personnalisables, tests)
 
 
 class _RowMover:
@@ -1973,6 +2010,9 @@ class _CellsState:
         self.objects: dict[str, list[int]] = {}
         self.head_hidden = False                   # clic droit > « Supprimer l'entete »
         self.above_texts: dict[int, str] = {}      # ligne LOGIQUE -> texte pose au-dessus
+        # Textes des cellules modifies (option fantome « Modifier le texte… ») : « r<l>c<c>:<n> » -> texte, n = rang
+        # du QLabel dans la cellule ; seulement ce qui differe de l'origine (`_cell_text_orig` du QLabel).
+        self.cell_texts: dict[str, str] = {}
         self._above_labels: dict = {}
         # Gabarits de lignes (voir ROW_TEMPLATES_KEY) : ligne LOGIQUE -> type, et dernier gabarit vu de chaque ligne.
         self.row_kinds: dict[int, str] = {}
@@ -2186,6 +2226,8 @@ class _CellsState:
                       if label.text() != self.head_titles[i]}
             if titles:
                 out["head_titles"] = titles
+        if self.cell_texts:
+            out["cell_texts"] = dict(self.cell_texts)
         renamed = {k: {str(i): t for i, t in enumerate(split_of(c.content()).capTexts())
                        if t != split_of(c.content())._cap_default[i]}
                    for k, c in self.cells.items() if split_of(c.content())}
@@ -2244,6 +2286,28 @@ class _CellsState:
         if notify and self.on_head_align is not None:
             self.on_head_align()
 
+    def set_cell_text(self, key: str, index: int, text: str, notify: bool = True) -> None:
+        """Texte du `index`-ieme QLabel de la cellule `key` ; vide = texte d'origine."""
+        cell = self.cells.get(key)
+        labels = cell.findChildren(QLabel) if cell is not None else []
+        if not 0 <= index < len(labels):
+            return
+        label = labels[index]
+        orig = getattr(label, "_cell_text_orig", None)
+        if orig is None:
+            orig = label._cell_text_orig = label.text()
+        text = (text or "").strip() or orig
+        name = f"{key}:{index}"
+        if text == orig:
+            self.cell_texts.pop(name, None)
+        else:
+            self.cell_texts[name] = text
+        if label.text() == text:
+            return
+        label.setText(text)
+        if notify and self.on_head_align is not None:
+            self.on_head_align()
+
     def set_head_align(self, index: int, key: str, notify: bool = True) -> None:
         self.head._cells[index].setAlignment(_H[key] | Qt.AlignVCenter)
         if notify and self.on_head_align is not None:
@@ -2291,6 +2355,11 @@ class _CellsState:
             self.set_head_align(i, saved if saved in _H else self.head_default[i], notify=False)
         for i in range(len(self.head_titles) if self.head is not None else 0):
             self.set_head_title(i, str((dims.get("head_titles") or {}).get(str(i)) or ""), notify=False)
+        saved_texts = dims.get("cell_texts") or {}
+        for name in set(self.cell_texts) | set(saved_texts):
+            key, _sep, index = name.rpartition(":")
+            if index.isdigit():
+                self.set_cell_text(key, int(index), str(saved_texts.get(name) or ""), notify=False)
         saved_titles = dims.get("split_titles") or {}
         for key, cell in self.cells.items():
             split = split_of(cell.content())
@@ -2494,13 +2563,16 @@ def _spread_over(pending: dict, templates: dict, hidden: bool, late: set, start:
 # ==========================================================================
 
 def build_cells_table(columns: list[tuple[str, int]], rows: list[list], first_col_width: int | None = None,
-                      head_align: dict | None = None):
+                      head_align: dict | None = None, parent: QWidget | None = None):
     """Tableau a entete et a cellules. `columns` : [(titre, largeur)] (0 = colonne
     extensible) ; `rows` : une liste de cellules par ligne, chacune un widget ou
     `(widget, justif_h, justif_v)`. Retourne (frame, head, cells) ; `frame` suit le
     style commun des tableaux (arrondi, bordure, padding, couleur d'entete) et
-    enregistre ses dimensions comme les autres (`_TableFrame`)."""
-    frame, layout = _table_frame()
+    enregistre ses dimensions comme les autres (`_TableFrame`).
+    `parent` : le widget qui portera le tableau (sans le mettre dans un layout : l'appelant s'en charge).
+    Cadre, lignes et cellules sont crees sous leur parent PUIS remplis : seuls les champs sont rattaches,
+    une fois, a une cellule deja en place (`docs/agents/pieges-generaux.md`, « Monter un tableau de reglages »)."""
+    frame, layout = _table_frame(parent)
     _prestyle_flat_frame(frame)
     head = _ResizableTableHeader([(title, width) for title, width in columns])
     head.setCellPadding(14, 14)
@@ -2521,7 +2593,7 @@ def build_cells_table(columns: list[tuple[str, int]], rows: list[list], first_co
     column_cells: dict[int, list[QWidget]] = {}
     for r, spec_row in enumerate(rows):
         bg = M["table_row_a"] if r % 2 else M["table_row_b"]
-        row, row_l = _table_row(bg, first=(r == 0))
+        row, row_l = _table_row(bg, first=(r == 0), parent=frame)     # ligne vide sous son cadre : un seul rattachement
         _prestyle_flat_row(row, r, len(rows))
         row_meta.append((row, bg, r == 0))
         grips.watch(row)
@@ -2530,7 +2602,7 @@ def build_cells_table(columns: list[tuple[str, int]], rows: list[list], first_co
         for c, spec in enumerate(spec_row):
             widget, h, v = spec if isinstance(spec, tuple) else (spec, None, None)
             h = h or ("left" if c == 0 else "right" if not columns[c][1] else "center")
-            cell = _Cell(widget, h, v or "center")
+            cell = _Cell(widget, h, v or "center", parent=row)       # cellule creee sous sa ligne, puis remplie
             cell._default = (h, v or "center")
             width = columns[c][1]
             if width:

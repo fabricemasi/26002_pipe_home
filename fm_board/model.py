@@ -1,4 +1,4 @@
-"""Schema d'un board (fichier `.mro`, JSON) :
+"""Schema d'un board (fichier `.brd`, JSON ; avant le 2026-11-05 : `.mro`, toujours lu) :
 
     {"format": "pipeline-board", "version": 2,
      "page": {"background": null, "grid": true, "export_background": "page", "export_grid": false},
@@ -22,11 +22,16 @@ from fm_cad import cad_model
 from fm_design import design_model
 from fm_illustrator import model as ill_model
 from fm_photoshop import board_model as ps_model
+from fm_pdf import board_model as pdf_model
 from fm_tableur import board_model as tableur_model
 
 FORMAT = "pipeline-board"
 VERSION = 2
-EXTENSION = ".mro"
+EXTENSION = ".brd"
+# Ancienne extension (demande de l'utilisateur 2026-11-05 : `.mro` -> `.brd`) : toujours reconnue et ouverte ; le
+# board est renomme en `.brd` a son premier enregistrement (`serialization.migrate_legacy`).
+LEGACY_EXTENSIONS = (".mro",)
+EXTENSIONS = (EXTENSION, *LEGACY_EXTENSIONS)
 
 MIRO_BACKGROUND = "#f2f2f2"          # mesure (capture 1 : 142 868 pixels sur 159 185)
 MIRO_INK = "#1a1a1a"                 # mesure (trait de la capture 3, contour de la forme de la capture 4)
@@ -91,6 +96,11 @@ DEFAULTS: dict[str, dict] = {
     "cad_dim": {k: None for k in cad_model.ENTITY_DEFAULTS["cad_dim"]},
     "cad_hatch": {k: None for k in cad_model.ENTITY_DEFAULTS["cad_hatch"]},
     "cad_text": {k: None for k in cad_model.ENTITY_DEFAULTS["cad_text"]},
+    "cad_point": {k: None for k in cad_model.ENTITY_DEFAULTS["cad_point"]},
+    "cad_insert": {k: None for k in cad_model.ENTITY_DEFAULTS["cad_insert"]},
+    "cad_image": {k: None for k in cad_model.ENTITY_DEFAULTS["cad_image"]},
+    "cad_xline": {k: None for k in cad_model.ENTITY_DEFAULTS["cad_xline"]},
+    "cad_ray": {k: None for k in cad_model.ENTITY_DEFAULTS["cad_ray"]},
     # Module Design (fm_design/design_model.py) : pages et elements ; valeurs bornees par design_model.normalize_entity.
     **{kind: copy.deepcopy(values) for kind, values in design_model.DEFAULTS.items()},
     # Module Tableur (fm_tableur/board_model.py) : classeur pose sur le board (format natif dans `workbook`).
@@ -99,6 +109,8 @@ DEFAULTS: dict[str, dict] = {
     **{kind: copy.deepcopy(values) for kind, values in ill_model.DEFAULTS.items()},
     # Module Photoshop (fm_photoshop/board_model.py) : document matriciel (pixels dans un conteneur `asset`).
     **{kind: copy.deepcopy(values) for kind, values in ps_model.DEFAULTS.items()},
+    # Module PDF (fm_pdf/board_model.py) : document PDF lié (chemin absolu + relatif au board, page montrée).
+    **{kind: copy.deepcopy(values) for kind, values in pdf_model.DEFAULTS.items()},
 }
 COMMON = {"x": 0.0, "y": 0.0, "z": 0.0, "rotation": 0.0, "locked": False, "link": ""}
 ROTATABLE = ("shape", "text", "image")
@@ -179,8 +191,19 @@ def paper_size(data: dict) -> tuple[float, float] | None:
     return (w, h) if data.get("orientation") == "portrait" else (h, w)
 
 
-# Boutons du board dont l'icone se regle (Reglages > Module MRO > Icones ; cle d'icone `ui_board_<genre>`).
-ICON_ROWS = [
+# Boutons dont l'icone se regle (cle d'icone `ui_board_<genre>`) : UNE section « Icônes » PAR MODULE dans la fenetre
+# « Réglages : Board » (demande de l'utilisateur 2026-11-05 : plus de tableau global). Onglet Board : la barre de
+# selection des modules ; onglet MRO : outils et barres du canvas ; chaque autre module : son bouton dans la barre de
+# selection et ses propres outils. CAD : `CAD_ICON_ROWS` plus bas.
+BOARD_ICON_ROWS = [
+    ("show", "Modules : éléments affichés"), ("hide", "Modules : éléments masqués"),
+    ("fade", "Modules : griser les éléments"), ("solo", "Modules : isoler les éléments"),
+    ("modules_reset", "Modules : tout afficher, sortir de l'isolation"),
+    ("modules_fold", "Modules : replier la barre"), ("modules_unfold", "Modules : déplier la barre"),
+    ("solo_exit", "Modules : quitter l'isolation (barre étroite)"),
+]
+MRO_ICON_ROWS = [
+    ("miro", "Module MRO (sélecteur de modules du board)"),
     ("select", "Outil Sélection"), ("hand", "Outil Main"), ("sticky", "Outil Post-it"), ("text", "Outil Texte"),
     ("shape", "Outil Formes"), ("connector", "Outil Connecteur"), ("draw", "Outil Dessin"),
     ("comment", "Commentaire"), ("frame", "Outil Cadre"), ("image", "Image depuis un fichier"),
@@ -193,14 +216,18 @@ ICON_ROWS = [
     ("frame_format", "Barre : format du cadre"), ("lock", "Barre : verrou"), ("more", "Barre : plus"),
     ("minus", "Zoom : dézoomer"), ("plus", "Zoom : zoomer"), ("fit", "Zoom : tout voir"),
     ("close", "Fermer le fil de commentaire"),
-    ("miro", "Modules : Miro"), ("fade", "Modules : griser les éléments"), ("hide", "Modules : masquer les éléments"),
-    ("design", "Modules : Design"), ("tableur", "Modules : Tableur"), ("illustrator", "Modules : Illustrator"),
-    ("photoshop", "Modules : Photoshop"),
+]
+DESIGN_ICON_ROWS = [
+    ("design", "Module Design (sélecteur de modules du board)"),
     ("design_templates", "Design : modèles et formats"), ("design_elements", "Design : éléments"),
     ("design_text", "Design : texte"), ("design_images", "Design : images"),
     ("design_layers", "Design : position et calques"), ("design_export", "Design : exporter"),
     ("design_present", "Design : présenter"), ("design_add_page", "Design : ajouter une page"),
-    # Module Illustrator (fm_illustrator/glyphs.py) : outils et barre de controle.
+]
+TABLEUR_ICON_ROWS = [("tableur", "Module Tableur (sélecteur de modules du board)")]
+# Module Illustrator (fm_illustrator/glyphs.py) : outils et barre de controle.
+ILL_ICON_ROWS = [
+    ("illustrator", "Module Illustrator (sélecteur de modules du board)"),
     ("ill_select", "Illustrator : Sélection"), ("ill_direct", "Illustrator : Sélection directe"),
     ("ill_pen", "Illustrator : Plume"), ("ill_add_anchor", "Illustrator : Ajout de point"),
     ("ill_delete_anchor", "Illustrator : Suppression de point"),
@@ -218,13 +245,21 @@ ICON_ROWS = [
     ("ill_align", "Illustrator : aligner et répartir"), ("ill_fx", "Illustrator : effets et aspect"),
     ("ill_layers", "Illustrator : calques"), ("ill_export", "Illustrator : exporter / importer"),
 ]
+PS_ICON_ROWS = [("photoshop", "Module Photoshop (sélecteur de modules du board)")]
+# Toutes les icones reglables hors CAD (boutons du board qui lisent `ui_board_<genre>`).
+ICON_ROWS = BOARD_ICON_ROWS + MRO_ICON_ROWS + DESIGN_ICON_ROWS + TABLEUR_ICON_ROWS + ILL_ICON_ROWS + PS_ICON_ROWS
 
-# Icones du module CAD (Reglages > Module CAD > Icones ; meme cle d'icone `ui_board_<genre>`) : barre d'outils CAD,
+# Icones du module CAD (Reglages : Board > CAD > Icones ; meme cle d'icone `ui_board_<genre>`) : barre d'outils CAD,
 # bouton « Mode CAD » du board, gestion, historique de la barre de commande. Les menus du CAD n'ont pas d'icone.
 CAD_ICON_ROWS = [
     ("cad", "Module CAD (sélecteur de modules du board)"),
     ("cad_line", "Dessin : ligne"), ("cad_pline", "Dessin : polyligne"), ("cad_circle", "Dessin : cercle"),
     ("cad_arc", "Dessin : arc"), ("cad_rect", "Dessin : rectangle"), ("cad_hatch", "Dessin : hachures"),
+    ("cad_polygon", "Dessin : polygone"), ("cad_ellipse", "Dessin : ellipse"), ("cad_point", "Dessin : point"),
+    ("cad_extend", "Modification : prolonger"), ("cad_stretch", "Modification : étirer"),
+    ("cad_break", "Modification : coupure"), ("cad_join", "Modification : joindre"),
+    ("cad_array", "Modification : réseau"), ("cad_block", "Gestion : créer un bloc"),
+    ("cad_insert", "Gestion : insérer un bloc"),
     ("cad_move", "Modification : déplacer"), ("cad_copy", "Modification : copier"),
     ("cad_erase", "Modification : effacer"), ("cad_match", "Modification : pipette"), ("cad_rotate", "Modification : rotation"), ("cad_scale", "Modification : échelle"),
     ("cad_mirror", "Modification : miroir"), ("cad_trim", "Modification : ajuster"), ("cad_offset", "Modification : décalage"),
@@ -250,9 +285,15 @@ def empty_board() -> dict:
 
 def new_item(kind: str, **values) -> dict:
     """Element neuf de type `kind` (valeurs par defaut + `values`), avec un identifiant."""
-    item = {"id": new_id(), "type": kind, **copy.deepcopy(COMMON), **copy.deepcopy(DEFAULTS[kind])}
+    # Copie des seules valeurs modifiables (listes, dictionnaires) : `copy.deepcopy` de valeurs presque toutes
+    # simples coutait plusieurs secondes a la conversion d'un DWG de 81 000 entites (`cad_import`).
+    item = {"id": new_id(), "type": kind, **COMMON,
+            **{k: v if type(v) in _ATOMIC else copy.deepcopy(v) for k, v in DEFAULTS[kind].items()}}
     item.update(values)
     return item
+
+
+_ATOMIC = frozenset({str, float, int, bool, type(None)})
 
 
 def _coerce(value, default):
@@ -292,6 +333,8 @@ def normalize_item(raw) -> dict | None:
         ill_model.normalize_entity(item)
     if kind in ps_model.PHOTOSHOP_TYPES:
         ps_model.normalize_entity(item)
+    if kind in pdf_model.PDF_TYPES:
+        pdf_model.normalize_entity(item)
     if kind == "shape" and item["shape"] == "round" and "radius" not in raw:
         item["radius"] = round(min(item["w"], item["h"]) * 0.18, 2)        # anciens fichiers (version 1)
     if kind == "shape" and item["shape"] not in SHAPE_KINDS:

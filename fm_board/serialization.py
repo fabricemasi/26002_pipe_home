@@ -1,4 +1,4 @@
-"""Lecture / ecriture d'un board `.mro`, et le dossier de ses images (`<nom>_assets`).
+"""Lecture / ecriture d'un board `.brd` (anciens `.mro` lus, renommes en `.brd` au premier enregistrement), et le dossier de ses images (`<nom>_assets`).
 
 Ecriture ATOMIQUE (fichier temporaire du meme dossier puis remplacement : un board n'est jamais a moitie ecrit).
 Images : copiees une fois dans `<nom>_assets/` a cote du board (dossier cache), nommees par leur empreinte
@@ -26,7 +26,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from .model import EXTENSION, empty_board, normalize
+from .model import EXTENSION, EXTENSIONS, LEGACY_EXTENSIONS, empty_board, normalize
 
 ASSET_NAME = re.compile(r"^[0-9a-f]{16}\.[a-z0-9]{1,5}$")
 PART_NAME = re.compile(r"^\.[0-9a-f]{16}\.[a-z0-9]{1,5}\.[0-9a-z_]+\.part$")
@@ -38,7 +38,31 @@ class BoardError(Exception):
 
 
 def is_board_file(path) -> bool:
-    return path is not None and Path(path).suffix.lower() == EXTENSION
+    return path is not None and Path(path).suffix.lower() in EXTENSIONS
+
+
+def migrated_path(path) -> Path | None:
+    """Chemin `.brd` d'un ancien `.mro` (meme nom, donc meme dossier d'images `<nom>_assets`) ; None si `path` est
+    deja un `.brd`, ou si ce `.brd` existe deja (on n'ecrase rien : le board reste alors en `.mro`)."""
+    path = Path(path)
+    if path.suffix.lower() not in LEGACY_EXTENSIONS:
+        return None
+    target = path.with_suffix(EXTENSION)
+    return None if target.exists() else target
+
+
+def migrate_legacy(path) -> Path:
+    """Ancien `.mro` RENOMME en `.brd` (rien n'est reecrit ni supprime) ; renvoie le chemin a utiliser ensuite
+    (l'ancien si le renommage est impossible ou inutile)."""
+    path = Path(path)
+    target = migrated_path(path)
+    if target is None:
+        return path
+    try:
+        os.rename(path, target)                           # refuse d'ecraser (Windows) ; meme dossier : atomique
+    except OSError:
+        return path
+    return target
 
 
 def load(path) -> dict:
@@ -90,7 +114,9 @@ def save(path, data: dict) -> None:
 def create_board_file(path) -> Path:
     """Nouveau board vierge (refuse d'ecraser un fichier existant)."""
     path = Path(path)
-    if path.suffix.lower() != EXTENSION:
+    if path.suffix.lower() in LEGACY_EXTENSIONS:           # un nouveau board est toujours un `.brd`
+        path = path.with_suffix(EXTENSION)
+    elif path.suffix.lower() != EXTENSION:
         path = path.with_name(path.name + EXTENSION)
     if path.exists():
         raise FileExistsError(str(path))

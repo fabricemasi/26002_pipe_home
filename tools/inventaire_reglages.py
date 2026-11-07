@@ -26,14 +26,18 @@ THEME_FAMILIES = {
     "toggle1_": "toggle", "toggle2_": "toggle", "toggle_styles": "toggle", "toggle_custom_styles": "toggle",
     "toggle_style": "toggle", "slider_": "slider", "input_": "champ de saisie", "button_": "bouton",
     "table_": "tableau", "tabs_": "onglets", "ctx_": "menu contextuel", "extra_": "fenêtre additionnelle",
-    "window_radius": "fenêtre",
+    "window_radius": "fenêtre", "window_border": "fenêtre (bordure du pourtour, 2026-10-30)",
+    "window_border_": "fenêtre (bordure du pourtour, 2026-10-30)",
+    "palette_": "barres d'outils flottantes (2026-11-02)",
+    # Barres de la fenetre : aspect general (demande de l'utilisateur, 2026-11-05).
+    "navbar_": "barre de navigation", "crumb_": "cheminement (barre de navigation)", "statusbar_": "barre d'état",
 }
 # Familles d'aspect PROPRES à fm_browser (restent dans fm_browser, valeurs -> références) ; leurs clés de
 # fonctionnement sont reconnues par les mots de la clé (voir LOOK_WORDS).
 PROPRE_FAMILIES = {
     # Colonnes Miller : propres à fm_browser (choix de l'utilisateur, 2026-10-29).
     "item_": "colonne (lignes)", "header_": "colonne (entête)", "column_": "colonne (cadre)",
-    "crumb_": "cheminement", "navbar_": "barre de navigation", "step_": "badges d'étapes",
+    "step_": "badges d'étapes",
     "resize_": "badge de redimensionnement", "shortcut_": "texte des raccourcis",
     "preview_": "carte d'aperçu", "viewer_": "visionneuse", "md_": "Markdown", "board_": "board / CAD",
     "video_": "vidéo",

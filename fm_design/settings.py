@@ -34,8 +34,6 @@ def _design_groups() -> dict:
         Spec("board_design_handle_size", "Taille des poignées (pixels d'écran)", "slider", 9, {"min": 5, "max": 20}),
         Spec("board_design_guide_color", "Couleur des repères et des marges (son opacité compte)", "color",
              "#c800beff", {"title": "Repères et marges"}),
-        Spec("board_design_snap_color", "Couleur des guides d'alignement (magnétisme)", "color", "#ff2fd0",
-             {"title": "Guides d'alignement"}),
         Spec("board_design_page_titles", "Titres des pages au-dessus de chaque page", "bool", True),
         Spec("board_design_rulers", "Règles affichées à l'ouverture du module (Maj+R)", "bool", False),
     ]
@@ -63,4 +61,5 @@ DESIGN_TREE = (
     Node("Sélection et repères", "Design : Sélection et repères"),
     Node("Clavier", "Design : Clavier"),
     Node("Présentation", "Design : Présentation"),
+    Node("Icônes", "Design : Icônes"),          # lignes : fm_board/settings.py (ICON_GROUPS_BY_MODULE)
 )

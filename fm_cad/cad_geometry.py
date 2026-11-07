@@ -235,6 +235,9 @@ def snap_to_grid(p, spacing: float, origin=(0.0, 0.0)):
 
 
 # -- index spatial --
+NUMPY_POOL = 1500                   # objets estimes dans une zone au-dela desquels `GridIndex.query` passe par numpy
+
+
 class GridIndex:
     """Index spatial en grille uniforme (recherche LOCALISEE des entites candidates : accrochage, selection).
     `build([(objet, (xmin, ymin, xmax, ymax))])` ; `insert` / `remove` un objet (mise a jour INCREMENTALE : une
@@ -244,6 +247,7 @@ class GridIndex:
     testee par son emprise. `needs_rebuild` : le dessin a trop change depuis (taille des cellules a revoir)."""
 
     MAX_CELLS = 64
+    NUMPY_MIN = 2048                # objets a partir desquels une grande zone passe par numpy (`_query_np`)
 
     def __init__(self):
         self.cell = 64.0
@@ -252,17 +256,30 @@ class GridIndex:
         self.boxes: dict = {}
         self.objects: dict = {}
         self._built_count = 0
+        self._rev = 0                   # change a chaque modification : tableaux numpy a refaire (`_arrays`)
+        self._np = None                 # (rev, objets, emprises N x 4)
 
     def build(self, entries):
+        for _ in self.build_steps(entries):
+            pass
+
+    def build_steps(self, entries, chunk: int = 4096):
+        """`build` par morceaux : generateur, un `next` par `chunk` objets ranges (construction en tache de fond d'un
+        gros dessin, `CadController._index_step`). L'index n'est utilisable qu'une fois le generateur epuise."""
+        self._rev += 1
         entries = list(entries)
         self.cells, self.large, self.boxes, self.objects = {}, {}, {}, {}
         sides = sorted(max(b[2] - b[0], b[3] - b[1]) for _o, b in entries) or [64.0]
         median = sides[len(sides) // 2]
         self.cell = max(1e-3, median * 2.0, 1e-6 + (sides[-1] / 1e6))
+        if len(entries) > chunk:
+            yield                                           # le tri des tailles est deja un morceau
         c = self.cell
         cells, large, boxes, objects = self.cells, self.large, self.boxes, self.objects
         floor = math.floor
-        for obj, box in entries:                            # meme chose que `insert`, sans appel par objet
+        for n, (obj, box) in enumerate(entries):            # meme chose que `insert`, sans appel par objet
+            if n and not n % chunk:
+                yield
             key = id(obj)
             boxes[key] = box
             objects[key] = obj
@@ -284,6 +301,7 @@ class GridIndex:
         return math.floor(box[0] / c), math.floor(box[1] / c), math.floor(box[2] / c), math.floor(box[3] / c)
 
     def insert(self, obj, box):
+        self._rev += 1
         key = id(obj)
         if key in self.boxes:
             self.remove(obj)
@@ -303,6 +321,7 @@ class GridIndex:
         box = self.boxes.pop(key, None)
         if box is None:
             return
+        self._rev += 1
         del self.objects[key]
         if self.large.pop(key, None) is not None:
             return
@@ -322,10 +341,23 @@ class GridIndex:
         count = len(self.objects)
         return len(self.large) > 32 + count // 8 or count > 2 * self._built_count + 256
 
-    def query(self, rect) -> list:
+    def query(self, rect, around=None, limit: int | None = None) -> list:
+        """Objets dont l'emprise touche `rect` ; `limit` (avec `around`, un point) : seulement les `limit` dont
+        l'emprise est la plus proche de `around`, du plus proche au plus loin (un plan vu de loin : quelques pixels
+        couvrent des dizaines de milliers d'entites)."""
         xmin, ymin, xmax, ymax = rect
         x0, y0, x1, y1 = self._span(rect)
-        if (x1 - x0 + 1) * (y1 - y0 + 1) > max(256, len(self.cells)):
+        spanned = (x1 - x0 + 1) * (y1 - y0 + 1)
+        big = spanned > max(256, len(self.cells))
+        count = len(self.objects)
+        # Zone qui couvre beaucoup d'objets (estimation : cases couvertes x objets par case occupee) : un calcul
+        # vectoriel plutot que des milliers de cases relues en Python (zoom d'un plan de 81 000 entites).
+        heavy = big or spanned * count > NUMPY_POOL * max(1, len(self.cells))
+        if heavy and count >= self.NUMPY_MIN:
+            found = self._query_np(rect, around, limit)
+            if found is not None:
+                return found
+        if big:
             pool = list(self.objects.values())              # grande zone : un seul passage sur tout
         else:
             pool, seen = [], set()
@@ -342,4 +374,46 @@ class GridIndex:
             b = boxes[id(obj)]
             if b[0] <= xmax and b[2] >= xmin and b[1] <= ymax and b[3] >= ymin:
                 out.append(obj)
+        if limit is not None and around is not None and len(out) > 1:
+            cx, cy = around
+
+            def gap(obj):
+                b = boxes[id(obj)]
+                dx, dy = max(b[0] - cx, 0.0, cx - b[2]), max(b[1] - cy, 0.0, cy - b[3])
+                return dx * dx + dy * dy
+            out.sort(key=gap)
+            del out[limit:]
         return out
+
+    def _arrays(self):
+        """(objets, emprises en tableau numpy N x 4), refaits apres une modification ; None sans numpy."""
+        if self._np is not None and self._np[0] == self._rev:
+            return self._np[1], self._np[2]
+        try:
+            import numpy as np
+        except ImportError:
+            return None
+        objects = list(self.objects.values())
+        boxes = self.boxes
+        array = np.array([boxes[id(obj)] for obj in objects], dtype=float).reshape(-1, 4)
+        self._np = (self._rev, objects, array)
+        return objects, array
+
+    def _query_np(self, rect, around, limit):
+        """`query` d'une GRANDE zone en un calcul vectoriel (81 000 emprises : ~1 ms au lieu de ~40 ms en Python)."""
+        found = self._arrays()
+        if found is None:
+            return None
+        import numpy as np
+        objects, a = found
+        xmin, ymin, xmax, ymax = rect
+        index = np.flatnonzero((a[:, 0] <= xmax) & (a[:, 2] >= xmin) & (a[:, 1] <= ymax) & (a[:, 3] >= ymin))
+        if limit is not None and around is not None and len(index) > 1:
+            sub = a[index]
+            cx, cy = around
+            dx = np.maximum(np.maximum(sub[:, 0] - cx, cx - sub[:, 2]), 0.0)
+            dy = np.maximum(np.maximum(sub[:, 1] - cy, cy - sub[:, 3]), 0.0)
+            gap = dx * dx + dy * dy
+            keep = np.argpartition(gap, limit)[:limit] if len(index) > limit else np.arange(len(index))
+            index = index[keep[np.argsort(gap[keep], kind="stable")]]
+        return [objects[i] for i in index.tolist()]

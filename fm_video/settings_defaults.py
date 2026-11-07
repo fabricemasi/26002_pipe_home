@@ -1,5 +1,6 @@
 """Défauts des réglages du module vidéo (source unique) : `settings_store` les fusionne dans DEFAULT_SETTINGS.
-Aucun import (lu au chargement des réglages, avant Qt). Lignes de la fenêtre de réglages : `fm_video/settings.py`."""
+Aucun import Qt (lu au chargement des réglages, avant Qt) ; l'habillage de l'analyse colorimétrique vient de
+`analysis_look.py` (Python pur, valeurs de la maquette). Lignes de la fenêtre de réglages : `fm_video/settings.py`."""
 from typing import Any
 
 VIDEO_DEFAULTS: dict[str, Any] = {
@@ -75,3 +76,6 @@ VIDEO_DEFAULTS: dict[str, Any] = {
     "video_grade": {}, "video_grade_presets": {}, "video_export_last": {}, "video_last_zoom": {},
     "video_scopes": False,
 }
+
+from fm_video.analysis_look import ANALYSIS_LOOK_DEFAULTS  # noqa: E402 - habillage de l'analyse (maquette)
+VIDEO_DEFAULTS.update(ANALYSIS_LOOK_DEFAULTS)

@@ -1328,8 +1328,14 @@ def apply_dwm_frame(widget, radius: int, border_hex: str, resizable: bool = Fals
             WS_THICKFRAME = 0x00040000
             WS_MAXIMIZEBOX = 0x00010000
             WS_MINIMIZEBOX = 0x00020000
+            # WS_CAPTION : sans lui, Windows refuse l'accrochage (Aero Snap) au glisser vers un bord de l'écran ; la
+            # barre native reste invisible (WM_NCCALCSIZE, `resize_hit_test`). JAMAIS sur une fenêtre translucide
+            # (WS_EX_LAYERED, la fenêtre principale) : elle devenait entièrement invisible au lancement (2026-11-03).
+            from PySide6.QtCore import Qt
+            layered = user32.GetWindowLongW(hwnd, -20) & 0x00080000 or widget.testAttribute(Qt.WA_TranslucentBackground)
+            WS_CAPTION = 0 if layered else 0x00C00000
             style = user32.GetWindowLongW(hwnd, GWL_STYLE)
-            wanted = style | WS_THICKFRAME | WS_MAXIMIZEBOX | WS_MINIMIZEBOX
+            wanted = style | WS_THICKFRAME | WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_CAPTION
             if wanted != style:
                 user32.SetWindowLongW(hwnd, GWL_STYLE, wanted)
                 # SANS CA : Windows garde en cache l'ancien frame tant qu'on
@@ -1427,13 +1433,19 @@ def resize_hit_test(widget, message, border: int = 6, inset=None):
 
     Retourne None si l'evenement n'est pas un WM_NCHITTEST exploitable —
     l'appelant doit alors retomber sur super().nativeEvent() — ou (True,
-    hit) sinon, directement renvoyable tel quel depuis nativeEvent()."""
-    if sys.platform != "win32" or widget.isMaximized():
+    hit) sinon, directement renvoyable tel quel depuis nativeEvent().
+
+    Répond aussi à WM_NCCALCSIZE : toute la fenêtre est zone cliente (le cadre et la barre natifs, posés pour
+    l'accrochage aux bords de l'écran, restent invisibles) ; agrandie, elle s'arrête à la zone de travail de son
+    écran (sinon elle déborde de l'épaisseur du cadre)."""
+    if sys.platform != "win32":
         return None
     try:
         from ctypes import wintypes
         msg = wintypes.MSG.from_address(int(message))
-        if msg.message != 0x0084:  # WM_NCHITTEST
+        if msg.message == 0x0083 and msg.wParam:   # WM_NCCALCSIZE
+            return _frameless_calc_size(msg)
+        if widget.isMaximized() or msg.message != 0x0084:  # WM_NCHITTEST
             return None
         import ctypes
         x = ctypes.c_short(msg.lParam & 0xFFFF).value - widget.frameGeometry().x()
@@ -1460,6 +1472,53 @@ def resize_hit_test(widget, message, border: int = 6, inset=None):
     except Exception:
         pass
     return None
+
+
+def _frameless_calc_size(msg):
+    """WM_NCCALCSIZE d'une fenêtre sans décoration (voir `resize_hit_test`) : zone cliente = toute la fenêtre ;
+    agrandie : la zone de travail de son écran."""
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    if user32.IsZoomed(msg.hWnd):
+        class _MonitorInfo(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT),
+                        ("dwFlags", wintypes.DWORD)]
+        rect = wintypes.RECT.from_address(msg.lParam)        # NCCALCSIZE_PARAMS.rgrc[0]
+        info = _MonitorInfo()
+        info.cbSize = ctypes.sizeof(_MonitorInfo)
+        monitor = user32.MonitorFromWindow(msg.hWnd, 2)      # MONITOR_DEFAULTTONEAREST
+        if monitor and user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            rect.left, rect.top, rect.right, rect.bottom = (info.rcWork.left, info.rcWork.top, info.rcWork.right,
+                                                            info.rcWork.bottom)
+    return True, 0
+
+
+def set_always_on_top(window, on: bool) -> None:
+    """Fenêtre de premier niveau « toujours au-dessus » (clic droit sur sa barre de titre) : sur Windows, sans
+    recréer la fenêtre native (pas de clignement) ; ailleurs, par le drapeau Qt."""
+    window = window.window()
+    window._always_on_top = bool(on)
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            HWND_TOPMOST, HWND_NOTOPMOST = -1, -2
+            SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = 0x0001, 0x0002, 0x0010
+            ctypes.windll.user32.SetWindowPos(ctypes.c_void_p(int(window.winId())),        # (insertion : un HWND
+                                              ctypes.c_ssize_t(HWND_TOPMOST if on else HWND_NOTOPMOST),  # sur 64 bits)
+                                              0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
+            return
+        except Exception:
+            pass
+    from PySide6.QtCore import Qt
+    visible = window.isVisible()
+    window.setWindowFlag(Qt.WindowStaysOnTopHint, bool(on))
+    if visible:
+        window.show()
+
+
+def always_on_top(window) -> bool:
+    return bool(getattr(window.window(), "_always_on_top", False))
 
 
 def refresh_style(app) -> None:

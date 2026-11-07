@@ -352,7 +352,7 @@
    "contenu:SemanticColorField": {
     "align": [
      "left,center",
-     "right,center"
+     "left,center"
     ],
     "height": 40
    },
@@ -683,7 +683,8 @@
      },
      "menu_shadow_size": 10,
      "menu_shadow_enabled_linked": false,
-     "menu_border_enabled_linked": false
+     "menu_border_enabled_linked": false,
+     "menu_ghost_color": "#e0a040"
     }
    }
   },

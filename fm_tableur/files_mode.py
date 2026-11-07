@@ -4,7 +4,7 @@ DXF, `BoardPane.open_import`) contenant un élément « sheet », affiché aussi
 Le fichier d'origine n'est JAMAIS réécrit en silence : « Enregistrer » le remplace seulement après confirmation,
 seulement si l'import n'a rien perdu (sinon : « Enregistrer sous » un nouveau fichier), et après une copie
 `<nom>.bak` de l'original. À la fermeture d'un classeur modifié : enregistrer / enregistrer sous / garder en
-board .mro / fermer sans enregistrer / annuler. La lecture (`read_as_board`) n'utilise pas Qt : elle peut se faire
+board .brd / fermer sans enregistrer / annuler. La lecture (`read_as_board`) n'utilise pas Qt : elle peut se faire
 dans un fil à part (gros classeurs)."""
 from __future__ import annotations
 
@@ -116,7 +116,7 @@ def leave(pane, item, path: Path) -> bool:
     """Fermeture d'un classeur ouvert depuis l'explorateur et modifié : rien n'est perdu sans le demander."""
     box = QMessageBox(QMessageBox.Question, "Classeur modifié", f"« {path.name} » a été modifié.", parent=pane)
     save_button = box.addButton("Enregistrer…", QMessageBox.AcceptRole)
-    board = box.addButton("Garder en board .mro", QMessageBox.ActionRole)
+    board = box.addButton("Garder en board .brd", QMessageBox.ActionRole)
     drop = box.addButton("Fermer sans enregistrer", QMessageBox.DestructiveRole)
     box.addButton("Annuler", QMessageBox.RejectRole)
     box.exec()

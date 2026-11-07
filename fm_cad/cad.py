@@ -33,11 +33,11 @@ import os
 import sys
 import time
 
-from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QPen
 from PySide6.QtWidgets import QApplication
 
-from . import cad_aliases, cad_commands, cad_geometry as geo, cad_input, cad_model, cad_shapes, cad_snap
+from . import cad_aliases, cad_assoc, cad_commands, cad_geometry as geo, cad_input, cad_model, cad_shapes, cad_snap
 from fm_board import model
 from .cad_items import CadLayer, CadLineItem, cad_module_look, unit_of
 from .cad_overlay import CadOverlay, native_cursor
@@ -63,6 +63,11 @@ DEFAULTS = {"board_cad_osnap": True, "board_cad_ortho": False,
 # Proprietes recopiees par la pipette (MATCHPROP).
 MATCHED = ("layer", "color", "lineweight", "linetype", "ltscale", "end1", "end2", "inner", "distribute", "resize")
 CLICK_PX = 4                      # en deca : un clic (au-dela : un glisser)
+PICK_LIMIT = 500                  # entites les plus proches mesurees par un choix / survol (plan vu de loin)
+# Index complet des accrochages a refaire pour au moins autant d'entites : construit EN FOND, par tranches de
+# INDEX_SLICE_S (DWG de 81 000 entites : ~1 s d'un bloc au 1er mouvement de souris apres l'ouverture).
+BACKGROUND_INDEX_MIN = 8000
+INDEX_SLICE_S = 0.006
 
 # Journal des evenements souris du CAD (diagnostic des clics perdus) : PIPELINE_CAD_MOUSE_LOG=1.
 MOUSE_LOG = bool(os.environ.get("PIPELINE_CAD_MOUSE_LOG"))
@@ -84,9 +89,11 @@ class CadController(QObject):
         self.active = False
         self.settings: dict = {}
         self.engine = cad_snap.SnapEngine(self._source)
+        self.engine.source_near = self._source              # recherche bornee aux plus proches (plan vu de loin)
         self._index = geo.GridIndex()               # recherche localisee (voir _source)
         self._index_epoch = 0
         self._index_built = None
+        self._index_job = None                      # construction complete en tache de fond (voir _start_index_job)
         self._grip_list = None                      # poignees de la selection (voir _grips_near)
         self._grips = None                          # ... rangees en grille pour le zoom courant
         self.command = None
@@ -112,6 +119,7 @@ class CadController(QObject):
         self._press_double = False             # appui venu d'un double-clic (voir mouse_double_click)
         self.last_pick_doc = None              # point (document) du dernier clic de choix d'objet (chanfrein…)
         self.last_pick_shift = False           # ce clic avait Maj (AJUSTER : Maj + clic = prolonger)
+        self._shift_forced = None              # etat de Maj impose pendant l'evenement de la touche (_shift_refresh)
         # Valeurs des outils gardees d'une utilisation a l'autre (comme AutoCAD) : distance de decalage, distances /
         # angle / methode du chanfrein, rayon du raccord, mode Ajuster.
         self.tool_memory = {"offset": None, "chamfer_d1": 0.0, "chamfer_d2": 0.0, "chamfer_angle": 45.0,
@@ -142,6 +150,8 @@ class CadController(QObject):
         self.scene.changed.connect(self._scene_changed)
         self.scene.pageChanged.connect(self._page_overrides_changed)
         self.scene.selectionChanged.connect(self._on_selection)
+        if hasattr(self.scene, "loadProgress"):             # fin d'un chargement par tranches : index prepare en fond
+            self.scene.loadProgress.connect(self._on_load_progress)
         from . import cad_ui
         self.ui = cad_ui.CadChrome(pane, self)
         self.overlay.attach_gpu(getattr(self.view, "gpu", None))     # rendu GPU deja allume (cad_gpu)
@@ -166,6 +176,9 @@ class CadController(QObject):
             "pickbox_px": max(2, int(g("board_cad_pickbox") or 5)),
             "crosshair": bool(g("board_cad_crosshair", True)),
             "crosshair_px": max(8, int(g("board_cad_crosshair_size") or 40)),
+            # Negatif sur les zones de sa couleur (cad_negative) : ecart tolere par canal, 0 = coupe.
+            "negative": (max(1, min(255, int(g("board_cad_crosshair_negative_tol") or 48)))
+                         if g("board_cad_crosshair_negative", True) else 0),
             "crosshair_full": bool(g("board_cad_crosshair_full", False)),
             "memory": bool(g("board_cad_crosshair_memory", True)),
             "cursor": "#1a1a1a", "rubber": "#1a1a1a",
@@ -410,8 +423,9 @@ class CadController(QObject):
         if look.get("magnet") and point_prompt and res is not None and res.kind == "osnap":
             return None, True                               # aimant : sur les objets, jamais sur la grille
         if self.box_only():
-            native = native_cursor(0, look["pickbox_px"], look["cursor"], self.view.viewport().devicePixelRatioF(),
-                                   self.memory_color())
+            self._native_args = (0, look["pickbox_px"], look["cursor"], self.view.viewport().devicePixelRatioF(),
+                                 self.memory_color(), look.get("negative", 0))
+            native = native_cursor(*self._native_args[:5])
             return native, native is None
         if look.get("crosshair_full"):
             return None, True                               # bras jusqu'aux bords : aucun curseur du systeme
@@ -423,14 +437,22 @@ class CadController(QObject):
         if look.get("magnet") and prompt is None and self.hover_snap is not None:
             return None, True
         ratio = self.view.viewport().devicePixelRatioF()
-        box = 0 if point_prompt or self.selecting_area() else look["pickbox_px"]
-        native = native_cursor(look["crosshair_px"], box, look["cursor"], ratio, self.memory_color())
+        box = 0 if point_prompt or self.selecting_area() or self.cross_only() else look["pickbox_px"]
+        self._native_args = (look["crosshair_px"], box, look["cursor"], ratio, self.memory_color(),
+                             look.get("negative", 0))
+        native = native_cursor(*self._native_args[:5])
         return native, native is None
 
     def box_only(self) -> bool:
         """Commande de MODIFICATION en cours (AJUSTER, DECALER, DEPLACER…) : le reticule n'est plus que le petit carre
         de selection, sans bras, jusqu'a la fin de la commande (demande de l'utilisateur)."""
-        return self.command is not None and getattr(self.command, "MODIFY", False)
+        return (self.command is not None and getattr(self.command, "MODIFY", False)
+                and not getattr(self.command, "CROSS_ONLY", False))
+
+    def cross_only(self) -> bool:
+        """Commande dont le curseur est le reticule SANS carre central, toute la commande (COPIER, demande de
+        l'utilisateur 2026-11-05), au lieu du carre seul des autres modifications."""
+        return self.command is not None and getattr(self.command, "CROSS_ONLY", False)
 
     def selecting_area(self) -> bool:
         """Une fenetre de selection ou un trace a main levee est en cours : le carre central du reticule disparait
@@ -461,11 +483,53 @@ class CadController(QObject):
             key = "blank"
             self.view.viewport().setCursor(Qt.BlankCursor)
         else:
+            native = self._negative_cursor(native)
             key = id(native)
             if key != self._cursor_key:
                 self.view.viewport().setCursor(native)
         self._cursor_key = key
         self._cursor_blank_ok = False
+
+    def _negative_cursor(self, native):
+        """Curseur du systeme avec ses pixels en NEGATIF sur les zones de sa couleur (`cad_negative`), d'apres l'image
+        du viewport relevee par l'overlay ; le curseur ordinaire sinon."""
+        args = getattr(self, "_native_args", None)
+        overlay = getattr(self, "overlay", None)
+        if not args or not args[5] or overlay is None or self.cursor_view is None:
+            gpu = getattr(self.view, "gpu", None)
+            if gpu is not None and not (args and args[5]):
+                gpu.want_frame = False                      # negatif coupe : plus de copie de l'image
+            return native
+        from . import cad_negative
+        ratio = args[3] or 1.0
+        gpu = getattr(self.view, "gpu", None)
+        if gpu is not None and getattr(gpu, "_neg_listener", None) is not self:
+            gpu._neg_listener = self
+            gpu.crossReady.connect(self.negative_refresh)
+        if overlay.backdrop is None and gpu is not None:
+            # Rendu GPU : aucune image du viewport relevee ; les deux bandes sous les bras sont lues dans la couche.
+            from . import cad_overlay
+            reach = round(max(args[0], args[1], cad_overlay.BADGE_ROOM if args[4] else 0) * ratio)
+            # La couche est la SOEUR du viewport (enfant de la vue) : passer par la vue. `gpu.mapFrom(viewport, …)`
+            # remontait tous les parents jusqu'a la position de la fenetre a l'ecran (negatif lu loin du pointeur).
+            point = gpu.mapFrom(self.view, self.view.viewport().mapTo(self.view, self.cursor_view))
+            found = gpu.read_cross(point, reach)
+            if found is None:
+                return native
+            array = cad_negative.cross_array(found[0], found[1], reach, getattr(self.scene, "background", None))
+            return cad_negative.adapted_cursor(args, array, (reach, reach)) or native
+        array = cad_negative.backdrop_array(overlay.backdrop)
+        if array is None:
+            return native
+        origin = getattr(overlay, "_origin", None) or QPoint(0, 0)
+        px = (math.floor((self.cursor_view.x() - origin.x()) * ratio), math.floor((self.cursor_view.y() - origin.y()) * ratio))
+        return cad_negative.adapted_cursor(args, array, px) or native
+
+    def negative_refresh(self):
+        """Fond du reticule renouvele (image relevee, copie GPU au repos) : curseur en negatif refait SANS attendre un
+        mouvement du pointeur (sinon, apres un defilement ou un zoom, il gardait le motif de l'ancienne vue)."""
+        if self.active and self.cursor_view is not None and self.look.get("negative"):
+            self._apply_cursor()
 
     def painted_cursor_shown(self):
         """L'overlay vient de peindre le reticule : le curseur du systeme peut disparaitre (jamais d'image sans
@@ -509,17 +573,18 @@ class CadController(QObject):
         """Finesse des apercus de courbes (fantomes, survol) : un demi-pixel d'ecran, en unites du document."""
         return 0.5 / self.scale()
 
-    def _source(self, rect):
+    def _source(self, rect, around=None, limit: int | None = None):
         """Entites CAD visibles dont l'emprise (geometrie + demi-epaisseur) touche `rect` (document). Index en
         grille propre au CAD : l'index BSP de la scene ne sert a rien ici (scene du board de 10^6 unites de cote :
         ses cellules contiennent tout — mesure, 3 000 lignes : 3,5 ms par requete, chaque emprise relue). Tenu a
         jour LIGNE PAR LIGNE (journal `CadLayer.changed`) : le reconstruire a chaque ligne tracee figeait le
-        premier mouvement qui suivait (~200 ms a 10 000 lignes)."""
+        premier mouvement qui suivait (~200 ms a 10 000 lignes). `limit` (avec `around`) : seulement les entites les
+        plus proches de `around` (accrochages d'un plan vu de loin, voir `SnapEngine._near`)."""
         self._sync_index()
         if cad_module_look(self.scene)[0]:
             return []                                       # module CAD masque : ni choix ni accrochage
         found = []
-        for item in self._index.query(rect):
+        for item in self._index.query(rect, around, limit):
             if self._alive(item):
                 if item.isVisible():
                     found.append(item)
@@ -531,9 +596,26 @@ class CadController(QObject):
         """Journal `CadLayer.changed` releve pour l'index des accrochages ; une entite changee (ou l'index refait)
         oblige aussi a relire les poignees de la selection (`_grips_near`)."""
         layer = CadLayer.of(self.scene)
+        job = self._index_job
+        if job is not None and job["epoch"] == self._index_epoch:
+            # Index complet en construction (tache de fond) : celui en service suit les changements, le nouveau les
+            # reprendra a la fin (`_finish_index_job`).
+            changes = layer.take_changes()
+            if changes:
+                self._drop_grips()
+            for item in changes:
+                job["changes"][id(item)] = item
+                self._apply_index_change(self._index, item)
+            return
+        if job is not None:
+            self._stop_index_job()                          # index a refaire autrement entre-temps : on recommence
         if self._index_built != self._index_epoch or self._index.needs_rebuild():
+            items = self.cad_items()
+            if len(items) >= BACKGROUND_INDEX_MIN:
+                self._start_index_job(items, layer)
+                return
             layer.take_changes()
-            self._index.build([(item, self._index_box(item)) for item in self.cad_items()])
+            self._index.build([(item, self._index_box(item)) for item in items])
             self._index_built = self._index_epoch
             self._drop_grips()
             return
@@ -541,10 +623,83 @@ class CadController(QObject):
         if changes:
             self._drop_grips()
         for item in changes:
-            if self._alive(item):
-                self._index.insert(item, self._index_box(item))
-            else:
-                self._index.remove(item)
+            self._apply_index_change(self._index, item)
+
+    def _apply_index_change(self, index, item):
+        if self._alive(item):
+            index.insert(item, self._index_box(item))
+        else:
+            index.remove(item)
+
+    # -- index complet en tache de fond (gros dessin) --
+    def _on_load_progress(self, done: int, total: int):
+        """Fin d'un chargement par tranches : l'index des accrochages se prepare tout de suite, en fond, plutot qu'au
+        premier mouvement de souris (qui figeait ~1 s a 81 000 entites)."""
+        if done >= total:
+            QTimer.singleShot(0, self, self._sync_index)
+
+    def _start_index_job(self, items: list, layer):
+        """Index complet construit par tranches de INDEX_SLICE_S (emprises, puis rangement dans la grille) ; d'ici la,
+        les recherches passent par l'index en service (vide juste apres l'ouverture : ni accrochage ni choix pendant
+        ~1 s, mais aucun figement). Passes completes du ramasse-miettes suspendues le temps de la construction."""
+        from fm_board.scene import hold_gc
+        layer.take_changes()                                # deja dans `items`
+        self._index_job = {"epoch": self._index_epoch, "items": items, "next": 0, "entries": [], "changes": {},
+                           "index": geo.GridIndex(), "steps": None, "key": ("index", id(self))}
+        key = self._index_job["key"]
+        hold_gc(key, True)
+        self.destroyed.connect(lambda *_args, key=key: hold_gc(key, False))   # panneau ferme avant la fin
+        QTimer.singleShot(0, self, self._index_step)
+
+    def _stop_index_job(self):
+        from fm_board.scene import hold_gc
+        job, self._index_job = self._index_job, None
+        if job is not None:
+            hold_gc(job["key"], False)
+
+    def _index_step(self):
+        job = self._index_job
+        if job is None:
+            return
+        try:
+            if job["epoch"] != self._index_epoch:
+                self._stop_index_job()
+                self._sync_index()
+                return
+            deadline = time.perf_counter() + INDEX_SLICE_S
+            items, entries = job["items"], job["entries"]
+            while job["steps"] is None:
+                start = job["next"]
+                if start >= len(items):
+                    job["steps"] = job["index"].build_steps(entries)
+                    break
+                for item in items[start:start + 256]:
+                    if self._alive(item):                   # supprimee entre-temps : sautee
+                        entries.append((item, self._index_box(item)))
+                job["next"] = start + 256
+                if time.perf_counter() >= deadline:
+                    QTimer.singleShot(0, self, self._index_step)
+                    return
+            for _ in job["steps"]:
+                if time.perf_counter() >= deadline:
+                    QTimer.singleShot(0, self, self._index_step)
+                    return
+            self._finish_index_job(job)
+        except RuntimeError:
+            self._stop_index_job()                          # scene en cours de destruction
+
+    def _finish_index_job(self, job):
+        index = job["index"]
+        for item in job["changes"].values():                # changes pendant la construction
+            self._apply_index_change(index, item)
+        for item in CadLayer.of(self.scene).take_changes():
+            self._apply_index_change(index, item)
+        self._index = index
+        self._index_built = job["epoch"]
+        self._stop_index_job()
+        self._drop_grips()
+        if self.active and self.cursor_view is not None:
+            self._view_changed()                            # accrochage sous le curseur, maintenant disponible
 
     def _drop_grips(self, *_args):
         self._grip_list = None
@@ -696,6 +851,21 @@ class CadController(QObject):
     def selection(self) -> list:
         return [i for i in self.scene.selectedItems() if isinstance(i, CadLineItem) and i.isVisible()]
 
+    def snap_link(self, p):
+        """Lien de cotation associative du point `p` qui vient d'etre donne : [id, poignee, x, y] si le point est
+        accroche a une poignee d'un objet (extremite, milieu, centre, quadrant, sommet), sinon None."""
+        candidate = getattr(self, "last_snap", None)
+        item = getattr(candidate, "entity", None) if candidate is not None else None
+        return self.link_to(item, p)
+
+    def link_to(self, item, p):
+        """[id, poignee, x, y] de la poignee de `item` qui est a `p` ; None s'il n'y en a pas."""
+        if item is None or not hasattr(item, "grips") or getattr(item, "kind", "") in ("cad_dim", "cad_text",
+                                                                                         "cad_hatch"):
+            return None
+        name = cad_assoc.grip_at(item.grips(), p, max(1e-6, 1e-9 * max(1.0, abs(p[0]) + abs(p[1]))))
+        return None if name is None else [item.item_id, name, float(p[0]), float(p[1])]
+
     def editable(self, items) -> list:
         out = [i for i in items if not i.locked()]
         skipped = len(items) - len(out)
@@ -749,7 +919,7 @@ class CadController(QObject):
         hachures ni les cotations n'en font partie."""
         out = []
         for item in self.cad_items():
-            if getattr(item, "AREA", False) or item.kind in ("cad_dim", "cad_text") or not item.isVisible():
+            if getattr(item, "AREA", False) or item.kind in ("cad_dim", "cad_text", "cad_point") or not item.isVisible():
                 continue
             out.extend(cad_shapes.display_segments(item.prims(), self.hatch_tol()))
         return out
@@ -894,6 +1064,11 @@ class CadController(QObject):
 
     def export_file(self, suffix: str):
         self.pane.export_cad(suffix=suffix)
+
+    def photoshop(self, action: str = "open"):
+        """Selection (sinon tout le dessin) vers Photoshop : « open », « save » (PNG / PSD), « vector » (PDF / SVG)."""
+        from . import cad_photoshop
+        cad_photoshop.run(self, action)
 
     def open_snap_settings(self):
         self.ui.open_snap_settings()
@@ -1078,6 +1253,9 @@ class CadController(QObject):
             return
         p = (geo.clean(p[0]), geo.clean(p[1]))
         self.last_point = p
+        res = self.res                                  # accrochage du point donne (cotations associatives)
+        self.last_snap = res.candidate if (res is not None and res.kind == "osnap" and res.candidate is not None
+                                           and geo.distance(res.point, p) <= 1e-6) else None
         command.point(p)
         self._reset_point_state()
 
@@ -1253,8 +1431,9 @@ class CadController(QObject):
             self.engine.settings.grid_spacing = self.scene.grid_step()     # RESOL : le niveau de grille affiche
             origin = self.scene.grid_origin()
             self.engine.settings.grid_origin = (origin[0], -origin[1])        # document : Y vers le haut
+            shift = self.shift_held() if self._shift_forced is None else self._shift_forced  # Maj : ORTHO inverse
             res = self.engine.resolve(self.cursor_doc, self.scale(), base, self.override, self.cycle,
-                                      lock_angle, lock_dist)
+                                      lock_angle, lock_dist, shift)
             if base is None and (self.lock_x is not None or self.lock_y is not None):
                 x = self.lock_x if self.lock_x is not None else res.point[0]
                 y = self.lock_y if self.lock_y is not None else res.point[1]
@@ -1265,7 +1444,7 @@ class CadController(QObject):
                 if self.cycle:
                     self.cycle = 0
                     res = self.engine.resolve(self.cursor_doc, self.scale(), base, self.override, 0,
-                                              lock_angle, lock_dist)
+                                              lock_angle, lock_dist, shift)
             self.res = res
             if self.engine.note_hover(res.candidate):
                 self._resolve()
@@ -1335,6 +1514,8 @@ class CadController(QObject):
         self.overlay.update()
 
     def _view_changed(self, *_args):
+        if getattr(self.view, "in_set_zoom", False):
+            return                                          # un seul calcul par cran : a `zoomChanged` (BoardView.set_zoom)
         try:
             self.overlay.invalidate()
             if self.active and self.cursor_view is not None:
@@ -1364,7 +1545,10 @@ class CadController(QObject):
         doc = self.view_to_doc(view_pos)
         reach = self.look.get("pickbox_px", 5) / self.scale()
         found = []
-        for item in self._source((doc[0] - reach - 1, doc[1] - reach - 1, doc[0] + reach + 1, doc[1] + reach + 1)):
+        # Au plus les PICK_LIMIT entites les plus proches (plan vu de loin : la boite de selection couvre des milliers
+        # d'entites, mesurees a chaque survol).
+        for item in self._source((doc[0] - reach - 1, doc[1] - reach - 1, doc[0] + reach + 1, doc[1] + reach + 1),
+                                 around=doc, limit=PICK_LIMIT):
             item._reach = reach
             d = item.distance_to(doc) - float(item.props()["lineweight"]) / 2.0
             if d <= reach:
@@ -1524,6 +1708,9 @@ class CadController(QObject):
         if key in FKEYS and not ctrl:
             self.toggle(FKEYS[key])
             return True
+        if key == Qt.Key_Shift:
+            self._shift_refresh(True)                       # Maj contraint (ORTHO inverse) : apercu tout de suite
+            return False
         if key == Qt.Key_F2:
             self.ui.toggle_history()
             return True
@@ -1591,7 +1778,18 @@ class CadController(QObject):
                 self.submit()                               # Espace tape = Entree
             self._sync_cursor()
             return True
+        if event.key() == Qt.Key_Shift:
+            self._shift_refresh(False)                      # Maj relachee : la ligne redevient libre
         return False
+
+    def _shift_refresh(self, held: bool):
+        """Appui / relachement de Maj : apercu refait sans attendre un mouvement de souris. L'etat est FORCE
+        (les modificateurs de l'appli ne sont pas encore a jour pendant l'evenement de la touche elle-meme)."""
+        self._shift_forced = held
+        try:
+            self.refresh()
+        finally:
+            self._shift_forced = None
 
     def note_pan(self):
         self._space_used = True
@@ -1738,7 +1936,8 @@ class CadController(QObject):
         # Reticule aimante sur une poignee : son contour tient lieu de boite (la boite par-dessus, d'une autre couleur
         # et d'un pixel plus petite, brouillait le contour : signale « pas opaque sur les coins »).
         on_grip = self.hover_grip is not None and self.hover_snap is not None and look["magnet"]
-        state["pickbox"] = state["box_only"] or (not point_prompt and not self.selecting_area() and not on_grip)
+        state["pickbox"] = state["box_only"] or (not point_prompt and not self.selecting_area() and not on_grip
+                                                 and not self.cross_only())
         if on_grip:
             ratio = self.view.viewport().devicePixelRatioF() or 1.0
             state["grip_gap"] = (max(3, round(look["grip_px"] * ratio)) | 1) // 2    # demi-cote (pixels physiques)

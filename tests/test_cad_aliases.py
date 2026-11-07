@@ -13,7 +13,8 @@ from fm_cad import cad_aliases, cad_commands  # noqa: E402
 
 PGP = (";  FABRICE\r\n;  =======\r\n\r\nA,         \t*AJUSTER\r\nAI,        \t*AIRE\r\n\r\nC,   *COPIER\r\n"
        "CE,  *CERCLE\r\nD,   *DEPLACER\r\nDC,  *DECALER\r\nL,   *LIGNE\r\nLL,  *POLYLIGN\r\nM,   *MIROIR\r\n"
-       "P,   *PROLONGE\r\nRG,  *REGEN\r\nRD,  *RACCORD\r\nV,   *MATCHPROP\r\n;;;;;J\r\n-B,  *-BLOC\r\n")
+       "P,   *PROLONGE\r\nRG,  *REGEN\r\nRD,  *RACCORD\r\nV,   *MATCHPROP\r\n;;;;;J\r\n-B,  *-BLOC\r\n"
+       "ZZ,  *TRUCMACHIN\r\n")                       # commande inconnue : « sans équivalent »
 
 
 class PgpAliasesTest(unittest.TestCase):
@@ -47,10 +48,10 @@ class PgpAliasesTest(unittest.TestCase):
         self.assertEqual(by_alias["V"].target, "MATCHPROP")
         self.assertEqual(by_alias["RG"].target, "REGEN")
         self.assertEqual((by_alias["A"].target, by_alias["A"].state), ("TRIM", cad_aliases.AVAILABLE))
-        self.assertEqual((by_alias["P"].target, by_alias["P"].state), ("EXTEND", cad_aliases.PLANNED))
+        self.assertEqual((by_alias["P"].target, by_alias["P"].state), ("EXTEND", cad_aliases.AVAILABLE))
         self.assertEqual(by_alias["P"].target, "EXTEND")                       # nom francais propre a AutoCAD
-        self.assertEqual(by_alias["AI"].state, cad_aliases.UNKNOWN)            # AIRE : pas d'equivalent
-        self.assertEqual(by_alias["-B"].state, cad_aliases.UNKNOWN)
+        self.assertEqual((by_alias["AI"].target, by_alias["AI"].state), ("AREA", cad_aliases.AVAILABLE))   # AIRE
+        self.assertEqual((by_alias["-B"].target, by_alias["-B"].state), ("BLOCK", cad_aliases.AVAILABLE))  # -BLOC
         self.assertIn("alias", loaded.summary())
         self.assertIn("Sans équivalent", loaded.report())
 

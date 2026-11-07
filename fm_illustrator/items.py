@@ -100,6 +100,11 @@ class IllItem(BoardItem):
     quiet_moves = False                 # vrai pendant un geste : pas de `scene.item_moved` par élément (notify_moved)
     snapshot_ids = None                 # zoom continu : objets peints par l'image de la vue (`snapshot.py`)
 
+    def snap_inner(self) -> bool:
+        """Magnétisme du board (`fm_board.snap_guides`) : un objet d'Illustrator est INTERNE au document (le plan de
+        travail, lui, en est le bord : `IllArtboardItem`)."""
+        return True
+
     def paint(self, painter, option, widget=None):
         ids = IllItem.snapshot_ids
         if ids is not None and self.item_id in ids:
@@ -144,11 +149,11 @@ class IllItem(BoardItem):
     def boundingRect(self) -> QRectF:
         # Gardée (Qt la demande plusieurs fois par élément et par image) ; refaite au changement de géométrie / zoom.
         scene = self.scene()
-        key = getattr(scene, "zoom", None) if scene is not None else None
+        key = getattr(scene, "pad_zoom", None) if scene is not None else None
         kept = getattr(self, "_bounds", None)
         if kept is not None and kept[0] == key:
             return kept[1]
-        m = 2.0 / self._zoom()
+        m = 2.0 / self._pad_zoom()     # par paliers : voir BoardScene.set_zoom (sinon plantage a l'effacement)
         rect = self.paint_margin().united(self.content_rect()).adjusted(-m, -m, m, m)
         self._bounds = (key, rect)
         return rect
@@ -163,6 +168,9 @@ class IllItem(BoardItem):
 
 class IllArtboardItem(IllItem):
     """Plan de travail : rectangle blanc ombré, sous les objets ; nom et sélection peints par l'overlay."""
+
+    def snap_inner(self) -> bool:
+        return False                    # bord du document (magnétisme du board)
 
     def _place_from_data(self):
         super()._place_from_data()

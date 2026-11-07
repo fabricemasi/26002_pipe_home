@@ -1,43 +1,36 @@
-"""Analyse des pixels d'affichage sRGB : clustering OKLab borné, exécuté en fond.
+"""Analyse des pixels d'affichage sRGB : clustering OKLab borné, exécuté en fond (MOTEUR, sans interface).
 
-Les mesures décrivent le proxy affiché ; elles ne mesurent ni la scène ni un signal HDR.
+Les mesures décrivent le proxy affiché ; elles ne mesurent ni la scène ni un signal HDR. Interface : `analysis_ui.py`
+(`ColorAnalysis`) ; `_Image` reste ici (aperçu du matching, `matching_ui.py`).
 """
+import math
 import numpy as np
 import threading
-from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool, Qt, QRectF, QTimer
-from PySide6.QtGui import QImage, QPainter, QColor, QPainterPath, QPen
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSpinBox,
-                               QFileDialog, QCheckBox, QComboBox)
+from PySide6.QtCore import QObject, Signal, QRunnable, Qt, QRectF
+from PySide6.QtGui import QImage, QPainter, QColor, QPen
+from PySide6.QtWidgets import QWidget
+
+_LUMA = np.array([.2126, .7152, .0722])
+_M1 = np.array([[.4122214708,.2119034982,.0883024619],
+                [.5363325363,.6806995451,.2817188376],
+                [.0514459929,.1073969566,.6299787005]])
+_M2 = np.array([[.2104542553,1.9779984951,.0259040371],
+                [.793617785,-2.428592205,.7827717662],
+                [-.0040720468,.4505937099,-.808675766]])
+SUBS = 6                    # nuances par couleur de la palette (maquette : 6 carrés sous la pastille choisie)
+_GRID = None
 
 
-def analyze_rgb(rgb, count=16, exclude_black=False, exclude_white=False, cancelled=None):
-    rgb = np.asarray(rgb, dtype=np.float64).reshape(-1, 3)
-    if not len(rgb):
-        return dict(colors=[], tones=[], histogram=[], luminance_histogram=[], samples=0)
-    # Échantillonnage réparti sur TOUTE l'image, sans moyenner les frontières
-    # des aplats : le filtre bilinéaire inventerait des teintes intermédiaires.
-    rgb = rgb[np.linspace(0,len(rgb)-1,min(4096,len(rgb)),dtype=int)] / 255.0
-    linear = np.where(rgb <= .04045, rgb / 12.92, ((rgb + .055) / 1.055) ** 2.4)
-    lms = linear @ np.array([[.4122214708,.2119034982,.0883024619],
-                            [.5363325363,.6806995451,.2817188376],
-                            [.0514459929,.1073969566,.6299787005]])
-    lab = np.cbrt(lms) @ np.array([[.2104542553,1.9779984951,.0259040371],
-                                  [.793617785,-2.428592205,.7827717662],
-                                  [-.0040720468,.4505937099,-.808675766]])
-    original_rgb, original_linear = rgb, linear
-    keep = np.ones(len(rgb),dtype=bool)
-    if exclude_black:
-        keep &= rgb.max(axis=1) > 8/255
-    if exclude_white:
-        keep &= rgb.min(axis=1) < 247/255
-    rgb, lab = rgb[keep], lab[keep]
-    if not len(rgb):
-        result = analyze_rgb(original_rgb*255,count,cancelled=cancelled)
-        result['colors'] = []
-        return result
-    count = max(1, min(int(count), len(lab), 32))
+def _lab(rgb01):
+    """OKLab de couleurs sRGB encodées 0-1 (n, 3)."""
+    linear = np.where(rgb01 <= .04045, rgb01 / 12.92, ((rgb01 + .055) / 1.055) ** 2.4)
+    return np.cbrt(linear @ _M1) @ _M2
+
+
+def _kmeans(lab, count, cancelled=None):
+    """Centres OKLab : initialisation déterministe par distance maximale (depuis le plus sombre), puis Lloyd.
+    None si annulé."""
     centers = [lab[np.argmin(lab[:, 0])]]
-    # Initialisation déterministe par distance maximale, puis Lloyd en OKLab.
     for _ in range(count - 1):
         if cancelled and cancelled():
             return None
@@ -56,20 +49,132 @@ def analyze_rgb(rgb, count=16, exclude_black=False, exclude_white=False, cancell
             centers = updated
             break
         centers = updated
+    return centers
+
+
+def label_map(rgb, centers, sub_centers):
+    """Couleur et nuance de chaque pixel (uint8 h x w : j * SUBS + k) d'une image sRGB uint8 (h, w, 3), au plus
+    proche en OKLab. Table 64³ (pas de 4 niveaux) : le coût ne dépend pas de la taille de l'image."""
+    global _GRID
+    if _GRID is None:
+        v = (np.arange(64) * 4 + 2) / 255.0
+        _GRID = _lab(np.stack(np.meshgrid(v, v, v, indexing='ij'), -1).reshape(-1, 3)).astype(np.float32)
+    grid = _GRID
+    c = np.asarray(centers, np.float32)
+    main = (grid @ (-2 * c.T) + (c * c).sum(1)).argmin(1)
+    table = np.zeros(len(grid), np.uint8)
+    for j, sub in enumerate(sub_centers):
+        idx = np.nonzero(main == j)[0]
+        if not len(idx):
+            continue
+        s = np.asarray(sub, np.float32)
+        table[idx] = j * SUBS + (grid[idx] @ (-2 * s.T) + (s * s).sum(1)).argmin(1)
+    q = (rgb[..., 0].astype(np.int32) >> 2) * 4096 + (rgb[..., 1].astype(np.int32) >> 2) * 64 + (rgb[..., 2] >> 2)
+    return table[q]
+
+
+def oklch(rgb):
+    """(L, C, h en degrés) OKLab d'une couleur sRGB 0-255 encodée."""
+    c = np.asarray(rgb, dtype=np.float64) / 255.0
+    lin = np.where(c <= .04045, c / 12.92, ((c + .055) / 1.055) ** 2.4)
+    lms = np.cbrt(lin @ np.array([[.4122214708,.2119034982,.0883024619],
+                                  [.5363325363,.6806995451,.2817188376],
+                                  [.0514459929,.1073969566,.6299787005]]))
+    lab = lms @ np.array([[.2104542553,1.9779984951,.0259040371],
+                          [.793617785,-2.428592205,.7827717662],
+                          [-.0040720468,.4505937099,-.808675766]])
+    return float(lab[0]), float(math.hypot(lab[1], lab[2])), float(math.degrees(math.atan2(lab[2], lab[1])) % 360)
+
+
+def scope_data(rgb, zoom=1.6):
+    """Waveform (alpha 256 x colonnes, densité log) et vectorscope (ARGB 256 x 256 : chaque case de la COULEUR moyenne
+    des pixels qui y tombent) d'une image sRGB uint8 (h, w, 3) opaque. Valeurs ENCODÉES (Y′, Cb / Cr BT.709)."""
+    f = rgb.astype(np.float32) / 255.0
+    h, w = f.shape[:2]
+    luma = f @ _LUMA.astype(np.float32)
+    levels = np.clip((luma * 255 + .5).astype(np.int32), 0, 255)
+    cols = np.broadcast_to(np.arange(w, dtype=np.int32), (h, w))
+    wave = np.bincount(((255 - levels) * w + cols).ravel(), minlength=256 * w)[:256 * w].reshape(256, w)
+    v = np.log1p(wave.astype(np.float32))
+    wave_alpha = (np.clip(v / (float(v.max()) or 1.0) * 1.3, 0, 1) * 255).astype(np.uint8)
+    cb = (f[..., 2] - luma) / 1.8556
+    cr = (f[..., 0] - luma) / 1.5748
+    x = np.clip((cb * zoom + .5) * 255 + .5, 0, 255).astype(np.int32)
+    y = np.clip((.5 - cr * zoom) * 255 + .5, 0, 255).astype(np.int32)
+    cell = (y * 256 + x).ravel()
+    count = np.bincount(cell, minlength=65536)[:65536].astype(np.float32)
+    flat = rgb.reshape(-1, 3).astype(np.float32)
+    mean = np.stack([np.bincount(cell, flat[:, c], minlength=65536)[:65536] for c in range(3)], -1)
+    mean /= np.maximum(count, 1)[:, None]
+    # Teinte des pixels gardée, clarté remontée (sinon les tons sombres disparaissent sur le fond noir).
+    mean = mean * (255.0 / np.maximum(mean.max(1, keepdims=True), 1.0)) * .75 + 255 * .25
+    lv = np.log1p(count)
+    alpha = np.clip(lv / (float(lv.max()) or 1.0) * 1.4, 0, 1)
+    vec = np.zeros((65536, 4), np.uint8)                          # BGRA prémultiplié
+    vec[:, 0] = (mean[:, 2] * alpha).astype(np.uint8)
+    vec[:, 1] = (mean[:, 1] * alpha).astype(np.uint8)
+    vec[:, 2] = (mean[:, 0] * alpha).astype(np.uint8)
+    vec[:, 3] = (alpha * 255).astype(np.uint8)
+    vec = vec.reshape(256, 256, 4)
+    image = QImage(vec.data, 256, 256, 256 * 4, QImage.Format_ARGB32_Premultiplied).copy()
+    return dict(wave_alpha=np.ascontiguousarray(wave_alpha), vec=image)
+
+
+def analyze_rgb(rgb, count=16, exclude_black=False, exclude_white=False, cancelled=None):
+    rgb = np.asarray(rgb, dtype=np.float64).reshape(-1, 3)
+    if not len(rgb):
+        return dict(colors=[], tones=[], histogram=[], luminance_histogram=[], samples=0)
+    # Échantillonnage réparti sur TOUTE l'image, sans moyenner les frontières
+    # des aplats : le filtre bilinéaire inventerait des teintes intermédiaires.
+    rgb = rgb[np.linspace(0,len(rgb)-1,min(4096,len(rgb)),dtype=int)] / 255.0
+    linear = np.where(rgb <= .04045, rgb / 12.92, ((rgb + .055) / 1.055) ** 2.4)
+    lab = np.cbrt(linear @ _M1) @ _M2
+    original_rgb, original_linear = rgb, linear
+    keep = np.ones(len(rgb),dtype=bool)
+    if exclude_black:
+        keep &= rgb.max(axis=1) > 8/255
+    if exclude_white:
+        keep &= rgb.min(axis=1) < 247/255
+    rgb, lab = rgb[keep], lab[keep]
+    if not len(rgb):
+        result = analyze_rgb(original_rgb*255,count,cancelled=cancelled)
+        result['colors'] = result['subs'] = []
+        return result
+    count = max(1, min(int(count), len(lab), 32))
+    centers = _kmeans(lab, count, cancelled)
+    if centers is None:
+        return None
     # Réassigner aux centres finaux : les pourcentages suivent le dernier pas.
     labels = ((lab[:,None] - centers[None]) ** 2).sum(2).argmin(1)
-    colors = []
+    colors, subs, kept, sub_centers = [], [], [], []
     for i in np.argsort(centers[:,0]):
         chosen = labels == i
         if chosen.any():
             colors.append((tuple(np.rint(rgb[chosen].mean(0) * 255).astype(int)), float(chosen.mean())))
+            kept.append(centers[i])
+            # Nuances : SUBS sous-groupes des échantillons de la couleur (moins s'ils sont trop peu), par clarté.
+            part, part_rgb = lab[chosen], rgb[chosen]
+            inner = _kmeans(part, min(SUBS, len(part)), cancelled)
+            if inner is None:
+                return None
+            inner_labels = ((part[:,None] - inner[None]) ** 2).sum(2).argmin(1)
+            shades, shade_centers = [], []
+            for k in np.argsort(inner[:,0]):
+                mine = inner_labels == k
+                if mine.any():
+                    shades.append((tuple(np.rint(part_rgb[mine].mean(0) * 255).astype(int)),
+                                   float(mine.sum() / len(lab))))
+                    shade_centers.append(inner[k])
+            subs.append(shades)
+            sub_centers.append(np.array(shade_centers))
     rgb, linear = original_rgb, original_linear
     y = linear @ np.array([.2126,.7152,.0722])
     tones = []
     for mask in (y < .09, (y >= .09) & (y < .5), y >= .5):
         tones.append((tuple(np.rint(rgb[mask].mean(0) * 255).astype(int)) if mask.any() else None,
                       float(mask.mean())))
-    return dict(colors=colors, tones=tones, samples=len(rgb), luminance=dict(mean=float(y.mean()),
+    return dict(colors=colors, subs=subs, centers=np.array(kept), sub_centers=sub_centers, tones=tones,
+                samples=len(rgb), luminance=dict(mean=float(y.mean()),
                 minimum=float(y.min()),maximum=float(y.max()),
                 black_clip=float((rgb <= 0).any(axis=1).mean()),white_clip=float((rgb >= 1).any(axis=1).mean()),
                 percentiles=np.percentile(y, [1,5,50,95,99]).tolist()),
@@ -106,42 +211,32 @@ class _Task(QRunnable):
             pixels = rgba[:,:,:3][rgba[:,:,3] > 0]
             result = analyze_rgb(pixels, self.count, self.options.get('exclude_black',False),
                                  self.options.get('exclude_white',False),self.cancel.is_set)
-            if result is not None and self.options.get('scopes') and not self.cancel.is_set():
-                from fm_video.scopes import compute, _gray_image
-                # Ces scopes décrivent des valeurs ENCODÉES sRGB SDR : Y' est
-                # distinct du Y linéaire des statistiques de luminance.
-                if (rgba[:,:,3] == 255).all():
-                    scopes = compute(rgba[:,:,:3].astype(np.float32)/255)
-                    result['scopes'] = dict(hist=scopes['hist'],
-                                            images=dict(wave=_gray_image(scopes['wave']),vec=_gray_image(scopes['vec'])))
+            if result is not None and len(pixels) and not self.cancel.is_set():
+                # Histogramme sur TOUS les pixels visibles du proxy réduit (pas les 4096 échantillons de la
+                # palette) ; Y′ = luma ENCODÉE (axe 0-255), distincte du Y linéaire des statistiques.
+                luma = np.clip((pixels.astype(np.float32) @ _LUMA.astype(np.float32) + .5).astype(np.int32), 0, 255)
+                result['hist'] = [np.bincount(pixels[:, c], minlength=256)[:256] for c in range(3)] + [
+                    np.bincount(luma, minlength=256)[:256]]
+                # Waveform / vectorscope : spatiaux, seulement sur une région entièrement opaque.
+                if self.options.get('scopes', True) and (rgba[:,:,3] == 255).all():
+                    result['scopes'] = scope_data(rgba[:,:,:3], self.options.get('vec_zoom', 1.6))
+                # « Localiser sur l'image » : couleur / nuance de chaque pixel de TOUTE l'image (pas seulement la
+                # région), à la taille d'affichage (≤ 1024 px).
+                if self.options.get('labels', True) and result.get('colors') and not self.cancel.is_set():
+                    result['iso'] = self._labels(result)
             if result is not None and not self.cancel.is_set():
                 self.signals.ready.emit(self.revision, result)
         except Exception as exc:
             self.signals.failed.emit(self.revision,str(exc))
 
-
-class _Swatches(QWidget):
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.colors = []
-        self.setFixedHeight(68)
-        self.setMouseTracking(True)
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        for i,(rgb,weight) in enumerate(self.colors):
-            p.fillRect(QRectF(i*self.width()/len(self.colors),0,self.width()/len(self.colors)+1,48),QColor(*rgb))
-
-    def mouseMoveEvent(self, event):
-        if self.colors:
-            rgb,weight = self.colors[min(len(self.colors)-1,int(event.position().x()*len(self.colors)/max(1,self.width())))]
-            self.setToolTip(f'{QColor(*rgb).name()} · RGB {rgb} · {weight:.1%} des pixels échantillonnés')
-
-    def mousePressEvent(self, event):
-        if self.colors:
-            from PySide6.QtWidgets import QApplication
-            rgb,_ = self.colors[min(len(self.colors)-1,int(event.position().x()*len(self.colors)/max(1,self.width())))]
-            QApplication.clipboard().setText(QColor(*rgb).name())
+    def _labels(self, result):
+        image = self.image
+        if image.width() > 1024 or image.height() > 1024:
+            image = image.scaled(1024, 1024, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        image = image.convertToFormat(QImage.Format_RGBA8888)
+        rgba = np.ndarray((image.height(), image.width(), 4), dtype=np.uint8, buffer=image.constBits(),
+                          strides=(image.bytesPerLine(), 4, 1)).copy()
+        return dict(rgba=rgba, labels=label_map(rgba[..., :3], result['centers'], result['sub_centers']))
 
 
 class _Image(QWidget):
@@ -202,307 +297,3 @@ class _Image(QWidget):
                              rect.y()+self.region.y()*rect.height()/self.image.height(),
                              self.region.width()*rect.width()/self.image.width(),
                              self.region.height()*rect.height()/self.image.height()))
-
-
-class _Histogram(QWidget):
-    """Tracés déjà calculés : aucune analyse de pixels pendant la peinture."""
-    def __init__(self,parent):
-        super().__init__(parent)
-        self.setMinimumHeight(140)
-        self.setMaximumHeight(200)
-        self.setMouseTracking(True)
-        self.result = {}
-        self.enabled = [True,True,True,False]
-        self.logarithmic = False
-
-    def paintEvent(self,event):
-        p = QPainter(self)
-        rect = self.rect().adjusted(35,12,-10,-22)
-        p.fillRect(rect,QColor('#171717'))
-        p.setPen(QColor('#aaaaaa'))
-        p.drawRect(rect)
-        p.drawText(0,12,'Pixels')
-        p.drawText(rect.left(),self.height()-4,'0')
-        p.drawText(rect.right()-90,self.height()-4,'255 RGB / 1 Y')
-        arrays = self.result.get('histogram',[])+[self.result.get('luminance_histogram',[])]
-        peak = max((max(a) for a,on in zip(arrays,self.enabled) if on and a),default=1) or 1
-        denominator = np.log1p(peak) if self.logarithmic else peak
-        for values,on,color in zip(arrays,self.enabled,('#ff6868','#66dd88','#669dff','#ffffff')):
-            if not on or not values:
-                continue
-            path = QPainterPath()
-            for i,value in enumerate(values):
-                value = np.log1p(value) if self.logarithmic else value
-                x,y = rect.x()+i*rect.width()/255,rect.bottom()-value*rect.height()/denominator
-                path.moveTo(x,y) if i==0 else path.lineTo(x,y)
-            p.setPen(QPen(QColor(color),1))
-            p.drawPath(path)
-
-    def mouseMoveEvent(self,event):
-        rect = self.rect().adjusted(35,12,-10,-22)
-        index = max(0,min(255,round((event.position().x()-rect.x())*255/max(1,rect.width()))))
-        arrays = self.result.get('histogram',[])+[self.result.get('luminance_histogram',[])]
-        self.setToolTip(f'Niveau RGB {index} · Y {index/255:.4f}\n'+' · '.join(
-            f'{name} : {values[index]} pixels' for name,values in zip(('R','V','B','Y'),arrays) if values))
-
-
-class ColorAnalysis(QWidget):
-    back = Signal()
-    settingsChanged = Signal(str, object)
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.revision = 0
-        self.cancel = threading.Event()
-        self.latest = {}
-        self.pool = QThreadPool(self)
-        self.pool.setMaxThreadCount(1)
-        self.signals = _Signals(self)
-        self.signals.ready.connect(self._ready)
-        self.signals.failed.connect(self._failed)
-        self.debounce = QTimer(self)
-        self.debounce.setSingleShot(True)
-        self.debounce.setInterval(100)
-        self.debounce.timeout.connect(self._start)
-        layout = QVBoxLayout(self)
-        row = QHBoxLayout()
-        back = QPushButton('Retour au moodboard',self)
-        back.clicked.connect(self.back)
-        row.addWidget(back)
-        self.title = QLabel(self)
-        row.addWidget(self.title,1)
-        row.addWidget(QLabel('Couleurs',self))
-        self.count = QSpinBox(self)
-        self.count.setRange(2,32)
-        self.count.setValue(16)
-        self.count.valueChanged.connect(self._submit)
-        row.addWidget(self.count)
-        export = QPushButton('Exporter la palette…', self)
-        export.clicked.connect(self.export_palette)
-        row.addWidget(export)
-        matching = QPushButton('Matching / LUT…',self)
-        matching.clicked.connect(self._open_matching)
-        row.addWidget(matching)
-        from fm_video.help_ui import HelpController,annotate
-        ancestor = self.parentWidget()
-        self.help = None
-        while ancestor is not None and self.help is None:
-            self.help = getattr(ancestor,'_color_help',None)
-            ancestor = ancestor.parentWidget()
-        if self.help is None:
-            self.help = HelpController(self)
-        glossary = QPushButton('Aide / glossaire',self)
-        glossary.clicked.connect(lambda:self.help.open_glossary())
-        row.addWidget(glossary)
-        layout.addLayout(row)
-        options = QHBoxLayout()
-        self.black = QCheckBox('Exclure noirs ≤ 8 (palette)',self)
-        self.white = QCheckBox('Exclure blancs ≥ 247 (palette)',self)
-        self.order = QComboBox(self)
-        self.order.addItems(['Clarté','Proportion'])
-        self.order.currentIndexChanged.connect(self._sort_palette)
-        for control in (self.black,self.white):
-            options.addWidget(control)
-            control.toggled.connect(self._submit)
-        options.addWidget(QLabel('Ordre',self))
-        options.addWidget(self.order)
-        options.addStretch(1)
-        layout.addLayout(options)
-        self.image = _Image(self)
-        self.image.regionChanged.connect(self._submit)
-        self.image.sampled.connect(self._sampled)
-        layout.addWidget(self.image,1)
-        self.palette = _Swatches(self)
-        layout.addWidget(self.palette)
-        self.tones = QLabel(self)
-        self.tones.setTextFormat(Qt.RichText)
-        layout.addWidget(self.tones)
-        self.statistics = QLabel(self)
-        layout.addWidget(self.statistics)
-        self.sample = QLabel('Pipette : clic sur l’image · Région : glisser · Image entière : double-clic',self)
-        layout.addWidget(self.sample)
-        histogram_controls = QHBoxLayout()
-        self.histogram = _Histogram(self)
-        self.scopes_toggle = QCheckBox('Waveform / vectorscope',self)
-        self.scopes_toggle.toggled.connect(self._show_scopes)
-        histogram_controls.addWidget(self.scopes_toggle)
-        for i,name in enumerate(('Rouge','Vert','Bleu','Luminance Y')):
-            checkbox = QCheckBox(name,self)
-            checkbox.setChecked(self.histogram.enabled[i])
-            checkbox.toggled.connect(lambda on,c=i: self._histogram_channel(c,on))
-            histogram_controls.addWidget(checkbox)
-        log = QCheckBox('Échelle logarithmique',self)
-        log.toggled.connect(self._histogram_log)
-        histogram_controls.addWidget(log)
-        layout.addLayout(histogram_controls)
-        layout.addWidget(self.histogram)
-        from fm_video.scopes import ScopesPanel, SIZE
-        self.scopes = ScopesPanel(self)
-        self.scopes.setMinimumSize(SIZE*3+40,SIZE+28)
-        self.scopes.setMaximumHeight(SIZE+28)
-        self.scopes.setToolTip('Waveform : Y′ encodé BT.709, position horizontale dans la région. '
-                               'Vectorscope : Cb/Cr BT.709, gain 1,8. Proxy SDR sRGB ; pas une mesure HDR. '
-                               'Scopes indisponibles pour une région partiellement transparente.')
-        layout.addWidget(self.scopes)
-        layout.addWidget(QLabel('Pixels du proxy affiché · hypothèse sRGB SDR · OKLab · clic sur une couleur : copier HEX',self))
-        for widget,key in ((self.count,'palette'),(self.black,'palette'),(self.white,'palette'),
-                           (self.order,'palette'),(self.palette,'palette'),(self.image,'region'),
-                           (self.sample,'region'),(self.histogram,'histogram'),(log,'histogram'),
-                           (self.statistics,'histogram'),(self.scopes,'scopes'),(self.scopes_toggle,'scopes'),
-                           (matching,'matching'),(export,'palette')):
-            annotate(widget,key)
-        self.setToolTip('Maintenir Ctrl + Shift sur un outil pour son aide détaillée ; F1 pour l’explication complète.')
-
-    def show_image(self, image, title):
-        self.title.setText(title)
-        self.image.image = image.copy()
-        self.image.region = None
-        self.palette.colors = []
-        self.palette.update()
-        self.latest = {}
-        self.histogram.result = {}
-        self.histogram.update()
-        self.scopes.set_result(None)
-        self.statistics.clear()
-        self.image.update()
-        self._submit()
-
-    def _submit(self, *_):
-        if self.image.image.isNull():
-            return
-        self.cancel.set()
-        self.revision += 1
-        self.pool.clear()
-        self.debounce.start()
-
-    def _start(self):
-        self.cancel = threading.Event()
-        self.tones.setText('Analyse colorimétrique en cours…')
-        options = dict(region=self.image.region,exclude_black=self.black.isChecked(),exclude_white=self.white.isChecked(),
-                       scopes=self.scopes_toggle.isChecked())
-        self.pool.start(_Task(self.image.image, self.count.value(), self.revision, self.signals,options,self.cancel))
-        for key,value in (('video_analysis_colors',self.count.value()),('video_analysis_exclude_black',self.black.isChecked()),
-                          ('video_analysis_exclude_white',self.white.isChecked())):
-            self.settingsChanged.emit(key,value)
-
-    def stop(self):
-        self.help.dismiss()
-        self.cancel.set()
-        self.debounce.stop()
-        self.revision += 1
-        self.pool.clear()
-
-    def apply_settings(self,settings):
-        self.settings = dict(settings)
-        self.help.settings = self.settings
-        for control,key,default in ((self.count,'video_analysis_colors',16),(self.black,'video_analysis_exclude_black',False),
-                                    (self.white,'video_analysis_exclude_white',False)):
-            control.blockSignals(True)
-            if isinstance(control,QSpinBox):
-                control.setValue(settings.get(key,default))
-            else:
-                control.setChecked(settings.get(key,default))
-            control.blockSignals(False)
-
-    def _failed(self, revision, message):
-        if revision == self.revision:
-            self.tones.setText('Analyse impossible : '+message)
-
-    def _sampled(self,color):
-        self.sample.setText(f'Pipette sRGB : {color.name()} · RGB {color.red()}, {color.green()}, {color.blue()} · '
-                           f'HSV {max(0,color.hsvHue())}°, {color.hsvSaturationF():.1%}, {color.valueF():.1%}')
-
-    def _histogram_channel(self,index,on):
-        self.histogram.enabled[index] = on
-        self.histogram.update()
-
-    def _histogram_log(self,on):
-        self.histogram.logarithmic = on
-        self.histogram.update()
-
-    def _show_scopes(self,on):
-        self.scopes.setVisible(on)
-        self._submit()
-
-    def _sort_palette(self,*_):
-        self.palette.colors = list(self.latest.get('colors',[]))
-        if self.order.currentIndex()==1:
-            self.palette.colors.sort(key=lambda item:item[1],reverse=True)
-        self.palette.update()
-
-    def _ready(self, revision, result):
-        if revision != self.revision:
-            return
-        self.latest = result
-        self._sort_palette()
-        self.histogram.result = result
-        self.histogram.update()
-        self.scopes.set_result(result.get('scopes'))
-        labels = ('Ombres (Y < 0,09)', 'Tons moyens (0,09 ≤ Y < 0,5)', 'Hautes lumières (Y ≥ 0,5)')
-        self.tones.setText(' &nbsp; | &nbsp; '.join(
-            f'{name} : <span style="color:{QColor(*rgb).name()}">■</span> {QColor(*rgb).name()} · {weight:.1%}'
-            if rgb else f'{name} : aucun pixel' for name,(rgb,weight) in zip(labels,result['tones'])))
-        stats = result.get('luminance')
-        if stats:
-            values = ' · '.join(f'P{p} {v:.4f}' for p,v in zip((1,5,50,95,99),stats['percentiles']))
-            self.statistics.setText(f'Luminance linéaire relative Y (sRGB / Rec.709) : moyenne {stats["mean"]:.4f} · {values}')
-            self.statistics.setToolTip(f'Y min {stats["minimum"]:.5f}, max {stats["maximum"]:.5f}\n'
-                                       f'Pixels ayant au moins un canal à 0 : {stats["black_clip"]:.1%}\n'
-                                       f'Pixels ayant au moins un canal à 255 : {stats["white_clip"]:.1%}\n'
-                                       f'{result["samples"]} pixels échantillonnés ; hors région et exclusions de palette traités séparément.')
-        else:
-            self.statistics.clear()
-            self.tones.setText('Aucun pixel visible dans cette région')
-
-    def export_palette(self):
-        if not self.palette.colors:
-            return
-        filename, _ = QFileDialog.getSaveFileName(self, 'Exporter la palette', 'palette.json',
-                                                 'JSON (*.json);;CSS (*.css);;PNG (*.png)')
-        if not filename:
-            return
-        import json
-        from pathlib import Path
-        from PySide6.QtWidgets import QMessageBox
-        path = Path(filename)
-        colors = [dict(hex=QColor(*rgb).name(), rgb=[int(v) for v in rgb], weight=weight)
-                  for rgb,weight in self.palette.colors]
-        try:
-            if path.suffix.lower() == '.png':
-                image = QImage(len(colors)*80,80,QImage.Format_RGB888)
-                painter = QPainter(image)
-                for i,item in enumerate(colors):
-                    painter.fillRect(i*80,0,80,80,QColor(item['hex']))
-                painter.end()
-                if not image.save(str(path),'PNG'):
-                    raise OSError('Impossible de sauvegarder la palette')
-            elif path.suffix.lower() == '.css':
-                path.write_text(':root {\n'+'\n'.join(f'  --palette-{i+1}: {item["hex"]};' for i,item in enumerate(colors))+'\n}\n',encoding='utf-8')
-            else:
-                path.write_text(json.dumps(dict(space='sRGB SDR (hypothèse du proxy affiché)',
-                                                clustering='OKLab',colors=colors),indent=2),encoding='utf-8')
-        except OSError as exc:
-            QMessageBox.warning(self,'Export de palette',str(exc))
-
-    def _open_matching(self):
-        if self.image.image.isNull():
-            return
-        from fm_video.matching_ui import MatchingDialog
-        dialog = getattr(self,'matching_dialog',None)
-        if dialog is not None and dialog.isVisible():
-            dialog.raise_()
-            return
-        if dialog is not None:
-            dialog.source = self.image.image.copy()
-            dialog.preview.image = dialog.source
-            dialog.reference = None
-            dialog.result = None
-            dialog.model = None
-            dialog.preset_model = None
-            dialog.paths.setText('Source : proxy du moodboard · Référence : à choisir')
-            dialog.status.setText('Choisir une référence pour calculer le matching.')
-            dialog.export.setEnabled(False)
-            dialog.preview.update()
-        else:
-            self.matching_dialog = MatchingDialog(self.image.image,self,getattr(self,'settings',{}))
-            self.matching_dialog.settingsChanged.connect(self.settingsChanged.emit)
-        self.matching_dialog.show()

@@ -26,16 +26,19 @@ CAD_DEFAULTS: dict[str, Any] = {
     "board_cad_linetypes": [],                    # types de ligne (vide = ceux d'origine, fm_cad.cad_model)
     "board_cad_pickbox": 5, "board_cad_grip_size": 8, "board_cad_pickadd": False,
     "board_cad_crosshair": True, "board_cad_crosshair_size": 40, "board_cad_crosshair_full": False,
-    "board_cad_crosshair_auto_color": True, "board_cad_crosshair_color": "#1a1a1a", "board_cad_crosshair_memory": True,
+    "board_cad_crosshair_auto_color": True, "board_cad_crosshair_color": "#1a1a1a",
+    # Negatif du reticule sur les zones de sa couleur (2026-11-05) : ecart toléré par canal (0-255).
+    "board_cad_crosshair_negative": True, "board_cad_crosshair_negative_tol": 48, "board_cad_crosshair_memory": True,
     "board_cad_dim_text": 250, "board_cad_dim_arrow": 250, "board_cad_dim_gap": 100, "board_cad_dim_over": 125,
-    "board_cad_dim_scale": 100, "board_cad_dim_arrow_kind": "triangle", "board_cad_dim_decimals": 2,   # cotations (centiemes d'unite de mesure)
+    "board_cad_dim_scale": 100, "board_cad_dim_arrow_kind": "triangle", "board_cad_dim_decimals": 2, "board_cad_dim_baseline": 375,   # cotations (centiemes d'unite de mesure)
     "board_cad_hatch_pattern": "lines", "board_cad_hatch_angle": 45, "board_cad_hatch_spacing": 300,
     "board_cad_hatch_alpha": 35,                   # hachures : motif, angle, espacement (centiemes d'unite de mesure), opacite du plein
+    "board_cad_point_mode": 34, "board_cad_point_size": 300,   # points : figure (PDMODE d'AutoCAD), taille (centiemes d'unite de mesure)
     "board_cad_text_height": 250, "board_cad_text_font": "Arial", "board_cad_text_justify": "L",
     "board_cad_mtext_justify": "TL", "board_cad_text_spacing": 100,   # textes : hauteur (centiemes d'unite de mesure), police, justifications, interligne (%)
     "board_cad_pgp_path": "",                      # fichier .pgp d'AutoCAD : alias de commandes du CAD (fm_cad/cad_aliases.py)
     "board_cad_gpu": False,                        # rendu GPU (OpenGL) des entites CAD (fm_cad/cad_gpu.py)
-    "board_cad_bar_color": "#0a0a0a",              # fond de la barre d'outils et de la barre de commande du CAD
+    "board_cad_bar_color": "#0a0a0a",              # fond de la barre de commande du CAD (les barres d'outils suivent fm_theme, reglages palette_*)
     "board_cad_precision": 4,
     "board_cad_lineweights": True,                 # affichage des epaisseurs de ligne (faux : simples lignes d'un pixel, comme AutoCAD)
     "board_cad_aa_filter": 75,                     # largeur du filtre de reduction du suréchantillonnage (% de pixel, rayon)

@@ -29,12 +29,16 @@ STANDARD = "standard"                                         # nom de la varian
 # Valeurs générales (pas de variantes) : clés exactes, et préfixe des rôles de texte.
 # `row_templates` : gabarits des lignes des fenetres de reglages, un par type de ligne (fm_theme.cells,
 # ROW_TEMPLATES_KEY) — de l'aspect commun a toutes les applis du theme (choix de l'utilisateur, 2026-10-29).
-GENERAL_KEYS = ("colors", "ui_scale", "window_radius", "row_templates")
+GENERAL_KEYS = ("colors", "ui_scale", "window_radius", "row_templates",
+                # Bordure du pourtour de toutes les fenetres (2026-10-30).
+                "window_border_enabled", "window_border_enabled_linked", "window_border", "window_border_thickness")
 GENERAL_PREFIX = "font_"
 # Types à une variante : type -> préfixe des clés.
 TYPE_PREFIXES = {
     "titres": "title_", "slider": "slider_", "champ": "input_", "bouton": "button_", "tableau": "table_",
-    "onglets": "tabs_", "menu": "ctx_", "fenetre": "extra_",
+    "onglets": "tabs_", "menu": "ctx_", "fenetre": "extra_", "palette": "palette_",
+    # Barre de navigation (et son cheminement) et barre d'etat : aspect general (2026-11-05).
+    "navigation": "navbar_", "cheminement": "crumb_", "etat": "statusbar_",
 }
 # Toggles : une variante par style (`toggle<N>_*`) ; clés propres au type : variante par défaut (`toggle_style`)
 # et noms des styles (`toggle_styles`, ancienne liste `toggle_custom_styles`).
@@ -108,6 +112,9 @@ def to_settings(preset: dict[str, Any], variants: dict | None = None) -> dict[st
         # Une seule variante à plat : celle PAR DÉFAUT du type (les autres attendent qu'un élément les choisisse).
         values.update({f"{prefix}{field}": value
                        for field, value in variant_fields(entry, used_variant(entry, (variants or {}).get(type_name))).items()})
+    # Toggles : anciennes cles (un seul cadre / une seule coche) reprises en cles par etat (OFF / ON).
+    from fm_theme.toggle_states import fill_toggle_states
+    fill_toggle_states(values)
     return values
 
 

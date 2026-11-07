@@ -50,3 +50,13 @@ video_checks_*/
 _o[0-9]*.txt
 p.out
 data/error_log.txt
+
+# Module PDF : moteur PDFium V8 + XFA (31 Mo), installé par python tools/install_pdfium_xfa.py
+fm_pdf/native/pdfium.dll
+
+# Restes de mesures et de captures (2026-11-07)
+tmp_shot/
+prof*.out
+data/stalls.log
+data/stall_log.on
+.claude/scheduled_tasks.lock

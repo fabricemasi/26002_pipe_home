@@ -110,7 +110,6 @@ class SaveTest(WindowTestCase):
             mock.patch.object(v2, "load_settings", lambda: copy.deepcopy(self.disk)),
             mock.patch.object(v2, "save_settings", lambda s: (self.written.append(copy.deepcopy(s)),
                                                               self.disk.update(copy.deepcopy(s)))),
-            mock.patch.object(v2, "_load_presets", lambda: self.presets),
             # update_active_preset (appele a l'enregistrement) lit / ecrit les presets par settings_store : sans
             # ces doublures, le preset ACTIF de l'utilisateur (« fab ») recevait les valeurs du test (signale).
             mock.patch.object(settings_store, "_load_presets", lambda: self.presets),
@@ -211,9 +210,11 @@ class WiringTest(WindowTestCase):
         Les identifiants d'onglets ne changent pas (cles retenues : ordre des titres, espaces)."""
         self.assertEqual([label for label, _t in v2.SCOPES], ["General"])
         self.assertEqual({m: [label for label, _t in s] for m, s in v2.MODULE_SCOPES.items()},
-                         {"video": [v2.VIDEO_TAB], "markdown": [v2.MARKDOWN_TAB], "board": [v2.MRO_TAB, v2.CAD_TAB, v2.DESIGN_TAB,
-                                                                                    v2.TABLEUR_TAB, v2.ILL_TAB, v2.PS_TAB],
+                         {"video": [v2.VIDEO_TAB], "markdown": [v2.MARKDOWN_TAB], "board": [v2.BOARD_TAB, v2.MRO_TAB, v2.CAD_TAB, v2.DESIGN_TAB,
+                                                                                    v2.TABLEUR_TAB, v2.ILL_TAB, v2.PS_TAB, v2.PDF_TAB],
                           "viewer": [v2.VIEWER_TAB], "font": [v2.TYPO_TAB],          # font : fm_font
+                          "pdf": [v2.PDF_TAB],                                       # pdf : fm_pdf
+                          "agenda": [v2.AGENDA_TAB],                                 # agenda : fm_agenda
                           "theme": [v2.THEME_TAB]})                                    # theme : editeur fm_theme
         self.assertEqual(v2.MARKDOWN_TAB, "Markdown")
         self.assertEqual(v2.MRO_TAB, "Module MRO")
@@ -613,7 +614,8 @@ class CadTabAndIconTablesTest(WindowTestCase):
                           "CAD : Grille", "CAD : Réticule",
                           "CAD : Sélection et poignées", "CAD : Fenêtre de sélection", "CAD : Capture",   # Sélection
                           "CAD : Ajuster", "CAD : Affichage",
-                          "CAD : Cotations", "CAD : Hachures", "CAD : Textes", "CAD : Raccourcis clavier", "CAD : Icônes"])
+                          "CAD : Cotations", "CAD : Hachures", "CAD : Textes", "CAD : Points", "CAD : Raccourcis clavier",
+                          "CAD : Icônes"])
         self.assertLessEqual(set(cad_settings.CAD_GROUPS), set(leaves))
         for group in ("CAD : Cotations", "CAD : Hachures", "CAD : Textes", "CAD : Fenêtre de sélection", "CAD : Capture",
                       "CAD : Ajuster"):                                                            # mêmes clés / défauts que DEFAULT_SETTINGS
@@ -635,8 +637,8 @@ class CadTabAndIconTablesTest(WindowTestCase):
         """Onglets « Design » et « Tableur » de Réglages : Board : chaque champ se construit et se relit à sa valeur
         d'origine (clé déclarée dans DEFAULT_SETTINGS, même défaut)."""
         import copy
-        self.assertEqual([label for label, _t in v2.MODULE_SCOPES["board"]][2:], [v2.DESIGN_TAB, v2.TABLEUR_TAB,
-                                                                              v2.ILL_TAB, v2.PS_TAB])
+        self.assertEqual([label for label, _t in v2.MODULE_SCOPES["board"]][3:], [v2.DESIGN_TAB, v2.TABLEUR_TAB,
+                                                                              v2.ILL_TAB, v2.PS_TAB, v2.PDF_TAB])
         self.assertNotIn("MRO : Tableur", v2.CATALOG)
         settings = copy.deepcopy(settings_store.DEFAULT_SETTINGS)
         for tree in (v2.DESIGN_TREE, v2.TABLEUR_TREE):
@@ -651,6 +653,30 @@ class CadTabAndIconTablesTest(WindowTestCase):
                     read = v2.FIELD_READERS.get(spec.kind, lambda sp, w: {sp.key: w.value()})(spec, widget)
                     self.assertEqual(read[spec.key], spec.default, spec.key)
 
+    def test_board_tab_module_bar_builds_and_reads_back(self):
+        """Onglet « Board » (le premier de Réglages : Board) > Barre de sélection : chaque champ se construit et se
+        relit à sa valeur d'origine ; une couleur dominante par module."""
+        import copy
+        self.assertEqual(v2.MODULE_SCOPES["board"][0][0], v2.BOARD_TAB)
+        self.assertEqual(v2.TAB_LABELS[v2.BOARD_TAB], "Board")
+        section = v2.BOARD_TREE[0]
+        self.assertEqual(section.title, "Barre de sélection")
+        settings = copy.deepcopy(settings_store.DEFAULT_SETTINGS)
+        keys = []
+        for node in section.children:
+            fields, record = {}, []
+            v2.build_group(node.group, v2.ScopeValues(settings, None), settings["colors"], fields, {}, [],
+                           record, lambda: None)
+            for spec, widget in record:
+                if not isinstance(spec, v2.Spec):
+                    continue
+                keys.append(spec.key)
+                self.assertEqual(spec.default, settings_store.DEFAULT_SETTINGS[spec.key], spec.key)
+                read = v2.FIELD_READERS.get(spec.kind, lambda sp, w: {sp.key: w.value()})(spec, widget)
+                self.assertEqual(read[spec.key], spec.default, spec.key)
+        for module in ("miro", "cad", "design", "tableur", "illustrator"):
+            self.assertIn(f"board_modulebar_color_{module}", keys)
+
     def test_every_cad_toolbar_icon_is_in_the_icon_table(self):
         from fm_cad import cad_ui
         from fm_board.model import CAD_ICON_ROWS
@@ -664,6 +690,7 @@ class CadTabAndIconTablesTest(WindowTestCase):
         self.assertIn("CAD : Icônes", v2.ICON_GROUPS)
         self.assertIn("Icones : General", v2.ICON_GROUPS)
         self.assertIn("MRO : Icones", v2.ICON_GROUPS)
+        self.assertIn("Board : Icônes", v2.ICON_GROUPS)
         self.assertIn("Visionneuse : Icones", v2.ICON_GROUPS)
         values = v2.ScopeValues(copy.deepcopy(settings_store.DEFAULT_SETTINGS), "General", None)
         for group in ("CAD : Icônes", "Icones : General"):

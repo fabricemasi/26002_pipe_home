@@ -312,6 +312,58 @@ class TextCommandTest(CadBoardCase):
         self.assertNotIn("TEXT", report["ignored"])
 
 
+class GpuTextRegistryTest(CadBoardCase):
+    """Rendu GPU : textes peints par QPainter pris dans le registre du CAD (`CadLayer.extras`), plus en parcourant
+    tous les elements a chaque image ; seuls ceux de la vue ; image gardee refaite quand un texte change
+    (`extras_rev`) ; lettres de moins d'un pixel jamais dessinees."""
+
+    def test_registry_follows_texts_and_view_culls_them(self):
+        from fm_cad.cad_items import CadLayer
+        scene = self.pane.scene
+        cad = scene.page["cad"] if "cad" in scene.page else cad_model.empty_cad_page()
+        near = scene._add(model.new_item("cad_text", **cad_model.new_entity_values(
+            cad, text="ici", pos=[10.0, -10.0], height=5.0, rot=0.0)))
+        far = scene._add(model.new_item("cad_text", **cad_model.new_entity_values(
+            cad, text="loin", pos=[900000.0, 0.0], height=5.0, rot=0.0)))
+        scene._add(model.new_item("cad_line", **cad_model.new_line_values(cad, (0.0, 0.0), (40.0, 0.0))))
+        layer = CadLayer.of(scene)
+        self.assertEqual(set(layer.extras.values()), {near, far})              # les lignes n'y sont pas
+        view = self.pane.view
+        view.set_zoom(1.0)
+        view.centerOn(near._text_item.sceneBoundingRect().center())
+        APP.processEvents()
+        visible = view.mapToScene(view.viewport().rect()).boundingRect()
+        self.assertEqual(list(view._gpu_extras("_text_item", visible)), [near._text_item])
+        rev = layer.extras_rev
+        key = view._gpu_text_key()
+        near.setPos(near.pos() + QPointF(3.0, 0.0))                           # deplace : image des textes refaite
+        self.assertGreater(layer.extras_rev, rev)
+        self.assertNotEqual(view._gpu_text_key(), key)
+        scene._remove(far.item_id)
+        self.assertEqual(list(layer.extras.values()), [near])
+
+    def test_letters_smaller_than_a_pixel_are_not_drawn(self):
+        from PySide6.QtGui import QImage, QPainter
+        from fm_cad import cad_items
+        scene = self.pane.scene
+        cad = scene.page["cad"] if "cad" in scene.page else cad_model.empty_cad_page()
+        text = scene._add(model.new_item("cad_text", **cad_model.new_entity_values(
+            cad, text="MMMM", pos=[0.0, 0.0], height=10.0, rot=0.0)))
+        label = text._text_item
+        drawn = []
+        image = QImage(200, 200, QImage.Format_ARGB32_Premultiplied)
+        for scale in (2.0, 0.05):                                               # 20 px, puis 0,5 px de capitales
+            image.fill(0)
+            painter = QPainter(image)
+            painter.translate(100, 100)
+            painter.scale(scale, scale)
+            label.paint(painter, None)
+            painter.end()
+            drawn.append(any(image.pixel(x, y) >> 24 for x in range(0, 200, 2) for y in range(0, 200, 2)))
+        self.assertEqual(drawn, [True, False])
+        self.assertGreater(cad_items.TEXT_MIN_PX, 0.5)
+
+
 class ExplodeTest(CadBoardCase):
     def test_polyline_becomes_lines_and_arcs_with_its_properties_in_one_step(self):
         self.type("PL", "0,0", "100,0", "A", "100,100", "L", "0,100", "")

@@ -7,6 +7,8 @@
   signal `received(preset, valeurs, variantes)`. Se reconnecte seul (l'éditeur peut être lancé après l'appli).
 - `PresetWatcher` (dans chaque appli) : surveille le fichier du preset (écrit à la fin du geste, ou par une
   appli lancée sans canal) ; signal `changed()` regroupé (une sauvegarde peut notifier plusieurs fois).
+- `PresetListWatcher` (dans chaque appli) : surveille la liste des presets (création, renommage, suppression) ;
+  la liste d'une appli est celle de fm_theme, à l'identique, mise à jour aussitôt.
 
 Qt seulement : aucun import de l'appli.
 """
@@ -170,3 +172,33 @@ class PresetWatcher(QObject):
             return
         self._stamp = stamp
         self.changed.emit()
+
+
+class PresetListWatcher(QObject):
+    """Surveille la LISTE des presets (le dossier) : signal `changed()` quand un preset est créé, renommé ou
+    supprimé (noms de fichiers comparés, rien n'est lu ; regroupé comme `PresetWatcher`)."""
+
+    changed = Signal()
+
+    def __init__(self, folder: Path, parent=None):
+        super().__init__(parent)
+        self._folder = Path(folder)
+        self._watcher = QFileSystemWatcher(self)
+        if self._folder.is_dir():
+            self._watcher.addPath(str(self._folder))
+        self._watcher.directoryChanged.connect(lambda *_a: self._debounce.start())
+        self._debounce = QTimer(self, singleShot=True, interval=WATCH_DEBOUNCE_MS)
+        self._debounce.timeout.connect(self._fire)
+        self._names = self._read_names()
+
+    def _read_names(self) -> frozenset:
+        try:
+            return frozenset(p.name for p in self._folder.glob("*.json"))
+        except OSError:
+            return frozenset()
+
+    def _fire(self):
+        names = self._read_names()
+        if names != self._names:
+            self._names = names
+            self.changed.emit()

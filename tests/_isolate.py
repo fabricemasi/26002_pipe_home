@@ -35,6 +35,13 @@ if _theme_presets.PRESETS_DIR.is_dir():
     shutil.copytree(_theme_presets.PRESETS_DIR, _theme_copy)
 _theme_presets.PRESETS_DIR = _theme_copy
 
+# Images importees des toggles (data/toggle_icons/) : dossier temporaire (un test d'import y copiait ses images).
+import fm_theme.tokens as _theme_tokens  # noqa: E402
+_toggle_icons_copy = _TMP / "toggle_icons"
+if _theme_tokens._TOGGLE_ICONS_DIR.is_dir():
+    shutil.copytree(_theme_tokens._TOGGLE_ICONS_DIR, _toggle_icons_copy)
+_theme_tokens._TOGGLE_ICONS_DIR = _toggle_icons_copy
+
 REAL_DATA_UNTOUCHED = True
 
 # État de la FENÊTRE PRINCIPALE (distinct de celui des réglages ci-dessus).
@@ -42,9 +49,17 @@ REAL_DATA_UNTOUCHED = True
 # enregistrer leur géométrie / dernier chemin dans la vraie session.
 os.environ["PIPELINE_MAIN_WINDOW_STATE_FILE"] = str(_TMP / "pipeline_window_state.json")
 
+# Cache des dessins DXF / DWG convertis (fm_cad/cad_cache.py, %LOCALAPPDATA%) : jamais celui de l'utilisateur.
+os.environ["PIPELINE_CAD_CACHE_DIR"] = str(_TMP / "cad_cache")
+
 # La fenetre de reglages construit ses sections en fond a l'ouverture (~20 s) : inutile et lent en test.
 os.environ.setdefault("PIPELINE_NO_PREBUILD", "1")
 # Feuille CSS partagee avec Obsidian (Reglages > Markdown > CSS, par defaut celle du coffre de l'utilisateur) : la
 # synchronisation ne lit ni n'ecrit jamais ce fichier en test ; seuls les tests de fm_markdown/css_sync.py l'allument,
 # sur des copies temporaires.
 os.environ["PIPELINE_NO_CSS_SYNC"] = "1"
+# Agenda (fm_agenda) : base SQLite et sauvegardes dans un dossier temporaire, jetons Google dans une mémoire de test
+# (jamais le Gestionnaire d'identifiants Windows), aucun réseau.
+os.environ["FM_AGENDA_DIR"] = str(_TMP / "fm_agenda")
+os.environ["FM_AGENDA_TEST_CREDENTIALS"] = "1"
+os.environ["FM_AGENDA_NO_NETWORK"] = "1"

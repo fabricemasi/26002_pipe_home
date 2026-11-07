@@ -192,6 +192,22 @@ class Actions:
         self._to_system_clipboard(got[0])
         return True
 
+    def copy_merged(self):
+        """« Copier avec fusion » (Ctrl+Maj+C) : l'image FINALE affichée, tous les calques visibles composés (masques, modes et
+        réglages compris), dans la sélection s'il y en a une, sinon le document entier. Ctrl+C copie, lui, le seul calque en cours."""
+        region = self._region(self.s.layer())
+        if region is None:
+            return self._say("Rien à copier.")
+        data = C.flatten_u8(self.doc, region)
+        sel = self.s.selection
+        if sel is not None and not sel.is_empty():
+            data[..., 3] = np.clip(data[..., 3] * sel.coverage(region) + 0.5, 0, 255).astype(np.uint8)
+        if not data[..., 3].any():
+            return self._say("Rien à copier : l'image est transparente.")
+        _CLIP["rgba"], _CLIP["origin"] = data, (region[0], region[1])
+        self._to_system_clipboard(data)
+        return True
+
     def cut(self):
         if self.copy() is not True:
             return None

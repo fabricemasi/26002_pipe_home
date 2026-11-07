@@ -57,8 +57,9 @@ from browser_core import (
     _paint_row_image,
     _resolve_font_family,
     _resolve_row_font_color,
-    _resolve_shortcut_font_color,
+    _resolve_shortcut_font,
     _row_icon_pixmap,
+    tinted_icon,
     _step_badge_color,
     _step_badge_rect,
     _step_badge_text_color,
@@ -173,6 +174,7 @@ class RowDelegate(QStyledItemDelegate):
         is_shortcut = bool(index.data(ROLE_IS_SHORTCUT))
         icon_key = software_icon_key(Path(index.data(ROLE_PATH) or "").name) if is_dir else None
         icon_pixmap = _row_icon_pixmap(is_dir, icon_key, SOFTWARE_ICON_SIZE)
+        folder_icon = is_dir and icon_key is None
         if is_shortcut:
             # Icone DEDIEE (Settings > ICONES > General > "Raccourcis") si
             # l'utilisateur en a choisi une, prioritaire sur l'icone
@@ -181,6 +183,9 @@ class RowDelegate(QStyledItemDelegate):
             shortcut_icon = custom_ui_icon_pixmap(UI_ICON_SHORTCUT, SOFTWARE_ICON_SIZE)
             if shortcut_icon is not None:
                 icon_pixmap = shortcut_icon
+                folder_icon = True
+        if folder_icon:
+            icon_pixmap = _tint_folder_icon(icon_pixmap, index, is_shortcut)
 
         # Apercu personnalise (voir Column._on_context_menu, "Ajouter un
         # apercu.../Capturer une zone d'ecran...") : deja generalise a
@@ -198,12 +203,11 @@ class RowDelegate(QStyledItemDelegate):
         elif title != "Type":
             preview_pixmap = self._image_pixmap(index)
 
-        # Police/couleur DEDIEES pour un raccourci (voir SHORTCUT_TEXT_
-        # STYLE, Settings > RACCOURCI) — GENERALE, pas par colonne : un
-        # raccourci doit se reperer de la MEME facon partout.
-        row_font, row_color = _resolve_shortcut_font_color() if is_shortcut else (self.type_font, self.type_color)
-        if index.data(ROLE_LIGHTROOM_SHORTCUT):
-            row_color = QColor("#87CEFA")
+        # Police DEDIEE pour un raccourci (voir SHORTCUT_TEXT_STYLE, Settings >
+        # RACCOURCI) ; couleur du texte des dossiers selon leur sorte (Icones >
+        # Couleur des dossiers), sinon celle de la colonne.
+        row_font = _resolve_shortcut_font() if is_shortcut else self.type_font
+        row_color = _folder_text_color(index, is_shortcut, self.type_color) if is_dir else self.type_color
         text_look = _row_text_look(self.column, index, row_font, row_color)
         if _is_empty_lightroom_folder(index):
             row_color = C["dim"]
@@ -763,6 +767,23 @@ def _row_media_looks(column, index):
     return result
 
 
+def _folder_kind(index, is_shortcut: bool) -> str:
+    """Sorte d'un dossier (Settings > Icones > Couleur des dossiers) : Lightroom, raccourci ou standard."""
+    return "lightroom" if index.data(ROLE_LIGHTROOM_SHORTCUT) else "shortcut" if is_shortcut else "standard"
+
+
+def _tint_folder_icon(pixmap, index, is_shortcut: bool):
+    """Icone de dossier teintee selon sa sorte. Jamais les icones de logiciel (badges deja colores)."""
+    return tinted_icon(pixmap, resolve_color_ref(ui_state.FOLDER_ICON_COLORS.get(_folder_kind(index, is_shortcut))
+                                                 or "#ffffff"))
+
+
+def _folder_text_color(index, is_shortcut: bool, default):
+    """Couleur du texte d'un dossier selon sa sorte (toggle de la colonne Texte allume), sinon `default`."""
+    color = ui_state.FOLDER_TEXT_COLORS.get(_folder_kind(index, is_shortcut))
+    return resolve_color_ref(color) if color else default
+
+
 def _is_empty_lightroom_folder(index) -> bool:
     """Le comptage Lightroom est absent pour les dossiers non gérés."""
     if not bool(index.data(ROLE_ISDIR)) or index.data(ROLE_MEDIA_COUNTS) is None:
@@ -830,11 +851,16 @@ class ProjectTileDelegate(QStyledItemDelegate):
         icon_key = software_icon_key(path.name) if is_dir_entry else None
         icon_pixmap = _row_icon_pixmap(is_dir_entry, icon_key, SOFTWARE_ICON_SIZE)
         is_shortcut = bool(index.data(ROLE_IS_SHORTCUT))
+        folder_icon = is_dir_entry and icon_key is None
         if is_shortcut:
             shortcut_icon = custom_ui_icon_pixmap(UI_ICON_SHORTCUT, SOFTWARE_ICON_SIZE)
             if shortcut_icon is not None:
                 icon_pixmap = shortcut_icon
-        row_font, row_color = _resolve_shortcut_font_color() if is_shortcut else (self.font_name, self.color_name)
+                folder_icon = True
+        if folder_icon:
+            icon_pixmap = _tint_folder_icon(icon_pixmap, index, is_shortcut)
+        row_font = _resolve_shortcut_font() if is_shortcut else self.font_name
+        row_color = _folder_text_color(index, is_shortcut, self.color_name) if is_dir_entry else self.color_name
         text_look = _row_text_look(self.column, index, row_font, row_color)
         if _is_empty_lightroom_folder(index):
             row_color = C["dim"]

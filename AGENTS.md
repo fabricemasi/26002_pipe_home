@@ -1,97 +1,75 @@
-# CLAUDE.md
+# AGENTS.md : instructions du projet PIPE FMZ
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Lu par Claude Code (via `CLAUDE.md` : `@AGENTS.md`) et par Codex. Chargé à CHAQUE appel : seulement les règles valables pour toute l'appli. Le détail d'un sujet est dans `docs/agents/<sujet>.md`, lu à la demande. Une décision durable est écrite UNE fois, au bon endroit (doc du module, jamais ici sauf règle générale).
 
-> ## ⚠️ IL FAUT QUE CE SOIT FLUIDE !
-> **Demande expresse de l'utilisateur, intransigeant sur ce point : l'appli ET les réglages doivent réagir TOUT DE SUITE, sans lourdeur, jamais « quelques secondes plus tard ».** Tout changement de code est jugé d'abord là-dessus. Avant d'ajouter un travail dans un aperçu en direct, une peinture, un clic ou une navigation : le mesurer (sonde cProfile, fenêtre de réglages ENTIÈREMENT construite — ~24 000 widgets) et ne rien refaire qui n'a pas changé. Pièges déjà rencontrés : `docs/agents/pieges-generaux.md`.
+## Règles absolues de l'utilisateur
 
-> ## ⚡ EFFICACITÉ DES REQUÊTES : PRIMORDIAL
-> **Demande expresse de l'utilisateur : chaque requête doit être traitée le plus efficacement et le plus rapidement possible.** Lire seulement le module concerné et SA doc (`docs/agents/<module>.md`), chercher précisément plutôt que lire de gros fichiers, lancer seulement les tests du module touché. Dans toute réflexion de code, garder le code découpé pour que les requêtes suivantes restent légères (modules isolés, fichiers de taille raisonnable). **Proposer d'office à l'utilisateur toute alternative qui rendrait les requêtes plus efficaces** (découpage, doc, tests, façon de formuler), même quand il ne la demande pas. Plan d'isolation des modules : `docs/agents/fm_theme.md`, « Isolation des modules de fm_browser ».
+- **Toujours répondre en FRANÇAIS** (réponses, questions, récapitulatifs ; code et commentaires le sont déjà).
+- **FLUIDITÉ (intransigeant)** : l'appli ET les réglages réagissent TOUT DE SUITE, jamais « quelques secondes plus tard ». Avant d'ajouter un travail dans un aperçu en direct, une peinture, un clic ou une navigation : estimer son coût (rien d'O(n) par image ou par événement, ne rien refaire qui n'a pas changé). La MESURE (cProfile, fenêtre de réglages entière ~24 000 widgets, bancs `tools/bench_*.py`) se fait à temps perdu : la noter avec sa commande dans `docs/agents/a_mesurer.md` ; l'utilisateur lance `fluidite.bat`, et ce qui échoue dans `docs/agents/rapport_fluidite.md` se corrige EN PRIORITÉ à la requête suivante (le lire s'il est plus récent que la dernière lecture). Pièges : `docs/agents/pieges-generaux.md`.
+- **PETITE REQUÊTE = QUELQUES SECONDES À QUELQUES MINUTES.** Tests : SEULEMENT ceux écrits pour la modification et ceux qui couvrent la fonction modifiée, appelés PAR NOM (`tests.test_x.Classe` ou `.test_y`), ~30 s au total ; un fichier de test entier seulement s'il est absent de `tools/hooks/tests_lourds.txt` ; JAMAIS `tests/run.py`, `discover` sans `-p`, `--lent`, `PIPELINE_TESTS_LENTS=1` (l'utilisateur les lance via `fluidite.bat`). « rapide » dans la demande = seulement le test écrit. Le hook `tools/hooks/garde_fous.py` (`.claude/settings.json`) refuse ces commandes et toute recherche récursive à la racine ; le contourner (`GARDE_FOUS_OK=1 commande`) SEULEMENT si l'utilisateur le demande en toutes lettres. Un échec SANS LIEN avec la modification : le signaler, ne pas enquêter.
+- **EFFICACITÉ** : coût d'une modification proportionnel à sa complexité, jamais à la taille de l'appli ni à l'âge de la conversation. Proposer d'office toute alternative qui rendrait les requêtes plus efficaces (découpage, doc, tests). Garder le code découpé (modules isolés, fichiers de taille raisonnable ; plan : `docs/agents/fm_theme.md`, « Isolation des modules de fm_browser »).
 
-> ## 🇫🇷 Langue : toujours parler FRANÇAIS à l'utilisateur
-> **Demande expresse de l'utilisateur** : toutes les réponses, questions, récapitulatifs et messages de fin de tour sont en français (le code et les commentaires le sont déjà).
+## Traiter une demande : recherche progressive
 
-## Projet
+1. Comprendre précisément ce qui doit changer.
+2. Trouver le module dans la table « Documentation par sujet » ci-dessous (ou `docs/agents/carte_reglages.md` pour un réglage).
+3. Dans sa doc : lire la section « Carte » (en tête) puis CHERCHER le mot-clé (Grep sur ce seul fichier). Ne JAMAIS lire une doc entière : elles font 35 à 150 Ko, et tout ce qui est lu reste dans le contexte jusqu'à la fin de la conversation.
+4. Grep du symbole dans les fichiers indiqués, puis lire seulement les lignes utiles (Read avec offset / limit) ; un fichier de plus de 1 500 lignes ne se lit jamais en entier.
+5. Modifier le plus localement possible, sans refactoring adjacent ; vérifier une interface partagée seulement si la modification peut l'affecter.
+6. Tester par nom (règle ci-dessus). 7. Compte rendu bref ; noter dans la doc du module ce que l'utilisateur a demandé ou le piège trouvé.
 
-Pipeline Browser : navigateur de fichiers en colonnes (Miller columns) en PySide6, pour une arborescence de projets de production (racine par défaut `F:\PIPELINE`, réglable via `root_path` dans `data/pipeline_settings.json`). Application Windows (DPI per-monitor, attributs « caché » Windows, chemins `.exe`) ; le code et les commentaires sont en français. Le dépôt est édité depuis WSL mais l'appli tourne sous Windows.
+Recherche globale seulement si le module est introuvable ou le risque réellement transversal ; jamais `grep -r` sur la racine (`data/` et les caches font expirer la commande). Pas de sous-agents ni de long plan pour une correction simple. Ne pas refaire une recherche déjà faite dans la session, sauf si le fichier a changé depuis.
 
-## Commandes
+## Sessions courtes et passation (2026-11-07)
 
-- Lancer : `pipeline_browser_debug.bat` (crée `.venv`, installe PySide6/ezdxf/matplotlib, lance l'appli) ou `python pipeline_browser.py` (`pythonw` pour éviter la console).
-- Dépendances : `requirements.txt` (PySide6 ; optionnels : OpenEXR, numpy, ezdxf, matplotlib).
-- Tests (unittest, offscreen Qt, certains exigent Blender installé) :
-  - **par module (à préférer)** : `python tests/run.py <module>` (sans argument : liste des modules) ; les tests marqués `@lent` (`tests/_lent.py` : Blender, fenêtre de réglages entière, appli complète) sont sautés sauf avec `--lent`. Tout nouveau fichier de test est rangé dans `MODULES` de `tests/run.py`.
-  - tous : `python -m unittest discover -s tests` (lents sautés aussi, sauf `PIPELINE_TESTS_LENTS=1`)
-  - un fichier : `python -m unittest discover -s tests -p test_turntable.py`
-  - un test : `python -m unittest tests.test_render_log.RenderLogTest.test_requested_columns_and_render_metadata` (lancer depuis la racine ; les tests importent `previews`, `detail_panel`… : patcher un nom dans le module qui l'utilise, pas dans celui qui l'a importé).
-- Tout fichier de test commence par `import _isolate` (`tests/_isolate.py` : réglages, presets et état des fenêtres redirigés vers des COPIES temporaires) — OBLIGATOIRE (un test a déjà écrit dans le vrai preset de l'utilisateur). Doubler des fonctions de presets : les remplacer dans `settings_store`. Détail : `docs/agents/pieges-generaux.md`.
-- Fenêtres de réglages construites par un test : DÉTRUITES à la fin du test (`tests/_window_cleanup.py`, `WindowTestCase`). Ne jamais poser de filtre d'événements sur l'application en permanence. Détail : `docs/agents/pieges-generaux.md`.
-- Pas de linter ni de build configuré.
-- `.venv/` est ignoré par git (ne pas l'éditer).
+Mesuré sur les 66 conversations du projet : le contexte de départ est ~86 k tokens, mais 82 % des tokens d'entrée sont partis dans des appels à plus de 250 k, c'est-à-dire dans l'historique des longues conversations.
+- Une tâche = une session. Quand une tâche est finie et que la demande suivante est indépendante, CONSEILLER à l'utilisateur une nouvelle session (nouvelle conversation, ou `/clear`) ; ne jamais prétendre l'avoir fait. Garder la session tant que les demandes portent sur la même fonctionnalité.
+- `/compact` seulement quand la tâche continue et que le contexte est lourd, avec la consigne : objectif, décisions, fichiers, modifications, tests, problèmes ouverts, prochaine action. Ne pas changer de modèle en cours de conversation (le cache est perdu : tout le contexte est réécrit).
+- PASSATION : si une tâche complexe reste INACHEVÉE au changement de session, REMPLACER (jamais empiler) la section `## PASSATION` de la doc du module : 15 lignes au plus (objectif, fait, fichiers, décisions, état des tests, reste, prochaine action), sans code ni sortie d'outil ; l'effacer quand la tâche est finie. L'état Git et les fichiers restent la source de vérité. Pas de passation pour une petite correction.
+
+## Projet et commandes
+
+Pipeline Browser / PIPE FMZ : navigateur de fichiers en colonnes (Miller columns) en PySide6, Windows (DPI par écran, attributs cachés, chemins `.exe`), racine par défaut `F:\PIPELINE` (`root_path` dans `data/pipeline_settings.json`). Code et commentaires en français. Le dossier est SYNCHRONISÉ (cloud) : voir `docs/agents/pieges-generaux.md`.
+
+- Lancer : `pipeline_browser_debug.bat` (crée `.venv`, installe les dépendances de `requirements.txt`) ou `python pipeline_browser.py`.
+- Tests (unittest, Qt offscreen, certains exigent Blender) : un test `python -m unittest tests.test_render_log.RenderLogTest.test_x` (depuis la racine) ; un fichier léger `python -m unittest discover -s tests -p test_x.py`. Tout fichier de test commence par `import _isolate` (OBLIGATOIRE : réglages, presets, état des fenêtres redirigés vers des copies) ; patcher un nom dans le module qui l'utilise ; doubler les presets dans `settings_store`. Fenêtres de réglages construites par un test : détruites à la fin (`tests/_window_cleanup.py`, `WindowTestCase`) ; jamais de filtre d'événements permanent sur l'application. Tout nouveau fichier de test est rangé dans `MODULES` de `tests/run.py` ; les tests lourds sont marqués `@lent` (`tests/_lent.py`). Les tests Illustrator exigent `.venv/Scripts/python.exe`.
+- Pas de linter ni de build. `.venv/` ignoré par git.
 
 ## Architecture
 
-Modules plats à la racine (aucun package), en couches : chaque module n'importe que ceux qui le précèdent (les imports tardifs `import browser_core as pb_core` dans `settings_*` évitent le cycle).
+Modules plats à la racine, en couches : chaque module n'importe que ceux qui le précèdent (imports tardifs `import browser_core as pb_core` dans `settings_*` contre le cycle). Ordre : `config.py` (constantes) ; `ui_state.py` (réglages d'interface réassignés à l'exécution : TOUJOURS `ui_state.X`, jamais `from ui_state import X`) ; `previews.py` (aperçus, caches, rendus Blender / Maya) ; `browser_core.py` (scan disque, config projet, peinture) ; `row_delegates.py`, `column_config.py`, `capture_widgets.py`, `column.py`, `preview_column.py`, `detail_panel.py` (+ `detail_panel_parts/`) ; `software_launch.py` ; `fm_markdown/preview.py` ; `fm_visionneuse/` ; `lightroom_bridge.py` ; `pipeline_browser.py` (point d'entrée : `main()` = `load_settings()` → `apply_all_settings()` → `QApplication` → `apply_style()` → fenêtre ; cœur de `PipelineBrowser`, le reste dans les mixins de `main_window/`).
 
-Application (ordre de dépendance) :
-- `config.py` : constantes (extensions, listes d'omission `GLOBAL_OMIT_*`) ; `ui_state.py` : réglages d'interface **réassignés à l'exécution** (`WINDOW_RADIUS`, `HEADER_HEIGHT`, `STEP_BADGE_STYLE`…). Ils se lisent toujours via `ui_state.X` (jamais `from ui_state import X`, qui figerait la valeur).
-- `previews.py` : décodeurs d'aperçus, caches mémoire/disque, rendus Blender/Maya, ordonnanceur de fond, journal de rendu.
-- `browser_core.py` : scan disque, config projet/layout/raccourcis, helpers de peinture/redimensionnement.
-- `row_delegates.py` (`RowDelegate`, `ProjectTileDelegate`), `column_config.py` (dialogue de configuration des colonnes), `capture_widgets.py` (capture, `_PreviewBlock`, `_ColumnCard`…), `column.py` (`Column`), `preview_column.py` (`PreviewColumn`, export PureRef), `detail_panel.py` (`DetailPanel`, inspecteur ; méthodes dans `detail_panel_parts/`, carte `docs/agents/inspecteur.md`).
-- `software_launch.py` : ouvrir un logiciel (Blender, Houdini) dans le dossier d'une colonne (détail : `docs/agents/colonnes.md`).
-- `fm_markdown/preview.py` (ex `markdown_preview.py`, importé `as markdown_preview`) : rendu Markdown -> HTML partagé par le module Markdown et l'inspecteur (détail : `docs/agents/fm_markdown.md`).
-- `fm_visionneuse/` (ex `focus.py`, `file_attributes.py`, `file_filters.py`) : visionneuse, pellicule, planche, attributs, filtres (détail : `docs/agents/fm_visionneuse.md`).
-- `lightroom_bridge.py` : dossiers liés à un catalogue Lightroom Classic (détail : `docs/agents/apercus.md`).
-- `pipeline_browser.py` : point d'entrée et CŒUR de `PipelineBrowser(QMainWindow)` (`__init__`, navigation, événements de la fenêtre), `main()` (`load_settings()` → `apply_all_settings()` → `QApplication` → `apply_style()` → fenêtre). Le reste de la fenêtre est découpé par responsabilité dans le paquet `main_window/` (mixins : colonnes, cheminement, visionneuse, planche, repli, réglages, branchement des modules ; `TitleBar`, mode « Déplacer l'interface ») — carte : `docs/agents/fm_browser.md`.
+`fm_theme/` = l'aspect (n'importe RIEN de l'appli ; `fm_theme/hooks.py`) ; les anciens noms (`app_style.py`, `settings_widgets.py`…) sont des alias `sys.modules` ; éditeur d'aspect seul : `fm_theme.bat` (`theme_editor.py`). Fenêtre de réglages : `settings_store.py` → `settings_theme.py` → `settings_menu.py` → `settings_dialogs.py` → `settings_widgets.py` → `settings_colorpicker.py` → `settings_layout.py` → `settings_sections.py` → `settings_window.py` → `settings_window_v2.py` (seule fenêtre ; une par module = `SettingsWindowV2(module=…)`). `settings_catalog.py` (sans Qt) : `CATALOG` ; chaque paquet décrit ses réglages dans `<paquet>/settings.py`, défauts dans `<paquet>/settings_defaults.py`.
 
-Paquet `fm_theme/` (aspect, n'importe RIEN de l'appli : `fm_theme/hooks.py` pour ce que l'appli lui fournit) : `style` (ex `app_style`), `tokens` (palette `M`, titres, zones de saisie : sortis de `settings_store`), `theme`, `widgets`, `cells`, `layout`, `menu`, `colorpicker`, `dialogs`, `window`, `presets` (presets fm_theme, `fm_theme/presets/<nom>.json`). Les anciens noms (`app_style.py`, `settings_widgets.py`…) sont des alias `sys.modules` du même module (transition, voir `docs/agents/fm_theme.md`). Éditeur : `fm_theme.bat` (`theme_editor.py` : fenêtre de réglages réduite à l'aspect, sur un preset fm_theme).
+Paquets de modules (aucun ne dépend de la fenêtre principale, elle leur pose des `HOOKS`) : `fm_board`, `fm_miro`, `fm_cad`, `fm_design`, `fm_visionneuse`, `fm_markdown`, `fm_video`, `fm_tableur`, `fm_illustrator`, `fm_photoshop`, `fm_font`, `fm_pdf`, `fm_agenda`. Données de l'appli dans `data/`, modèles Blender dans `files/`, SVG dans `icons/`.
 
-Fenêtre de réglages (ordre de dépendance) : `settings_store.py` (palette `M`, `DEFAULT_SETTINGS`, `load/save_settings`, presets), `settings_theme.py` (rôles de texte, arrondis communs), `settings_menu.py` (menus contextuels, voir `docs/agents/reglages.md`), `settings_dialogs.py` (fenêtre de confirmation `confirm`, briques des réglages), `settings_widgets.py` (champs de base : `_Toggle`, `_MiniSlider`, `_FontSelectField`…), `settings_colorpicker.py`, `settings_layout.py` (sections/tableaux), `settings_sections.py` (registre des champs, polices/couleurs/entêtes/géométrie), `settings_window.py` (briques communes ; la fenêtre v1 est RETIRÉE, seule la v2 `settings_window_v2.py` existe) ; une fenêtre PAR MODULE = la même classe, `SettingsWindowV2(module=…)`). `settings_catalog.py` (sans Qt) : `Spec`, `Node`, `CATALOG` ; chaque module décrit ses réglages dans son paquet (`<paquet>/settings.py`, défauts dans `<paquet>/settings_defaults.py`).
+Réglages : `DEFAULT_SETTINGS` (`settings_store.py`) est la source de vérité, toute nouvelle clé y est déclarée (les inconnues sont ignorées) ; `apply_all_settings()` recopie les réglages dans les globals, avec un refresh derrière (`PipelineBrowser._apply_settings`). Enregistrer UNE clé d'état temps réel : `settings_store.save_live_state(clé, valeur)`, jamais `load_settings()` + `save_settings()`. Presets : `data/pipeline_settings.presets.json` (détail : `docs/agents/reglages.md`).
 
-`app_style.py` : tokens de style (couleurs, polices par rôle) et `build_stylesheet()`/`apply_style()`.
+## Documentation par sujet (lire la Carte, puis chercher dedans)
 
-Les données propres à l'appli sont dans `data/` (réglages, presets, état des fenêtres, cache d'aperçus, icônes de logiciels) ; `files/` contient les modèles Blender et profils de rendu, `icons/` les SVG de l'interface.
+| Sujet | Doc |
+|---|---|
+| Où vit chaque réglage (GÉNÉRÉE : `python tools/carte_reglages.py` après ajout / déplacement de section) | `carte_reglages.md` |
+| Pièges de fluidité, isolation des tests, outillage, méthode de travail | `pieges-generaux.md` |
+| Fenêtre principale découpée (`pipeline_browser.py` + `main_window/`) | `fm_browser.md` |
+| Colonnes, navigation, boutons de mode, logiciels, opérations sur les fichiers | `colonnes.md` |
+| Inspecteur (`detail_panel.py` + `detail_panel_parts/`) | `inspecteur.md` |
+| Aperçus, caches, rendus Blender / Maya / Houdini, Lightroom | `apercus.md` |
+| Visionneuse, pellicule, planche, PureRef, attributs, filtres | `fm_visionneuse.md` |
+| Fenêtre de réglages v2 et ses briques, presets, menus contextuels, gabarits | `reglages.md` (+ `over/Notes.txt` en entier avant de toucher la fenêtre de réglages) |
+| fm_theme (aspect, variantes, presets, isolation des modules), barres flottantes | `fm_theme.md`, `barres_outils_spec.md` |
+| Board (`.brd`) / tableau blanc / CAD / Design / Tableur | `fm_board.md` / `fm_miro.md` / `fm_cad.md` / `fm_design.md` / `fm_tableur.md` |
+| Illustrator / Photoshop / Typographie | `fm_illustrator.md` / `fm_photoshop.md` / `fm_font.md` |
+| Markdown / Vidéo / PDF / Agenda | `fm_markdown.md` / `fm_video.md` / `fm_pdf.md` / `fm_agenda.md` |
 
-Paquets : `fm_board/` (coque du board MRO), `fm_miro/` (tableau blanc), `fm_cad/` (CAD), `fm_design/` (Design, façon Canva), `fm_visionneuse/`, `fm_markdown/` (module Markdown), `fm_video/` (module vidéo), `fm_tableur/` (tableur du board et mode Standard), `fm_illustrator/` (illustration vectorielle du board, façon Illustrator), `fm_photoshop/` (images matricielles du board : calques, masques, retouche) ; aucun ne dépend de la fenêtre principale (elle leur pose des `HOOKS`).
+Suivis de mission à la racine : `PDF_MODULE_PROGRESS.md`, `FM_AGENDA_PROGRESS.md`, `COLOR_ANALYSIS_PROGRESS.md`.
 
-### Réglages (règles de base)
-Enregistrer UNE clé d'état temps réel : `settings_store.save_live_state(clé, valeur)` (écrit cette clé dans le fichier tel qu'il est), jamais `load_settings()` + `save_settings()` (cela fige dans le fichier les valeurs du preset actif, même périmées).
-`DEFAULT_SETTINGS` (settings_store.py) est la source de vérité : `load_settings` fusionne `data/pipeline_settings.json` par-dessus (puis le preset actif, voir « Presets » dans `docs/agents/reglages.md`) et ignore les clés inconnues — toute nouvelle clé doit donc y être déclarée. `apply_all_settings()` (pipeline_browser.py) est le point d'entrée unique qui recopie les réglages dans des globals/tokens ; il n'a d'effet visible qu'avec un refresh derrière (`refresh_all_columns`, `refresh_colors`…, cf. `PipelineBrowser._apply_settings`). Presets : `data/pipeline_settings.presets.json`.
+## Règles de l'appli
 
-## Documentation détaillée par sujet (À LIRE AVANT d'y travailler)
-
-Le détail de chaque module (choix de l'utilisateur, pièges, mesures, tests) est dans `docs/agents/`, lu seulement quand on travaille dessus. Avant de modifier un sujet : lire son fichier. Après une demande de l'utilisateur ou un piège trouvé : l'y noter (jamais ici, sauf règle valable pour toute l'appli).
-
-- `docs/agents/pieges-generaux.md` : pièges de fluidité déjà rencontrés, isolation des tests.
-- `docs/agents/inspecteur.md` : inspecteur découpé (`detail_panel.py` + `detail_panel_parts/`) : quel fichier porte quelle responsabilité.
-- `docs/agents/fm_browser.md` : fenêtre principale découpée (`pipeline_browser.py` + `main_window/`) : quel fichier porte quelle responsabilité, où patcher dans les tests.
-- `docs/agents/colonnes.md` : colonnes (configuration `.pipeline_*.json`, animations, navigation réactive, réseau, dessin), boutons de mode de la barre, lancement des logiciels, opérations sur les fichiers (confirmations, corbeille, glisser-déposer).
-- `docs/agents/apercus.md` : pipeline d'aperçus, caches, rendus Blender / Maya / Houdini, rendu automatique SUSPENDU, Lightroom.
-- `docs/agents/fm_visionneuse.md` : visionneuse, pellicule, planche, PureRef, cadre « Visionneuse », attributs des fichiers, filtres.
-- `docs/agents/fm_markdown.md` : module Markdown / code (`fm_markdown/`, ex `mdeditor/` + `markdown_preview.py`), aperçu des notes, CSS / Obsidian.
-- `docs/agents/fm_board.md` : coque du board (`fm_board/`, ex `board/` : fichier `.mro`, scène, vue, barres) ; `docs/agents/fm_miro.md` : tableau blanc (`fm_miro/`, clone de Miro).
-- `docs/agents/fm_cad.md` : module CAD du board (`fm_cad/`, ex `board/cad*.py`).
-- `docs/agents/fm_design.md` : module Design du board (`fm_design/`, à la manière de Canva : pages, formes, textes, images, modèles, export) ; plan de travail et mesures en fin de doc.
-- `docs/agents/fm_video.md` : module vidéo (`fm_video/`, ex `video/`).
-- `docs/agents/fm_tableur.md` : module Tableur du board (`fm_tableur/`, à la manière d'Excel : moteur de calcul formualizer, grille, Excel / CSV, graphiques, mode Standard) ; matrice des fonctions `docs/agents/fm_tableur_fonctions.md`.
-- `docs/agents/fm_illustrator.md` : module Illustrator du board (`fm_illustrator/`, illustration vectorielle à la manière d'Adobe Illustrator : plans de travail, plume / Bézier, formes, sélection directe, export / import SVG) ; carte, choix, mesures, état et PASSATION.
-- `docs/agents/fm_photoshop.md` : module Photoshop du board (`fm_photoshop/`, retouche et composition d'images matricielles : calques, groupes, masques, sélections, brosse et retouche, réglages et filtres, transformations, texte et formes, couleur ICC, import PSD en lecture seule, export PNG / TIFF / JPEG / WebP, format natif `.fmps`, éditeur Standard partagé avec l'élément du Board) ; carte, décisions, état, mesures, limites et PASSATION.
-- `docs/agents/fm_font.md` : module typographique (`fm_font/`, éditeur de polices façon FontLab / Glyphs : sources UFO 3 + Designspace, Bézier, composants, métriques, crénage, features, compilation OTF / TTF / WOFF / variable, couleur COLR, hinting, diagnostic) ; carte et PASSATION, parties `fm_font_decisions.md`, `fm_font_etat.md`, `fm_font_mesures.md`.
-- `docs/agents/reglages.md` : fenêtre de réglages v2 et ses briques (tableaux, toggles, presets, menus contextuels, fenêtres additionnelles, « Changement de style à la volée », « Override settings », couleurs, cheminement / barre de navigation, préchargement), gabarits de lignes, réutilisation dans d'autres applis.
-- `docs/agents/fm_theme.md` : PROJET (non codé) de séparation en deux entités, fm_theme (aspect : variantes d'éléments, presets) et fm_browser (tout le reste) ; ordre de migration, questions ouvertes.
-
-## Déplacements : Ctrl + glisser (règle de l'appli)
-
-Demande de l'utilisateur : TOUT déplacement d'élément (colonnes, sous-cellules et lignes des tableaux, titres de la v2, éléments des menus contextuels, lignes des colonnes, colonnes IN/OVER/OUT/LOGICIELS) démarre seulement avec Ctrl enfoncé (`QApplication.keyboardModifiers()` au départ du geste) ; sans Ctrl, le geste garde son sens habituel (clic, glisser de fichiers pour les lignes des colonnes). Tout nouveau déplacement doit suivre cette règle (et l'opacité `DRAG_GHOST_OPACITY`).
-
-## Conventions du projet
-
-**Styles : jamais inventés.** Tout élément qui a déjà son équivalent dans les réglages (tableau, titre, zone de saisie, toggle, panneau…), y compris dans la fenêtre principale, est construit AVEC les briques des réglages (`settings_window_v2.seed_window_look` puis `_flat_cells_table` / `build_cells_table`, rôles de texte, `_title_font`, `_PanelFrame` + `M`, `make_field`) ; précédents : `settings_quick_style.QuickStyleWindow`, `focus.FocusInfoPanel`. Demande expresse de l'utilisateur, valable pour tout élément à venir.
-
-Gabarits des lignes de réglages et sources uniques des styles : `docs/agents/reglages.md` ; lire `over/Notes.txt` en entier avant de modifier la fenêtre de réglages.
+- **Styles jamais inventés** : tout élément qui a son équivalent dans les réglages (tableau, titre, zone de saisie, toggle, panneau…) est construit AVEC les briques des réglages (`settings_window_v2.seed_window_look` puis `_flat_cells_table` / `build_cells_table`, rôles de texte, `_title_font`, `_PanelFrame` + `M`, `make_field`) ; précédents : `settings_quick_style.QuickStyleWindow`, `focus.FocusInfoPanel`. Gabarits : `docs/agents/reglages.md`.
+- **Ctrl + glisser** : TOUT déplacement d'élément (colonnes, sous-cellules et lignes des tableaux, titres de la v2, éléments des menus contextuels, lignes des colonnes, colonnes IN/OVER/OUT/LOGICIELS) démarre seulement avec Ctrl enfoncé au départ du geste (`QApplication.keyboardModifiers()`), avec l'opacité `DRAG_GHOST_OPACITY` ; sans Ctrl le geste garde son sens habituel. EXCEPTION voulue : les barres d'outils flottantes (glissées SANS Ctrl, Ctrl + clic sur le titre = renommer), identiques à `docs/agents/prototype_barres_outils.html` (spec `barres_outils_spec.md`).
+- **Échap ne fait jamais sortir d'un module** (board et ses modules, vidéo, typographie, visionneuse…) : il annule seulement (geste, sélection, outil, plein écran, zoom).
 
 ## Commit et push
 
-- Commit depuis WSL avec `git` (identité globale déjà configurée) ; `git add -u` pour les fichiers suivis, `lancer.sh` (non suivi) n'est pas à ajouter.
-- Le push se fait avec `git.exe push` (Git for Windows, via le Gestionnaire d'identifiants Windows) : un `git push` WSL échoue (« could not read Username for 'https://github.com' »). Sinon, pousser depuis un terminal Windows dans le dossier.
-- Messages de commit en français, terminés par la ligne `Co-Authored-By` demandée par l'environnement.
+`git add -u` pour les fichiers suivis (jamais `lancer.sh`) ; messages en français, terminés par la ligne `Co-Authored-By` demandée par l'environnement. Push : `git.exe push` (Git for Windows, Gestionnaire d'identifiants) ; un `git push` de WSL échoue (« could not read Username »).

@@ -4,6 +4,7 @@ par `settings_store`. Aucun import de l'appli. Lus par `canvas.GlyphCanvas.apply
 from typing import Any
 
 TYPO_DEFAULTS: dict[str, Any] = {
+    "typo_bars": {},                       # barres flottantes de l'éditeur (fm_theme/bar_manager.py), état temps réel
     # Nouveau projet : unités par em et métriques verticales proposées.
     "typo_new_upm": 1000,
     "typo_new_ascender": 800,

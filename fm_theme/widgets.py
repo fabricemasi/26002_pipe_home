@@ -43,7 +43,7 @@ from fm_theme.style import (
     ITEM_FONT_ROLE_LABELS,
 )
 from fm_theme.theme import _input_radius, _qfont, _register_input, _register_radius, _set_text_role
-from fm_theme.menu import Menu, menu_row  # noqa: F401 (reexporte : menus contextuels)
+from fm_theme.menu import Menu, ghost_action, mark_current, menu_row  # noqa: F401 (reexporte : menus contextuels)
 from fm_theme.tokens import (
     M,
     input_bg,
@@ -358,14 +358,22 @@ class _MiniSlider(QWidget):
         self._value = max(minimum, min(maximum, value))
         self._width = width
         self._grab_offset = 0
+        self._style = _SLIDER_STYLE          # habillage : celui des réglages (Sliders), sauf `set_style` (barres d'outils)
         self.setCursor(Qt.ArrowCursor)
         self._apply_size()
+
+    def set_style(self, style: dict | None) -> None:
+        """Habillage propre à ce curseur (dict aux clés de `_SLIDER_STYLE`), ou None : celui des réglages."""
+        style = style or _SLIDER_STYLE
+        if style is not self._style and style != self._style:
+            self._style = style
+            self.apply_style()
 
     def _apply_size(self):
         # +8 : meme marge verticale que l'ancien fixe (14 + 8 = 22) —
         # garde le curseur/le rail respirer plutot que toucher les bords
         # haut/bas du widget quel que soit thumb_h/track_h.
-        h = max(_SLIDER_STYLE["thumb_h"], _SLIDER_STYLE["track_h"]) + 8
+        h = max(self._style["thumb_h"], self._style["track_h"]) + 8
         self.setFixedSize(self._width, h)
 
     def apply_style(self):
@@ -399,7 +407,7 @@ class _MiniSlider(QWidget):
             x = event.position().toPoint().x()
             # Clic SUR le curseur : on le saisit la ou il est (pas de saut
             # vers le pointeur) ; ailleurs, il vient sous le pointeur.
-            thumb_w = _SLIDER_STYLE["thumb_w"]
+            thumb_w = self._style["thumb_w"]
             knob_center = round(self._pct() * self.width())
             self._grab_offset = x - knob_center if abs(x - knob_center) <= thumb_w // 2 + 2 else 0
             # Ancrage ECRAN du glisser : la valeur suit le deplacement de la souris depuis le clic,
@@ -429,7 +437,7 @@ class _MiniSlider(QWidget):
         handler = getattr(self, "knob_double_clicked", None)
         if event.button() == Qt.LeftButton and handler is not None:
             x = event.position().toPoint().x()
-            if abs(x - round(self._pct() * self.width())) <= _SLIDER_STYLE["thumb_w"] // 2 + 3:
+            if abs(x - round(self._pct() * self.width())) <= self._style["thumb_w"] // 2 + 3:
                 self._press_global_x = None
                 handler()
                 event.accept()
@@ -570,46 +578,46 @@ class _MiniSlider(QWidget):
         # -- rail : voir _paint_bordered — bordure INDEPENDANTE par cote
         # (voir la remarque de l'utilisateur, "4 couleurs comme la bordure
         # du selecteur") puis remplissage deja-parcouru/a-parcourir.
-        track_h = _SLIDER_STYLE["track_h"]
+        track_h = self._style["track_h"]
         track_rect = QRect(0, mid_y - track_h // 2, self.width(), track_h)
         # track_h > 2 : rail trop fin pour loger meme 1px de bordure sur
         # chaque cote (voir l'ancien code, meme garde-fou) — tous les cotes
         # forces a "off" dans ce cas, quel que soit le reglage par cote.
         if track_h > 2:
-            track_border_on = dict(_SLIDER_STYLE["track_border_enabled"])
+            track_border_on = dict(self._style["track_border_enabled"])
         else:
             track_border_on = {k: False for k in ("top", "right", "bottom", "left")}
 
         def _fill_track(p, inner):
-            p.fillRect(inner, QColor(_SLIDER_STYLE["track_empty"]))
+            p.fillRect(inner, QColor(self._style["track_empty"]))
             fill_w = round(self._pct() * inner.width())
             if fill_w > 0:
-                p.fillRect(inner.x(), inner.y(), fill_w, inner.height(), QColor(_SLIDER_STYLE["track_fill"]))
+                p.fillRect(inner.x(), inner.y(), fill_w, inner.height(), QColor(self._style["track_fill"]))
 
         self._paint_bordered(
-            p, track_rect, _SLIDER_STYLE["track_radius"], track_border_on,
-            {side: _SLIDER_STYLE[f"track_border_{side}"] for side in ("top", "right", "bottom", "left")},
+            p, track_rect, self._style["track_radius"], track_border_on,
+            {side: self._style[f"track_border_{side}"] for side in ("top", "right", "bottom", "left")},
             _fill_track,
-            key=("track", self._value, self._min, self._max, _SLIDER_STYLE["track_empty"],
-                 _SLIDER_STYLE["track_fill"]),
+            key=("track", self._value, self._min, self._max, self._style["track_empty"],
+                 self._style["track_fill"]),
         )
 
         # -- selecteur : meme principe, une couleur de bordure par cote
         # (voir la remarque de l'utilisateur, "1 couleur pour chaque cote").
-        thumb_w, thumb_h = _SLIDER_STYLE["thumb_w"], _SLIDER_STYLE["thumb_h"]
+        thumb_w, thumb_h = self._style["thumb_w"], self._style["thumb_h"]
         fill_w = round(self._pct() * self.width())
         knob_x = max(0, min(self.width() - thumb_w, fill_w - thumb_w // 2))
         thumb_rect = QRect(knob_x, mid_y - thumb_h // 2, thumb_w, thumb_h)
-        thumb_border_on = _SLIDER_STYLE["thumb_border_enabled"]
+        thumb_border_on = self._style["thumb_border_enabled"]
 
         def _fill_thumb(p, inner):
-            p.fillRect(inner, QColor(_SLIDER_STYLE["thumb_color"]))
+            p.fillRect(inner, QColor(self._style["thumb_color"]))
 
         self._paint_bordered(
-            p, thumb_rect, _SLIDER_STYLE["thumb_radius"], thumb_border_on,
-            {side: _SLIDER_STYLE[f"thumb_border_{side}"] for side in ("top", "right", "bottom", "left")},
+            p, thumb_rect, self._style["thumb_radius"], thumb_border_on,
+            {side: self._style[f"thumb_border_{side}"] for side in ("top", "right", "bottom", "left")},
             _fill_thumb,
-            key=("thumb", _SLIDER_STYLE["thumb_color"]),
+            key=("thumb", self._style["thumb_color"]),
         )
         p.end()
 
@@ -1260,51 +1268,71 @@ _TOGGLE_STYLE = "toggle1"
 
 _ALL_SIDES_ON = {"top": True, "right": True, "bottom": True, "left": True}
 
-_TOGGLE_SHAPE_DEFAULTS = {
-    "outer_w": 29, "outer_h": 14,
-    # dict {cote: bool}, pas un bool unique (voir _coerce_side_enabled/la
-    # remarque de l'utilisateur, "un toggle par cote") — reecrase de toute
-    # facon par _sync_toggle_shape_style avant le 1er rendu, valeur de
-    # depart seulement.
-    "outer_border_enabled": dict(_ALL_SIDES_ON), "outer_border_thickness": 1,
-    "outer_border_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
-    "outer_border_top": "#2e343a", "outer_border_right": "#2e343a",
-    "outer_border_bottom": "#2e343a", "outer_border_left": "#2e343a",
-    "outer_bg": "#141618",
-    # Fond a l'etat ON (voir _paint_toggle_shape, qui interpole entre
-    # outer_bg -> outer_bg_on selon `progress` pendant l'animation) — voir
-    # la remarque de l'utilisateur, "dans les toggles, j'aimerais que la
-    # couleur de fond differe entre l'etat on et l'etat off".
-    "outer_bg_on": "#3f6f9f",
-    "coche_w": 11, "coche_h": 11,
-    # Marge (px, "x" sur le schema de l'utilisateur) entre le bord du cadre
-    # et la coche — reglable (voir Toggles > Coche > Distance du bord),
-    # PAR STYLE (chacun le sien). Sert de marge HAUTE et BASSE (voir
-    # _sync_toggle_shape_style, qui EN DEDUIT coche_h — la hauteur de la
-    # coche est LIEE a celle du cadre, voir la remarque de l'utilisateur)
-    # et, pour "toggle1", de marge DROITE aussi (voir _paint_toggle_shape).
-    "coche_margin": 4,
-    "coche_border_enabled": dict(_ALL_SIDES_ON), "coche_border_thickness": 1,
-    "coche_border_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
-    "coche_border_top": "#2e343a", "coche_border_right": "#2e343a",
-    "coche_border_bottom": "#2e343a", "coche_border_left": "#2e343a",
-    "coche_color": "#3f6f9f",
-    # Habillage de la coche : rien, un texte ou une icone dessines DANS la coche.
-    "skin": "none", "text": "",
-    "text_font": {"family": "", "bold": True, "italic": False, "size": 10, "smoothing": "current",
-                  "color": "#ffffff"},
-    "icon": "", "icon_color": "#ffffff",
-    # Type : "qt" (cadre + coche peints) ou "icons" (images ON/OFF + sequence optionnelle entre les
-    # deux, dans data/toggle_icons/) ; mouvement de la coche : "slide" (glissiere) ou "fade" (centree,
-    # fondu) ; duree de l'animation ON <-> OFF.
-    "kind": "qt", "motion": "slide", "icon_on": "", "icon_off": "", "icon_frames": [], "anim_ms": 140,
-}
+def _toggle_state_shape(prefix: str, state: str, colors: dict | None = None, settings: dict | None = None) -> dict:
+    """Fond + coche d'UN etat d'un style (Toggles > <style> > Etat OFF / Etat ON), couleurs resolues."""
+    from fm_theme.toggle_states import state_values
+    v = state_values(settings or {}, prefix, state)
+    colors = colors or {}
 
-_TOGGLE1_STYLE = dict(_TOGGLE_SHAPE_DEFAULTS)
+    def res(value):
+        return _resolve_color_value(value, colors)
 
-_TOGGLE2_STYLE = dict(_TOGGLE_SHAPE_DEFAULTS)
+    def sides(part):
+        border = v[f"{part}_border"] or {}
+        return {side: res(border.get(side, "#2e343a")) for side in ("top", "right", "bottom", "left")}
 
-_TOGGLE2_STYLE.update({"outer_w": 22, "outer_h": 22, "motion": "fade"})
+    smoothing_on = bool(v["coche_text_font_smoothing_enabled"])
+    return {
+        "bg_w": max(4, int(v["bg_width"])), "bg_h": max(4, int(v["bg_height"])),
+        "bg_border_enabled": _coerce_side_enabled(v["bg_border_enabled"]),
+        "bg_border_thickness": max(0, int(v["bg_border_thickness"])),
+        "bg_border_radius": _coerce_corner_radius(v["bg_border_radius"]),
+        "bg_border": sides("bg"), "bg_color": res(v["bg_color"]),
+        "coche_w": max(1, int(v["coche_width"])), "coche_h": max(1, int(v["coche_height"])),
+        "coche_border_enabled": _coerce_side_enabled(v["coche_border_enabled"]),
+        "coche_border_thickness": max(0, int(v["coche_border_thickness"])),
+        "coche_border_radius": _coerce_corner_radius(v["coche_border_radius"]),
+        "coche_border": sides("coche"), "coche_color": res(v["coche_color"]),
+        # Habillage de la coche : rien, un texte ou une icone (image importee), au milieu de la coche.
+        "skin": v["coche_skin"] if v["coche_skin"] in ("text", "icon") else "none",
+        "text": str(v["coche_text"] or ""),
+        "text_font": {"family": v["coche_text_font_family"] or "", "bold": bool(v["coche_text_font_bold"]),
+                      "italic": bool(v["coche_text_font_italic"]), "size": max(4, int(v["coche_text_font_size"])),
+                      "smoothing": v["coche_text_font_smoothing"] if smoothing_on else "current",
+                      "color": res(v["coche_text_font_color"])},
+        "icon": str(v["coche_icon"] or ""),
+    }
+
+
+def _toggle_box(states: dict) -> tuple[int, int]:
+    """Taille de ce que peint un toggle Qt, sur ses deux etats : le fond, agrandi de ce que la coche en deborde
+    (elle est centree verticalement, a egale distance du bord sur les cotes : deborde des deux cotes)."""
+    w = h = 0
+    for st in states.values():
+        over = max(0, -((st["bg_h"] - st["coche_h"]) // 2))        # distance du bord negative : deborde
+        w = max(w, st["bg_w"] + 2 * over, st["coche_w"])
+        h = max(h, st["bg_h"], st["coche_h"])
+    return w, h
+
+
+def _toggle_defaults(prefix: str) -> dict:
+    from fm_theme.toggle_states import defaults
+    states = {state: _toggle_state_shape(prefix, state, settings=defaults(prefix)) for state in ("off", "on")}
+    w, h = _toggle_box(states)
+    return {
+        "states": states, "outer_w": w, "outer_h": h,
+        # Type : "qt" (fond + coche peints) ou "icons" (images ON/OFF + sequence optionnelle entre les deux, dans
+        # data/toggle_icons/) ; mouvement de la coche : "slide" (glissiere) ou "fade" (centree, fondu) ; duree.
+        "kind": "qt", "motion": "fade" if prefix == "toggle2" else "slide", "icon_on": "", "icon_off": "",
+        "icon_frames": [], "anim_ms": 140,
+    }
+
+
+_TOGGLE_SHAPE_DEFAULTS = _toggle_defaults("toggle1")
+
+_TOGGLE1_STYLE = _toggle_defaults("toggle1")
+
+_TOGGLE2_STYLE = _toggle_defaults("toggle2")
 
 # Registre des styles : toggle1, toggle2 et ceux que l'utilisateur ajoute (toggle3...).
 _TOGGLE_STYLES: dict[str, dict] = {"toggle1": _TOGGLE1_STYLE, "toggle2": _TOGGLE2_STYLE}
@@ -1333,54 +1361,12 @@ def _resolve_toggle_key(key: str | None) -> str:
 
 
 def _sync_toggle_shape_style(target: dict, settings: dict, prefix: str) -> None:
-    """Recopie les reglages `{prefix}_*` de `settings` dans `target`
-    (_TOGGLE1_STYLE ou _TOGGLE2_STYLE) — voir _sync_toggle_style, qui
-    l'appelle pour chacun des 2 styles a chaque changement."""
-    target["outer_w"] = max(4, int(settings.get(f"{prefix}_outer_width", target["outer_w"])))
-    target["outer_h"] = max(4, int(settings.get(f"{prefix}_outer_height", target["outer_h"])))
-    target["outer_border_enabled"] = _coerce_side_enabled(settings.get(f"{prefix}_outer_border_enabled", True))
-    target["outer_border_thickness"] = max(0, int(settings.get(f"{prefix}_outer_border_thickness", 1)))
-    target["outer_border_radius"] = _coerce_corner_radius(settings.get(f"{prefix}_outer_border_radius", 0))
-    # _resolve_color_value : outer_border/coche_border (voir _AppOrCustom
-    # ColorField, bordures Toggles/Sliders) peuvent contenir un hex direct
-    # OU une reference "@<slot>" a une pastille semantique — cette derniere
-    # doit etre resolue en hex REEL avant de finir ici, seule forme que
-    # _paint_bordered_rect (QColor(...)) sait interpreter.
+    """Recopie les reglages `{prefix}_*` de `settings` dans `target` (le style d'un toggle) : Type, puis fond et
+    coche de CHAQUE etat (`{prefix}_off_*`, `{prefix}_on_*`, fm_theme/toggle_states.py) — voir _sync_toggle_style,
+    qui l'appelle pour chaque style a chaque changement."""
     colors = settings.get("colors") or {}
-    outer_border = settings.get(f"{prefix}_outer_border") or {}
-    for side in ("top", "right", "bottom", "left"):
-        target[f"outer_border_{side}"] = _resolve_color_value(
-            outer_border.get(side, target[f"outer_border_{side}"]), colors)
-    target["outer_bg"] = _resolve_color_value(settings.get(f"{prefix}_outer_bg", target["outer_bg"]), colors)
-    target["outer_bg_on"] = _resolve_color_value(settings.get(f"{prefix}_outer_bg_on", target["outer_bg_on"]), colors)
-    target["coche_w"] = max(2, int(settings.get(f"{prefix}_coche_width", target["coche_w"])))
-    target["coche_margin"] = max(0, int(settings.get(f"{prefix}_coche_margin", target["coche_margin"])))
-    # coche_h LIEE a outer_h (voir la remarque de l'utilisateur), pas un
-    # reglage independant — marge haute ET basse egales a x (coche_margin),
-    # ce qui centre aussi verticalement la coche (equivalent, voir
-    # _paint_toggle_shape).
-    target["coche_h"] = max(2, target["outer_h"] - 2 * target["coche_margin"])
-    target["coche_border_enabled"] = _coerce_side_enabled(settings.get(f"{prefix}_coche_border_enabled", True))
-    target["coche_border_thickness"] = max(0, int(settings.get(f"{prefix}_coche_border_thickness", 1)))
-    target["coche_border_radius"] = _coerce_corner_radius(settings.get(f"{prefix}_coche_border_radius", 0))
-    coche_border = settings.get(f"{prefix}_coche_border") or {}
-    for side in ("top", "right", "bottom", "left"):
-        target[f"coche_border_{side}"] = _resolve_color_value(
-            coche_border.get(side, target[f"coche_border_{side}"]), colors)
-    target["coche_color"] = _resolve_color_value(settings.get(f"{prefix}_coche_color", target["coche_color"]), colors)
-    target["skin"] = settings.get(f"{prefix}_coche_skin", "none")
-    target["text"] = str(settings.get(f"{prefix}_coche_text", ""))
-    smoothing_on = bool(settings.get(f"{prefix}_coche_text_font_smoothing_enabled", False))
-    target["text_font"] = {
-        "family": settings.get(f"{prefix}_coche_text_font_family", "") or "",
-        "bold": bool(settings.get(f"{prefix}_coche_text_font_bold", True)),
-        "italic": bool(settings.get(f"{prefix}_coche_text_font_italic", False)),
-        "size": max(4, int(settings.get(f"{prefix}_coche_text_font_size", 10))),
-        "smoothing": settings.get(f"{prefix}_coche_text_font_smoothing", "current") if smoothing_on else "current",
-        "color": _resolve_color_value(settings.get(f"{prefix}_coche_text_font_color", "#ffffff"), colors),
-    }
-    target["icon"] = str(settings.get(f"{prefix}_coche_icon", "") or "")
-    target["icon_color"] = _resolve_color_value(settings.get(f"{prefix}_coche_icon_color", "#ffffff"), colors)
+    target["states"] = {state: _toggle_state_shape(prefix, state, colors, settings) for state in ("off", "on")}
+    target["outer_w"], target["outer_h"] = _toggle_box(target["states"])
     target["kind"] = "icons" if settings.get(f"{prefix}_kind") == "icons" else "qt"
     motion = settings.get(f"{prefix}_motion", "fade" if prefix == "toggle2" else "slide")
     target["motion"] = "fade" if motion == "fade" else "slide"
@@ -1734,68 +1720,105 @@ def _blend_hex(off_hex: str, on_hex: str, t: float) -> str:
     b = round(off_c.blue() + (on_c.blue() - off_c.blue()) * t)
     return QColor(r, g, b).name()
 
+def _blend_argb(off_hex: str, on_hex: str, t: float) -> str:
+    """Comme _blend_hex, transparence comprise (« #aarrggbb ») : une coche transparente a l'etat OFF apparait
+    en fondu."""
+    t = max(0.0, min(1.0, t))
+    a, b = QColor(off_hex), QColor(on_hex)
+    return QColor(*(round(x + (y - x) * t) for x, y in (
+        (a.red(), b.red()), (a.green(), b.green()), (a.blue(), b.blue()), (a.alpha(), b.alpha())))).name(
+        QColor.HexArgb)
+
+
+def _lerp(a: float, b: float, t: float) -> float:
+    return a + (b - a) * t
+
+
+def _toggle_part_at(off: dict, on: dict, part: str, t: float) -> dict:
+    """Fond ou coche entre ses deux etats (`t` : 0 = OFF, 1 = ON) : tailles, epaisseur, coins et couleurs
+    interpoles ; cotes allumes : ceux de l'etat le plus proche. Au repos (t = 0 ou 1, le cas courant) : la forme
+    de l'etat, calculee une fois (aucun melange de couleurs a chaque peinture)."""
+    if t <= 0.0 or t >= 1.0 or off is on:
+        st = on if t >= 1.0 else off
+        cache = st.setdefault("_parts", {})
+        if part not in cache:
+            cache[part] = _toggle_part_at(st, dict(st), part, 0.5)
+        return cache[part]
+    near = on if t >= 0.5 else off
+    return {
+        "w": round(_lerp(off[f"{part}_w"], on[f"{part}_w"], t)), "h": round(_lerp(off[f"{part}_h"], on[f"{part}_h"], t)),
+        "enabled": near[f"{part}_border_enabled"],
+        "thickness": round(_lerp(off[f"{part}_border_thickness"], on[f"{part}_border_thickness"], t)),
+        "radius": {k: round(_lerp(off[f"{part}_border_radius"][k], on[f"{part}_border_radius"][k], t))
+                   for k in _CORNERS},
+        "colors": {k: _blend_argb(off[f"{part}_border"][k], on[f"{part}_border"][k], t)
+                   for k in ("top", "right", "bottom", "left")},
+        "fill": _blend_argb(off[f"{part}_color"], on[f"{part}_color"], t),
+    }
+
+
+def _paint_part(p: QPainter, rect: QRect, part: dict) -> None:
+    _paint_bordered_rect(p, rect, part["radius"], part["enabled"], part["thickness"], part["colors"], part["fill"])
+
+
 def _paint_toggle_shape(p: QPainter, x: int, y: int, style_key: str, style: dict, checked: bool,
                          progress: float | None = None):
-    """Dessine le cadre EXTERIEUR + la coche INTERIEURE d'un toggle a la
-    position (x, y), selon `style` (voir _TOGGLE1_STYLE/_TOGGLE2_STYLE) —
-    factorise entre _Toggle.paintEvent (style COURANT de la fenetre, voir
-    _TOGGLE_STYLE) et _ToggleShapePreview (apercu de CHAQUE style, voir
-    Toggles > Style, toujours a l'etat FIXE ON/OFF — jamais anime).
+    """Dessine le FOND + la COCHE d'un toggle dans la boite (x, y, outer_w, outer_h) selon `style` : chacun a son
+    aspect a l'etat OFF et a l'etat ON (Toggles > <style> > Etat OFF / Etat ON) — factorise entre _Toggle.paintEvent
+    et _ToggleShapePreview (apercu fixe ON / OFF de chaque style).
 
-    `progress` (0.0 = OFF, 1.0 = ON) anime la TRANSITION entre les 2 etats
-    (voir _Toggle, qui glisse cette valeur de 0 a 1 ou l'inverse au clic —
-    voir la remarque de l'utilisateur, "une animation quand le toggle
-    passe de l'etat on a l'etat off et vice versa") ; None (les 2 apercus
-    statiques ci-dessus) retombe sur l'etat fixe de `checked` (0.0 ou 1.0).
-
-    Les 2 styles se comportent tres differemment entre ON et OFF (voir la
-    remarque de l'utilisateur, corrigeant un malentendu precedent) :
-    - "toggle1" : GLISSIERE classique — la coche garde TOUJOURS le meme
-      style (bordure/couleur/taille inchangees), seule sa POSITION change,
-      caleé a droite (ON) ou a gauche (OFF), avec la meme marge des 2
-      cotes (voir Toggles > Coche > Distance du bord) — animee ici par un
-      simple LERP de sa position x entre les 2 bornes.
-    - "toggle2" : la coche reste centree mais DISPARAIT completement a
-      l'etat OFF (rien de dessine, pas meme un contour) — ne s'affiche
-      qu'a l'etat ON — animee ici par un FONDU (opacite = progress)."""
+    `progress` (0.0 = OFF, 1.0 = ON) anime la transition (None : l'etat fixe de `checked`) :
+    - fond : taille, bordure, coins et couleur passent de l'etat OFF a l'etat ON, centre dans la boite ;
+    - coche « glissiere » : elle va du bord gauche (OFF) au bord droit (ON) du fond, a egale distance du bord en
+      haut, en bas et sur le cote (= (hauteur du fond - hauteur de la coche) / 2), et passe de son aspect OFF a son
+      aspect ON ; son habillage (texte / icone) passe en fondu de l'un a l'autre ;
+    - coche « fondu » : centree, la coche OFF s'efface pendant que la coche ON apparait."""
     if progress is None:
         progress = 1.0 if checked else 0.0
+    box = QRect(x, y, style["outer_w"], style["outer_h"])
     if style.get("kind") == "icons":
-        _paint_toggle_icons(p, QRect(x, y, style["outer_w"], style["outer_h"]), style, progress)
+        _paint_toggle_icons(p, box, style, progress)
         return
-    outer_rect = QRect(x, y, style["outer_w"], style["outer_h"])
-    outer_colors = {side: style[f"outer_border_{side}"] for side in ("top", "right", "bottom", "left")}
-    outer_bg = _blend_hex(style["outer_bg"], style["outer_bg_on"], progress)
-    _paint_bordered_rect(p, outer_rect, style["outer_border_radius"], style["outer_border_enabled"],
-                          style["outer_border_thickness"], outer_colors, outer_bg)
-    margin = style["coche_margin"]
-    # coche_h est deduite de outer_h en retirant 2x la marge (voir
-    # _sync_toggle_shape_style), donc marge haute = marge basse = margin,
-    # ce qui centre deja la coche verticalement — vrai pour les 2 styles,
-    # quel que soit l'etat.
-    cy = y + margin
-    fade = style.get("motion", "slide") == "fade"
-    if fade:
-        if progress <= 0.0:
-            return   # coche invisible a l'etat OFF (rien a peindre)
-        cx = x + (style["outer_w"] - style["coche_w"]) // 2
-    else:
-        off_x = margin
-        on_x = max(0, style["outer_w"] - margin - style["coche_w"])
-        cx = x + round(off_x + (on_x - off_x) * progress)
-    coche_rect = QRect(cx, cy, style["coche_w"], style["coche_h"])
-    coche_colors = {side: style[f"coche_border_{side}"] for side in ("top", "right", "bottom", "left")}
-    if fade and progress < 1.0:
+    off, on = style["states"]["off"], style["states"]["on"]
+    center = QRectF(box).center()
+    bg = _toggle_part_at(off, on, "bg", progress)
+    bg_rect = QRect(round(center.x() - bg["w"] / 2), round(center.y() - bg["h"] / 2), bg["w"], bg["h"])
+    _paint_part(p, bg_rect, bg)
+
+    def coche_rect(st: dict, slide_t: float | None) -> QRect:
+        """Coche d'un etat : centree (fondu) ou au bord gauche / droit du fond de cet etat (glissiere)."""
+        cy = round(center.y() - st["coche_h"] / 2)
+        if slide_t is None:
+            return QRect(round(center.x() - st["coche_w"] / 2), cy, st["coche_w"], st["coche_h"])
+        gap = (st["bg_h"] - st["coche_h"]) / 2
+        left = center.x() - st["bg_w"] / 2
+        cx = left + gap if slide_t == 0 else left + st["bg_w"] - gap - st["coche_w"]
+        return QRect(round(cx), cy, st["coche_w"], st["coche_h"])
+
+    if style.get("motion", "slide") == "fade":
+        for st, opacity in ((off, 1.0 - progress), (on, progress)):
+            if opacity <= 0.0:
+                continue
+            rect = coche_rect(st, None)
+            p.save()
+            p.setOpacity(p.opacity() * opacity)
+            _paint_part(p, rect, _toggle_part_at(st, st, "coche", 0.0))
+            _paint_coche_skin(p, rect, st)
+            p.restore()
+        return
+    start, end = coche_rect(off, 0), coche_rect(on, 1)
+    coche = _toggle_part_at(off, on, "coche", progress)
+    rect = QRect(round(_lerp(start.x(), end.x(), progress)), round(_lerp(start.y(), end.y(), progress)),
+                 coche["w"], coche["h"])
+    _paint_part(p, rect, coche)
+    same = all(off[k] == on[k] for k in ("skin", "text", "text_font", "icon"))
+    for st, opacity in ((on, 1.0),) if same else ((off, 1.0 - progress), (on, progress)):
+        if opacity <= 0.0:
+            continue
         p.save()
-        p.setOpacity(p.opacity() * progress)
-        _paint_bordered_rect(p, coche_rect, style["coche_border_radius"], style["coche_border_enabled"],
-                              style["coche_border_thickness"], coche_colors, style["coche_color"])
-        _paint_coche_skin(p, coche_rect, style)
+        p.setOpacity(p.opacity() * opacity)
+        _paint_coche_skin(p, rect, st)
         p.restore()
-    else:
-        _paint_bordered_rect(p, coche_rect, style["coche_border_radius"], style["coche_border_enabled"],
-                              style["coche_border_thickness"], coche_colors, style["coche_color"])
-        _paint_coche_skin(p, coche_rect, style)
 
 _TOGGLE_IMAGE_CACHE: dict = {}
 
@@ -1900,7 +1923,8 @@ def _toggle_icon_pixmap(name: str, size: int, color: str, dpr: float | None = No
     return pix
 
 def _paint_coche_skin(p: QPainter, rect: QRect, style: dict) -> None:
-    """Texte ou icone dessine au centre de la coche (voir Toggles > Coche > Habillage)."""
+    """Texte ou icone dessine au centre de la coche (Toggles > <style> > Etat OFF / ON > Coche > Habillage) ;
+    `style` : l'etat de la coche (_toggle_state_shape)."""
     skin = style.get("skin", "none")
     if skin == "text" and style.get("text"):
         spec = style["text_font"]
@@ -1916,8 +1940,14 @@ def _paint_coche_skin(p: QPainter, rect: QRect, style: dict) -> None:
         p.drawText(rect, Qt.AlignCenter, style["text"])
         p.restore()
     elif skin == "icon" and style.get("icon"):
+        # Image importee (data/toggle_icons/, a ses couleurs) ; repli : ancienne icone de icons/ (en blanc).
         size = max(1, min(rect.width(), rect.height()) - 2)
-        pix = _toggle_icon_pixmap(style["icon"], size, style["icon_color"], p.device().devicePixelRatioF())
+        from fm_theme.tokens import _TOGGLE_ICONS_DIR
+        dpr = p.device().devicePixelRatioF()
+        if (_TOGGLE_ICONS_DIR / style["icon"]).is_file():
+            pix = _toggle_image_pixmap(style["icon"], size, size, dpr)
+        else:
+            pix = _toggle_icon_pixmap(style["icon"], size, "#ffffff", dpr)
         if pix is not None:
             logical = pix.deviceIndependentSize()
             p.drawPixmap(round(rect.center().x() - logical.width() / 2 + 0.5),
@@ -2070,12 +2100,7 @@ class _Toggle(QWidget):
     def _drawn_size(style: dict) -> tuple[int, int]:
         """Largeur / hauteur de ce que peint _paint_toggle_shape : le cadre, agrandi de ce que la
         coche en deborde (marge negative : elle deborde des deux cotes, symetriquement)."""
-        w, h = style["outer_w"], style["outer_h"]
-        if style.get("kind") != "icons":
-            over = max(0, -int(style.get("coche_margin", 0)))
-            w = max(w, style.get("coche_w", 0), w + 2 * over)
-            h = max(h, style.get("coche_h", 0))
-        return w, h
+        return style["outer_w"], style["outer_h"]          # deja la boite des deux etats (_toggle_box)
 
     def isChecked(self) -> bool:
         return self._checked
@@ -2194,7 +2219,7 @@ class _ToggleShapePreview(QWidget):
 
     def refresh(self):
         style = self._style()
-        self._slot_w = max(style["outer_w"], style["coche_w"]) + self._PAD * 2
+        self._slot_w = style["outer_w"] + self._PAD * 2
         h = max(style["outer_h"], 18) + self._PAD * 2 + 16
         self.setFixedSize(self._slot_w * 2 + self._GAP, h)
         self.updateGeometry()
@@ -4007,8 +4032,8 @@ class _TableFrame(QWidget):
         self._border_thickness = max(0, int(thickness))
         self._refresh_style()
 
-def _table_frame() -> tuple[QWidget, QVBoxLayout]:
-    frame = _TableFrame()
+def _table_frame(parent: QWidget | None = None) -> tuple[QWidget, QVBoxLayout]:
+    frame = _TableFrame(parent)
     layout = QVBoxLayout(frame)
     # Marge de 1px (= l'epaisseur du filet de #TableFrame), PAS 0 : a marge
     # nulle, l'entete/les lignes (chacun avec son propre fond peint via
@@ -4071,6 +4096,11 @@ class _TableRow(QWidget):
 
     def paintEvent(self, event):
         super().paintEvent(event)
+        line = getattr(self, "_top_line", None)       # filet du haut d'une ligne arrondie (_restyle_table_row)
+        if line:
+            p = QPainter(self)
+            p.fillRect(0, 0, self.width(), line[0], QColor(line[1]))
+            p.end()
         self._paint_part_backgrounds()
         self._paint_row_mark()
         head = getattr(self, "_sel_head", None)
@@ -4214,7 +4244,21 @@ def _restyle_table_row(row: QWidget, bg: str, first: bool, top_radius: int = 0, 
     if getattr(row, "_split_below", False):
         bottom_radius = max(bottom_radius, frame_radius)
     row._first_row, row._bottom_radius = first, bottom_radius      # fonds propres des cellules
-    border = "" if first else f"border-top: {_inner_h_edge()};"
+    # PIEGE (signale : dernier filet d'une autre couleur) : avec des coins arrondis, Qt ne peint pas le fond SOUS
+    # la bordure ; un filet translucide (« @ligne/3 ») s'y melangeait au fond du cadre au lieu de celui de la
+    # ligne. Ligne arrondie : la place du filet est reservee (padding) et le filet peint par-dessus le fond.
+    h = _TABLE_INNER_BORDER["h"]
+    previous, row._top_line = getattr(row, "_top_line", None), None
+    if first:
+        border = ""
+    elif top_radius or bottom_radius:
+        thickness = h["thickness"] if h["enabled"] else 0
+        border = f"padding-top: {thickness}px;"
+        row._top_line = (thickness, h["color"] or M["panel_border"]) if thickness else None
+    else:
+        border = f"border-top: {_inner_h_edge()};"
+    if row._top_line != previous:
+        row.update()                     # la feuille seule peut ne pas changer (couleur du filet)
     _apply_stylesheet_cached(
         row,
         f"#TableRow {{ background: {bg}; {border} "

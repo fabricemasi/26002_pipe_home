@@ -27,7 +27,7 @@ from settings_store import (
     _resolve_color_value,
 )
 from settings_widgets import (
-    Menu, menu_row, _ColorPickerPopup, DRAG_GHOST_OPACITY, _ColorSwatchButton, _SLOT_LABELS, _SliderField,
+    Menu, mark_current, menu_row, _ColorPickerPopup, DRAG_GHOST_OPACITY, _ColorSwatchButton, _SLOT_LABELS, _SliderField,
     _Toggle, _set_dimmed,
 )
 from settings_layout import (
@@ -432,9 +432,13 @@ class _CompactAppOrCustomColorField(QWidget):
         field.valueChanged.connect(self._set_alpha)
         menu_row(menu, "Opacité", field)
         menu.addSeparator()
+        current_slot = self._slot_alpha()[0] if self._is_slot() else None
         for slot, real, label in sorted(SEMANTIC_COLOR_SLOTS, key=lambda t: t[2]):
             action = menu.addAction(_solid_icon(self._colors.get(real, "#000")), label)
             action.triggered.connect(lambda _c=False, s=slot: self._select_slot(s))
+            if slot == current_slot:
+                # Couleur en cours marquee EN PERMANENCE (demande de l'utilisateur), couleur distincte du survol.
+                mark_current(action)
         menu.exec(self.swatch.mapToGlobal(QPoint(0, self.swatch.height())))
 
     def _set_alpha(self, alpha: int):

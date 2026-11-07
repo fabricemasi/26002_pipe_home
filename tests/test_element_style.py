@@ -194,9 +194,10 @@ class ToggleOverrideTest(_Base):
         target = self._of(es.targets_for(mine), es.ToggleTarget)
         prefix = target.prefix
         window = es.open_override(target)
-        self._set(window, f"{prefix}_outer_width", 61)
-        self.assertEqual(self.disk["element_style_overrides"]["toggle:Essai|a#0"], {f"{prefix}_outer_width": 61})
-        self.assertEqual(mine._style()["outer_w"], 61)
+        self._set(window, f"{prefix}_off_bg_width", 61)                  # fond a l'etat OFF
+        self.assertEqual(self.disk["element_style_overrides"]["toggle:Essai|a#0"], {f"{prefix}_off_bg_width": 61})
+        self.assertEqual(mine._style()["states"]["off"]["bg_w"], 61)
+        self.assertEqual(mine._style()["outer_w"], 61)                        # boite des deux etats
         self.assertNotEqual(other._style()["outer_w"], 61)
         self.assertNotIn(prefix + "x", str(self.disk.get("toggle_styles")))     # aucun style nomme cree
         es.remove_override(target)

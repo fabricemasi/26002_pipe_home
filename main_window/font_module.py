@@ -1,6 +1,6 @@
 """Branchement du module typographique (fm_font) : ouverture plein cadre par le bouton « Typographie » de la barre
 ou le menu d'une ligne « Ouvrir dans le module typographique » (source .ufo / .designspace, police .ttf / .otf /
-.woff / .woff2 ; JAMAIS au double-clic, demande de l'utilisateur), menu « Créer un projet typographique » d'une
+.woff / .woff2 ; au SIMPLE clic sur une police depuis le 2026-11-03, jamais au double-clic), menu « Créer un projet typographique » d'une
 colonne, hooks, réglages. Carte du module : docs/agents/fm_font.md ; de la fenêtre : docs/agents/fm_browser.md."""
 from pathlib import Path
 
@@ -50,10 +50,19 @@ class FontModuleMixin:
             return False
         if self._board is not None and not self._close_board():
             return False
+        leave_pdf = getattr(self, "_leave_pdf", None)          # éditeur PDF ouvert : fermé d'abord (fm_pdf)
+        if leave_pdf is not None and not leave_pdf():
+            return False
+        leave_agenda = getattr(self, "_leave_agenda", None)    # agenda ouvert : rangé d'abord (fm_agenda)
+        if leave_agenda is not None:
+            leave_agenda()
         self._close_video()
         self._install_font_hooks()
         pane = getattr(self, "_font", None)
+        side = getattr(self, "_module_side_left", 0)
         if pane is not None and path is not None and pane.project.path == Path(path):
+            pane.set_side_left(side)
+            self._hide_columns_under_font()
             pane.raise_()
             return True
         if pane is not None and not pane.confirm_leave():
@@ -69,18 +78,26 @@ class FontModuleMixin:
             if pane.project.path is None and not pane.project.is_dirty():
                 self._close_font()
             return False
+        pane.set_side_left(side)
         pane.show()
         pane.raise_()
         self._layout_font_buttons()
-        # Colonnes VRAIMENT masquées sous le module (comme la vidéo) : rien ne les repeint pendant l'édition.
-        host = self.scroll.widget()
-        if host is not None and host.isVisible():
-            host.hide()
-            self._font_hid_columns = True
+        self._hide_columns_under_font()
         self._sync_collapse_button()
         if path is not None:
             self.path_label.setText(str(path))
         return True
+
+    def _hide_columns_under_font(self):
+        """Colonnes VRAIMENT masquées sous le module plein (comme la vidéo) : rien ne les repeint pendant l'édition ;
+        ouvert à côté d'elles (simple clic) : elles restent."""
+        pane = getattr(self, "_font", None)
+        host = self.scroll.widget()
+        if pane is None or host is None or pane.side_left:
+            return
+        if host.isVisible():
+            host.hide()
+            self._font_hid_columns = True
 
     def _leave_font(self) -> bool:
         """Un autre mode s'ouvre (éditeur, board, vidéo) : le module typographique se ferme d'abord (projet
@@ -103,7 +120,7 @@ class FontModuleMixin:
         if getattr(self, "_font_hid_columns", False):
             self._font_hid_columns = False
             host = self.scroll.widget()
-            if host is not None:
+            if host is not None and not getattr(self, "_columns_user_hidden", False):
                 host.show()
         pane.shutdown()
         pane.hide()

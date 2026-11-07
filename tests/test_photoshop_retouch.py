@@ -147,5 +147,154 @@ class FilterToolsTest(unittest.TestCase):
             self.assertTrue(np.array_equal(layer.pix.read(doc.rect()), before), mode)
 
 
+class StrokeSmoothnessTest(unittest.TestCase):
+    """Trait fluide à la manière des logiciels de dessin : courbe de milieu en milieu, pression filtrée."""
+
+    def _width_profile(self, brush, points):
+        doc, layer = make_doc(160, 60, (0, 0, 0, 0))
+        stroke = B.Stroke(layer, "pixels", brush, doc.rect())
+        stroke.begin(*points[0])
+        for p in points[1:]:
+            stroke.move(*p)
+        stroke.finish_to(*points[-1][:2], points[-1][2])
+        stroke.end()
+        a = layer.pix.read(doc.rect())[..., 3]
+        return np.array([(a[:, x] > 128).sum() for x in range(20, 140)], float)
+
+    def test_noisy_pressure_gives_a_regular_width(self):
+        brush = B.Brush(size=30, hardness=1.0, spacing=0.1, pressure_size=True)
+        noisy = [(10 + 6 * i, 30, 0.9 if i % 2 else 0.35) for i in range(23)]
+        steady = [(10 + 6 * i, 30, 0.62) for i in range(23)]
+        jump = np.abs(np.diff(self._width_profile(brush, noisy))).max()
+        reference = np.abs(np.diff(self._width_profile(brush, steady))).max()
+        self.assertLessEqual(jump, 3)                                  # pas d'à-coups de plusieurs pixels d'une colonne à l'autre
+        self.assertLessEqual(reference, 1)
+
+    def test_tuning_controls_change_the_stroke(self):
+        self.addCleanup(B.TUNING.reset)
+        brush = B.Brush(size=30, hardness=1.0, spacing=0.1, pressure_size=True)
+        light = [(10 + 6 * i, 30, 0.1) for i in range(23)]
+        thin = self._width_profile(brush, light).max()
+        self.assertAlmostEqual(thin, 3.0, delta=1.0)                  # courbe linéaire : 30 px x 0,1
+        B.TUNING.min_diameter = 0.5                                   # diamètre minimum : la pression nulle garde la moitié
+        self.assertGreater(self._width_profile(brush, light).max(), thin + 5)
+        B.TUNING.reset()
+        B.TUNING.size_gamma = 0.5                                     # courbe en racine : un appui léger reste épais
+        self.assertGreater(self._width_profile(brush, light).max(), thin + 5)
+        B.TUNING.reset()
+        B.TUNING.pressure_filter = 0.2                                # pression lissée : un changement brutal arrive en retard
+        jump = [(10 + 6 * i, 30, 0.1 if i < 8 else 1.0) for i in range(23)]
+        late = self._width_profile(brush, jump)
+        B.TUNING.reset()
+        raw = self._width_profile(brush, jump)
+        self.assertLess(late[40:50].mean(), raw[40:50].mean())
+
+    def test_lagging_tip_keeps_the_pressure_it_had(self):
+        self.addCleanup(B.TUNING.reset)
+        brush = B.Brush(size=24, hardness=1.0, spacing=0.1, smoothing=0.6, pressure_size=True)
+        pts = [(10 + 4 * i, 30, 1.0 if 10 + 4 * i < 70 else 0.1) for i in range(26)]
+
+        def thick(on):
+            B.TUNING.pressure_at_tip = on
+            profile = self._width_profile(brush, pts)
+            return int((profile > 18).sum())
+        self.assertGreater(thick(True), thick(False))                 # la pointe en retard est encore épaisse là où le curseur a allégé
+
+    def test_catch_up_during_a_pause_reaches_the_cursor(self):
+        doc, layer = make_doc(160, 40, (0, 0, 0, 0))
+        stroke = B.Stroke(layer, "pixels", B.Brush(size=6, hardness=1.0, spacing=0.1, smoothing=0.8), doc.rect())
+        stroke.begin(10, 20)
+        for x in range(14, 100, 4):
+            stroke.move(x, 20)
+        self.assertLess(stroke._pos[0], 90)                            # la corde retient la pointe
+        for _ in range(60):                                            # (une zone vide = aucun tampon posé ce tour-ci, pas la fin)
+            stroke.idle()
+        self.assertAlmostEqual(stroke._pos[0], stroke._cursor[0], delta=0.6)
+        stroke.finish_to(100, 20)
+        stroke.end()
+        self.assertGreater(int(layer.pix.read(doc.rect())[20, 96, 3]), 200)
+
+    def test_tuning_text_and_reset(self):
+        B.TUNING.oe_beta = 0.5
+        self.assertIn("oe_beta=0.5", B.TUNING.as_text())
+        B.TUNING.reset()
+        self.assertEqual(B.TUNING, B.Tuning())
+
+    def test_direct_mode_follows_sparse_samples_exactly(self):
+        doc, layer = make_doc(100, 100, (0, 0, 0, 0))
+        stroke = B.Stroke(layer, "pixels", B.Brush(size=6, hardness=1.0, spacing=0.1), doc.rect())
+        pts = [(10, 50), (40, 20), (70, 50), (90, 80)]                  # échantillons très espacés
+        stroke.begin(*pts[0])
+        for p in pts[1:]:
+            stroke.move(*p)
+        stroke.finish_to(*pts[-1])
+        stroke.end()
+        alpha = layer.pix.read(doc.rect())[..., 3]
+        self.assertGreater(int(alpha[80, 90]), 200)                    # dernier point atteint
+        self.assertGreater(int(alpha[20, 40]), 200)                    # le sommet est ATTEINT : aucun angle coupé, aucune courbe ajoutée
+        self.assertGreater(int(alpha[35, 25]), 200)                    # et la trajectoire est la polyligne exacte (y = 60 - x)
+
+    def test_stabilizer_rounds_sparse_samples(self):
+        doc, layer = make_doc(100, 100, (0, 0, 0, 0))
+        brush = B.Brush(size=6, hardness=1.0, spacing=0.1, smoothing=0.01, smoothing_mode="stabilizer")
+        stroke = B.Stroke(layer, "pixels", brush, doc.rect())
+        pts = [(10, 50), (40, 20), (70, 50), (90, 80)]
+        stroke.begin(*pts[0])
+        for p in pts[1:]:
+            stroke.move(*p)
+        stroke.finish_to(*pts[-1])
+        stroke.end()
+        alpha = layer.pix.read(doc.rect())[..., 3]
+        self.assertEqual(int(alpha[20, 40]), 0)                        # le stabilisateur contourne le sommet (courbe)
+        self.assertGreater(int(alpha[35, 25:30].max()), 100)
+
+    def test_rope_smoothing_lags_behind_the_cursor_like_photoshop(self):
+        doc, layer = make_doc(200, 40, (0, 0, 0, 0))
+        brush = B.Brush(size=6, hardness=1.0, spacing=0.1, smoothing=0.5)          # corde de 50 px
+        stroke = B.Stroke(layer, "pixels", brush, doc.rect())
+        stroke.begin(10, 20)
+        for x in range(11, 71, 2):
+            stroke.move(x, 20)
+        stroke.finish_to(70, 20)
+        stroke.end()
+        a = layer.pix.read(doc.rect())[..., 3]
+        self.assertGreater(int(a[20, 15]), 200)
+        self.assertEqual(int(a[20, 40]), 0)                            # la pointe reste à 50 px derrière le curseur : trait court
+        self.assertEqual(int(a[20, 60]), 0)                            # (pas de rattrapage à la fin, comme Photoshop par défaut)
+
+    def test_low_flow_stroke_has_no_beads(self):
+        doc, layer = make_doc(160, 40, (0, 0, 0, 0))
+        brush = B.Brush(size=24, hardness=0.5, spacing=0.3, flow=0.2, opacity=1.0)
+        stroke = B.Stroke(layer, "pixels", brush, doc.rect())
+        stroke.begin(20, 20)
+        stroke.move(140, 20)
+        stroke.finish_to(140, 20)
+        stroke.end()
+        centre = layer.pix.read((40, 20, 120, 21))[0, :, 3].astype(int)
+        self.assertLessEqual(int(centre.max() - centre.min()), 6)        # alpha régulier le long du trait (pas de perles)
+
+    def _jittery_line(self, **brush_kw):
+        import random
+        random.seed(1)
+        doc, layer = make_doc(200, 40, (0, 0, 0, 0))
+        brush = B.Brush(size=24, hardness=1.0, spacing=0.1, pressure_size=True, **brush_kw)
+        stroke = B.Stroke(layer, "pixels", brush, doc.rect())
+        pts = [(10 + 1.5 * i, 20 + random.uniform(-0.7, 0.7)) for i in range(80)]    # ligne droite + tremblement de ±0,7 px
+        stroke.begin(*pts[0], 0.5)
+        for i, p in enumerate(pts[1:], 1):
+            stroke.move(*p, 0.5, t=i / 120.0)
+        stroke.finish_to(*pts[-1], 0.5)
+        stroke.end()
+        a = layer.pix.read(doc.rect())[..., 3].astype(float)
+        centre = [(a[:, x] * np.arange(40)).sum() / a[:, x].sum() for x in range(25, 120)]
+        return float(np.std(np.diff(centre)))
+
+    def test_adaptive_mode_filters_hand_jitter_that_direct_mode_keeps(self):
+        direct = self._jittery_line()
+        adaptive = self._jittery_line(smoothing=0.7, smoothing_mode="adaptive")
+        self.assertGreater(direct, 0.1)                                # mode « aucun » : la trajectoire du périphérique, telle quelle
+        self.assertLess(adaptive, direct * 0.6)                        # adaptatif : tremblement lent nettement atténué
+
+
 if __name__ == "__main__":
     unittest.main()

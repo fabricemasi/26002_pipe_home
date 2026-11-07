@@ -104,6 +104,9 @@ class TablesTest(WindowTestCase):
         from settings_sections import _ToggleSideColorsField
         from PySide6.QtCore import QPoint, QRect
         field = next(f for frame in self.frames for f in frame.findChildren(_ToggleSideColorsField))
+        self.win.show()                 # mesure dans une fenetre AFFICHEE (comme l'appli) : jamais affichee, aucune
+        for _ in range(10):             # passe de layout ne recale les titres (hauteur = contenu, fm_theme.layout)
+            app.processEvents()
         side = field.sides
         toggle, color = side.side_checks["left"], side.fields["left"]
 
@@ -429,14 +432,17 @@ class GapsTableTest(WindowTestCase):
 
 class ToggleStylesTest(WindowTestCase):
     def setUp(self):
-        self.win = build()
+        self.win = build("theme")                 # Toggles : dans la fenetre Theme (etape 6 de fm_theme)
         self.addCleanup(self.win.close)
 
     @lent
     def test_coche_has_a_skin_row_with_text_and_icon_choices(self):
-        labels = [sp.label for sp in v2.CATALOG["toggle1 : Coche"]]
-        for wanted in ("Habillage", "Texte", "Police du texte", "Icône", "Couleur de l'icône"):
-            self.assertIn(wanted, labels)
+        for state in ("OFF", "ON"):                      # Etat OFF / Etat ON : le meme tableau « Fond | Coche »
+            specs = v2.CATALOG[f"toggle1 : {state}"]
+            self.assertEqual([sp.label for sp in specs], ["Largeur", "Hauteur", "Bordure", "Border radius",
+                                                          "Couleur de fond", "Habillage", "Texte", "Police", "Icône"])
+            self.assertEqual([[c for c, sub in sp.params["parts"] if sub is not None] for sp in specs],
+                             [["Fond", "Coche"]] * 5 + [["Coche"]] * 4)
 
     @lent
     def test_skin_text_and_icon_are_painted_inside_the_coche(self):
@@ -445,13 +451,15 @@ class ToggleStylesTest(WindowTestCase):
         toggle = sw._Toggle(True, style_override="toggle1", show_label=False)
         plain = toggle.grab().toImage()
         settings = copy.deepcopy(DEFAULT_SETTINGS)
-        settings.update({"toggle1_coche_skin": "text", "toggle1_coche_text": "A", "toggle1_coche_width": 14,
-                         "toggle1_outer_height": 24, "toggle1_outer_width": 40})
+        for state in ("off", "on"):
+            settings.update({f"toggle1_{state}_coche_skin": "text", f"toggle1_{state}_coche_text": "A",
+                             f"toggle1_{state}_coche_width": 14, f"toggle1_{state}_coche_height": 18,
+                             f"toggle1_{state}_bg_height": 24, f"toggle1_{state}_bg_width": 40})
         sw._sync_toggle_style(settings)
         toggle.apply_style()
         with_text = toggle.grab().toImage()
-        settings["toggle1_coche_skin"] = "icon"
-        settings["toggle1_coche_icon"] = "punaise_01.png"
+        settings["toggle1_on_coche_skin"] = "icon"
+        settings["toggle1_on_coche_icon"] = "punaise_01.png"            # repli : ancienne icone de icons/
         sw._sync_toggle_style(settings)
         toggle.apply_style()
         with_icon = toggle.grab().toImage()
@@ -478,14 +486,14 @@ class ToggleStylesTest(WindowTestCase):
         key = self.win.add_toggle_style("Mon toggle")
         self.assertEqual(key, "toggle3")
         self.assertEqual(self.win.settings["toggle_styles"][-1], {"key": "toggle3", "name": "Mon toggle"})
-        self.assertIn("toggle3_outer_width", self.win.settings)
+        self.assertIn("toggle3_off_bg_width", self.win.settings)
         self.assertIn("toggle3_kind", self.win.settings)
         self.assertEqual(len(picker._cards), cards_before + 1)
         node = next(n for n in self.win.findChildren(v2._LazyNode) if n.node.title == "Mon toggle")
         v2.expand_all(self.win.stack.currentWidget())
-        self.assertEqual([c.node.title for c in node._child_nodes], ["Type", "Cadre", "Coche"])
+        self.assertEqual([c.node.title for c in node._child_nodes], ["Type", "État OFF", "État ON"])
         values = self.win.wired_values()
-        self.assertIn("toggle3_coche_skin", values)
+        self.assertIn("toggle3_on_coche_skin", values)
         self.assertIn("toggle3_icon_frames", values)
         self.assertEqual(self.win.add_toggle_style("Autre"), "toggle4")
         self.assertEqual(self.win.add_toggle_style("Autre"), "toggle5")
@@ -545,8 +553,8 @@ class ToggleStylesTest(WindowTestCase):
         self.win.show()
         for _ in range(5):
             app.processEvents()
-        frames = [f for f in self.win.findChildren(_TableFrame) if f.dimsKey() == "Toggles/Cadre#0"]
-        self.assertEqual(len(frames), 3)
+        frames = [f for f in self.win.findChildren(_TableFrame) if f.dimsKey() == "Toggles/État#0"]
+        self.assertEqual(len(frames), 6)                               # 3 styles x (OFF, ON)
         head = frames[0]._flat_head
         head._set_width(0, head._widths[0] + 37)
         for frame in frames[1:]:
@@ -569,7 +577,7 @@ class ToggleStylesTest(WindowTestCase):
         # A la reouverture, le toggle retrouve son style.
         saved = copy.deepcopy(self.win.settings)
         with mock.patch.object(v2, "load_settings", lambda: copy.deepcopy(saved)):
-            win = build()
+            win = build("theme")
         self.addCleanup(win.close)
         again = next(t for t in win.findChildren(_Toggle) if t.style_id == toggle.style_id)
         self.assertEqual(again._style_key(), other)
@@ -597,7 +605,7 @@ class ToggleStylesTest(WindowTestCase):
                 image.fill(QColor(color))
                 paths[name] = str(Path(folder) / f"{name}.png")
                 image.save(paths[name])
-            specs = {getattr(sp, "key", sp): w for sp, w in self.win.stores["General"]["specs"]}
+            specs = {getattr(sp, "key", sp): w for store in self.win.stores.values() for sp, w in store.get("specs", ())}
             specs["toggle1_icon_on"]._v2_parts["on"].setFiles([paths["on"]])
             specs["toggle1_icon_on"]._v2_parts["off"].setFiles([paths["off"]])
             specs["toggle1_icon_frames"].setFiles([paths["step10"], paths["step2"]])
@@ -624,7 +632,7 @@ class ToggleStylesTest(WindowTestCase):
 
     @lent
     def test_icon_rows_are_greyed_while_the_type_is_qt(self):
-        specs = {getattr(sp, "key", sp): w for sp, w in self.win.stores["General"]["specs"]}
+        specs = {getattr(sp, "key", sp): w for store in self.win.stores.values() for sp, w in store.get("specs", ())}
         kind, icons, frames = specs["toggle1_kind"], specs["toggle1_icon_on"], specs["toggle1_icon_frames"]
         self.assertEqual(kind.value(), "Qt")
         self.assertFalse(icons.isEnabled())
@@ -1303,6 +1311,8 @@ class SelectionEqualWidthAndSnapTest(WindowTestCase):
                                  and cells.split_of(c.content()).isVisible())
         without_row_templates(self, frame)
         split.snap_provider = None
+        for _ in range(3):                  # mise en page faite (la 1re cellule divisee trouvee peut etre neuve)
+            app.processEvents()
         spans = split._column_spans()
         press = QPoint((spans[0][0] + spans[0][1]) // 2, 8)
         drop = QPoint(spans[1][1] - 4, 8)

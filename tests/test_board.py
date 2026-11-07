@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QTransform
-from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
+from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QWidget
 
 APP = QApplication.instance() or QApplication([])
 
@@ -110,7 +110,7 @@ class SerializationTest(unittest.TestCase):
 
     def test_create_load_save_round_trip(self):
         path = board.create_board_file(self.dir / "plan")
-        self.assertEqual(path.name, "plan.mro")
+        self.assertEqual(path.name, "plan.brd")
         with self.assertRaises(FileExistsError):
             board.create_board_file(path)
         data = serialization.load(path)
@@ -118,7 +118,25 @@ class SerializationTest(unittest.TestCase):
         serialization.save(path, data)
         self.assertEqual(serialization.load(path)["items"][0]["text"], "é")
         self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["format"], "pipeline-board")
-        self.assertEqual([p.name for p in self.dir.iterdir()], ["plan.mro"])
+        self.assertEqual([p.name for p in self.dir.iterdir()], ["plan.brd"])
+
+    def test_legacy_mro_is_read_then_renamed_to_brd(self):
+        """Ancien `.mro` : reconnu et lu ; un nouveau board demande en `.mro` est cree en `.brd` ; `migrate_legacy`
+        RENOMME l'ancien fichier (meme nom, meme dossier d'images), sans ecraser un `.brd` existant."""
+        old = self.dir / "ancien.mro"
+        serialization.save(old, model.empty_board())
+        self.assertTrue(board.is_board_file(old))
+        self.assertTrue(board.is_board_file(self.dir / "x.brd"))
+        self.assertEqual(serialization.load(old)["format"], "pipeline-board")
+        self.assertEqual(board.create_board_file(self.dir / "neuf.mro").name, "neuf.brd")
+        self.assertEqual(serialization.assets_dir(old), serialization.assets_dir(old.with_suffix(".brd")))
+        new = serialization.migrate_legacy(old)
+        self.assertEqual(new.name, "ancien.brd")
+        self.assertFalse(old.exists())
+        self.assertIsNone(serialization.migrated_path(new))
+        serialization.save(old, model.empty_board())                    # .brd deja la : l'ancien reste en .mro
+        self.assertEqual(serialization.migrate_legacy(old), old)
+        self.assertTrue(old.exists())
 
     def test_invalid_file_raises_board_error(self):
         path = self.dir / "x.mro"
@@ -325,6 +343,60 @@ class SceneTest(unittest.TestCase):
         self.assertEqual(data[a.item_id]["rotation"], 30.0)
 
 
+class DeleteIndexTest(unittest.TestCase):
+    """PLANTAGES a l'effacement (2026-11-03) : une zone d'element (`boundingRect`) changee sans `prepareGeometryChange`
+    AVANT (marge des elements suivant le zoom, titre d'un cadre) laissait l'element dans des cases de l'index BSP de
+    Qt apres son retrait : pointeur mort une fois l'element detruit, relu a la peinture / au survol suivants. Un
+    element retire ne doit plus jamais etre trouve par `items()` (les elements sont gardes en vie pour le verifier)."""
+
+    def _stale(self, scene, items):
+        found = []
+        for item in items:
+            rect = item.sceneBoundingRect()                  # detache : marge de 3 (zoom 1) > marge au zoom 4
+            if item in scene.items(rect.adjusted(-60, -60, 60, 60)):
+                found.append(item.kind)
+        return found
+
+    def test_removed_items_leave_the_index_after_zooms(self):
+        import random
+        rnd = random.Random(1)
+        scene = BoardScene()
+        items = [scene._add(model.new_item(rnd.choice(["sticky", "text", "shape", "ink", "frame"]),
+                                           x=rnd.uniform(-5000, 5000), y=rnd.uniform(-5000, 5000),
+                                           w=rnd.uniform(20, 300), h=rnd.uniform(20, 300),
+                                           points=[[0, 0], [40, 20], [80, 5]], title="un titre assez long"))
+                 for _ in range(2500)]
+        for item in items[:40]:
+            item.setSelected(True)
+        for zoom in (0.1, 0.13, 4.0, 3.1):                   # dezoom puis zoom (deux paliers, puis le meme)
+            scene.set_zoom(zoom)
+            scene.items(scene.sceneRect())                   # index refait a chaque etape
+        for item in items:
+            if item.kind == "frame":
+                item.text_item.setPlainText("t")             # titre raccourci : zone du cadre plus petite
+        scene.items(scene.sceneRect())
+        removed = items[:600]
+        scene.delete_items(removed)                          # (deleteLater : encore en vie jusqu'au retour a la boucle)
+        self.assertEqual(self._stale(scene, removed), [])
+
+    def test_removed_frame_leaves_the_index_after_a_shorter_title(self):
+        import random
+        rnd = random.Random(2)
+        scene = BoardScene()
+        title = "un titre bien plus large que son cadre"
+        frames = [scene._add(model.new_item("frame", x=rnd.uniform(-5000, 5000), y=rnd.uniform(-5000, 5000),
+                                            w=8, h=8, title=title)) for _ in range(1500)]
+        scene.items(scene.sceneRect())
+        for frame in frames:
+            frame.text_item.setPlainText("t")                # zone du cadre plus etroite (frappe)
+        scene.items(scene.sceneRect())
+        removed = frames[:500]
+        scene.delete_items(removed)
+        for frame in removed:
+            frame.text_item.setPlainText(title)              # rallonge, detache : la recherche atteint ses anciennes cases
+        self.assertEqual(self._stale(scene, removed), [])
+
+
 class SnapTest(unittest.TestCase):
     def setUp(self):
         self.scene = BoardScene()
@@ -517,8 +589,8 @@ class ShapeAndCommentTest(unittest.TestCase):
     def test_context_bar_offers_the_shape_commands(self):
         shape = self.scene.add_new(model.new_item("shape"))
         settle(0.05)
-        tips = {self.pane._context_layout.itemAt(i).widget().toolTip()
-                for i in range(self.pane._context_layout.count())}
+        manager = self.pane._miro_bars.manager
+        tips = {manager.widgets[key].toolTip() for key in manager.dynamic["ctx"]}
         for tip in ("Forme", "Police", "Taille du texte", "Lien", "Fond (couleur, opacité)",
                     "Contour (couleur, épaisseur, style, opacité, arrondi)", "Verrouiller (Ctrl+Maj+L)", "Plus…"):
             self.assertIn(tip, tips)
@@ -625,7 +697,10 @@ class PageAndSettingsTest(unittest.TestCase):
         import settings_window_v2 as v2
         keys = {spec.key for spec in v2.CATALOG["MRO"]}
         self.assertEqual(keys, {"board_snap_enabled", "board_snap_objects", "board_snap_grid", "board_snap_resize",
-                                "board_snap_guides", "board_snap_distance"})
+                                "board_snap_guides", "board_snap_distance",
+                                "board_snap_doc_guides", "board_snap_inner_guides",
+                                "board_snap_frame_guides"})                              # lignes des guides par sorte
+        keys |= {key for spec in v2.CATALOG["MRO"] for key in spec.extra_keys}
         for key in keys:
             self.assertIn(key, settings_store.DEFAULT_SETTINGS)
         self.assertIn("board_pen_presets", settings_store._LIVE_STATE_KEYS)
@@ -751,10 +826,55 @@ class ModuleSelectorTest(_PaneCase):
         self.assertEqual(pane.module, "miro")
         self.assertTrue(pane._toolbar.isVisible())
 
+    def test_without_a_module_nothing_is_selected_moved_or_resized(self):
+        """Demande de l'utilisateur, 2026-11-06 : « quand aucun module n'est actif, on peut quand même sélectionner et
+        dimensionner des éléments ; je ne veux pas ça ». Le double-clic ouvre l'élément comme avant, sans le choisir."""
+        from PySide6.QtCore import QPoint
+        from PySide6.QtTest import QTest
+        pane = self.pane
+        note = pane.scene.add_new(model.new_item("sticky", text="x", x=0, y=0))
+        note.setSelected(True)
+        pane.set_module(None)
+        self.assertFalse(note.isSelected())                      # module quitté : plus rien de choisi
+        view, viewport = pane.view, pane.view.viewport()
+        center = view.mapFromScene(note.mapToScene(note.content_rect().center()))
+        QTest.mouseClick(viewport, Qt.LeftButton, pos=center)    # vrai clic
+        self.assertFalse(note.isSelected())
+        start = QPointF(note.pos())
+        QTest.mousePress(viewport, Qt.LeftButton, pos=center)    # glisser : l'élément ne bouge pas
+        for k in range(1, 6):
+            QTest.mouseMove(viewport, center + QPoint(12 * k, 8 * k))
+        QTest.mouseRelease(viewport, Qt.LeftButton, pos=center + QPoint(60, 40))
+        self.assertEqual(note.pos(), start)
+        self.assertFalse(note.isSelected())
+        corner = view.mapFromScene(note.mapToScene(note.content_rect().topLeft())) - QPoint(60, 60)
+        QTest.mousePress(viewport, Qt.LeftButton, pos=corner)    # rectangle de sélection : rien
+        QTest.mouseMove(viewport, center + QPoint(80, 80))
+        QTest.mouseRelease(viewport, Qt.LeftButton, pos=center + QPoint(80, 80))
+        self.assertEqual(pane.scene.selectedItems(), [])
+        QTest.keyClick(view, Qt.Key_A, Qt.ControlModifier)       # Ctrl + A : rien
+        self.assertEqual(pane.scene.selectedItems(), [])
+        self.assertIsNone(pane.module)
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import QMouseEvent
+        from PySide6.QtWidgets import QApplication
+
+        def send(kind, pos, button, buttons):
+            p = QPointF(pos)
+            QApplication.sendEvent(viewport, QMouseEvent(kind, p, viewport.mapToGlobal(p), button, buttons,
+                                                         Qt.NoModifier))
+        send(QEvent.MouseButtonDblClick, center, Qt.LeftButton, Qt.LeftButton)   # double-clic puis glisser
+        for k in range(1, 6):
+            send(QEvent.MouseMove, center + QPoint(12 * k, 8 * k), Qt.NoButton, Qt.LeftButton)
+        send(QEvent.MouseButtonRelease, center + QPoint(60, 40), Qt.LeftButton, Qt.NoButton)
+        self.assertEqual(note.pos(), start)                      # ouvert comme avant, ni choisi ni déplacé
+        self.assertFalse(note.isSelected())
+        self.assertIsNone(pane.module)
+
     def test_fade_and_hide_the_elements_of_a_module(self):
         note = self.scene.add_new(model.new_item("sticky", text="x"))
         note.setSelected(True)
-        fade, hide = self.pane._module_buttons["miro"][1:]
+        _icon, hide, fade, _solo = self.pane._module_buttons["miro"]
         fade.click()
         self.assertAlmostEqual(note.opacity(), 0.3)
         self.assertFalse(note.isEnabled())
@@ -774,6 +894,158 @@ class ModuleSelectorTest(_PaneCase):
             self.assertTrue(item.isEnabled())
             self.assertAlmostEqual(item.opacity(), 1.0)
         self.assertIs(self.view._item_at(spot), note)
+
+    def test_isolate_reset_and_fold_the_module_bar(self):
+        """Barre des modules (maquette 2026-10-31) : isoler (bouton ou Alt + clic), pastille « Isolé », tout
+        reinitialiser, languette qui replie la barre entierement."""
+        pane = self.pane
+        note = self.scene.add_new(model.new_item("sticky", text="x"))
+        icon, hide, fade, solo = pane._module_buttons["cad"]
+        solo.click()                                             # CAD isole : Miro masque
+        self.assertTrue(self.scene.module_state["cad"]["solo"])
+        self.assertFalse(note.isVisible())
+        exit_button = pane._modulebar.solo_exit                  # barre toujours etroite : « Quitter l'isolation » en icone
+        self.assertTrue(exit_button.isVisibleTo(pane._modulebar))
+        self.assertLess(exit_button.geometry().bottom(), pane._modulebar.reset.mapTo(
+            pane._modulebar, pane._modulebar.reset.rect().topLeft()).y())
+        self.assertIn("CAD", exit_button.toolTip())
+        self.assertTrue(pane._modulebar.rows["cad"].icon.solo_mark)    # point d'isolation sur l'icone
+        self.assertEqual(pane._modulebar.rows["miro"].icon.state, "iso")
+        hide.click()                                             # masquer ne vaut pas pour un module isole
+        self.assertFalse(self.scene.module_look["cad"]["hide"])
+        exit_button.click()                                      # quitter l'isolation : CAD reste masque
+        self.assertTrue(note.isVisible())
+        self.assertTrue(self.scene.module_look["cad"]["hide"])
+        self.assertFalse(exit_button.isVisibleTo(pane._modulebar))
+        pane._on_module_icon("miro", True)                       # Alt + clic : isoler
+        self.assertTrue(self.scene.module_state["miro"]["solo"])
+        pane._modulebar.reset.click()                            # tout afficher, sortir de l'isolation
+        self.assertFalse(any(any(s.values()) for s in self.scene.module_state.values()))
+        self.assertTrue(note.isVisible())
+        pane._on_module_icon("tableur", False)                   # clic : activer le module
+        self.assertEqual(pane.module, "tableur")
+        pane._on_module_icon("tableur", False)
+        self.assertIsNone(pane.module)
+        self.assertGreaterEqual(pane.title_area().x(), pane._modulebar.geometry().right())
+        wide = pane._modulebar.width()
+        pane.toggle_module_look("cad", "solo")
+        with mock.patch("settings_store.save_live_state") as save:
+            pane._modulebar.fold.click()                         # (reglage « etroite ») : rien ne change de largeur
+        save.assert_called_with("board_modulebar_folded", True)
+        self.assertTrue(pane._modulebar.isVisible())
+        self.assertEqual(pane._modulebar.width(), wide)
+        self.assertFalse(pane._modulebar.rows["cad"].solo.isVisibleTo(pane._modulebar))
+        self.assertTrue(pane._modulebar.rows["cad"].icon.solo_mark)
+        self.assertTrue(exit_button.isVisibleTo(pane._modulebar))
+        self.assertFalse(pane._modulebar.pill.isVisibleTo(pane._modulebar))
+        self.assertLessEqual(exit_button.width(), pane._modulebar.width())
+        exit_button.click()
+        self.assertFalse(self.scene.module_state["cad"]["solo"])
+        self.assertFalse(exit_button.isVisibleTo(pane._modulebar))
+        pane.toggle_module_look("cad", "solo")
+        self.assertGreaterEqual(pane.title_area().x(), pane._modulebar.geometry().right())
+        with mock.patch("settings_store.save_live_state"):
+            pane._modulebar.fold.click()
+        self.assertEqual(pane._modulebar.width(), wide)
+        self.assertTrue(pane._modulebar.rows["cad"].icon.solo_mark)    # toujours etroite : le point reste
+
+
+class ModuleBarSettingsTest(_PaneCase):
+    """Reglages : Board > Board > Barre de selection, appliques tout de suite au board ouvert."""
+
+    def tearDown(self):
+        self.pane.apply_settings({})                             # habillage commun : remis aux defauts
+
+    def test_settings_restyle_the_bar_live(self):
+        from fm_board import modulebar
+        from fm_cad import cad_items
+        pane = self.pane
+        icon = pane._modulebar.rows["cad"].icon
+        pane.apply_settings(dict(pane._settings, board_modulebar_color_cad="#ff0000", board_modulebar_icon_size=44,
+                                 board_modulebar_buttons=False, board_modulebar_alt_solo=False,
+                                 board_modules_fade_opacity=50))
+        self.assertEqual(modulebar.LOOK["colors"]["cad"], "#ff0000")      # dominante du module
+        self.assertEqual(icon.width(), 44)
+        self.assertFalse(pane._modulebar.rows["cad"].vis.isVisibleTo(pane._modulebar))
+        pane._on_module_icon("cad", True)                        # Alt + clic coupe : active seulement
+        self.assertFalse(pane.scene.module_state["cad"]["solo"])
+        self.assertEqual(pane.module, "cad")
+        pane.set_module(None)
+        note = pane.scene.add_new(model.new_item("sticky", text="x"))
+        pane.toggle_module_look("miro", "fade")
+        self.assertAlmostEqual(note.opacity(), 0.5)
+        pane.apply_settings(dict(pane._settings, board_modules_fade_opacity=20))
+        self.assertAlmostEqual(note.opacity(), 0.2)                # opacite des grises : a chaud
+        pane.apply_settings({})
+        self.assertAlmostEqual(cad_items.FADE_OPACITY, 0.3)
+
+    def test_fade_saturation_and_tool_icon_color(self):
+        """Saturation des elements grises (0 % = gris) et couleur des icones replier / reinitialiser."""
+        from fm_board import scene as board_scene
+        from fm_cad import cad_items
+        pane = self.pane
+        note = pane.scene.add_new(model.new_item("sticky", text="x"))
+        pane.toggle_module_look("miro", "fade")
+        self.assertIsNone(note.graphicsEffect())                 # 100 % (defaut) : aucun effet a peindre
+        pane.apply_settings(dict(pane._settings, board_modules_fade_saturation=0,
+                                 board_modulebar_tool_color="#ff00ff"))
+        effect = note.graphicsEffect()
+        self.assertIsInstance(effect, board_scene._FadeEffect)
+        self.assertAlmostEqual(effect.strength(), 1.0)
+        gray = QColor(cad_items.fade_ink("#ff0000"))
+        self.assertEqual(gray.red(), gray.green())               # CAD : traits desatures
+        self.assertEqual(pane._modulebar.reset.glyph_ink(False), "#ff00ff")
+        self.assertEqual(pane._modulebar.fold.glyph_ink(False), "#ff00ff")
+        pane.toggle_module_look("miro", "fade")                  # plus grise : effet retire
+        self.assertIsNone(note.graphicsEffect())
+        pane.apply_settings({})
+        self.assertAlmostEqual(cad_items.FADE_SATURATION, 1.0)
+
+    def test_save_state_signal_and_external_badge(self):
+        """Etat d'enregistrement emis pour la barre d'etat de l'appli (le cartouche du board est cache) ; encart du
+        mode de rendu montre par l'appli : celui du board se cache."""
+        pane = self.pane
+        states = []
+        pane.saveStateChanged.connect(lambda text, dirty: states.append((text, dirty)))
+        pane.scene.add_new(model.new_item("sticky", text="x"))
+        settle(0.05)
+        self.assertIn(("modifié", True), states)
+        self.assertFalse(pane._title.isVisible())
+        pane.set_external_badge(True)
+        self.assertFalse(pane._badge.isVisible())
+        self.assertIsNone(pane.view.gpu_badge)
+        pane.set_external_badge(False)
+        self.assertTrue(pane._badge.isVisible())
+
+    def test_a_click_on_the_render_badge_switches_the_mode(self):
+        """Clic sur l'encart OPEN GL / CLASSIQUE : l'autre mode, retenu dans le reglage."""
+        pane = self.pane
+        state = {"gpu": False}
+        pane.view.gpu_active = lambda: state["gpu"]
+        pane.view.set_gpu = lambda on: state.update(gpu=on) or True
+        pane._badge.clicked.emit()
+        self.assertTrue(state["gpu"])
+        self.assertTrue(pane._settings["board_cad_gpu"])
+        pane._badge.clicked.emit()
+        self.assertFalse(state["gpu"])
+        self.assertFalse(pane._settings["board_cad_gpu"])
+
+    def test_fold_style_narrow_or_tab(self):
+        """Barre repliee : etroite (1re maquette, defaut) ou cachee derriere une languette (2e), au choix."""
+        pane = self.pane
+        self.assertFalse(pane._module_tab.isVisible())           # defaut : etroite, pas de languette
+        with mock.patch("settings_store.save_live_state"):
+            pane.apply_settings(dict(pane._settings, board_modulebar_fold_style="tab"))
+            self.assertTrue(pane._module_tab.isVisible())
+            self.assertFalse(pane._modulebar.fold.isVisibleTo(pane._modulebar))   # pas de bouton dans la barre
+            pane._module_tab.clicked.emit()                      # repliee : barre cachee, titre au bord
+            self.assertFalse(pane._modulebar.isVisible())
+            self.assertLess(pane.title_area().x(), 40)
+            pane.apply_settings(dict(pane._settings, board_modulebar_fold_style="narrow"))
+            self.assertTrue(pane._modulebar.isVisible())         # meme etat replie : barre etroite
+            self.assertTrue(pane._modulebar.folded)
+            self.assertFalse(pane._module_tab.isVisible())
+            pane.set_modulebar_folded(False)
 
 
 class TextZoomAndEditTest(_PaneCase):
@@ -801,9 +1073,10 @@ class TextZoomAndEditTest(_PaneCase):
         QTest.mouseDClick(viewport, Qt.LeftButton, pos=pos)
         settle(0.05)
         self.assertTrue(shape.text_item.editing())
-        bar = self.pane._contextbar
-        self.assertGreater(bar.width(), 300)                              # plus de barre de 12 x 12 px
-        self.assertTrue(all(bar.layout().itemAt(i).widget().isVisible() for i in range(bar.layout().count())))
+        manager = self.pane._miro_bars.manager
+        self.assertTrue(manager.dynamic["ctx"])                           # la selection est refaite : ses boutons sont la
+        self.assertTrue(all(manager.widgets[key].isVisible() for key in manager.dynamic["ctx"]))
+        self.assertGreater(self.pane._contextbar.width(), 300)            # plus de barre de 12 x 12 px
         QTest.keyClicks(viewport, " !")
         count = self.scene.undo.count()
         QTest.mouseClick(viewport, Qt.LeftButton, pos=self.view.mapFromScene(QPointF(900, 700)))
@@ -812,6 +1085,26 @@ class TextZoomAndEditTest(_PaneCase):
         self.assertEqual(self.scene.undo.count(), count + 1)
         self.scene.undo.undo()
         self.assertEqual(self.scene.item(shape.item_id).data["text"], "Forme")
+
+
+class ImageZoom100Test(_PaneCase):
+    """Clic droit sur une image : « Zoom 100 % sur cette image » (demande de l'utilisateur, 2026-11-03)."""
+
+    def test_the_board_zooms_so_that_one_image_pixel_is_one_screen_pixel(self):
+        path = self.dir / "photo.png"
+        image = QImage(1600, 1200, QImage.Format_RGB32)
+        image.fill(QColor("#336699"))
+        image.save(str(path))
+        self.assertTrue(self.view.add_image_files([path], QPointF(0, 0)))
+        item = next(i for i in self.scene.board_items() if i.kind == "image")
+        self.assertEqual(item.content_rect().width(), 600.0)          # posée réduite à 600 unités
+        self.assertTrue(self.view.zoom_100_on(item))
+        ratio = self.view.devicePixelRatioF() or 1.0
+        on_screen = self.view.mapFromScene(item.mapToScene(item.content_rect()).boundingRect()).boundingRect()
+        self.assertAlmostEqual(self.view.zoom(), 1600 / 600 / ratio, places=3)
+        self.assertAlmostEqual(on_screen.width() * ratio, 1600, delta=3)
+        center = self.view.mapFromScene(item.mapToScene(item.content_rect().center()))
+        self.assertLess((center - self.view.viewport().rect().center()).manhattanLength(), 3)
 
 
 class ZoomLimitsTest(_PaneCase):
@@ -975,13 +1268,46 @@ class FontPickerTest(_PaneCase):
         self.assertEqual(saved["font_family"], "Police Imaginaire 42")      # gardee malgre son absence
 
 
+class LegacyMroPaneTest(_PaneCase):
+    def test_old_mro_opens_then_saves_as_brd(self):
+        """Ancien `.mro` (demande de l'utilisateur 2026-11-05) : ouvert tel quel, puis enregistre en `.brd` (renomme ;
+        ses images, dans `<nom>_assets`, restent valables)."""
+        old = self.dir / "ancien.mro"
+        data = model.empty_board()
+        data["items"].append(model.new_item("sticky", text="garde"))
+        serialization.save(old, data)
+        self.assertTrue(self.pane.open(old))
+        self.pane._set_dirty(True)                                       # modifie : l'enregistrement ecrit
+        self.assertTrue(self.pane.save())
+        new = self.dir / "ancien.brd"
+        self.assertEqual(self.pane.path, new)
+        self.assertFalse(old.exists())
+        self.assertIn("garde", [d.get("text") for d in serialization.load(new)["items"]])
+
+
 class MroIconsTest(_PaneCase):
     def test_icon_rows_and_provider(self):
         import settings_window_v2 as v2
         keys = {spec.params["ui_key"] for spec in v2.CATALOG["MRO : Icones"]}
         self.assertIn("ui_board_select", keys)
         self.assertIn("ui_board_lock", keys)
+        self.assertNotIn("ui_board_design_present", keys)                # chaque module a SA section « Icônes »
         self.assertIn(("Icônes", "MRO : Icones"), [(n.title, n.group) for n in v2.MRO_TREE])
+        for tree, group, key in ((v2.BOARD_TREE, "Board : Icônes", "ui_board_solo"),
+                                 (v2.DESIGN_TREE, "Design : Icônes", "ui_board_design_present"),
+                                 (v2.TABLEUR_TREE, "Tableur : Icônes", "ui_board_tableur"),
+                                 (v2.ILL_TREE, "Illustrator : Icônes", "ui_board_ill_pen"),
+                                 (v2.PS_TREE, "Photoshop : Icônes", "ui_board_photoshop")):
+            self.assertIn(("Icônes", group), [(n.title, n.group) for n in tree])
+            self.assertIn(key, {spec.params["ui_key"] for spec in v2.CATALOG[group]})
+            self.assertIn(group, v2.ICON_GROUPS)
+        every = [spec.params["ui_key"] for g in __import__("fm_board.settings", fromlist=["x"]).ICON_GROUPS_BY_MODULE for spec in v2.CATALOG[g]]
+        self.assertEqual(len(every), len(set(every)))                    # aucune icone dans deux sections
+        self.assertEqual(set(every), {f"ui_board_{kind}" for kind, _label in model.ICON_ROWS})
+        # Ouverture, Navigation, Grille : onglet Board (venues de MRO)
+        for title in ("Ouverture", "Navigation", "Grille"):
+            self.assertIn((title, f"Board : {title}"), [(n.title, n.group) for n in v2.BOARD_TREE])
+            self.assertNotIn(title, [n.title for n in v2.MRO_TREE])
         self.assertIn((v2.MRO_TAB, None), v2.MODULE_SCOPES["board"])
         self.assertNotIn("MRO", [n.title for n in v2.GENERAL_TREE])
         import fm_board.ui as board_ui_module
@@ -1156,27 +1482,21 @@ class MroToolbarAndMenuSettingsTest(_PaneCase):
             settings_menu._STATE["values"] = old
 
     def test_toolbars_follow_their_settings_at_once(self):
+        """Les barres flottantes de Miro suivent la section « Palette » de fm_theme (`palette_*`), en direct."""
+        from fm_theme import palette as fm_palette
         bar = self.pane._toolbar
-        self.assertEqual(bar.look["bg"], "#16181a")                       # apparence d'origine par defaut
-        self.pane.apply_settings({"board_toolbar_bg_color": "#ff0000",
-                                  "board_toolbar_corner_radius": {"top_left": 8, "top_right": 8, "bottom_right": 8,
-                                                                  "bottom_left": 8},
-                                  "board_toolbar_text_font_size": 17, "board_toolbar_text_font_color": "#00ff00",
-                                  "board_toolbar_shadow_enabled": {"top": True, "right": True, "bottom": True,
-                                                                   "left": True},
-                                  "board_toolbar_shadow_size": 12})
-        self.assertEqual(bar.look["bg"], "#ff0000")
+        self.assertEqual(bar.size(), bar.grid_size())
+        before = bar.width()
+        sides = {"top": False, "right": False, "bottom": False, "left": False}
+        self.pane.apply_settings({"palette_bg_color": "#ff0000", "palette_cell_size": 48, "palette_border_enabled": sides})
+        self.assertEqual(fm_palette.LOOK["bg"], "#ff0000")
+        self.assertGreater(bar.width(), before)                           # cases plus grandes : la barre grandit
+        self.assertEqual(bar.size(), bar.grid_size())
+        self.assertEqual(self.pane._tool_buttons["hand"].width(), 48)
         image = bar.grab().toImage()
-        self.assertEqual(QColor(image.pixel(bar.width() // 2, 3)).name(), "#ff0000")
-        self.assertIsNotNone(bar.look["shadow"])
-        self.assertTrue(bar._shadow.isVisible())
-        shape = self.scene.add_new(model.new_item("shape", text="x"))
-        settle(0.05)
-        from fm_board.ui import _TextButton
-        buttons = self.pane._contextbar.findChildren(_TextButton)
-        self.assertTrue(buttons)
-        self.assertEqual(buttons[0].font().pixelSize() or round(buttons[0].font().pointSizeF() * 4 / 3), 17)
-        self.assertIsNotNone(shape)
+        self.assertEqual(QColor(image.pixel(2, bar.height() // 2)).name(), "#ff0000")
+        self.pane.apply_settings({})
+        self.assertEqual(bar.width(), before)
 
     def test_board_menus_follow_the_app_unless_overridden(self):
         import settings_menu
@@ -1259,17 +1579,18 @@ class ShiftSnapAndNegativeTest(_PaneCase):
         self._frame_drag(frame, [QPointF(400, 200), QPointF(700, 500)], [Qt.ShiftModifier])
         self.assertEqual((frame.data["w"], frame.data["h"]), (700, 500))   # libre : Maj ne garde pas le ratio
 
-    def test_toolbar_button_toggles_negative_and_asks_the_app_to_save(self):
+    def test_negative_setting_asks_the_app_to_save(self):
+        """Reglage « Icones et textes en negatif » (cartouche, barres du CAD) : applique tout de suite puis enregistre. Il n'y a
+        plus de bouton dans les barres de Miro : leur aspect est celui de fm_theme."""
         written = []
         old = board_ui.SETTING_WRITER
         board_ui.SETTING_WRITER = lambda key, value: written.append((key, value))
         try:
-            button = self.pane._invert_button
-            self.assertIs(button.parentWidget(), self.pane._toolbar)
-            button.click()
-            self.assertTrue(self.pane._toolbar.look["invert"])
-            button.click()
-            self.assertFalse(self.pane._toolbar.look["invert"])
+            self.assertNotIn("invert", self.pane._miro_bars.manager.widgets)
+            self.pane.toggle_invert()
+            self.assertTrue(self.pane.toolbar_style["invert"])
+            self.pane.toggle_invert()
+            self.assertFalse(self.pane.toolbar_style["invert"])
         finally:
             board_ui.SETTING_WRITER = old
         self.assertEqual(written, [("board_toolbar_invert", True), ("board_toolbar_invert", False)])
@@ -1292,20 +1613,242 @@ class ShiftSnapAndNegativeTest(_PaneCase):
     def test_negative_icons_and_texts(self):
         from fm_board.ui import negative
         self.assertEqual(negative("#d6d9dc"), "#292623")
-        button = self.pane._tool_buttons["hand"]
-
-        def dark_pixels():
-            image = button.grab().toImage()
-            return sum(1 for x in range(image.width()) for y in range(image.height())
-                       if QColor(image.pixel(x, y)).lightness() < 60 and QColor(image.pixel(x, y)).name() != "#16181a")
-        light = dark_pixels()
         self.pane.apply_settings({"board_toolbar_invert": True})
-        self.assertTrue(self.pane._toolbar.look["invert"])
-        self.assertGreater(dark_pixels(), light)                          # le glyphe est passe en sombre
+        self.assertTrue(self.pane.toolbar_style["invert"])                # cartouche et barres du CAD
         self.pane.apply_settings({"board_toolbar_invert": False})
-        self.assertEqual(dark_pixels(), light)                            # apparence normale retrouvee
+        self.assertFalse(self.pane.toolbar_style["invert"])
         import settings_store
         self.assertIn("board_toolbar_invert", settings_store.DEFAULT_SETTINGS)
+
+
+class MiroFloatingBarsTest(_PaneCase):
+    """Barres flottantes de Miro (fm_board/bars.py + fm_theme/bar_manager.py, maquette Claude Design « Barres d'outils
+    flottantes ») : elles remplacent les anciennes barres d'outils de Miro ; la barre des modules n'est pas touchée."""
+
+    def manager(self):
+        return self.pane._miro_bars.manager
+
+    def drag_out(self, key, x=700, y=300):
+        """Ctrl + glisser (méthodes du gestionnaire) : l'élément `key` lâché dans le vide du board."""
+        from PySide6.QtCore import QPoint
+        mgr = self.manager()
+        bar = mgr.bar_of(key)
+        item = bar._items[key]
+        mgr.begin_item_drag(bar, item, bar.mapToGlobal(item.widget.geometry().center()))
+        mgr.item_drag_to(self.pane.mapToGlobal(QPoint(x, y)))
+        mgr.end_item_drag()
+
+    def test_default_layout_puts_every_tool_in_a_named_bar(self):
+        mgr = self.manager()
+        self.assertEqual([b.title() for b in mgr.bars], ["Outils", "Créer", "Page", "Vue", "Dessin", "Sélection"])
+        self.assertEqual(sorted(mgr.bar("b1").keys()), ["hand", "select"])
+        self.assertEqual(sorted(mgr.bar("b2").keys()),
+                         sorted(["sticky", "text", "shape", "connector", "draw", "comment", "frame", "image"]))
+        self.assertEqual(sorted(mgr.bar("b4").keys()), ["fit", "zoom", "zoom_in", "zoom_out"])
+        every_tool = {kind for kind, _tip in board_ui.TOOLS}
+        self.assertTrue(every_tool <= set(mgr.widgets))                     # aucun outil n'est perdu
+
+    def test_the_module_bar_is_not_touched_and_the_bars_start_to_its_right(self):
+        pane = self.pane
+        self.assertTrue(pane._modulebar.isVisible())
+        self.assertEqual(pane._modulebar.geometry().left(), 0)
+        for bar in self.manager().bars:
+            if bar.dock == "left":
+                self.assertEqual(bar.x(), pane.left_edge())                  # clipsées au bord de la zone, pas sous la barre des modules
+        self.assertEqual(self.manager().bar("b4").geometry().right() + 1, pane.width())     # « Vue » : à droite
+
+    def test_the_module_bar_toggles_the_grid_and_sets_the_view_background(self):
+        from fm_board import model, ui
+        pane = self.pane
+        bar = pane._modulebar
+        foot = [bar.grid, bar.background, bar.reset]
+        self.assertEqual(sorted(foot, key=lambda w: w.mapTo(bar, w.rect().topLeft()).y()), foot)   # au-dessus de « réinitialiser »
+        on = bool(pane.scene.page.get("grid", True))
+        bar.grid.click()
+        self.assertEqual(bool(pane.scene.page.get("grid", True)), not on)
+        self.assertEqual(bar.grid._on, not on)                               # l'icône suit la grille
+        labels = [label for label, _c in ui.VIEW_BACKGROUNDS]
+        self.assertEqual(labels, ["AutoCAD (sombre)", "Miro"])
+        pane._open_background_menu(bar.background)
+        menu = next(m for m in pane.findChildren(QMenu) if m.isVisible())
+        next(a for a in menu.actions() if a.text().startswith("AutoCAD")).trigger()
+        self.assertEqual(pane.scene.page.get("background"), "#212830")
+        menu.close()
+        pane._open_background_menu(bar.background)
+        menu = next(m for m in pane.findChildren(QMenu) if m.isVisible())
+        next(a for a in menu.actions() if a.text().startswith("Miro")).trigger()
+        self.assertIsNone(pane.scene.page.get("background"))                 # couleur Miro = celle par défaut
+        self.assertEqual(model.MIRO_BACKGROUND, "#f2f2f2")
+        menu.close()
+
+    def test_the_module_bar_keeps_one_width_and_a_long_press_shows_its_buttons(self):
+        from PySide6.QtCore import QPoint
+        from PySide6.QtTest import QTest
+        from fm_board import modulebar
+        pane = self.pane
+        bar = pane._modulebar
+        width = bar.width()
+        row = bar.rows["cad"]
+        self.assertFalse(row.vis.isVisible())                                # icônes seules
+        self.assertEqual(pane.left_edge(), bar.geometry().right() + 1)       # barres collées contre elle
+        with mock.patch.dict(modulebar.LOOK, {"long_press": 150}):
+            QTest.mousePress(row.icon, Qt.LeftButton, Qt.NoModifier, row.icon.rect().center())
+            settle(0.3)
+            flyout = bar._flyout
+            self.assertTrue(flyout.isVisible())
+            self.assertIs(row.vis.parentWidget(), flyout)                    # ses boutons, dans le volet
+            QTest.mouseRelease(row.icon, Qt.LeftButton, Qt.NoModifier, row.icon.rect().center())
+        self.assertEqual(bar.width(), width)                                 # même largeur
+        flyout.hide()
+        self.assertIs(row.vis.parentWidget(), row)
+        self.assertFalse(row.vis.isVisible())
+
+    def test_one_module_flyout_closes_after_a_choice_and_ctrl_opens_every_module(self):
+        """Demande de l'utilisateur, 2026-11-04 : volet d'UN module refermé des que le choix est fait ; Ctrl + appui
+        long = les boutons de TOUS les modules, chacun en face de sa ligne, ouverts jusqu'a un clic ailleurs."""
+        from PySide6.QtTest import QTest
+        from fm_board import modulebar
+        bar = self.pane._modulebar
+        row = bar.rows["cad"]
+        looks = []
+        bar.lookToggled.connect(lambda name, kind: looks.append((name, kind)))
+        with mock.patch.dict(modulebar.LOOK, {"long_press": 150}):
+            QTest.mousePress(row.icon, Qt.LeftButton, Qt.NoModifier, row.icon.rect().center())
+            settle(0.3)
+            QTest.mouseRelease(row.icon, Qt.LeftButton, Qt.NoModifier, row.icon.rect().center())
+            flyout = bar._flyout
+            self.assertTrue(flyout.isVisible() and flyout.single())
+            row.dim.click()
+            self.assertEqual(looks, [("cad", "fade")])
+            self.assertFalse(flyout.isVisible())                                  # choix fait : refermé
+            self.assertIs(row.dim.parentWidget(), row)
+            with mock.patch.object(modulebar.QApplication, "keyboardModifiers", return_value=Qt.ControlModifier):
+                QTest.mousePress(row.icon, Qt.LeftButton, Qt.ControlModifier, row.icon.rect().center())
+                settle(0.3)
+                QTest.mouseRelease(row.icon, Qt.LeftButton, Qt.ControlModifier, row.icon.rect().center())
+        self.assertTrue(flyout.isVisible())
+        self.assertFalse(flyout.single())
+        for other in bar.rows.values():                                          # tous, en face de leur ligne
+            self.assertIs(other.vis.parentWidget(), flyout)
+            self.assertTrue(other.vis.isVisible())
+            centre = other.mapToGlobal(other.rect().center()).y()
+            self.assertLessEqual(abs(other.vis.mapToGlobal(other.vis.rect().center()).y() - centre), 2)
+        names = list(bar.rows)
+        bar.rows[names[0]].vis.click()
+        bar.rows[names[1]].solo.click()
+        self.assertTrue(flyout.isVisible())                                      # reste ouvert pour tout régler
+        self.assertEqual(looks[1:], [(names[0], "hide"), (names[1], "solo")])
+        flyout.hide()                                                            # (clic ailleurs : fenêtre popup)
+        self.assertTrue(all(r.vis.parentWidget() is r and not r.vis.isVisible() for r in bar.rows.values()))
+
+    def test_long_press_then_release_on_a_button_chooses_it(self):
+        """Demande de l'utilisateur, 2026-11-05 : appui long, glisser sur « griser » SANS relacher, relacher = choisi."""
+        from PySide6.QtCore import QEvent, QPointF
+        from PySide6.QtGui import QMouseEvent
+        from PySide6.QtTest import QTest
+        from fm_board import modulebar
+        bar = self.pane._modulebar
+        row = bar.rows["cad"]
+        looks = []
+        bar.lookToggled.connect(lambda name, kind: looks.append((name, kind)))
+        with mock.patch.dict(modulebar.LOOK, {"long_press": 150}):
+            QTest.mousePress(row.icon, Qt.LeftButton, Qt.NoModifier, row.icon.rect().center())
+            settle(0.3)
+        flyout = bar._flyout
+        self.assertTrue(flyout.isVisible())
+        flyout.armed = True                                                       # bouton toujours tenu
+        target = row.dim.mapToGlobal(row.dim.rect().center())
+        local = QPointF(row.icon.mapFromGlobal(target))
+
+        def send(kind, buttons):
+            QApplication.sendEvent(row.icon, QMouseEvent(kind, local, QPointF(target), Qt.LeftButton, buttons,
+                                                         Qt.NoModifier))
+        send(QEvent.MouseMove, Qt.LeftButton)
+        self.assertTrue(row.dim.isDown())                                         # survol : montre enfonce
+        self.assertEqual(looks, [])
+        send(QEvent.MouseButtonRelease, Qt.NoButton)
+        self.assertEqual(looks, [("cad", "fade")])                                # applique au relachement
+        self.assertFalse(flyout.isVisible())
+
+    def test_isolating_a_module_makes_it_active(self):
+        """Demande de l'utilisateur, 2026-11-05 : isoler un module inactif l'active."""
+        pane = self.pane
+        pane.set_module(None)
+        pane.toggle_module_look("cad", "solo")
+        self.assertTrue(pane.scene.module_state["cad"]["solo"])
+        self.assertEqual(pane.module, "cad")
+        pane.toggle_module_look("cad", "solo")                                    # sortie d'isolation : reste actif
+        self.assertEqual(pane.module, "cad")
+
+    def test_drawing_bar_and_presets_only_while_a_drawing_tool_is_chosen(self):
+        pane = self.pane
+        pane.view.set_tool("select")
+        settle(0.05)
+        self.assertFalse(pane._drawbar.isVisible())
+        pane.view.set_tool("pen")
+        settle(0.05)
+        self.assertTrue(pane._drawbar.isVisible())
+        self.assertTrue(all(button.isVisible() for button in pane._preset_buttons))
+        self.assertTrue(pane._draw_buttons["pen"].active)
+        pane.view.set_tool("sticky")
+        settle(0.05)
+        self.assertFalse(pane._drawbar.isVisible())
+
+    def test_zoom_text_follows_the_view_and_a_tool_click_still_works(self):
+        pane = self.pane
+        pane.view.set_zoom(2.0)
+        settle(0.05)
+        self.assertEqual(pane._zoom_label.grab().isNull(), False)
+        self.assertEqual(pane._zoom_label.text_value(), board_ui.format_zoom(pane.view.zoom()))
+        pane._tool_buttons["hand"].click()
+        self.assertEqual(pane.view.tool, "hand")
+        self.assertTrue(pane._tool_buttons["hand"].active)
+
+    def test_a_tool_dropped_in_the_void_becomes_a_bar_that_is_saved_and_restored(self):
+        self.drag_out("sticky")
+        mgr = self.manager()
+        new = mgr.bar_of("sticky")
+        self.assertNotEqual(new.bar_id, "b2")
+        self.assertEqual(new.keys(), ["sticky"])
+        self.assertNotIn("sticky", mgr.bar("b2").keys())
+        saved = self.pane._settings["board_bars"]["miro"]
+        self.assertIn("sticky", next(b for b in saved["bars"] if b["id"] == new.bar_id)["items"])
+        other = BoardPane(self.host, {"board_bars": self.pane._settings["board_bars"]})   # autre ouverture : meme disposition
+        other.open(self.path)
+        other.fit()
+        other.show()
+        settle(0.05)
+        self.assertEqual(other._miro_bars.manager.bar_of("sticky").bar_id, new.bar_id)
+        self.assertEqual(other._miro_bars.manager.bar_of("sticky").keys(), ["sticky"])
+
+    def test_the_selection_buttons_keep_the_cell_the_user_gave_them(self):
+        note = self.scene.add_new(model.new_item("sticky", text="x"))
+        note.setSelected(True)
+        settle(0.05)
+        mgr = self.manager()
+        self.assertEqual(mgr.bar_of("link").bar_id, "b6")                    # par defaut : barre « Selection »
+        self.drag_out("link", 650, 400)
+        moved = mgr.bar_of("link").bar_id
+        self.assertNotEqual(moved, "b6")
+        note.setSelected(False)
+        settle(0.05)
+        self.assertFalse(mgr.dynamic["ctx"])
+        note.setSelected(True)
+        settle(0.05)
+        self.assertEqual(mgr.bar_of("link").bar_id, moved)                   # boutons refaits : « Lien » retrouve sa barre
+
+    def test_a_removed_old_toolbar_attribute_still_answers_for_other_modules(self):
+        """CAD et Design placent leurs barres d'apres `_zoombar` : la barre « Vue » les renseigne."""
+        pane = self.pane
+        self.assertIs(pane._zoombar, self.manager().bar("b4"))
+        self.assertTrue(pane._zoombar.isVisible())
+        self.assertGreater(pane._zoombar.width(), 100)
+
+    def test_reset_returns_to_the_default_layout(self):
+        self.drag_out("sticky")
+        self.pane._miro_bars.reset()
+        self.assertEqual(self.manager().bar_of("sticky").bar_id, "b2")
+        self.assertEqual(len(self.manager().bars), 6)
 
 
 class BoardModeTest(unittest.TestCase):
@@ -1336,7 +1879,7 @@ class BoardModeTest(unittest.TestCase):
         column = self._file_column()
         self.assertFalse(win.btn_board.isEnabled())
         path = column._create_board_file("Atelier")
-        self.assertEqual(path, self.root / "set" / "Atelier.mro")
+        self.assertEqual(path, self.root / "set" / "Atelier.brd")
         settle(0.3)
         self.assertTrue(win.btn_board.isEnabled())
         win.on_activated(path)
@@ -1344,6 +1887,9 @@ class BoardModeTest(unittest.TestCase):
         pane = win._board
         self.assertIsNotNone(pane)
         self.assertEqual(pane.geometry(), win.scroll.viewport().rect())
+        # Fluidite : colonnes cachees sous le board (fondu fini), remontrees a la fermeture.
+        settle(0.5)
+        self.assertFalse(win.columns_host.isVisible())
         group = win.titlebar.board_group()
         self.assertTrue(group.isVisible())
         from settings_store import load_settings
@@ -1351,10 +1897,23 @@ class BoardModeTest(unittest.TestCase):
         settings["board_snap_distance"] = 12
         win._apply_settings(settings, {"board_snap_distance"})
         self.assertEqual(pane.scene.snap["distance"], 12)                 # Reglages > MRO en direct
+        badge = win._board_render_badge                                   # encart accroche en bas de la barre
+        self.assertTrue(badge.isVisible() and badge.hanging)
+        self.assertEqual(badge.geometry().bottom(), win.titlebar.height() - 1)
+        self.assertFalse(pane._badge.isVisible())
+        self.assertEqual(win.status_right.text(), "enregistré")           # a la place de « read-only »
         pane.scene.add_new(model.new_item("sticky", text="idée"))
+        settle(0.05)
+        self.assertEqual(win.status_right.text(), "modifié")
+        self.assertNotIn("Atelier", win.status_right.text())
+        if __import__("os").environ.get("BOARD_SHOT"):
+            win.grab().save(__import__("os").environ["BOARD_SHOT"])
         self.assertTrue(win._close_board())
         settle(0.3)
         self.assertIsNone(win._board)
+        self.assertTrue(win.columns_host.isVisible())
+        self.assertEqual(win.status_right.text(), "read-only")
+        self.assertFalse(badge.isVisible())
         self.assertEqual(serialization.load(path)["items"][0]["text"], "idée")
 
     def test_double_click_on_a_dxf_opens_it_in_the_board(self):

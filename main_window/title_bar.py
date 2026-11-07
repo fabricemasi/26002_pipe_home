@@ -380,6 +380,11 @@ class TitleBar(QWidget):
         self.btn_min = self._make_button("min", window.showMinimized)
         self.btn_max = self._make_button("max", self._toggle_max)
         self.btn_close = self._make_button("close", window.close)
+        # Punaise : fenêtre « toujours au-dessus » (clic droit sur la barre), un clic la libère.
+        self.btn_pin = self._make_button("pin", lambda: self.set_always_on_top(False))
+        self.btn_pin.setToolTip("Toujours au-dessus (cliquer pour libérer)")
+        self.btn_pin.hide()
+        layout.addWidget(self.btn_pin, alignment=Qt.AlignTop)
         layout.addWidget(self.btn_min, alignment=Qt.AlignTop)
         layout.addWidget(self.btn_max, alignment=Qt.AlignTop)
         layout.addWidget(self.btn_close, alignment=Qt.AlignTop)
@@ -505,6 +510,31 @@ class TitleBar(QWidget):
         self._place_crumbs()
         self.place_viewer_group()
         self._place_load_bar()
+        self.place_bottom_badge()
+
+    def set_bottom_badge(self, widget):
+        """Encart accroche en BAS de la barre, a droite (mode de rendu du board : OPEN GL / CLASSIQUE) ; None =
+        aucun."""
+        old = getattr(self, "_bottom_badge", None)
+        if old is not None and old is not widget:
+            old.hide()
+        self._bottom_badge = widget
+        self.place_bottom_badge()
+
+    def place_bottom_badge(self):
+        """Colle en bas, a droite (sous les boutons de la fenetre) ; a leur gauche s'il en recouvrait plus que le
+        bord."""
+        badge = getattr(self, "_bottom_badge", None)
+        if badge is None:
+            return
+        gap = scaled(8, 0)
+        x = self.width() - badge.width() - gap
+        y = self.height() - badge.height()
+        first = self.btn_min.geometry()
+        if first.bottom() - y > scaled(4, 0) and x + badge.width() > first.left() - gap:
+            x = first.left() - gap - badge.width()
+        badge.move(x, y)
+        badge.raise_()
 
     def set_load_progress(self, percent: int | None):
         """Barre « Réglages n % » en bas a droite de la barre (chargement des reglages sur inactivite) ; None =
@@ -587,13 +617,30 @@ class TitleBar(QWidget):
             group.hide()
         return group
 
+    def pdf_group(self) -> "_ViewerGroup":
+        """Cadre « PDF » (module fm_pdf/) : memes habillage et place que « Visionneuse »."""
+        group = getattr(self, "_pdf_group", None)
+        if group is None:
+            group = self._pdf_group = _ViewerGroup(self, "PDF")
+            group.hide()
+        return group
+
+    def agenda_group(self) -> "_ViewerGroup":
+        """Cadre « Agenda » (module fm_agenda/) : memes habillage et place que « Visionneuse »."""
+        group = getattr(self, "_agenda_group", None)
+        if group is None:
+            group = self._agenda_group = _ViewerGroup(self, "Agenda")
+            group.hide()
+        return group
+
     def place_viewer_group(self):
-        """Cadres « Visionneuse » / « Éditeur » / « Board » / « Vidéo » / « Typographie » : a la suite des outils
-        (apres le dernier bouton de la barre), centres dans la hauteur de la rangee des outils, decales de leur
-        margin."""
+        """Cadres « Visionneuse » / « Éditeur » / « Board » / « Vidéo » / « Typographie » / « PDF » / « Agenda » :
+        a la suite des outils (apres le dernier bouton de la barre), centres dans la hauteur de la rangee des outils,
+        decales de leur margin."""
         for group in (getattr(self, "_viewer_group", None), getattr(self, "_editor_group", None),
                       getattr(self, "_board_group", None), getattr(self, "_video_group", None),
-                      getattr(self, "_font_group", None)):
+                      getattr(self, "_font_group", None), getattr(self, "_pdf_group", None),
+                      getattr(self, "_agenda_group", None)):
             if group is not None and not group.isHidden():
                 self._place_group(group)
 
@@ -651,7 +698,7 @@ class TitleBar(QWidget):
         self.title_label.setFixedHeight(scaled(TITLEBAR_HEIGHT))
         for holder in getattr(self, "_tool_boxes", ()):
             holder.setFixedHeight(scaled(TITLEBAR_HEIGHT))
-        for btn in (self.btn_min, self.btn_max, self.btn_close, *getattr(self, "_tool_buttons", ())):
+        for btn in (self.btn_pin, self.btn_min, self.btn_max, self.btn_close, *getattr(self, "_tool_buttons", ())):
             btn.setFixedSize(scaled(26), scaled(TITLEBAR_HEIGHT))
 
     def refresh_look(self):
@@ -699,7 +746,7 @@ class TitleBar(QWidget):
         self._icon.setPixmap(custom_logo or QPixmap())
         _set_qss(self._icon, "background: transparent;" if custom_logo is not None else
                  f"border: 1px solid {C['mark_dir_bd']}; background: transparent;")
-        for btn in (self.btn_min, self.btn_max, self.btn_close):
+        for btn in (self.btn_pin, self.btn_min, self.btn_max, self.btn_close):
             btn.update()
         self.refresh_crumbs()
 
@@ -718,6 +765,28 @@ class TitleBar(QWidget):
         )
         btn.clicked.connect(slot)
         return btn
+
+    def contextMenuEvent(self, event):
+        """Clic droit sur la barre : « Toujours au-dessus » (demande de l'utilisateur : plus d'espaces ici)."""
+        from settings_widgets import Menu
+        from fm_theme.style import always_on_top
+        menu = Menu(self)
+        action = menu.addAction("Toujours au-dessus")
+        action.setCheckable(True)
+        action.setChecked(always_on_top(self))
+        action.triggered.connect(lambda checked: self.set_always_on_top(checked))
+        menu.exec(event.globalPos())
+        event.accept()
+
+    def set_always_on_top(self, on: bool, save: bool = True):
+        from fm_theme.style import set_always_on_top
+        set_always_on_top(self, on)
+        self.btn_pin.setVisible(bool(on))
+        if save:
+            from settings_store import save_live_state
+            save_live_state("window_always_on_top", bool(on))
+            if isinstance(ui_state.APPLIED_SETTINGS, dict):
+                ui_state.APPLIED_SETTINGS["window_always_on_top"] = bool(on)
 
     def _toggle_max(self):
         if self._window.isMaximized():

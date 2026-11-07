@@ -8,6 +8,7 @@ import shutil
 import sys
 import tempfile
 import time
+from _lent import lent  # noqa: E402
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -50,6 +51,9 @@ class PreloadTest(unittest.TestCase):
         self.addCleanup(patch.stop)
         with mock.patch("main_window.settings_link.settings_window_v2_preload_enabled", lambda: True):
             win._start_settings_idle_watch()
+        # Les taches automatiques (tests/test_automatic_tasks.py) prennent la main sur ce releve : coupees ici
+        # pour tester le chargement sur inactivite lui-meme.
+        win._automatic_tasks = None
         self.addCleanup(win._settings_idle_timer.stop)
         self.addCleanup(win._stop_settings_idle_load)
         # Fenetre preparee DETRUITE avec le test (processEvents ne traite pas les deleteLater) : ses ~24 000 widgets
@@ -84,7 +88,8 @@ class PreloadTest(unittest.TestCase):
         win._settings_idle_tick()
         self.assertTrue(win._settings_idle_loading)
         self.assertIsNotNone(win._settings_dialog_v2)
-        self.assertTrue(win.titlebar._load_bar.isVisible())          # barre « Réglages n % »
+        # Avancement : indicateur des taches de fond (`background_status.settings_progress`).
+        self.assertTrue(win._background_status.progress.format().startswith("Chargement des réglages"))
 
     def test_user_input_stops_the_loading_at_once(self):
         win = self.win
@@ -98,7 +103,7 @@ class PreloadTest(unittest.TestCase):
         event.spontaneous.return_value = True
         win._idle_input_watch.eventFilter(win, event)                 # l'utilisateur revient
         self.assertFalse(win._settings_idle_loading)
-        self.assertFalse(win.titlebar._load_bar.isVisible())
+        self.assertFalse(win._background_status.progress.format().startswith("Chargement des réglages"))
         self.assertTrue(win._settings_prebuild_hold())                 # preparation suspendue
         self.assertLess(time.monotonic() - win._app_input_at, 1)      # la minute est recomptee
 
@@ -122,6 +127,7 @@ class PreloadTest(unittest.TestCase):
         win._settings_idle_tick()
         self.assertFalse(win._settings_idle_loading)
 
+    @lent                                    # fenetre de reglages ENTIERE construite (~90 s)
     def test_dialog_is_prepared_hidden_then_reused(self):
         win = self.win
         self._watch()
@@ -131,11 +137,11 @@ class PreloadTest(unittest.TestCase):
         dialog = win._settings_dialog_v2
         self.assertFalse(dialog.isVisible())                          # cachee
         seen = []
-        bar = win.titlebar._load_bar
+        bar = win._background_status.progress
         end = time.monotonic() + 90
         while time.monotonic() < end and not dialog.prebuild_finished():
             APP.processEvents()
-            if bar.isVisible():
+            if bar.format().startswith("Chargement des réglages"):
                 seen.append(bar.value())
         self.assertTrue(dialog.prebuild_finished())
         self.assertTrue(all(n._built for n in dialog.findChildren(v2._LazyNode)))   # construite sans etre affichee

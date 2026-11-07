@@ -53,7 +53,7 @@ from settings_layout import (
     _Section, _SectionHeader, _SubSection, _TabStrip, _TABLE_HEAD, _ResizableTableHeader, _TableRow,
     set_tab_look,
     _make_accordion,
-    _ancestors, _flat_tables, _reflow_all,
+    _ancestors, _flat_tables, _reflow_all, logical_parent,
     _section_host, _seed_flat_tables_style, _set_flat_tables_style,
 )
 from settings_sections import (
@@ -61,7 +61,7 @@ from settings_sections import (
     _ITEM_TEXT_FIELD_SPECS, _SidePaddingField, _ToggleSideColorsField, _font_choices,
 )
 from settings_store import (
-    M, _coerce_corner_radius, _coerce_side_enabled, _load_presets, _load_window_geometry,
+    M, _coerce_corner_radius, _coerce_side_enabled, _load_window_geometry,
     _resolve_color_value, _ICONS_DIR, _save_window_geometry, import_toggle_image, toggle_style_list,
     update_active_preset, _subsection_left_margin, _title_color, _title_font, _title_indent, _sync_dynamic_M,
     _sync_slider_style, _sync_title_level_style, load_settings, save_settings,
@@ -86,13 +86,15 @@ from settings_catalog import _BORD, CATALOG, Node, Spec, _ctx_font, _gabarit_ext
 # Reglages des modules : definis dans LEUR paquet (inscrits dans CATALOG a l'import).
 from fm_video.settings import VIDEO_TAB, VIDEO_TREE
 from fm_markdown.settings import MARKDOWN_TAB, MARKDOWN_TREE, MD_ALIGN, MD_MODES, MD_OPEN_MD
-from fm_board.settings import BOARD_MENU_GROUPS, MRO_TAB, MRO_TREE
+from fm_board.settings import BOARD_MENU_GROUPS, BOARD_TAB, BOARD_TREE, MRO_TAB, MRO_TREE
 from fm_cad.settings import CAD_TAB, CAD_TREE
 from fm_design.settings import DESIGN_TAB, DESIGN_TREE
 from fm_tableur.settings import TABLEUR_TAB, TABLEUR_TREE
 from fm_illustrator.settings import ILL_TAB, ILL_TREE
 from fm_photoshop.settings import PS_TAB, PS_TREE
 from fm_font.settings import TYPO_TAB, TYPO_TREE
+from fm_pdf.settings import PDF_TAB, PDF_TREE
+from fm_agenda.settings import AGENDA_TAB, AGENDA_TREE
 from fm_visionneuse.settings import VIEWER_TAB, VIEWER_TREE
 from app_style import SEMANTIC_COLOR_SLOTS
 
@@ -288,13 +290,73 @@ CATALOG["Tableaux"] = [
     Spec("table_cell_head_color", "Couleur d'entête (cellules)", "header_color", "tableHead"),
 ]
 
-# -- Toggles : un choix de style, puis Type/Cadre/Coche pour chaque style --
+# -- Toggles : un choix de style, puis Type, État OFF et État ON pour chaque style --
 CATALOG["Toggles : Style"] = [Spec("toggle_style", "Style", "toggle_style", "toggle1")]
 
 
-def _toggle_specs(prefix: str) -> tuple[list[Spec], list[Spec], list[Spec]]:
+TOGGLE_STATES = (("off", "OFF"), ("on", "ON"))
+# Tableaux d'un style : Type, puis UN tableau par etat (groupes « <style> : OFF » / « <style> : ON »), Fond et
+# Coche cote a cote dans chaque ligne (cellule divisee, demande de l'utilisateur 2026-10-30).
+TOGGLE_STATE_PARTS = tuple(label for _s, label in TOGGLE_STATES)
+
+
+def _state_pair(label: str, fond: Spec | None, coche: Spec | None, **params) -> Spec:
+    """Ligne « Fond | Coche » d'un tableau d'etat : chaque sous-cellule porte le champ de sa partie (vide si
+    la partie n'a pas ce reglage). Lue / ecrite comme ses champs (kind `state_pair`)."""
+    keys = tuple(k for sub in (fond, coche) if sub is not None for k in (sub.key, *sub.extra_keys))
+    return Spec(keys[0], label, "state_pair", None, {"parts": (("Fond", fond), ("Coche", coche)), **params},
+                extra_keys=keys[1:])
+
+
+def _toggle_state_specs(prefix: str, state: str) -> list[Spec]:
+    """Tableau d'un etat (Etat OFF / Etat ON, memes lignes) : Fond et Coche dans les deux sous-cellules."""
+    from fm_theme.toggle_states import defaults
+    pre = f"{prefix}_{state}"
+    base = defaults(prefix)
+
+    def size(part, field):
+        key = f"{pre}_{part}_{field}"
+        return Spec(key, {"width": "Largeur", "height": "Hauteur"}[field], "slider", base[key],
+                    {"min": 1, "max": 80, "width": 110, "box": 54})
+
+    def border(part):
+        return Spec(f"{pre}_{part}_border_enabled", "Bordure", "sides_thick", True,
+                    {"colors_key": f"{pre}_{part}_border", "thickness_key": f"{pre}_{part}_border_thickness",
+                     "width": 90, "box": 54},
+                    extra_keys=(f"{pre}_{part}_border", f"{pre}_{part}_border_thickness"))
+
+    def radius(part):
+        return Spec(f"{pre}_{part}_border_radius", "Border radius", "corners", 0, {"max": 20})
+
+    def color(part):
+        return Spec(f"{pre}_{part}_color", "Couleur de fond", "color", base[f"{pre}_{part}_color"],
+                    {"title": f"{'Fond' if part == 'bg' else 'Coche'} ({state.upper()})"})
+
+    skin = f"{pre}_coche_skin"
+    text_pre = f"{pre}_coche_text"
+    return [
+        *(_state_pair(label, maker("bg"), maker("coche")) for label, maker in (
+            ("Largeur", lambda part: size(part, "width")), ("Hauteur", lambda part: size(part, "height")),
+            ("Bordure", border), ("Border radius", radius), ("Couleur de fond", color))),
+        # Habillage (coche seulement) : un texte OU une icone, au milieu de la coche ; leurs lignes sont grisees sinon.
+        _state_pair("Habillage", None, Spec(skin, "Habillage", "coche_skin", "none")),
+        _state_pair("Texte", None, Spec(f"{pre}_coche_text", "Texte", "text", ""), active_when=(skin, "text")),
+        _state_pair("Police", None, Spec(
+            f"{text_pre}_font_family", "Police", "font_gabarit", "",
+            {"prefix": text_pre, "size": (4, 32), "size_default": 10, "color_default": "#ffffff",
+             "color_title": "Couleur du texte"},
+            extra_keys=tuple(f"{text_pre}_font_{k}" for k in
+                             ("bold", "italic", "size", "smoothing_enabled", "smoothing", "color"))),
+            active_when=(skin, "text")),
+        _state_pair("Icône", None, Spec(f"{pre}_coche_icon", "Icône", "toggle_image", "", {"style": prefix}),
+                    active_when=(skin, "icon")),
+    ]
+
+
+def _toggle_specs(prefix: str) -> tuple[list[Spec], ...]:
+    """Tableaux d'un style : (Type, Etat OFF, Etat ON)."""
     small = {"width": 90, "box": 54}
-    # Type : peint par Qt (cadre + coche) ou images importees (ON / OFF + sequence entre les deux).
+    # Type : peint par Qt (fond + coche) ou images importees (ON / OFF + sequence entre les deux).
     kind = [
         Spec(f"{prefix}_kind", "Type", "toggle_kind", "qt"),
         Spec(f"{prefix}_motion", "Mouvement de la coche", "toggle_motion",
@@ -306,44 +368,20 @@ def _toggle_specs(prefix: str) -> tuple[list[Spec], list[Spec], list[Spec]]:
              {"style": prefix, "active_when": (f"{prefix}_kind", "icons")}),
         Spec(f"{prefix}_anim_ms", "Durée de l'animation (ms)", "slider", 140, {"min": 0, "max": 2000, **small}),
     ]
-    def border(part):
-        return Spec(f"{prefix}_{part}_border_enabled", "Bordure", "sides_thick", True,
-                    {"colors_key": f"{prefix}_{part}_border", "thickness_key": f"{prefix}_{part}_border_thickness",
-                     **small},
-                    extra_keys=(f"{prefix}_{part}_border", f"{prefix}_{part}_border_thickness"))
-    def radius(part):
-        return Spec(f"{prefix}_{part}_border_radius", "Border radius", "corners", 0, {"max": 20})
-    outer = [
-        Spec(f"{prefix}_outer_width", "Largeur", "slider", 29, {"min": 4, "max": 80, **small}),
-        Spec(f"{prefix}_outer_height", "Hauteur", "slider", 14, {"min": 4, "max": 60, **small}),
-        border("outer"), radius("outer"),
-        Spec(f"{prefix}_outer_bg", "Fond (sans)", "color", "#141618", {"title": "Fond"}),
-        Spec(f"{prefix}_outer_bg_on", "Fond (actif)", "color", "#3f6f9f", {"title": "Fond (actif)"}),
-    ]
-    text_pre = f"{prefix}_coche_text"
-    coche = [
-        Spec(f"{prefix}_coche_width", "Largeur", "slider", 11, {"min": 2, "max": 60, **small}),
-        Spec(f"{prefix}_coche_margin", "Distance du bord", "slider", 4, {"min": 0, "max": 30, **small}),
-        border("coche"), radius("coche"),
-        Spec(f"{prefix}_coche_color", "Couleur", "color", "#3f6f9f", {"title": "Couleur"}),
-        # Habillage : un texte OU une icone dessine(e) dans la coche.
-        Spec(f"{prefix}_coche_skin", "Habillage", "coche_skin", "none"),
-        Spec(f"{prefix}_coche_text", "Texte", "text", ""),
-        Spec(f"{text_pre}_font_family", "Police du texte", "font_gabarit", "",
-             {"prefix": text_pre, "size": (4, 32), "size_default": 10, "color_default": "#ffffff",
-              "color_title": "Couleur du texte"},
-             extra_keys=tuple(f"{text_pre}_font_{k}" for k in
-                              ("bold", "italic", "size", "smoothing_enabled", "smoothing", "color"))),
-        Spec(f"{prefix}_coche_icon", "Icône", "icon_choice", ""),
-        Spec(f"{prefix}_coche_icon_color", "Couleur de l'icône", "color_app", "#ffffff",
-             {"title": "Couleur de l'icône"}),
-    ]
-    return kind, outer, coche
+    return (kind, *(_toggle_state_specs(prefix, state) for state, _label in TOGGLE_STATES))
 
 
 def register_toggle_catalog(prefix: str):
-    """Declare les tableaux Type/Cadre/Coche d'un style de toggle (tous les styles ont les memes)."""
-    CATALOG[f"{prefix} : Type"], CATALOG[f"{prefix} : Cadre"], CATALOG[f"{prefix} : Coche"] = _toggle_specs(prefix)
+    """Declare les tableaux d'un style de toggle (tous les styles ont les memes) : Type, Etat OFF, Etat ON."""
+    kind, *parts = _toggle_specs(prefix)
+    CATALOG[f"{prefix} : Type"] = kind
+    for name, specs in zip(TOGGLE_STATE_PARTS, parts):
+        CATALOG[f"{prefix} : {name}"] = specs
+
+
+def unregister_toggle_catalog(prefix: str):
+    for name in ("Type", *TOGGLE_STATE_PARTS, "OFF Fond", "OFF Coche", "ON Fond", "ON Coche", "Cadre", "Coche"):
+        CATALOG.pop(f"{prefix} : {name}", None)
 
 
 for _p in ("toggle1", "toggle2"):
@@ -421,21 +459,10 @@ def _normalized_extensions(values) -> list[str]:
 # -- Menu contextuel (settings_menu : tous les menus contextuels, lus a chaque ouverture) --
 # Fenetres additionnelles (demande de l'utilisateur) : toutes les fenetres en plus de la principale.
 CATALOG["Fenêtres additionnelles"] = [
-    Spec("extra_window_border_enabled", "Bordures", "sides_thick", True,
-         {"colors_key": "extra_window_border", "thickness_key": "extra_window_border_thickness", "width": 90,
-          "box": 54}, extra_keys=("extra_window_border", "extra_window_border_thickness")),
+    # Bordures : « Bordure des fenêtres » de Thème > Général (toutes les fenêtres), plus ici.
     Spec("extra_window_radius", "Border radius", "corners", 0, {"max": 24}),
     _shadow_spec("extra_window_shadow"),
-    Spec("extra_window_title_height", "Hauteur de la barre de navigation", "slider", 32, {"min": 16, "max": 80}),
-    Spec("extra_window_title_bg", "Couleur de la barre de navigation", "color", "#101214",
-         {"title": "Barre de navigation"}),
-    Spec("extra_window_title_button_width", "Taille des boutons de la barre de navigation", "xy", 36,
-         {"range": (12, 120), "defaults": (36, 32), "second_key": "extra_window_title_button_height",
-          "captions": ("X", "Y")}, extra_keys=("extra_window_title_button_height",)),
-    Spec("extra_window_title_button_radius", "Border radius des boutons", "corners", 0, {"max": 20}),
-    Spec("extra_window_title_line_enabled", "Bordure barre de navigation / interface", "inner_line", True,
-         {"prefix": "extra_window", "axis": "title_line"},
-         extra_keys=("extra_window_title_line_color", "extra_window_title_line_thickness")),
+    # Barre de navigation des fenetres : dans Barre de navigation > Fenetres additionnelles (2026-11-05).
     Spec("extra_window_buttons_line_enabled", "Bordure interface / barre des boutons", "inner_line", True,
          {"prefix": "extra_window", "axis": "buttons_line"},
          extra_keys=("extra_window_buttons_line_color", "extra_window_buttons_line_thickness")),
@@ -444,8 +471,22 @@ CATALOG["Fenêtres additionnelles"] = [
 # Tableaux > « Texte au dessus » : police des textes poses au-dessus d'une ligne (settings_cells).
 CATALOG["Tableaux"].append(_ctx_font("table_above_text", "Texte au dessus", 11, "#8d949a"))
 
-CATALOG["Fenêtres additionnelles"].insert(
-    5, _ctx_font("extra_window_title_text", "Texte de la barre de navigation", 11, "#8d949a"))
+# Barre de navigation > Fenetres additionnelles : la barre du haut de toutes les fenetres en plus de la principale
+# (avant : dans Fenetres additionnelles ; demande de l'utilisateur, 2026-11-05 : tout ce qui regle une barre de
+# navigation dans la section Barre de navigation).
+CATALOG["Barre de navigation : Fenetres additionnelles"] = [
+    Spec("extra_window_title_height", "Hauteur barre", "slider", 32, {"min": 16, "max": 80}),
+    Spec("extra_window_title_bg", "Couleur de fond", "color", "#101214",
+         {"title": "Barre de navigation des fenêtres"}),
+    _ctx_font("extra_window_title_text", "Texte", 11, "#8d949a"),
+    Spec("extra_window_title_button_width", "Taille des boutons", "xy", 36,
+         {"range": (12, 120), "defaults": (36, 32), "second_key": "extra_window_title_button_height",
+          "captions": ("X", "Y")}, extra_keys=("extra_window_title_button_height",)),
+    Spec("extra_window_title_button_radius", "Border radius des boutons", "corners", 0, {"max": 20}),
+    Spec("extra_window_title_line_enabled", "Bordure barre / interface", "inner_line", True,
+         {"prefix": "extra_window", "axis": "title_line"},
+         extra_keys=("extra_window_title_line_color", "extra_window_title_line_thickness")),
+]
 
 CATALOG["Menu contextuel : Menu"] = [
     Spec("ctx_menu_editable", "Personnalisation (glisser, clic droit)", "bool", True),
@@ -465,6 +506,10 @@ CATALOG["Menu contextuel : Lignes"] = [
     _ctx_font("ctx_menu", "Police", 11, "#d6d9dc"),
     Spec("ctx_menu_item_padding", "Padding des lignes", "padding", {}),
     Spec("ctx_menu_disabled_color", "Couleur du texte grisé", "color", "#7d858b", {"title": "Couleur du texte grisé"}),
+    Spec("ctx_menu_ghost_color", "Couleur des options fantômes", "color", "#e0a040",
+         {"title": "Options fantômes (Ctrl+Maj + clic droit)"}),
+    Spec("ctx_menu_current_color", "Couleur de l'élément en cours", "color", "#4d5f9bd0",
+         {"title": "Élément en cours (ex. couleur « app » choisie)"}),
     Spec("ctx_menu_icon_size", "Taille des icônes", "slider", 16, {"min": 8, "max": 40}),
     Spec("ctx_menu_control_gap", "Écart texte / contrôle", "slider", 16, {"min": 0, "max": 80}),
     Spec("ctx_menu_slider_width", "Largeur des curseurs", "slider", 140, {"min": 60, "max": 320}),
@@ -605,7 +650,7 @@ CATALOG["Barre de navigation : Icones"] = [
         ("navbar_browse", "Icône parcourir (racine)"), ("navbar_presets", "Icône gérer les presets"),
         ("settings_gear", "Icône réglages"), ("navbar_viewer", "Icône visionneuse"),
         ("navbar_text_editor", "Icône éditeur Markdown / code"), ("navbar_board", "Icône board"),
-        ("navbar_font", "Icône typographie"))
+        ("navbar_font", "Icône typographie"), ("navbar_pin", "Icône « toujours au-dessus » (punaise)"))
 ]
 CATALOG["Barre de navigation"] = [
     Spec("navbar_bottom_enabled", "Bordure bas", "inner_line", True,
@@ -616,6 +661,21 @@ CATALOG["Barre de navigation"] = [
           "color_default": "#7d858b", "color_title": "Couleur du titre"},
          extra_keys=_gabarit_extra("navbar_title")),
     Spec("navbar_height", "Hauteur barre", "slider", 32, {"min": 24, "max": 160}),
+    Spec("navbar_theme_button_color", "Couleur du bouton fm_theme", "color", "#f28c28",
+         {"title": "Couleur du bouton fm_theme"}),
+]
+# Barre d'etat (fm_theme, 2026-11-05) : bas de la fenetre principale, chemin a gauche, infos a droite
+# (fm_theme/status_bar.py l'applique).
+CATALOG["Barre d'état"] = [
+    Spec("statusbar_height", "Hauteur barre", "slider", 24, {"min": 16, "max": 80}),
+    Spec("statusbar_bg_color", "Couleur de fond", "color_app", "#202326", {"title": "Fond de la barre d'état"}),
+    Spec("statusbar_top_enabled", "Bordure haut", "inner_line", True,
+         {"prefix": "statusbar", "axis": "top"},
+         extra_keys=("statusbar_top_color", "statusbar_top_thickness")),
+    Spec("statusbar_padding_x", "Marge gauche / droite", "slider", 10, {"min": 0, "max": 60, "unit": "px"}),
+    Spec("statusbar_spacing", "Espacement entre les éléments", "slider", 12, {"min": 0, "max": 60, "unit": "px"}),
+    _ctx_font("statusbar_path", "Texte (chemin)", 11, "#b9bfc4"),
+    _ctx_font("statusbar_info", "Texte (infos)", 11, "#5f666b"),
 ]
 
 
@@ -665,18 +725,150 @@ def _standard_control_specs(prefix: str, *, shadow: bool = False) -> list[Spec]:
 CATALOG["Bouton"] = _standard_control_specs("button", shadow=True)
 CATALOG["Zone de saisie"] = _standard_control_specs("input")
 CATALOG["Tabs"] = _standard_control_specs("tabs")
+
+
+def _palette_specs() -> dict[str, list[Spec]]:
+    """Section « Palette » (type d'élément « palette » de fm_theme, fm_theme/palette.py) : un tableau par partie (le
+    Contrôleur a un sous-tableau par type : slider, liste déroulante, zone de saisie, toggle), une ligne par
+    réglage `palette_*` (défauts dans fm_theme/palette_defaults.py ; couleur transparente = celle du thème)."""
+    from fm_theme.palette_defaults import PALETTE_DEFAULTS as D, SLIDER_STYLES, TITLE_ALIGNS, TOGGLE_STYLES
+
+    def slider(key, label, low, high, unit="px"):
+        return Spec(key, label, "slider", D[key], {"min": low, "max": high, "unit": unit})
+
+    def color(key, label, title=None):
+        return Spec(key, label, "color_app", D[key], {"title": title or label})
+
+    def border(prefix, label="Bordures"):
+        return Spec(f"{prefix}_border_enabled", label, "sides_thick", D[f"{prefix}_border_enabled"],
+                    {"colors_key": f"{prefix}_border", "thickness_key": f"{prefix}_border_thickness"},
+                    extra_keys=(f"{prefix}_border", f"{prefix}_border_thickness"))
+
+    def font(prefix, label, size, color_default):
+        return Spec(f"{prefix}_font_family", label, "font_gabarit", "",
+                    {"prefix": prefix, "size": (6, 40), "size_default": size, "color_default": color_default,
+                     "color_title": "Couleur du texte"}, extra_keys=_gabarit_extra(prefix))
+
+    def choice(key, label, choices):
+        return Spec(key, label, "choice", D[key], {"choices": choices})
+
+    return {
+        "Palette : Grille": [
+            slider("palette_cell_size", "Taille d'une case (une icône)", 16, 96),
+            slider("palette_cell_gap", "Écart entre les cases", 0, 24),
+            slider("palette_margin", "Marges (gauche, droite et bas : égales)", 0, 32),
+            slider("palette_snap_distance", "Accrochage aux bords et aux autres barres (distance)", 0, 120),
+        ],
+        "Palette : Barre": [
+            color("palette_bg_color", "Couleur de fond", "Fond de la barre (transparent = fond des panneaux)"),
+            border("palette"),
+            Spec("palette_corner_radius", "Border radius", "corners", D["palette_corner_radius"], {"max": 40}),
+            _shadow_spec("palette_shadow"),
+            color("palette_drag_border_color", "Bordure pendant un déplacement"),
+            Spec("palette_snap_border_off", "Clipsée : pas de bordure du côté collé", "bool",
+                 D["palette_snap_border_off"]),
+            Spec("palette_snap_header_color", "Clipsée : en-tête de la couleur de l'élément voisin", "bool",
+                 D["palette_snap_header_color"]),
+            Spec("palette_snap_bg_color", "Clipsée : fond de la couleur de l'élément voisin", "bool",
+                 D["palette_snap_bg_color"]),
+            Spec("palette_snap_border_match", "Clipsée : bordure de la couleur de celle de l'élément voisin", "bool",
+                 D["palette_snap_border_match"]),
+        ],
+        "Palette : En-tete": [
+            Spec("palette_header_shown", "Afficher les en-têtes (sans : la barre se tire par sa tranche)", "bool",
+                 D["palette_header_shown"]),
+            slider("palette_header_height", "Hauteur du titre", 0, 80),
+            color("palette_header_bg_color", "Couleur de fond de l'en-tête", "Fond de l'en-tête (transparent = celui de la barre)"),
+            font("palette_title", "Police du titre", 10, "#8d949a"),
+            choice("palette_title_align", "Justification du titre", TITLE_ALIGNS),
+            Spec("palette_title_caps", "Titre en majuscules", "bool", D["palette_title_caps"]),
+            slider("palette_title_tracking", "Espacement des lettres du titre", 0, 60, "1/10 px"),
+            Spec("palette_grip_enabled", "Poignée de déplacement", "bool", D["palette_grip_enabled"]),
+            color("palette_grip_color", "Couleur de la poignée"),
+        ],
+        "Palette : Icones": [
+            color("palette_cell_bg_color", "Couleur de fond", "Fond d'une icône (transparent = aucun)"),
+            border("palette_cell", "Bordures (couleurs, épaisseur)"),
+            slider("palette_cell_radius", "Border radius", 0, 40),
+            slider("palette_icon_ratio", "Taille de l'icône (part de la case)", 20, 100, "%"),
+            color("palette_icon_color", "Couleur des icônes"),
+            color("palette_cell_hover_color", "Fond au survol"),
+            color("palette_cell_active_color", "Fond de l'icône active"),
+            color("palette_cell_active_border_color", "Contour de l'icône active"),
+            slider("palette_cell_active_border_thickness", "Épaisseur du contour actif", 0, 6),
+            color("palette_drop_color", "Accent : case de dépôt, barre visée, trait d'aimantation"),
+            color("palette_separator_color", "Couleur des séparateurs (clic droit sur une barre)"),
+            slider("palette_slide_ms", "Glissement des éléments et des barres qui font place", 0, 400, "ms"),
+        ],
+        "Palette : Controleur": [
+            color("palette_bar_bg_color", "Couleur de fond"),
+            border("palette_bar"),
+            slider("palette_bar_radius", "Border radius", 0, 40),
+            slider("palette_bar_join_gap", "Soudés (pas d'arrondi entre eux) jusqu'à un écart de", 0, 24),
+            slider("palette_bar_padding", "Marges intérieures", 0, 32),
+            font("palette_bar", "Police du libellé", 11, "#8d949a"),
+            color("palette_bar_value_color", "Couleur de la valeur"),
+            Spec("palette_bar_grip_enabled", "Poignée de déplacement", "bool", D["palette_bar_grip_enabled"]),
+            color("palette_bar_grip_color", "Couleur de la poignée"),
+            Spec("palette_bar_handle_enabled", "Trait de largeur (à droite)", "bool", D["palette_bar_handle_enabled"]),
+            color("palette_bar_handle_color", "Couleur du trait"),
+        ],
+        "Palette : Slider": [
+            choice("palette_slider_style", "Choix du slider", SLIDER_STYLES),
+            slider("palette_slider_track_height", "Épaisseur du rail (propre aux barres)", 1, 20),
+            slider("palette_slider_thumb_width", "Largeur du sélecteur", 1, 30),
+            slider("palette_slider_thumb_height", "Hauteur du sélecteur", 2, 30),
+            slider("palette_slider_radius", "Border radius du rail et du sélecteur", 0, 20),
+            color("palette_slider_track_color", "Couleur du rail"),
+            color("palette_slider_fill_color", "Couleur du rail parcouru"),
+            color("palette_slider_thumb_color", "Couleur du sélecteur"),
+            slider("palette_slider_value_width", "Largeur minimale de la valeur", 0, 120),
+        ],
+        "Palette : Liste": [
+            slider("palette_select_min_width", "Largeur minimale de la liste", 20, 300),
+            slider("palette_select_height", "Hauteur de la liste", 12, 40),
+        ],
+        "Palette : Saisie": [
+            slider("palette_input_min_width", "Largeur minimale du champ", 20, 300),
+            slider("palette_input_height", "Hauteur du champ", 12, 40),
+        ],
+        "Palette : Toggle": [
+            choice("palette_toggle_style", "Style du toggle", TOGGLE_STYLES),
+            Spec("palette_toggle_labels", "Libellé d'état (actif / sans)", "bool", D["palette_toggle_labels"]),
+        ],
+    }
+
+
+CATALOG.update(_palette_specs())
 CATALOG["Raccourci"] = [
     Spec("shortcut_font_family", "Police", "font_gabarit", "",
          {"prefix": "shortcut", "size": (8, 24), "size_default": 11, "bold_default": False,
-          "color_default": "#8fb4d5", "color_title": "Couleur du raccourci", "keys": {"color": "shortcut_color"}},
-         extra_keys=_gabarit_extra("shortcut", "shortcut_color")),
+          "only": ("family", "bold", "italic", "size", "smoothing")},     # couleur : Icones > Couleur des dossiers
+         extra_keys=_gabarit_extra("shortcut", only=("bold", "italic", "size", "smoothing"))),
 ]
 UI_ICON_ROWS = (("pin", "Punaise"), ("folder_default", "Dossiers"), ("file_default", "Fichiers"),
                 ("settings_gear", "Engrenage (bouton Parametres)"),
                 ("settings_style", "Reglages visuels (second bouton Parametres)"),
                 ("shortcut", "Raccourcis"),)
+FOLDER_ICON_COLOR_ROWS = (("standard", "Standard", "Dossiers standard", "#d6d9dc"),
+                          ("shortcut", "Raccourci", "Dossiers raccourcis", "#8fb4d5"),
+                          ("lightroom", "Lightroom", "Dossiers Lightroom", "#87cefa"))
+FOLDER_COLOR_COLUMNS = [("Dossier", 160), ("Icône", 90), ("Texte", 80), ("Couleur icône", 110),
+                        ("Couleur du texte", 130)]
 CATALOG["Icones : General"] = [
     Spec(f"ui_icon:{suffix}", label, "ui_icon", None, {"ui_key": suffix}) for suffix, label in UI_ICON_ROWS
+]
+# Couleurs des dossiers selon leur sorte (demande de l'utilisateur) : teinte de l'icone (blanc = icone telle quelle)
+# et couleur du texte (toggle Texte coupe = couleur du texte de la colonne ; « Couleur icone » = celle de l'icone,
+# couleur du texte grisee). Groupe a part : « Icones : General » reste un tableau d'icones (ICON_GROUPS : toutes ses
+# lignes sont des icones). Specs par ligne, dans l'ordre des colonnes de FOLDER_COLOR_COLUMNS (voir build_group) :
+# une COLONNE par reglage, jamais une cellule divisee sur toutes les lignes.
+CATALOG["Icones : Couleurs des dossiers"] = [
+    spec for kind, label, title, text_default in FOLDER_ICON_COLOR_ROWS for spec in (
+        Spec(f"folder_icon_color_{kind}", label, "color_app", "#ffffff", {"title": f"Icône : {title.lower()}"}),
+        Spec(f"folder_text_color_{kind}_enabled", label, "bool", False),
+        Spec(f"folder_text_color_{kind}_from_icon", label, "bool", False),
+        Spec(f"folder_text_color_{kind}", label, "color_app", text_default, {"title": f"Texte : {title.lower()}"}))
 ]
 CATALOG["Icones : Logiciels"] = [
     Spec("custom_softwares", "Logiciels", "logiciels", [], extra_keys=("removed_softwares",)),
@@ -748,8 +940,9 @@ GENERAL_COLUMNS = Node("Colonnes", children=(
 ))
 
 def _toggle_style_node(prefix: str, label: str) -> Node:
-    return Node(label, children=(Node("Type", f"{prefix} : Type"), Node("Cadre", f"{prefix} : Cadre"),
-                                 Node("Coche", f"{prefix} : Coche")), toggle_key=prefix)
+    """Toggles > <style> : Type (intact), puis État OFF et État ON (un tableau « Fond | Coche » chacun)."""
+    states = tuple(Node(f"État {label_}", f"{prefix} : {label_}") for _s, label_ in TOGGLE_STATES)
+    return Node(label, children=(Node("Type", f"{prefix} : Type"), *states), toggle_key=prefix)
 
 
 def general_tree(settings: dict | None = None) -> tuple:
@@ -785,15 +978,24 @@ GENERAL_TREE = (
          children=(Node("Icônes", "Barre de navigation : Icones"),
                    Node("Cheminement", "Barre de navigation : Cheminement",
                         children=(Node("Set", "Cheminement : Set"), Node("Après set", "Cheminement : Apres set"),
-                                  Node("Après focus", "Cheminement : Apres focus"))))),
+                                  Node("Après focus", "Cheminement : Apres focus"))),
+                   Node("Fenêtres additionnelles", "Barre de navigation : Fenetres additionnelles"))),
+    Node("Barre d'état", "Barre d'état"),
     Node("Bouton", "Bouton"),
     Node("Tabs", "Tabs"),
+    Node("Palette", children=(Node("Grille", "Palette : Grille"), Node("Barre", "Palette : Barre"),
+                              Node("En-tête", "Palette : En-tete"), Node("Icônes", "Palette : Icones"),
+                              Node("Contrôleur", "Palette : Controleur", children=(
+                                  Node("Slider", "Palette : Slider"), Node("Liste déroulante", "Palette : Liste"),
+                                  Node("Zone de saisie", "Palette : Saisie"), Node("Toggle", "Palette : Toggle"))))),
     Node("Zone de saisie", "Zone de saisie"),
     Node("Tableaux", "Tableaux"),
     Node("Toggles", "Toggles : Style", children=tuple(
         _toggle_style_node(p, label) for p, label in (("toggle1", "Toggle 1"), ("toggle2", "Toggle 2")))),
     Node("Sliders", children=(Node("Rail", "Slider : Rail"), Node("Selecteur", "Slider : Selecteur"))),
-    Node("ICONES", children=(Node("General", "Icones : General"), Node("Logiciels", "Icones : Logiciels"))),
+    Node("ICONES", children=(Node("General", "Icones : General"),
+                             Node("Couleur des dossiers", "Icones : Couleurs des dossiers"),
+                             Node("Logiciels", "Icones : Logiciels"))),
 )
 
 
@@ -802,8 +1004,16 @@ GENERAL_TREE = (
 # fenetre de l'onglet Application (qui melange aspect et fonctionnement).
 THEME_TAB = "Thème"
 THEME_SECTIONS = ("Couleurs", "Polices principales", "TITRES", "Toggles", "Sliders", "Zone de saisie", "Bouton",
-                  "Tableaux", "Tabs", "Menu contextuel", "Fenêtres additionnelles")
-CATALOG["Thème : Général"] = [s for s in CATALOG["Application"] if s.key in ("ui_scale", "window_radius")]
+                  "Tableaux", "Tabs", "Palette", "Menu contextuel", "Fenêtres additionnelles",
+                  # Barres de la fenetre (2026-11-05) : aspect general, plus dans General de fm_browser.
+                  "Barre de navigation", "Barre d'état")
+CATALOG["Thème : Général"] = [s for s in CATALOG["Application"] if s.key in ("ui_scale", "window_radius")] + [
+    # Pourtour de TOUTES les fenetres (principale et additionnelles) : remplace la ligne « Bordures » des
+    # Fenetres additionnelles (demande de l'utilisateur, 2026-10-30).
+    Spec("window_border_enabled", "Bordure des fenêtres", "sides_thick", True,
+         {"colors_key": "window_border", "thickness_key": "window_border_thickness", "width": 90, "box": 54},
+         extra_keys=("window_border", "window_border_thickness")),
+]
 # Etape 6 : ces deux reglages ne sont plus dans Application (General de fm_browser), seulement dans le Theme.
 CATALOG["Application"] = [s for s in CATALOG["Application"] if s.key not in ("ui_scale", "window_radius")]
 
@@ -825,9 +1035,9 @@ def tab_tree(label: str, settings: dict | None = None) -> tuple:
 
 
 # Onglets de reglages generaux a part (pas une colonne) : leur arbre.
-STANDALONE_TABS = {MARKDOWN_TAB: MARKDOWN_TREE, VIDEO_TAB: VIDEO_TREE, MRO_TAB: MRO_TREE, CAD_TAB: CAD_TREE,
-                   DESIGN_TAB: DESIGN_TREE, TABLEUR_TAB: TABLEUR_TREE, ILL_TAB: ILL_TREE, PS_TAB: PS_TREE, VIEWER_TAB: VIEWER_TREE,
-                   TYPO_TAB: TYPO_TREE}
+STANDALONE_TABS = {MARKDOWN_TAB: MARKDOWN_TREE, VIDEO_TAB: VIDEO_TREE, BOARD_TAB: BOARD_TREE, MRO_TAB: MRO_TREE,
+                   CAD_TAB: CAD_TREE, DESIGN_TAB: DESIGN_TREE, TABLEUR_TAB: TABLEUR_TREE, ILL_TAB: ILL_TREE, PS_TAB: PS_TREE, VIEWER_TAB: VIEWER_TREE,
+                   TYPO_TAB: TYPO_TREE, PDF_TAB: PDF_TREE, AGENDA_TAB: AGENDA_TREE}
 
 # Groupes repris de la v1 : leurs tableaux ont une cle de dimensions a eux (voir build_group).
 PORTED_GROUPS = frozenset(("Application", "Omettre", "LUT", "Polices principales", "Couleurs",
@@ -846,16 +1056,19 @@ SCOPES: list[tuple[str, str | None]] = [("General", None)]
 MODULE_SCOPES: dict[str, list[tuple[str, str | None]]] = {
     "video": [(VIDEO_TAB, None)],
     "markdown": [(MARKDOWN_TAB, None)],
-    "board": [(MRO_TAB, None), (CAD_TAB, None), (DESIGN_TAB, None), (TABLEUR_TAB, None), (ILL_TAB, None), (PS_TAB, None)],
+    "board": [(BOARD_TAB, None), (MRO_TAB, None), (CAD_TAB, None), (DESIGN_TAB, None), (TABLEUR_TAB, None), (ILL_TAB, None), (PS_TAB, None), (PDF_TAB, None)],
     "viewer": [(VIEWER_TAB, None)],
     "font": [(TYPO_TAB, None)],             # module typographique (fm_font)
+    "pdf": [(PDF_TAB, None)],               # éditeur PDF (fm_pdf ; aussi onglet de « Réglages : Board »)
+    "agenda": [(AGENDA_TAB, None)],         # agenda (fm_agenda)
     "theme": [(THEME_TAB, None)],          # editeur fm_theme (pas dans la rangee de la fenetre generale)
 }
 MODULE_TITLES = {"video": "Vidéo", "markdown": "Markdown", "board": "Board", "viewer": "Visionneuse",
-                 "font": "Typographie"}
+                 "font": "Typographie", "pdf": "PDF", "agenda": "Agenda"}
 # Libelle AFFICHE d'un onglet quand il differe de son identifiant (cles retenues, tests).
-TAB_LABELS = {MARKDOWN_TAB: "Module Markdown", MRO_TAB: "MRO", CAD_TAB: "CAD", DESIGN_TAB: "Design",
-              TABLEUR_TAB: "Tableur", ILL_TAB: "Illustrator", PS_TAB: "Photoshop"}
+TAB_LABELS = {MARKDOWN_TAB: "Module Markdown", BOARD_TAB: "Board", MRO_TAB: "MRO", CAD_TAB: "CAD", DESIGN_TAB: "Design",
+              TABLEUR_TAB: "Tableur", ILL_TAB: "Illustrator", PS_TAB: "Photoshop", PDF_TAB: "PDF",
+              AGENDA_TAB: "Agenda"}
 
 
 # ==========================================================================
@@ -1287,6 +1500,11 @@ def _f_toggle_icons(spec, v, colors):
     return holder
 
 
+def _f_toggle_image(spec, v, colors):
+    """Une image choisie sur le disque (copiee dans data/toggle_icons/) : icone de la coche d'un toggle."""
+    return _ImageImportField(v.seed(spec.key, "") or "", spec.params["style"])
+
+
 def _f_image_sequence(spec, v, colors):
     return _ImageImportField(v.seed(spec.key, []) or [], spec.params["style"], multiple=True)
 
@@ -1544,7 +1762,8 @@ def _f_md_css_path(spec, v, colors):
 
 
 def _f_preset(spec, v, colors):
-    names = [NO_PRESET] + sorted(_load_presets().keys())
+    import settings_store                       # liste des presets = celle de fm_theme (aucun au lancement : le dernier actif)
+    names = [NO_PRESET] + settings_store.preset_names()
     current = v.seed(spec.key, "") or NO_PRESET
     return _SelectField(names, current if current in names else NO_PRESET, width=268)
 
@@ -1626,6 +1845,52 @@ def _f_color_pair(spec, v, colors):
     return holder
 
 
+def _align_state_pairs(fields: dict):
+    """Lignes « Fond | Coche » d'un tableau : chaque sous-cellule a au moins la largeur de la plus large de sa
+    colonne, la frontiere Fond | Coche tombe au meme endroit sur toutes les lignes (largeurs reglees a la main
+    inchangees)."""
+    rows = list({id(w): w for w in fields.values() if isinstance(w, _StatePairField)}.values())
+    if len(rows) < 2:
+        return
+    splits = [row.findChild(SplitCell) for row in rows]
+    for index in range(len(splits[0]._cells)):
+        width = max(max(sp._cells[index].sizeHint().width(), sp._cap_labels[index].sizeHint().width())
+                    for sp in splits)
+        for sp in splits:
+            sp._cells[index].setMinimumWidth(width)
+
+
+class _StatePairField(QWidget):
+    """Ligne « Fond | Coche » d'un tableau d'etat de toggle (`_state_pair`) : une sous-cellule par partie, son
+    champ habituel dedans (vide si la partie n'a pas ce reglage). `parts` : [(spec, champ)]."""
+
+    changed = Signal()
+
+    def __init__(self, spec, v, colors):
+        super().__init__()
+        self.parts = []
+        cells = []
+        for caption, sub in spec.params["parts"]:
+            widget = QWidget()
+            if sub is not None:
+                widget = FIELD_FACTORIES[sub.kind](sub, v, colors)
+                widget._row_kind = sub.kind
+                _connect_changed(widget, self.changed.emit)
+                self.parts.append((sub, widget))
+            cells.append((caption, [widget]))
+        # wrap_split sans sa feuille de style (« transparent ») : un QWidget simple ne peint deja pas de fond, et
+        # une feuille de style propre fait repolir tout le contenu a chaque reparentage (~10 ms par ligne).
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._split = SplitCell(cells, self)
+        layout.addWidget(self._split)
+        self._fill_cell = True
+
+    def field(self, key: str) -> QWidget:
+        """Le champ d'une sous-cellule, par une de ses cles."""
+        return next(w for sub, w in self.parts if key in (sub.key, *sub.extra_keys))
+
+
 def _f_xy(spec, v, colors):
     """Deux curseurs sur une ligne (position X / Y, largeur / hauteur) : cellule divisee."""
     p = spec.params
@@ -1694,7 +1959,11 @@ FIELD_FACTORIES: dict[str, Callable] = {
     "logiciels": _f_logiciels, "cad_linetypes": _f_cad_linetypes, "collapse_mode": _choice_factory(COLLAPSE_MODES),
     "coche_skin": _f_coche_skin, "text": _f_text, "icon_choice": _f_icon_choice,
     "crumb_separator_kind": _choice_factory(CRUMB_SEPARATORS), "toggle_kind": _choice_factory(TOGGLE_KINDS), "toggle_motion": _choice_factory(TOGGLE_MOTIONS),
-    "toggle_icons": _f_toggle_icons, "image_sequence": _f_image_sequence,
+    "toggle_icons": _f_toggle_icons, "image_sequence": _f_image_sequence, "toggle_image": _f_toggle_image,
+    "state_pair": _StatePairField,
+    # Meme cellule divisee (un champ par sous-cellule, `params["parts"]`), avec SON gabarit de ligne : celui des
+    # lignes « Fond | Coche » ne s'y applique pas (lignes des guides du Magnetisme, fm_board/settings.py).
+    "split_fields": _StatePairField,
     "badge_position": _f_badge_position, "ratio_slider": _f_ratio_slider,
     "font_gabarit": _f_font_gabarit, "sides_thick": _f_sides_thick, "shadow": _f_shadow, "inner_line": _f_inner_line,
     "toggle_style": _f_toggle_style, "bg_fill": _f_bg_fill,
@@ -1704,6 +1973,9 @@ FIELD_FACTORIES: dict[str, Callable] = {
     "color_mark": _f_color_mark, "line_pattern": _f_line_pattern,
     "corners": _f_corners, "padding": _f_padding, "title_padding": _f_title_padding, "sides": _f_sides, "font": _f_font,
 }
+# Champs d'actions de l'agenda (comptes Google, données locales) : definis dans leur paquet.
+from fm_agenda.settings import FIELD_FACTORIES as _AGENDA_FACTORIES, FIELD_READERS as _AGENDA_READERS  # noqa: E402
+FIELD_FACTORIES.update(_AGENDA_FACTORIES)
 
 
 # ==========================================================================
@@ -1774,6 +2046,9 @@ FIELD_READERS: dict[str, Callable] = {
     "toggle_icons": lambda sp, w: {sp.key: w._v2_parts["on"].value(),
                                    sp.params["off_key"]: w._v2_parts["off"].value()},
     "image_sequence": lambda sp, w: {sp.key: w.value()},
+    "toggle_image": lambda sp, w: {sp.key: w.value()},
+    "state_pair": lambda sp, w: {k: val for sub, f in w.parts for k, val in read_spec(sub, f).items()},
+    "split_fields": lambda sp, w: {k: val for sub, f in w.parts for k, val in read_spec(sub, f).items()},
     "text": lambda sp, w: {sp.key: w.text()},
     "icon_choice": lambda sp, w: {sp.key: w.value()},
     "badge_position": lambda sp, w: {
@@ -1816,6 +2091,7 @@ FIELD_READERS: dict[str, Callable] = {
                                  sp.params["border_key"]: w._v2_parts["border"].isChecked(),
                                  sp.params["thickness_key"]: w._v2_parts["thickness"].value()},
 }
+FIELD_READERS.update(_AGENDA_READERS)
 
 
 def read_spec(spec: Spec, widget: QWidget) -> dict:
@@ -1895,6 +2171,9 @@ FIELD_WRITERS: dict[str, Callable] = {
     "inner_line": _w_inner_line,
     "bg_fill": _w_bg_fill,
     "font_gabarit": _w_font_gabarit,
+    "toggle_image": lambda sp, w, v: (w.setNames([v[sp.key]] if v[sp.key] else []), True)[1],
+    "state_pair": lambda sp, w, v: all([write_spec(sub, f, v) for sub, f in w.parts]),
+    "split_fields": lambda sp, w, v: all([write_spec(sub, f, v) for sub, f in w.parts]),
     "xy": lambda sp, w, v: (w._v2_parts["first"].setValue(int(v[sp.key])),
                             w._v2_parts["second"].setValue(int(v[sp.params["second_key"]])), True)[2],
 }
@@ -1990,7 +2269,8 @@ def _label(text: str) -> QLabel:
 
 
 def _build_font_table(group: str, values: ScopeValues, colors: dict, fields: dict, resizers: list,
-                      record: list | None, on_change: Callable | None, on_range: Callable | None) -> QWidget:
+                      record: list | None, on_change: Callable | None, on_range: Callable | None,
+                      parent: QWidget | None = None) -> QWidget:
     """Tableau « une ligne par niveau, un champ par colonne » (reproduction de la v1 : Titre > Polices)."""
     columns = COLUMN_TABLES[group]
     table_rows = []
@@ -2008,15 +2288,16 @@ def _build_font_table(group: str, values: ScopeValues, colors: dict, fields: dic
         table_rows.append([(holder, "left", "center")] + [(parts[name], "center", "center")
                                                           for name, _caption in FONT_CAPTIONS])
     frame, head, _cells = build_cells_table(
-        columns, table_rows, head_align={i: Qt.AlignCenter for i in range(1, len(columns))})
+        columns, table_rows, head_align={i: Qt.AlignCenter for i in range(1, len(columns))}, parent=parent)
     resizers.append(head)
     normalize_toggles(frame)
     return frame
 
 
-def _flat_cells_table(rows: list) -> QWidget:
+def _flat_cells_table(rows: list, parent: QWidget | None = None) -> QWidget:
     """Tableau Parametre | Valeur. `rows` : (libelle, champ, toggle d'override ou None). Un toggle
-    (portee de surcharge) precede le libelle ; OFF grise la ligne, qui suit alors le General."""
+    (portee de surcharge) precede le libelle ; OFF grise la ligne, qui suit alors le General.
+    `parent` : voir `build_cells_table`."""
     rows = [tuple(row) + (None,) * (4 - len(row)) for row in rows]
     toggle_extra = 40 if any(t is not None for _l, _f, t, _s in rows) else 0
     # Jamais plus etroite que le titre de son entete (« PARAMÈTRE », police des entetes) : des libelles
@@ -2058,7 +2339,7 @@ def _flat_cells_table(rows: list) -> QWidget:
     head_align = {1: Qt.AlignRight | Qt.AlignVCenter}
     if shortcuts:
         head_align[2] = Qt.AlignCenter
-    frame, head, _cells = build_cells_table(columns, table_rows, head_align=head_align)
+    frame, head, _cells = build_cells_table(columns, table_rows, head_align=head_align, parent=parent)
     frame._v2_head = head
     set_row_kinds(frame, {r: _row_content_kind(field) for r, (_l, field, _t, _s) in enumerate(rows)})
     return frame
@@ -2197,14 +2478,28 @@ def _build_icon_table(group: str, fields: dict, resizers: list) -> QWidget:
 TABLE_FIELDS = frozenset({"cad_linetypes"})
 
 
+def _link_folder_text_row(enabled: _Toggle, from_icon: _Toggle, color: QWidget) -> None:
+    """Couleur des dossiers : « Couleur icone » grise si Texte est coupe ; la couleur du texte grisee si Texte est
+    coupe ou si elle suit l'icone. En direct."""
+    def sync(_checked=None):
+        _set_dimmed(from_icon, not enabled.isChecked())
+        _set_dimmed(color, not enabled.isChecked() or from_icon.isChecked())
+    enabled.toggled.connect(sync)
+    from_icon.toggled.connect(sync)
+    sync()
+
+
 def build_group(group: str, values: ScopeValues, colors: dict,
                 fields: dict, toggles: dict, resizers: list,
                 record: list | None = None, on_change: Callable | None = None,
-                on_range: Callable | None = None) -> QWidget:
+                on_range: Callable | None = None, parent: QWidget | None = None) -> QWidget:
     """Tableau d'un groupe du CATALOG : lignes sans toggle (sauf celles qui portent un
     `general_toggle`, regroupees dans un second tableau).
     `record` : liste ou s'inscrivent (spec, widget) et (cle_interrupteur, toggle).
-    Tout tableau a un entete ; ses toggles sont de type 2 sans texte."""
+    Tout tableau a un entete ; ses toggles sont de type 2 sans texte.
+    `parent` : le corps qui recevra le groupe (pas encore dans son layout). Les tableaux a lignes
+    Parametre | Valeur et celui des polices naissent sous lui : les rattacher plus tard, tout remplis, coutait
+    ~80 ms par tableau (voir `build_cells_table`) ; les autres groupes l'ignorent."""
     if group == "Chargement et génération automatique":
         rows = []
         specs = CATALOG[group]
@@ -2224,8 +2519,30 @@ def build_group(group: str, values: ScopeValues, colors: dict,
         frame._v2_head = head
         resizers.append(head)
         return frame
+    if group == "Icones : Couleurs des dossiers":
+        rows = []
+        specs = CATALOG[group]
+        step = len(FOLDER_COLOR_COLUMNS) - 1
+        for offset in range(0, len(specs), step):
+            cells = [(_label(specs[offset].label), "left", "center")]
+            line = []
+            for spec in specs[offset:offset + step]:
+                widget = make_field(spec, values, colors)
+                fields[spec.key] = widget
+                if record is not None:
+                    record.append((spec, widget))
+                    _connect_changed(widget, on_change)
+                cells.append((widget, "center", "center"))
+                line.append(widget)
+            _link_folder_text_row(*line[1:])
+            rows.append(cells)
+        frame, head, _cells = build_cells_table(FOLDER_COLOR_COLUMNS, rows)
+        normalize_toggles(frame)
+        frame._v2_head = head
+        resizers.append(head)
+        return frame
     if group in COLUMN_TABLES:
-        return _build_font_table(group, values, colors, fields, resizers, record, on_change, on_range)
+        return _build_font_table(group, values, colors, fields, resizers, record, on_change, on_range, parent)
     if group in ICON_GROUPS:
         return _build_icon_table(group, fields, resizers)
     specs = CATALOG[group]
@@ -2260,10 +2577,12 @@ def build_group(group: str, values: ScopeValues, colors: dict,
         else:
             flat_rows.append((spec.label, field_w, None, _shortcut_field(spec, values, colors, fields, record,
                                                                          on_change)))
+    _align_state_pairs(fields)                      # avant le tableau : sa colonne se cale sur les sous-cellules
     frames = []
+    wrap = QWidget(parent) if bool(flat_rows) + bool(toggle_rows) != 1 else None   # 2 tableaux : ils naissent sous lui
     for rows in (flat_rows, toggle_rows):
         if rows:
-            frame = _flat_cells_table(rows)
+            frame = _flat_cells_table(rows, wrap if wrap is not None else parent)
             if group in PORTED_GROUPS:
                 # Cle de dimensions propre a la v2 : la v1 a enregistre sous le meme titre de section
                 # les largeurs de SES tableaux (autres colonnes), qui ecraseraient celles-ci.
@@ -2275,7 +2594,6 @@ def build_group(group: str, values: ScopeValues, colors: dict,
     _link_side_colors(group, fields)
     if len(frames) == 1:
         return frames[0]
-    wrap = QWidget()
     wrap.setStyleSheet("background: transparent;")
     wl = QVBoxLayout(wrap)
     wl.setContentsMargins(0, 0, 0, 0)
@@ -2386,7 +2704,7 @@ class _LazyNode(QWidget):
         while node is not None:
             if isinstance(node, _LazyNode):
                 titles.append(node.node.title)
-            node = node.parentWidget()
+            node = logical_parent(node)
         return f"{self._values.name}|" + "/".join(reversed(titles))
 
     def is_collapsed(self) -> bool:
@@ -2447,7 +2765,7 @@ class _LazyNode(QWidget):
             self.node.group, self._values, self._colors, self._store.setdefault("fields", {}),
             self._store.setdefault("toggles", {}), self._store.setdefault("resizers", []),
             self._store.setdefault("specs", []) if self.wired else None,
-            self._store.get("on_change"), self._store.get("on_range"))
+            self._store.get("on_change"), self._store.get("on_range"), parent=self._head._body)
 
     def rebuild_group(self):
         """Tableau du groupe refait avec les valeurs COURANTES des reglages (changees hors de la fenetre :
@@ -2852,11 +3170,12 @@ def seed_window_look(settings: dict):
     import settings_element_style          # « Override settings » (clic droit) + styles propres enregistres
     settings_element_style.load(settings)
 
-# Tableaux des styles de toggle : tous les styles ont les MEMES tableaux (Type, Cadre, Coche), lies
+# Tableaux des styles de toggle : tous les styles ont les MEMES tableaux (Type, Fond et Coche de chaque etat), lies
 # d'un style a l'autre, nouveaux compris. Reconnus par leur groupe du CATALOG (le titre d'un style
 # est renommable), cle partagee `Toggles/<tableau>#0`.
-_TOGGLE_TABLE_PARTS = ("Type", "Cadre", "Coche")
-_TOGGLE_TABLE_GROUP = re.compile(r"^toggle\d+ : (Type|Cadre|Coche)$")
+_TOGGLE_TABLE_PARTS = ("Type", "État")
+# OFF et ON partagent les dimensions de leur tableau (memes lignes) : « Toggles/État#0 ».
+_TOGGLE_TABLE_GROUP = re.compile(r"^toggle\d+ : (Type|OFF|ON)$")
 
 
 def _linked_group(frame: QWidget):
@@ -2870,7 +3189,8 @@ def _linked_group(frame: QWidget):
         node = node.parentWidget()
     match = _TOGGLE_TABLE_GROUP.match(node.node.group or "") if node is not None else None
     if match:
-        return f"toggles:{match.group(1)}", f"Toggles/{match.group(1)}#0"
+        part = "Type" if match.group(1) == "Type" else "État"
+        return f"toggles:{part}", f"Toggles/{part}#0"
     if node is not None and re.fullmatch(r"Markdown : H[1-6]", node.node.group or ""):
         return "markdown:headings", "Markdown/Titres H1-H6#0"
     return None
@@ -2909,8 +3229,8 @@ def _markdown_reset_menu_extra(widget: QWidget, menu) -> None:
     node = widget.parentWidget()
     while node is not None and not isinstance(node, _LazyNode):
         node = node.parentWidget()
-    if node is None or node._values.name not in (MARKDOWN_TAB, VIDEO_TAB, MRO_TAB, CAD_TAB, DESIGN_TAB,
-                                                         TABLEUR_TAB, ILL_TAB, PS_TAB, TYPO_TAB):
+    if node is None or node._values.name not in (MARKDOWN_TAB, VIDEO_TAB, BOARD_TAB, MRO_TAB, CAD_TAB, DESIGN_TAB,
+                                                         TABLEUR_TAB, ILL_TAB, PS_TAB, TYPO_TAB, PDF_TAB):
         return
     title = node.node.title
     menu.addAction(f"Restaurer les valeurs d'origine de « {title} »").triggered.connect(
@@ -2956,7 +3276,7 @@ TOGGLE_STYLE_LISTENERS.append(_toggle_style_listener)
 WIRED_SECTIONS = ("Général", "Colonnes", "Colonnes spéciales", "TITRES", "Tableaux", "Toggles", "Sliders", "Application", "Visionneuse",
                   "Menu contextuel", "Fenêtres additionnelles",
                   "Dossiers et fichiers à omettre", "LUT", "Polices principales", "Couleurs",
-                  "Barre de navigation", "Bouton", "Tabs", "Zone de saisie",
+                  "Barre de navigation", "Barre d'état", "Bouton", "Tabs", "Palette", "Zone de saisie",
                   "ICONES")
 
 # Enregistrement EN TEMPS REEL de ce qui n'est pas un reglage a valider : taille/position de la
@@ -3067,6 +3387,12 @@ class SettingsWindowV2(QDialog):
         self._live_timer.setInterval(30)
         self._live_timer.setSingleShot(True)
         self._live_timer.timeout.connect(self._flush_live)
+        # Aspect change dans l'editeur fm_theme (`follow_theme`) : regroupe, cadence adaptee a son cout.
+        self._theme_pending: dict = {}
+        self._theme_timer = QTimer(self)
+        self._theme_timer.setInterval(16)
+        self._theme_timer.setSingleShot(True)
+        self._theme_timer.timeout.connect(self._flush_theme)
         # Enregistrement en temps reel (taille de la fenetre, dimensions des tableaux) : regroupe
         # les rafales d'un glissement, ecrit ~0,4 s apres le dernier mouvement.
         self._persist_timer = QTimer(self)
@@ -3240,7 +3566,7 @@ class SettingsWindowV2(QDialog):
 
     def add_toggle_style(self, name: str) -> str:
         """Cree un style de toggle (reglages copies sur le style par defaut, enregistres tout de suite),
-        sa sous-section Toggles > <nom> (Type + Cadre + Coche) et sa carte dans le choix du style."""
+        sa sous-section Toggles > <nom> (Type, État OFF, État ON) et sa carte dans le choix du style."""
         styles = toggle_style_list(self.settings)
         taken = {s["key"] for s in styles} | {"toggle1", "toggle2"}
         number = 3
@@ -3304,15 +3630,15 @@ class SettingsWindowV2(QDialog):
         # Reglages du style : retires (sauf toggle1/toggle2, dont les cles par defaut existent toujours).
         drop = tuple(k for k in self.settings if k.startswith(f"{key}_")) if key not in ("toggle1", "toggle2") else ()
         self._write_now(partial, drop)
-        CATALOG.pop(f"{key} : Type", None), CATALOG.pop(f"{key} : Cadre", None), CATALOG.pop(f"{key} : Coche", None)
+        unregister_toggle_catalog(key)
         self._restyle_toggles(self.current_values())
         return True
 
     def _remove_node(self, node: "_LazyNode"):
         """Retire une sous-section construite : voisins recolles, champs oublies par la fenetre."""
-        parent = node.parentWidget()
+        parent = logical_parent(node)
         while parent is not None and not isinstance(parent, _LazyNode):
-            parent = parent.parentWidget()
+            parent = logical_parent(parent)
         siblings = getattr(parent, "_child_nodes", None) if parent is not None else None
         prev = nxt = None
         if siblings is not None and node in siblings:
@@ -3544,10 +3870,11 @@ class SettingsWindowV2(QDialog):
             "toggles": (("toggle",), self._restyle_toggles),
             "geometry": (("input_radius", "button_radius"), self._restyle_geometry),
             "tabs": (("tabs_", "colors", "extra_window_title_bg"), self._restyle_tabs),
+            "palettes": (("palette_", "colors"), self._restyle_palettes),
             "inputs": (("input_", "colors"), self._restyle_inputs),
             "colors": (("colors",), self._restyle_colors),
             # Fenetres additionnelles (celle-ci comprise) : en direct.
-            "extra_windows": (("extra_window_", "colors"), seed_extra_window_look),
+            "extra_windows": (("extra_window_", "window_border", "colors"), seed_extra_window_look),
         }
 
     def _apply_look(self, merged: dict, values: dict | None = None):
@@ -3667,6 +3994,10 @@ class SettingsWindowV2(QDialog):
     def _restyle_inputs(self, merged: dict):
         from settings_theme import apply_input_look
         apply_input_look(merged)
+
+    def _restyle_palettes(self, merged: dict):
+        from fm_theme.palette import restyle_palettes_in
+        restyle_palettes_in(self, merged)
 
     def _restyle_sliders(self, merged: dict):
         # thumb/track changent la hauteur des curseurs : il faut rejouer apply_style().
@@ -3911,6 +4242,28 @@ class SettingsWindowV2(QDialog):
             if keys & changed and any(id(sp) in failed for sp in specs):
                 node.rebuild_group()
 
+    def follow_theme(self, values: dict):
+        """Aspect generique change DANS L'EDITEUR fm_theme (demande de l'utilisateur, 2026-10-30 : visible tout de
+        suite, pas au redemarrage) : la fenetre reprend les valeurs (`external_values`, sans quoi son prochain
+        apercu renverrait l'ancien aspect a la fenetre principale) et se restyle. Fenetre cachee (prechargee) :
+        rien maintenant, `reopen` s'en charge. Rafales regroupees, au plus une fois par image."""
+        if not values:
+            return
+        self._theme_pending.update(values)
+        if self.isVisible() and not self._theme_timer.isActive():
+            self._theme_timer.start()
+
+    def _flush_theme(self):
+        values, self._theme_pending = self._theme_pending, {}
+        if not values or not self.isVisible():
+            return
+        start = time.perf_counter()
+        self.external_values(values)
+        seed_window_look(self.settings)
+        self._apply_look(self.settings, values)
+        # Au moins autant de temps libre que de travail (meme regle que `_flush_live`).
+        self._theme_timer.setInterval(max(16, 2 * int((time.perf_counter() - start) * 1000)))
+
     def _write_in_place(self, values: dict) -> set:
         """Pose `values` dans les champs construits ; retourne les `id` des specs qui n'ont pas su. Ni « non enregistre »
         ni apercu en direct : ce sont les valeurs de reference de la fenetre."""
@@ -3968,8 +4321,10 @@ class SettingsWindowV2(QDialog):
 
         changed = {k: v for k, v in fresh.items() if dump(v) != dump(self._original_settings.get(k))}
         seed_window_look(fresh)
+        self._theme_pending = {}
         if changed:
             self.external_values(changed)
+            self._apply_look(self.settings, changed)    # aspect change pendant qu'elle etait cachee (fm_theme)
         self._original_settings = json.loads(json.dumps(self.settings))
         self._last_live_snapshot = None          # prochain apercu : compare a l'etat d'ouverture
         self._saved = False

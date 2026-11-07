@@ -60,7 +60,6 @@ def push():
     overlay = mods.get("fm_illustrator.overlay")
     if overlay is not None:
         overlay.ANCHOR_SIDE = float(LOOK["anchor_size"])
-        overlay.GUIDE_COLOR = LOOK["guide_color"]
     xform = mods.get("fm_illustrator.tools_xform")
     if xform is not None:
         xform.SNAP_PX = float(LOOK["snap_px"])

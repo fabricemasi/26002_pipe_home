@@ -34,7 +34,7 @@ class FormatTest(unittest.TestCase):
     def test_types_and_variants(self):
         values = {"colors": {"accent": "#ff0000"}, "font_main": {"size": 12}, "toggle_style": "toggle3",
                   "toggle3_outer_width": 40, "toggle1_outer_width": 30, "title_level1_font_size": 14,
-                  "table_dims": {"x": 1}, "root_path": "F:/", "crumb_bg_color": "#000"}
+                  "table_dims": {"x": 1}, "root_path": "F:/", "item_row_height": 30}
         preset = tp.from_settings(values, "essai")
         self.assertEqual(preset["format"], tp.FORMAT)
         self.assertEqual(preset["general"], {"colors": {"accent": "#ff0000"}, "font_main": {"size": 12}})
@@ -45,7 +45,7 @@ class FormatTest(unittest.TestCase):
         # État de l'appli, fonctionnement, aspect propre à l'appli : jamais dans un preset fm_theme.
         self.assertNotIn("table_dims", tp.to_settings(preset))
         self.assertNotIn("root_path", tp.to_settings(preset))
-        self.assertNotIn("crumb_bg_color", tp.to_settings(preset))
+        self.assertNotIn("item_row_height", tp.to_settings(preset))
 
     def test_unknown_type_is_ignored(self):
         preset = {"format": 1, "nom": "x", "general": {}, "types": {"futur": {"variantes": {"a": {"b": 1}}}}}
@@ -80,7 +80,7 @@ class FilesTest(unittest.TestCase):
 
     def test_converter_loses_nothing(self):
         source = self.folder / "presets.json"
-        old = {"fab": dict(settings_store.DEFAULT_SETTINGS, toggle3_outer_width=50, root_path="F:/"),
+        old = {"fab": dict(settings_store.DEFAULT_SETTINGS, toggle3_off_bg_width=50, root_path="F:/"),
                "Vide": {"root_path": "G:/"}}
         source.write_text(json.dumps(old), encoding="utf-8")
         before = source.read_text(encoding="utf-8")
@@ -142,7 +142,7 @@ class VariantTest(unittest.TestCase):
 
 
 class LinkedThemeTest(unittest.TestCase):
-    """fm_browser lit et écrit son aspect générique dans le preset fm_theme lié (`theme_preset`)."""
+    """fm_browser lit et écrit son aspect générique dans le preset fm_theme DE MÊME NOM (`theme_preset`)."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -153,7 +153,7 @@ class LinkedThemeTest(unittest.TestCase):
         for patch in self._patches:
             patch.start()
         # Preset de l'appli « fab » (ancien format : aspect compris) et preset fm_theme « fab » converti.
-        app = {"window_radius": 3, "button_radius": 2, "crumb_spacing": 5}
+        app = {"window_radius": 3, "button_radius": 2, "item_row_spacing": 5}
         (root / "presets.json").write_text(json.dumps({"fab": app}), encoding="utf-8")
         tp.save_preset(tp.from_settings({"window_radius": 9, "button_radius": 7}, "fab"))
         settings_store.save_settings({"default_preset": "fab"})
@@ -163,22 +163,21 @@ class LinkedThemeTest(unittest.TestCase):
             patch.stop()
         self._tmp.cleanup()
 
-    def test_startup_links_the_same_name_and_reads_the_theme(self):
+    def test_startup_reads_the_theme_of_the_same_name(self):
         settings = settings_store.load_settings(startup=True)
-        self.assertEqual(settings_store._load_presets()["fab"]["theme_preset"], "fab")
         self.assertEqual(settings["theme_preset"], "fab")
         self.assertEqual(settings["window_radius"], 9)          # aspect : le preset fm_theme l'emporte
-        self.assertEqual(settings["crumb_spacing"], 5)          # le reste : le preset de l'appli
+        self.assertEqual(settings["item_row_spacing"], 5)          # le reste : le preset de l'appli
 
     def test_saved_aspect_goes_to_the_theme_and_the_rest_to_the_app_preset(self):
         settings = settings_store.load_settings(startup=True)
-        settings.update(window_radius=12, crumb_spacing=8)
+        settings.update(window_radius=12, item_row_spacing=8)
         settings_store.save_settings(settings)
         settings_store.update_active_preset(settings)
         theme = tp.to_settings(tp.load_preset(tp.preset_path("fab")))
         self.assertEqual(theme["window_radius"], 12)
         app = settings_store._load_presets()["fab"]
-        self.assertEqual(app["crumb_spacing"], 8)
+        self.assertEqual(app["item_row_spacing"], 8)
         self.assertNotIn("window_radius", app)                  # source unique : le preset fm_theme
         self.assertEqual(settings_store.load_settings()["window_radius"], 12)
 
@@ -190,22 +189,21 @@ class LinkedThemeTest(unittest.TestCase):
         self.assertFalse(settings_store.update_theme_preset(settings_store.load_settings()))
         self.assertEqual(path.stat().st_mtime_ns, before)
 
-    def test_without_any_theme_the_current_look_becomes_one(self):
-        """Étape 6 : l'aspect ne se règle plus que dans fm_theme ; sans thème lié, l'aspect actuel en devient un."""
-        settings_store._save_presets({})
+    def test_without_any_theme_nothing_is_created(self):
+        """Les presets se créent SEULEMENT dans fm_theme (2026-10-30) : sans preset fm_theme, aucun n'est créé ici."""
+        tp.delete_preset("fab")
         settings_store.save_settings({"button_radius": 5})
         settings = settings_store.load_settings(startup=True)
-        name = settings["theme_preset"]
-        self.assertTrue(name.startswith("Thème actuel"))
-        self.assertEqual(tp.to_settings(tp.load_preset(tp.find_preset(name)))["button_radius"], 5)
-        self.assertEqual(settings_store.load_settings()["theme_preset"], name)   # retenu dans le fichier
-        self.assertEqual(settings_store.load_settings(startup=True)["theme_preset"], name)   # pas un 2e
+        self.assertEqual(settings["theme_preset"], "")
+        self.assertEqual(settings["button_radius"], 5)
+        self.assertEqual(tp.list_presets(), {})
 
-    def test_preset_manager_links_another_theme(self):
-        settings_store.load_settings(startup=True)
+    def test_an_old_link_to_another_theme_is_ignored(self):
         tp.save_preset(tp.from_settings({"window_radius": 1}, "autre"))
-        settings_store.set_preset_theme("fab", "autre")
-        self.assertEqual(settings_store.load_settings()["window_radius"], 1)
+        layers = settings_store._load_presets()
+        layers["fab"]["theme_preset"] = "autre"
+        settings_store._save_presets(layers)
+        self.assertEqual(settings_store.load_settings(startup=True)["window_radius"], 9)   # le thème « fab »
 
     def test_missing_theme_keeps_the_aspect_in_the_app_preset(self):
         settings = settings_store.load_settings(startup=True)

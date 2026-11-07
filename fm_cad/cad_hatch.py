@@ -7,6 +7,12 @@ Champs : `loops` [[[x, y], ...], ...] ; `hatch_pattern` (solid | lines | cross |
 `hatch_spacing` (unites du board entre deux traits) ; `hatch_origin` (point de depart du motif : il suit l'objet quand
 on le deplace, le motif ne glisse donc pas dans la forme) ; `hatch_alpha` (opacite du remplissage plein, 0-100).
 
+Motif d'AutoCAD (`hatch_pattern` « dxf », hachures importees d'un DXF / DWG) : `hatch_lines` = familles de traits du
+motif (`{"angle", "base", "offset", "dashes"}`, comme un fichier .pat : traits paralleles a `angle` passant par `base`,
+repetes de `offset`, tirets > 0, blancs < 0, points = 0) DANS LE REPERE DE LA HACHURE (angle relatif a `hatch_angle`,
+positions relatives a `hatch_origin`, longueurs en multiples de `hatch_spacing`) : deplacer, tourner, mettre a
+l'echelle ou retourner la hachure garde son motif ; `hatch_name` = nom du motif (ANSI31, AR-CONC…).
+
 Zone a hachurer :
 - `find_region` : a partir d'un POINT INTERNE, la plus petite zone fermee que forment les traits qui l'entourent
   (graphe planaire : traits coupes a leurs intersections, parcours de la face qui contient le point ; les ilots
@@ -18,10 +24,21 @@ import math
 
 from . import cad_geometry as geo
 
-PATTERNS = ("solid", "lines", "cross", "brick")
+PATTERNS = ("solid", "lines", "cross", "brick")      # motifs proposes (commande, panneau Proprietes)
+WIPEOUT = "wipeout"                 # MASQUE (WIPEOUT d'AutoCAD) : zone peinte de la couleur du fond PAR-DESSUS les traits
+                                    # (les textes restent au-dessus), aucun trait de motif
+DXF = "dxf"                                         # motif d'AutoCAD importe (`hatch_lines`)
+GRADIENT = "gradient"               # DEGRADE (HATCH d'AutoCAD, remplissage degrade) : de la couleur de l'entite a
+                                    # `hatch_color2`, forme `hatch_gradient`, angle `hatch_angle`, `hatch_centered`
+GRADIENTS = ("LINEAR", "CYLINDER", "INVCYLINDER", "SPHERICAL", "INVSPHERICAL", "HEMISPHERICAL", "INVHEMISPHERICAL",
+             "CURVED", "INVCURVED")
+GRADIENT_LABELS = {"LINEAR": "Linéaire", "CYLINDER": "Cylindre", "INVCYLINDER": "Cylindre inversé",
+                   "SPHERICAL": "Sphère", "INVSPHERICAL": "Sphère inversée", "HEMISPHERICAL": "Hémisphère",
+                   "INVHEMISPHERICAL": "Hémisphère inversé", "CURVED": "Courbe", "INVCURVED": "Courbe inversée"}
 MM = 96.0 / 25.4
 DEFAULTS = {"hatch_pattern": "lines", "hatch_angle": 45.0, "hatch_spacing": 3.0 * MM, "hatch_alpha": 35.0}
 MAX_LINES = 4000                    # traits au plus par famille (l'ecart est agrandi au-dela)
+MAX_DASHES = 40000                  # tirets au plus par famille d'un motif d'AutoCAD (au-dela : traits continus)
 GEOMETRY_KEYS = ("loops", "hatch_origin", "hatch_angle")
 
 
@@ -54,12 +71,48 @@ def clean_loops(loops) -> list:
     return out
 
 
+def clean_families(lines) -> list:
+    """Familles valides d'un motif d'AutoCAD (`hatch_lines`) : nombres finis, tirets reels."""
+    out = []
+    for line in lines or []:
+        if not isinstance(line, dict):
+            continue
+        base, offset = _pt(line.get("base"), None), _pt(line.get("offset"), None)
+        if base is None or offset is None or not all(math.isfinite(v) for v in (*base, *offset)):
+            continue
+        dashes = [v for v in (_num(d, None) for d in (line.get("dashes") or [])) if v is not None]
+        out.append({"angle": _num(line.get("angle"), 0.0) % 360.0, "base": [base[0], base[1]],
+                    "offset": [offset[0], offset[1]], "dashes": dashes})
+    return out
+
+
 def style_of(data: dict) -> dict:
-    pattern = data.get("hatch_pattern") if data.get("hatch_pattern") in PATTERNS else DEFAULTS["hatch_pattern"]
+    pattern = data.get("hatch_pattern")
+    families = clean_families(data.get("hatch_lines")) if pattern == DXF else []
+    if pattern not in PATTERNS and not families and pattern not in (WIPEOUT, GRADIENT):
+        pattern = DEFAULTS["hatch_pattern"]
+    color2 = str(data.get("hatch_color2") or "")
+    if not (color2.startswith("#") and len(color2) in (7, 9)):
+        color2 = "#ffffff"
     return {"pattern": pattern, "angle": _num(data.get("hatch_angle"), DEFAULTS["hatch_angle"]),
             "spacing": max(1e-3, _num(data.get("hatch_spacing"), DEFAULTS["hatch_spacing"])),
             "origin": _pt(data.get("hatch_origin")), "alpha": max(0.0, min(100.0, _num(data.get("hatch_alpha"),
-                                                                                      DEFAULTS["hatch_alpha"])))}
+                                                                                      DEFAULTS["hatch_alpha"]))),
+            "lines": families, "name": str(data.get("hatch_name") or "") if families else "",
+            "color2": color2.lower(),
+            "gradient": data.get("hatch_gradient") if data.get("hatch_gradient") in GRADIENTS else "LINEAR",
+            "centered": bool(data.get("hatch_centered", True))}
+
+
+def gradient_stops(name: str) -> list:
+    """[(position 0..1, 1 = couleur de l'entite / 2 = seconde couleur)] le long du degrade (forme `name`)."""
+    base = name[3:] if name.startswith("INV") else name
+    stops = {"LINEAR": [(0.0, 1), (1.0, 2)], "CYLINDER": [(0.0, 1), (0.5, 2), (1.0, 1)],
+             "SPHERICAL": [(0.0, 2), (1.0, 1)], "HEMISPHERICAL": [(0.0, 2), (1.0, 1)],
+             "CURVED": [(0.0, 1), (0.7, 2), (1.0, 2)]}.get(base, [(0.0, 1), (1.0, 2)])
+    if name.startswith("INV"):
+        stops = [(t, 3 - c) for t, c in stops]
+    return stops
 
 
 # ==========================================================================
@@ -186,11 +239,70 @@ def _brick(loops, angle: float, spacing: float, origin) -> list:
     return out
 
 
+def family_frame(family: dict, style: dict):
+    """(angle, base, pas le long du trait, pas d'une rangee a l'autre, tirets) d'une famille d'un motif d'AutoCAD, en
+    coordonnees du DOCUMENT (repere de la hachure applique)."""
+    angle, s, origin = style["angle"], style["spacing"], style["origin"]
+    base = _back((family["base"][0] * s, family["base"][1] * s), angle, origin)
+    rel = math.radians(family["angle"])
+    ox, oy = family["offset"][0] * s, family["offset"][1] * s
+    along = ox * math.cos(rel) + oy * math.sin(rel)
+    across = -ox * math.sin(rel) + oy * math.cos(rel)
+    return (angle + family["angle"]) % 360.0, base, along, across, [d * s for d in family["dashes"]]
+
+
+def _family(loops, family: dict, style: dict) -> list:
+    """Traits d'une famille d'un motif d'AutoCAD (tirets et points compris), coupes a la zone."""
+    angle, base, along, across, dashes = family_frame(family, style)
+    if abs(across) <= geo.EPS:
+        return []
+    poly, _ = _frame(loops, angle, base)
+    ys = [p[1] for loop in poly for p in loop]
+    if not ys:
+        return []
+    step = max(1, math.ceil((max(ys) - min(ys)) / abs(across) / MAX_LINES))     # trop de rangees : une sur `step`
+    gap, shift = abs(across) * step, along * step * (1.0 if across > 0 else -1.0)
+    rows = _scan(poly, (gap, 0.0))
+    period = sum(abs(d) for d in dashes)
+    if dashes and period > geo.EPS and any(d >= 0 for d in dashes):
+        total = sum(x1 - x0 for spans in rows.values() for x0, x1 in spans)
+        if total / period * len(dashes) > MAX_DASHES:
+            dashes = []                                         # tirets trop fins pour la zone : traits continus
+    else:
+        dashes = []
+    dot = period * 0.01
+    out = []
+    for k, spans in rows.items():
+        y = k * gap
+        phase = k * shift
+        for x0, x1 in spans:
+            if x1 - x0 <= geo.EPS:
+                continue
+            if not dashes:
+                out.append((_back((x0, y), angle, base), _back((x1, y), angle, base)))
+                continue
+            pos = phase + math.floor((x0 - phase) / period) * period
+            while pos < x1:
+                for d in dashes:
+                    if d > 0:
+                        a, b = max(x0, pos), min(x1, pos + d)
+                        if b > a:
+                            out.append((_back((a, y), angle, base), _back((b, y), angle, base)))
+                    elif d == 0 and x0 <= pos <= x1:            # point : un trait tres court, visible
+                        out.append((_back((pos, y), angle, base), _back((min(x1, pos + dot), y), angle, base)))
+                    pos += abs(d)
+                    if pos >= x1:
+                        break
+    return out
+
+
 def pattern_segments(loops, style: dict) -> list:
     """Traits du motif [(a, b)] (rien pour le remplissage plein)."""
     loops = clean_loops(loops)
-    if not loops or style["pattern"] == "solid":
+    if not loops or style["pattern"] in ("solid", WIPEOUT, GRADIENT):
         return []
+    if style["pattern"] == DXF:
+        return [seg for family in style["lines"] for seg in _family(loops, family, style)]
     angle, spacing, origin = style["angle"], style["spacing"], style["origin"]
     if style["pattern"] == "cross":
         return _lines(loops, angle, spacing, origin) + _lines(loops, angle + 90.0, spacing, origin)
@@ -219,7 +331,7 @@ def distance_inside(data: dict, p) -> float:
     """Distance de `p` (dans la zone) au motif le plus proche, calculee sans parcourir les traits (motifs reguliers) ;
     `math.inf` pour un remplissage plein."""
     s = style_of(data)
-    if s["pattern"] == "solid":
+    if s["pattern"] in ("solid", WIPEOUT, GRADIENT):
         return math.inf
     c, sn = math.cos(math.radians(-s["angle"])), math.sin(math.radians(-s["angle"]))
     x, y = p[0] - s["origin"][0], p[1] - s["origin"][1]
@@ -229,15 +341,60 @@ def distance_inside(data: dict, p) -> float:
     def gap(v):
         r = v % sp
         return min(r, sp - r)
+    if s["pattern"] == DXF:                                     # trait le plus proche de ses familles (tirets ignores)
+        best = math.inf
+        for family in s["lines"]:
+            angle, base, _along, across, _dashes = family_frame(family, s)
+            if abs(across) <= geo.EPS:
+                continue
+            r = math.radians(angle)
+            v = (-(p[0] - base[0]) * math.sin(r) + (p[1] - base[1]) * math.cos(r)) % abs(across)
+            best = min(best, v, abs(across) - v)
+        return best
     if s["pattern"] == "cross":
         return min(gap(fy), gap(fx))
     return gap(fy)
 
 
-def transform(data: dict, point_fn, angle_fn) -> dict:
+def transform(data: dict, point_fn, angle_fn, flips: bool = False) -> dict:
+    """Hachure transformee (deplacement, rotation, miroir…). Retournee (`flips`), un motif d'AutoCAD l'est aussi dans
+    son repere : angles et ordonnees de ses familles changent de signe."""
     out = {"loops": [[list(point_fn((p[0], p[1]))) for p in loop] for loop in clean_loops(data.get("loops"))],
            "hatch_origin": list(point_fn(_pt(data.get("hatch_origin")))),
            "hatch_angle": angle_fn(_num(data.get("hatch_angle"), DEFAULTS["hatch_angle"])) % 360.0}
+    if flips and data.get("hatch_lines"):
+        out["hatch_lines"] = flipped_families(data.get("hatch_lines"))
+    return out
+
+
+def flipped_families(lines) -> list:
+    return [{"angle": (-f["angle"]) % 360.0, "base": [f["base"][0], -f["base"][1]],
+             "offset": [f["offset"][0], -f["offset"][1]], "dashes": list(f["dashes"])} for f in clean_families(lines)]
+
+
+def families_from_world(lines, origin, angle: float, spacing: float) -> list:
+    """Familles en coordonnees du DESSIN (comme un HATCH de DXF : angle absolu, base, decalage deja tourne, tirets)
+    -> repere de la hachure (`hatch_lines`)."""
+    c, s = math.cos(math.radians(-angle)), math.sin(math.radians(-angle))
+    out = []
+    for a, base, offset, dashes in lines:
+        bx, by = base[0] - origin[0], base[1] - origin[1]
+        out.append({"angle": (a - angle) % 360.0,
+                    "base": [(bx * c - by * s) / spacing, (bx * s + by * c) / spacing],
+                    "offset": [(offset[0] * c - offset[1] * s) / spacing, (offset[0] * s + offset[1] * c) / spacing],
+                    "dashes": [d / spacing for d in dashes]})
+    return out
+
+
+def families_to_world(data: dict) -> list:
+    """Inverse de `families_from_world` : [(angle, base, decalage, tirets)] en coordonnees du document (export)."""
+    style = style_of(data)
+    r = math.radians(style["angle"])
+    out = []
+    for family in style["lines"]:
+        a, base, _along, _across, dashes = family_frame(family, style)
+        ox, oy = family["offset"][0] * style["spacing"], family["offset"][1] * style["spacing"]
+        out.append((a, base, (ox * math.cos(r) - oy * math.sin(r), ox * math.sin(r) + oy * math.cos(r)), dashes))
     return out
 
 

@@ -23,10 +23,11 @@ from __future__ import annotations
 import copy
 import math
 
-from . import cad_dims, cad_hatch, cad_text
+from . import cad_assoc, cad_attrib, cad_block, cad_dims, cad_hatch, cad_image, cad_point, cad_text
 
 CAD_VERSION = 4                    # 2 : extremites « selon le type », segments interieurs ; 3 : repartition ; 4 : redimensionner
 BYLAYER = "ByLayer"
+BYBLOCK = cad_block.BYBLOCK        # couleur / epaisseur PARBLOC : seulement dans une definition de bloc (cad_block)
 LAYER0 = "0"                       # calque initial, ni supprimable ni renommable (comme AutoCAD)
 DEFAULT_COLOR = "#1a1a1a"          # encre des boards (model.MIRO_INK), lisible sur le canvas clair
 
@@ -69,7 +70,7 @@ def unit_scale(value) -> float:
 CROSSHAIR_KEYS = ("board_cad_crosshair", "board_cad_crosshair_size", "board_cad_crosshair_full",
                   "board_cad_crosshair_auto_color", "board_cad_crosshair_color", "board_cad_pickbox",
                   "board_cad_magnet", "board_cad_magnet_radius", "board_cad_magnet_tooltip",
-                  "board_cad_crosshair_memory")
+                  "board_cad_crosshair_memory", "board_cad_crosshair_negative", "board_cad_crosshair_negative_tol")
 OVERRIDABLE = ("board_cad_unit", "board_cad_precision") + CROSSHAIR_KEYS
 OVERRIDABLE_PREFIXES = ("board_grid_",)
 
@@ -134,13 +135,29 @@ ENTITY_DEFAULTS = {
     "cad_pline": {**PROP_DEFAULTS, "vertices": [], "closed": False},
     # Cotation : geometrie et style, voir cad_dims
     "cad_dim": {**PROP_DEFAULTS, "dim_type": "linear", "p1": [0.0, 0.0], "p2": [0.0, 0.0], "pos": [0.0, 0.0],
-                "center": [0.0, 0.0], "rot": 0.0, **cad_dims.STYLE_DEFAULTS},
+                "center": [0.0, 0.0], "rot": 0.0, **cad_dims.STYLE_DEFAULTS,
+                "assoc": {}},                          # liens aux objets cotés (cotation associative, voir cad_assoc)
     # Hachures : contours + motif, voir cad_hatch
     "cad_hatch": {**PROP_DEFAULTS, "loops": [], "hatch_pattern": cad_hatch.DEFAULTS["hatch_pattern"],
                   "hatch_angle": cad_hatch.DEFAULTS["hatch_angle"], "hatch_spacing": cad_hatch.DEFAULTS["hatch_spacing"],
-                  "hatch_origin": [0.0, 0.0], "hatch_alpha": cad_hatch.DEFAULTS["hatch_alpha"]},
+                  "hatch_origin": [0.0, 0.0], "hatch_alpha": cad_hatch.DEFAULTS["hatch_alpha"],
+                  "hatch_lines": [], "hatch_name": "",           # motif d'AutoCAD importe (`hatch_pattern` « dxf »)
+                  "hatch_color2": "", "hatch_gradient": "", "hatch_centered": True},   # degrade (`hatch_pattern` « gradient »)
     # Texte (TEXTE / MTEXTE) : point d'insertion, contenu, style, voir cad_text
-    "cad_text": {**PROP_DEFAULTS, "pos": [0.0, 0.0], **cad_text.DEFAULTS},
+    "cad_text": {**PROP_DEFAULTS, "pos": [0.0, 0.0], **cad_text.DEFAULTS,
+                 "attdef": {}},                         # definition d'attribut de bloc (ATTDEF), voir cad_attrib
+    # Point (POINT) : position + figure PDMODE / PDSIZE copiee a la creation, voir cad_point
+    "cad_point": {**PROP_DEFAULTS, "pos": [0.0, 0.0], **cad_point.DEFAULTS},
+    # Reference de bloc (INSERER) : nom, point d'insertion, echelle, rotation, miroir ; definitions dans
+    # page["cad"]["blocks"], voir cad_block
+    "cad_insert": {**PROP_DEFAULTS, "block": "", "pos": [0.0, 0.0], "scale": 1.0, "rot": 0.0, "mirror": False,
+                   "attribs": {},                       # valeurs des attributs {etiquette: valeur}, voir cad_attrib
+                   "state": ""},                        # etat de visibilite (bloc dynamique), voir cad_block
+    # Image referencee (IMAGEATTACH) : trois coins + fichier, voir cad_image
+    "cad_image": {**PROP_DEFAULTS, "pos": [0.0, 0.0], **cad_image.DEFAULTS},
+    # Lignes de construction (XLINE : droite, RAY : demi-droite) : base + point de direction, voir cad_xline
+    "cad_xline": {**PROP_DEFAULTS, "p1": [0.0, 0.0], "p2": [1.0, 0.0]},
+    "cad_ray": {**PROP_DEFAULTS, "p1": [0.0, 0.0], "p2": [1.0, 0.0]},
 }
 CAD_TYPES = tuple(ENTITY_DEFAULTS)
 
@@ -163,7 +180,15 @@ def empty_cad_page() -> dict:
 
 
 def copy_cad(cad: dict) -> dict:
-    return copy.deepcopy(cad)
+    """Copie modifiable de la page CAD. Definitions de blocs PARTAGEES (jamais modifiees sur place : une definition
+    changee est remplacee, `BlockCommand`) : les recopier coutait ~2 s par calque bascule sur un DWG de 258 blocs, et
+    chaque reference se croyait changee (`CadInsertItem.block_parts`)."""
+    blocks = cad.get("blocks") if isinstance(cad, dict) else None
+    if not isinstance(blocks, dict):
+        return copy.deepcopy(cad)
+    out = copy.deepcopy({k: v for k, v in cad.items() if k != "blocks"})
+    out["blocks"] = dict(blocks)
+    return out
 
 
 # -- validation --
@@ -250,17 +275,35 @@ def normalize_entity(item: dict) -> dict:
         style = cad_dims.style_of(item)
         for key in cad_dims.STYLE_DEFAULTS:
             item[key] = style[key] if key != "dim_str" else str(item.get("dim_str") or "")
+        item["assoc"] = cad_assoc.clean(item.get("assoc"))
     if kind == "cad_hatch":
         item["loops"] = cad_hatch.clean_loops(item.get("loops"))
         style = cad_hatch.style_of(item)
         item["hatch_pattern"], item["hatch_angle"] = style["pattern"], style["angle"]
         item["hatch_spacing"], item["hatch_alpha"] = style["spacing"], style["alpha"]
         item["hatch_origin"] = list(style["origin"])
+        item["hatch_lines"], item["hatch_name"] = style["lines"], style["name"]
+        if style["pattern"] == cad_hatch.GRADIENT:
+            item["hatch_color2"], item["hatch_gradient"] = style["color2"], style["gradient"]
+            item["hatch_centered"] = style["centered"]
+    if kind == "cad_point":
+        item["pos"] = _point(item.get("pos"), (0.0, 0.0))
+        item.update(cad_point.style_of(item))
+    if kind == "cad_insert":
+        item.update(cad_block.style_of(item))
+        item["attribs"] = cad_attrib.clean_attribs(item.get("attribs"))
+        item["state"] = str(item.get("state") or "")
+    if kind == "cad_image":
+        item.update(cad_image.style_of(item))
+    if kind in ("cad_xline", "cad_ray"):
+        for key, default in (("p1", (0.0, 0.0)), ("p2", (1.0, 0.0))):
+            item[key] = _point(item.get(key), default)
     if kind == "cad_text":
         item["pos"] = _point(item.get("pos"), (0.0, 0.0))
         style = cad_text.style_of(item)
         for key in cad_text.DEFAULTS:
             item[key] = style[key]
+        item["attdef"] = cad_attrib.clean_attdef(item.get("attdef"))
     if kind == "cad_pline":
         vertices = []
         for v in item.get("vertices") or []:
@@ -559,6 +602,7 @@ def set_linetypes(raw) -> bool:
     new = {d["key"]: d for d in defs}
     if new == LINETYPE_DEFS:
         return False
+    _RESOLVED.clear()                           # proprietes partagees (resolve_shared) calculees avec les anciennes
     LINETYPE_DEFS.clear()
     LINETYPE_DEFS.update(new)
     LINETYPES.clear()
@@ -638,6 +682,31 @@ def resolve(data: dict, cad: dict, unit: float = 1.0) -> dict:
         "visible": bool(layer["visible"]),
         "locked": bool(layer["locked"]),
     }
+
+
+_RESOLVED: dict = {}                    # (id(cad), unite, proprietes de l'entite) -> (cad, proprietes effectives)
+
+
+def resolve_shared(data: dict, cad: dict, unit: float = 1.0) -> dict:
+    """`resolve`, gardee pour toutes les entites aux memes proprietes (presque tout un dessin : ByLayer, calques en
+    nombre limite) : ~10 µs de moins par entite a l'ouverture d'un gros DWG. Resultat PARTAGE entre les entites :
+    jamais modifie sur place (le copier d'abord). Page CAD jamais modifiee sur place (regle de `page["cad"]`) : une
+    autre page = une autre cle ; types de ligne changes (`set_linetypes`) : tout est oublie."""
+    get = data.get
+    try:
+        key = (id(cad), unit, get("layer", LAYER0), get("color", BYLAYER), get("lineweight", BYLAYER),
+               get("linetype", BYLAYER), get("ltscale", 1.0), get("end1", BYTYPE), get("end2", BYTYPE),
+               get("inner", BYTYPE), get("distribute", BYTYPE), get("resize", BYTYPE))
+        found = _RESOLVED.get(key)
+    except TypeError:                           # extremites propres a l'entite (dictionnaires) : non partagees
+        return resolve(data, cad, unit)
+    if found is not None and found[0] is cad:
+        return found[1]
+    props = resolve(data, cad, unit)
+    if len(_RESOLVED) > 4096:
+        _RESOLVED.clear()
+    _RESOLVED[key] = (cad, props)               # la page gardee : son identifiant n'est pas reutilise
+    return props
 
 
 def new_entity_values(cad: dict, **geometry) -> dict:

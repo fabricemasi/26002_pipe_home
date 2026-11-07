@@ -79,5 +79,35 @@ class ExtensionColorTest(unittest.TestCase):
         self.assertEqual(red_pixels(column.list.viewport()), [])
 
 
+
+class LiveFontTest(unittest.TestCase):
+    """Bug signale 2026-10-30 : Colonnes > Texte > Police ne suivait pas EN DIRECT. L'apercu en direct
+    (refresh_all_columns(rescan=False)) passe par Column.relayout(do_layout=False) quand la hauteur des lignes
+    ne change pas : la police du delegue changeait, mais rien ne repeignait les lignes."""
+
+    setUp = ExtensionColorTest.setUp
+    column = ExtensionColorTest.column
+
+    def test_cosmetic_relayout_repaints_every_row(self):
+        from PySide6.QtCore import QEvent, QObject
+
+        column = self.column("fichier.txt", dirs=("dossier",))
+
+        class Counter(QObject):
+            paints = 0
+
+            def eventFilter(self, obj, event):
+                if event.type() == QEvent.Paint:
+                    Counter.paints += 1
+                return False
+
+        counter = Counter()
+        column.list.viewport().installEventFilter(counter)
+        column.list.itemDelegate().refresh_fonts()
+        column.relayout(do_layout=False)
+        for _ in range(5):
+            APP.processEvents()
+        self.assertGreater(Counter.paints, 0)
+
 if __name__ == "__main__":
     unittest.main()

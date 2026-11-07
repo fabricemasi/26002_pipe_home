@@ -549,7 +549,13 @@ class ViewerMixin:
         if path.is_dir():
             open_in_file_manager(path)
             return
+        if self._make_module_full(path):                 # ouvert à côté des colonnes (simple clic) : module plein
+            if getattr(self, "_font", None) is not None:
+                self._hide_columns_under_font()
+            return
         if self._video_claims(path) and self._open_video(path):   # module video : video / sequence d'images
+            return
+        if self._pdf_claims(path) and self._open_pdf(path):       # éditeur PDF (fm_pdf) : lu DANS l'appli
             return
         import fm_board as board
         if board.is_board_file(path):                     # board facon Miro : ouvert DANS l'appli
@@ -581,7 +587,10 @@ class ViewerMixin:
         (pas de celui de l'inspecteur) ; le retour aux colonnes la ramene dans l'inspecteur."""
         if self._project_columns_hidden:
             return
+        self._close_side_viewer()                # simple clic : la visionneuse à côté laisse place à la pleine
         if self._video_claims(path) and self._open_video(path):   # video / sequence EXR, TIFF… : module video
+            return
+        if self._pdf_claims(path) and self._open_pdf(path):       # .pdf : l'éditeur PDF, pas la visionneuse
             return
 
         def go():

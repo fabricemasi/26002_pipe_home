@@ -80,6 +80,45 @@ def _row_icon_pixmap(is_dir: bool, icon_key: str | None, size: int) -> QPixmap |
         return software_icon_pixmap(icon_key, size)
     return custom_ui_icon_pixmap(UI_ICON_FOLDER_DEFAULT if is_dir else UI_ICON_FILE_DEFAULT, size)
 
+_TINT_CACHE: dict[tuple[int, int], QPixmap] = {}
+
+
+def tinted_icon(pixmap: QPixmap | None, color) -> QPixmap | None:
+    """`pixmap` multipliee par `color` (une icone blanche prend la couleur, ses gris gardent leur modele ; la
+    transparence est conservee). Blanc opaque : l'icone telle quelle. Cache par (icone, couleur) : rien n'est
+    recalcule a la peinture des lignes."""
+    if pixmap is None or pixmap.isNull():
+        return pixmap
+    color = QColor(color)
+    if not color.isValid() or color.rgba() == 0xFFFFFFFF:
+        return pixmap
+    key = (pixmap.cacheKey(), color.rgba())
+    cached = _TINT_CACHE.get(key)
+    if cached is not None:
+        return cached
+    out = QPixmap(pixmap.size())
+    out.setDevicePixelRatio(pixmap.devicePixelRatio())
+    out.fill(Qt.transparent)
+    p = QPainter(out)
+    p.drawPixmap(0, 0, pixmap)
+    p.setCompositionMode(QPainter.CompositionMode_Multiply)
+    p.fillRect(out.rect(), color)
+    p.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+    p.drawPixmap(0, 0, pixmap)
+    p.end()
+    if color.alpha() < 255:                     # couleur translucide : l'icone l'est aussi
+        faded = QPixmap(out.size())
+        faded.setDevicePixelRatio(out.devicePixelRatio())
+        faded.fill(Qt.transparent)
+        p = QPainter(faded)
+        p.setOpacity(color.alphaF())
+        p.drawPixmap(0, 0, out)
+        p.end()
+        out = faded
+    _bounded_cache_set(_TINT_CACHE, key, out, 256)
+    return out
+
+
 _PIN_ICON_CACHE: dict[tuple[bool, int], QPixmap] = {}
 
 def _pin_icon_pixmap(active: bool, size: int) -> QPixmap:

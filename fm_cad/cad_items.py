@@ -40,7 +40,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetricsF, QGuiApplication, QImage,
 from PySide6.QtWidgets import QGraphicsItem, QStyle
 
 from . import cad_geometry as geo
-from . import cad_dims, cad_hatch, cad_model, cad_shapes, cad_text
+from . import cad_assoc, cad_block, cad_dims, cad_hatch, cad_image, cad_model, cad_point, cad_shapes, cad_text, cad_xline
 from fm_miro import items as _items
 from fm_miro.items import ITEM_CLASSES, BoardItem
 
@@ -176,6 +176,18 @@ def line_outline(length: float, half: float, end1: dict, end2: dict) -> QPainter
 
 # Ce qui change l'aspect d'une ligne (proprietes effectives relues a chaque changement de calque / de reglage).
 FADE_OPACITY = 0.3                    # elements grises d'un module du board (selecteur de modules)
+FADE_SATURATION = 1.0                 # saturation des elements grises (1 = couleurs gardees, 0 = gris)
+
+
+def fade_ink(color) -> str:
+    """Couleur d'un element grise : desaturee selon FADE_SATURATION (reglage de la barre des modules du board)."""
+    sat = FADE_SATURATION
+    if sat >= 0.999:
+        return color if isinstance(color, str) else QColor(color).name(QColor.HexArgb)
+    c = QColor(color)
+    luma = 0.2126 * c.redF() + 0.7152 * c.greenF() + 0.0722 * c.blueF()
+    out = QColor.fromRgbF(*(luma + (v - luma) * sat for v in (c.redF(), c.greenF(), c.blueF())), c.alphaF())
+    return out.name(QColor.HexArgb)
 
 
 def cad_module_look(scene) -> tuple:
@@ -231,22 +243,128 @@ def scene_path(primitives) -> QPainterPath:
     for p in primitives:
         start = cad_shapes.prim_start(p)
         sx, sy = start[0], -start[1]
-        if last is None or geo.distance(last, start) > geo.EPS * 10:
-            path.moveTo(sx, sy)
+        fresh = last is None or geo.distance(last, start) > geo.EPS * 10
         if p[0] == "segment":
+            if fresh:
+                path.moveTo(sx, sy)
             path.lineTo(p[2][0], -p[2][1])
         else:
             c, r = p[1], p[2]
-            path.arcTo(QRectF(c[0] - r, -c[1] - r, 2 * r, 2 * r), p[3], p[4])
+            rect = QRectF(c[0] - r, -c[1] - r, 2 * r, 2 * r)
+            if fresh:
+                # Depart EXACT de l'arc (arcMoveTo) : un moveTo sur le point calcule laissait arcTo ajouter un segment
+                # minuscule de direction quelconque, dont la coupe franche faisait une encoche au bout (signale
+                # 2026-11-05, cercle coupe).
+                path.arcMoveTo(rect, p[3])
+            path.arcTo(rect, p[3], p[4])
         last = cad_shapes.prim_end(p)
     return path
 
 
+def _exact_arc_outline(primitives, half: float, start, end, closed: bool):
+    """Contour exact d'un cercle (anneau) ou d'un arc seul (secteur d'anneau, bouts francs radiaux, disque aux bouts
+    « arrondi ») ; None pour toute autre courbe."""
+    if len(primitives) != 1 or primitives[0][0] != "arc" or half <= 0:
+        return None
+    _kind, c, r, a0, sweep = primitives[0]
+    cx, cy = c[0], -c[1]
+    outer = QRectF(cx - r - half, cy - r - half, 2 * (r + half), 2 * (r + half))
+    inner_r = max(0.0, r - half)
+    inner = QRectF(cx - inner_r, cy - inner_r, 2 * inner_r, 2 * inner_r)
+    path = QPainterPath()
+    if closed or abs(sweep) >= 360.0 - 1e-9:
+        # Trou trace a REBOURS : vide aussi en remplissage « winding » (les lots fusionnent les contours, ThickPaths).
+        path.setFillRule(Qt.WindingFill)
+        path.addEllipse(outer)
+        if inner_r > 0:
+            hole = QPainterPath()
+            hole.addEllipse(inner)
+            path.addPath(hole.toReversed())
+        return path
+    path.arcMoveTo(outer, a0)
+    path.arcTo(outer, a0, sweep)
+    if inner_r > 0:
+        path.arcTo(inner, a0 + sweep, -sweep)            # retour par le bord interieur (le lineTo est le bout radial)
+    else:
+        path.lineTo(cx, cy)
+    path.closeSubpath()
+    caps = QPainterPath()
+    for end_style, point in ((start, cad_shapes.prim_start(primitives[0])), (end, cad_shapes.prim_end(primitives[0]))):
+        if end_style is not None and end_style.get("style") == "round":
+            caps.addEllipse(QPointF(point[0], -point[1]), half, half)
+    if not caps.isEmpty():
+        path = path.united(caps)
+    path.setFillRule(Qt.WindingFill)
+    return path
+
+
+def _radius_corners(path: QPainterPath, primitives, half: float, start, end) -> QPainterPath:
+    """Bouts « border radius » d'une courbe epaisse (demande, 2026-11-05 : avant, rendus en coupe franche) : a chaque
+    coin du bout, la zone hors du quart de cercle de rayon rr (= % de la demi-epaisseur) est retiree. Le bout est
+    perpendiculaire au trace (radial pour un arc) : les coins sont des angles droits."""
+    notches = QPainterPath()
+    for end_style, prim, s_at, outward in ((start, primitives[0], 0.0, -1.0),
+                                           (end, primitives[-1], None, 1.0)):
+        if end_style is None or end_style.get("style") != "radius":
+            continue
+        rr = half * max(0.0, min(100.0, float(end_style.get("radius", 0.0)))) / 100.0
+        if rr <= geo.EPS:
+            continue
+        s = cad_shapes.prim_length(prim) if s_at is None else s_at
+        point = cad_shapes.prim_point(prim, s)
+        t = cad_shapes.prim_tangent(prim, s)
+        d = (outward * t[0], -outward * t[1])                      # vers l'exterieur du bout, repere de la scene
+        n0 = (-d[1], d[0])
+        p = (point[0], -point[1])
+        m = rr * 0.5 + 1e-3                                         # marge hors de la forme (courbure)
+        for side in (1.0, -1.0):
+            n = (n0[0] * side, n0[1] * side)
+            c = (p[0] + n[0] * half, p[1] + n[1] * half)            # coin
+            def at(a, b):                                            # a vers l'interieur le long du trace, b vers l'axe
+                return QPointF(c[0] - d[0] * a - n[0] * b, c[1] - d[1] * a - n[1] * b)
+            square = QPainterPath()
+            square.moveTo(at(-m, -m))
+            square.lineTo(at(rr, -m))
+            square.lineTo(at(rr, rr))
+            square.lineTo(at(-m, rr))
+            square.closeSubpath()
+            disc = QPainterPath()
+            disc.addEllipse(at(rr, rr), rr, rr)
+            notches.addPath(square.subtracted(disc))
+    if notches.isEmpty():
+        return path
+    out = path.subtracted(notches)
+    out.setFillRule(Qt.WindingFill)
+    return out
+
+
 def stroke_outline(primitives, half: float, start: dict | None, end: dict | None, closed: bool) -> QPainterPath:
     """Contour d'un trait epais qui suit les primitives : coupe franche, angles en onglet (polylignes larges
-    d'AutoCAD), disque pose aux bouts « arrondi » (`start` / `end` = terminaison, None = aucune). Le border radius
-    des courbes est rendu en coupe franche."""
-    path = scene_path(primitives)
+    d'AutoCAD), disque pose aux bouts « arrondi », coins arrondis aux bouts « border radius » (`start` / `end` =
+    terminaison, None = aucune)."""
+    out = _stroke_outline(primitives, half, start, end, closed)
+    if closed or not primitives or half <= 0:
+        return out
+    return _radius_corners(out, primitives, half, start, end)
+
+
+def _stroke_outline(primitives, half: float, start: dict | None, end: dict | None, closed: bool) -> QPainterPath:
+    # Trait EPAIS sur une courbe : le decalage des courbes de Bezier par Qt est approche, et se deforme quand la
+    # demi-epaisseur approche le rayon (trou « carre » d'un cercle epais, signale 2026-11-05). Cercle / arc seul :
+    # contour EXACT (anneau, secteur d'anneau) ; autre courbe tres epaisse : petits segments, decales sans erreur.
+    exact = _exact_arc_outline(primitives, half, start, end, closed)
+    if exact is not None:
+        return exact
+    radii = [p[2] for p in primitives if p[0] != "segment" and p[2] > 0]
+    if radii and half > 0.1 * min(radii):
+        fine = cad_shapes.tessellate(primitives, max(min(radii) * 2e-4, 1e-6))
+        path = QPainterPath()
+        for pts in fine:
+            path.moveTo(pts[0][0], -pts[0][1])
+            for q in pts[1:]:
+                path.lineTo(q[0], -q[1])
+    else:
+        path = scene_path(primitives)
     if closed:
         path.closeSubpath()
     stroker = QPainterPathStroker()
@@ -283,20 +401,26 @@ class CadLineItem(BoardItem):
     CONNECTABLE = False
     NO_CACHE = True
     CAD = True
+    # Creee SANS contenu peint (lots, GPU ou chargement par tranches la peignent : voir `itemChange`), sans survol ni
+    # image gardee : aucun reglage a refaire apres coup (chaque drapeau change = 2 appels Python de `itemChange`).
+    ITEM_FLAGS = BoardItem.ITEM_FLAGS | QGraphicsItem.ItemHasNoContents
+    HOVER = False
+    CACHE_MODE = QGraphicsItem.NoCache
+    INFINITE = False                # ligne de construction (XLINE / RAY) : ni lot ni GPU, decoupee a la vue
 
     def __init__(self, data: dict):
         self._geom_key = None
         self._outline = QPainterPath()
         self._dashed = None
         self._thin_dashes = None
+        self._transform = None
         self._props = None
+        self._shown = True                      # derniere visibilite notifiee (un element neuf est visible)
         self._bounds = QRectF()
         self._batch = None                      # lot qui peint cette ligne (CadBatch), None = se peint seule
         self._op = None                         # liste de dessin du lot qui la contient
         self._scene_geom: dict = {}             # geometrie dans le repere de la scene, par variante
         super().__init__(data)
-        self.setCacheMode(QGraphicsItem.NoCache)
-        self.setAcceptHoverEvents(False)
 
     # -- etat --
     def to_dict(self) -> dict:
@@ -329,7 +453,7 @@ class CadLineItem(BoardItem):
     def props(self) -> dict:
         if self._props is None:
             cad = self.cad_page()
-            props = cad_model.resolve(self.data, cad, unit_of(self.scene(), cad))
+            props = cad_model.resolve_shared(self.data, cad, unit_of(self.scene(), cad))   # partagees : jamais modifiees
             scene = self.scene()
             if scene is not None and not getattr(scene, "cad_lineweights", True) and not getattr(scene, "exporting", False):
                 props = dict(props)                     # affichage « simples lignes » : epaisseurs ignorees (trait fin d'un pixel)
@@ -363,8 +487,22 @@ class CadLineItem(BoardItem):
         """Verrou du board OU calque verrouille : ni deplace, ni modifie, ni supprime (reste accrochable)."""
         return bool(self.data.get("locked", False)) or bool(self.props().get("locked"))
 
+    # Proprietes, geometrie, verrou et visibilite calcules a l'entree dans la scene (`itemChange`) : `_add` n'a pas a
+    # refaire `sync` (BoardScene._add).
+    SYNCED_ON_ADD = True
+
     def _place_from_data(self):
         self._props = None
+        if self.scene() is None:
+            # Creation (`make_item`, juste avant `addItem`) : seulement la place. Proprietes (ByLayer), geometrie,
+            # verrou et visibilite attendent l'entree dans la scene (SCENE_HAS_CHANGED, avec les VRAIS calques) :
+            # calcules ici avec une page vide, puis refaits, ils coutaient ~3 fois le necessaire a l'ouverture
+            # d'un gros dessin (mesure, 81 000 entites : `sync` 224 000 fois, `resolve` 243 000 fois).
+            self.setPos(float(self.data.get("x", 0.0)), float(self.data.get("y", 0.0)))
+            z = float(self.data.get("z", 0.0))
+            if z:                                   # 0 : deja la hauteur d'un element neuf (un appel d'itemChange)
+                self.setZValue(z)
+            return
         super()._place_from_data()
         self.setVisible(self.props()["visible"])
         self._touch(restyle=True)
@@ -389,11 +527,8 @@ class CadLineItem(BoardItem):
             return value
         if change is _items.SELECTED_CHANGE and value and any(cad_module_look(self.scene())):
             return False                                # module CAD grise ou masque : jamais selectionne
-        if change is _items.SCENE_HAS_CHANGED and value is not None and (
-                getattr(value, "cad_gpu", False) or getattr(value, "bulk_loading", False)):
-            # Rendu GPU : la scene ne le peint pas. Chargement par tranches : peint par son lot, forme a la fin
-            # (`CadLayer.bulk_loaded`) ; seule, chaque ligne se peindrait une a une (~0,1 ms chacune a chaque image).
-            self.setFlag(QGraphicsItem.ItemHasNoContents, True)
+        # Entree / sortie de scene : tout est fait ici, sans repasser par `BoardItem.itemChange` (meme regroupement
+        # signale) ni par Qt (qui rend la valeur telle quelle) : deux appels de moins par entite creee.
         if change is _items.SCENE_CHANGE:
             old = self.scene()
             if old is not None and value is not old:
@@ -402,22 +537,46 @@ class CadLineItem(BoardItem):
                 layer = getattr(old, "cad_layer", None)
                 if layer is not None:
                     layer.structure_changed()
+                    layer.extras.pop(id(self), None)
                     layer.note_geometry(self, removed=True)    # quitte la scene : retire du dessin GPU
-        elif change is _items.SCENE_HAS_CHANGED:
+            return value
+        if change is _items.SCENE_HAS_CHANGED:
             self._props = None
+            if value is not None:
+                # Creee sans contenu peint (ITEM_FLAGS). Rendu GPU : la scene ne la peint pas. Chargement par
+                # tranches : peinte par son lot, forme a la fin (`CadLayer.bulk_loaded`) ; seule, chaque ligne se
+                # peindrait une a une (~0,1 ms chacune a chaque image). Sinon elle se peint seule jusqu'au
+                # regroupement (`CadLayer.rebuild`, boucle suivante).
+                if (self._batch is None and not getattr(value, "cad_gpu", False)
+                        and not getattr(value, "bulk_loading", False)
+                        and self.flags() & QGraphicsItem.ItemHasNoContents):
+                    self.setFlag(QGraphicsItem.ItemHasNoContents, False)
+                movable = not self.locked()             # verrou et visibilite du calque (voir `_place_from_data`)
+                if bool(self.flags() & QGraphicsItem.ItemIsMovable) != movable:
+                    self.setFlag(QGraphicsItem.ItemIsMovable, movable)
+                self.setVisible(self.props()["visible"])
             self.sync()
             if value is not None:
                 layer = CadLayer.of(value)
                 layer.structure_changed()
+                if getattr(self, "TEXTED", False):
+                    layer.extras[id(self)] = self
                 layer.note_geometry(self)
-        elif change is _items.ZVALUE_HAS_CHANGED:
+            return value
+        if change is _items.ZVALUE_HAS_CHANGED:
             if self._batch is not None:
                 self._batch.drop(self)              # se peint seule a sa nouvelle hauteur jusqu'au regroupement
         elif change is _items.POSITION_HAS_CHANGED:
             self._scene_geom = {}
             self._touch()
-        elif change is _items.VISIBLE_HAS_CHANGED:
-            self._touch(restyle=True)
+        elif change is _items.VISIBLE_HAS_CHANGED or change is _items.VISIBLE_CHANGE:
+            # Qt « polit » tout element ajoute (boucle suivante) en lui renvoyant ces deux notifications, visibilite
+            # inchangee : rien a refaire (sinon chaque ligne d'un gros dessin se reclassait dans son lot). Ni
+            # `BoardItem` ni Qt n'en font rien.
+            if change is _items.VISIBLE_HAS_CHANGED and bool(value) != self._shown:
+                self._shown = bool(value)
+                self._touch(restyle=True)
+            return value
         elif change is _items.SELECTED_HAS_CHANGED:
             if self._batch is not None:
                 self._batch.selection_changed(self)
@@ -444,9 +603,12 @@ class CadLineItem(BoardItem):
 
     def sync(self):
         props = self.props() if self.scene() is not None else cad_model.resolve(self.data, cad_model.empty_cad_page())
-        a, b = self._local_points()
+        p1, p2 = self.data.get("p1") or (0, 0), self.data.get("p2") or (0, 0)
+        ax, ay, bx, by = float(p1[0]), -float(p1[1]), float(p2[0]), -float(p2[1])     # repere local (Y vers le bas)
         weight = float(props["lineweight"])
-        key = (a.x(), a.y(), b.x(), b.y(), weight, repr(props["end1"]), repr(props["end2"]), repr(props["inner"]),
+        # Cle comparee par valeur (jamais hachee) : les extremites y entrent telles quelles, sans `repr` (copies
+        # propres a `resolve`, jamais modifiees sur place).
+        key = (ax, ay, bx, by, weight, props["end1"], props["end2"], props["inner"],
                tuple(props["pattern"]), props["ltscale"], props["extra"], props["distribute"], props["resize"])
         if key == self._geom_key:
             return
@@ -455,16 +617,18 @@ class CadLineItem(BoardItem):
         self._dashed = None
         self._thin_dashes = None
         self._scene_geom = {}
-        length = QLineF(a, b).length()
-        transform = QTransform()
-        transform.translate(a.x(), a.y())
-        transform.rotate(math.degrees(math.atan2(b.y() - a.y(), b.x() - a.x())) if length > geo.EPS else 0.0)
-        self._transform = transform
+        length = math.hypot(bx - ax, by - ay)
         self._length = length
         half = weight / 2.0
         end1, end2, inner = props["end1"], props["end2"], props["inner"]
-        self._outline = transform.map(line_outline(length, half, end1, end2)) if half > 0 else QPainterPath()
         pattern = props["pattern"]
+        transform = None                        # seulement pour un contour (trait epais) ou un motif
+        if half > 0 or pattern:
+            transform = QTransform()
+            transform.translate(ax, ay)
+            transform.rotate(math.degrees(math.atan2(by - ay, bx - ax)) if length > geo.EPS else 0.0)
+        self._transform = transform
+        self._outline = transform.map(line_outline(length, half, end1, end2)) if half > 0 else QPainterPath()
         if pattern:
             scale, offset, span = pattern_layout(props, length)
             intervals = geo.dash_intervals(span, pattern, scale, dot_length=weight, limit=MAX_DASHES)
@@ -478,8 +642,10 @@ class CadLineItem(BoardItem):
             self._period = cad_model.pattern_period(pattern) * scale
         else:
             self._period = 0.0
-        rect = QRectF(a, b).normalized().adjusted(-1.0, -1.0, 1.0, 1.0)
-        self._bounds = self._outline.boundingRect().adjusted(-1.0, -1.0, 1.0, 1.0).united(rect) if half > 0             else rect
+        x0, x1 = (ax, bx) if ax <= bx else (bx, ax)
+        y0, y1 = (ay, by) if ay <= by else (by, ay)
+        rect = QRectF(x0 - 1.0, y0 - 1.0, x1 - x0 + 2.0, y1 - y0 + 2.0)
+        self._bounds = self._outline.boundingRect().adjusted(-1.0, -1.0, 1.0, 1.0).united(rect) if half > 0 else rect
         scene = self.scene()
         if scene is not None and hasattr(scene, "fit_index"):
             scene.fit_index(self.scene_bounds())
@@ -588,6 +754,7 @@ class CadLineItem(BoardItem):
             return                                       # module CAD masque (selecteur de modules du board)
         if faded:
             painter.setOpacity(painter.opacity() * FADE_OPACITY)
+            color = fade_ink(color)
         painter.setRenderHint(QPainter.Antialiasing, bool(getattr(scene, "cad_antialiasing", True)))
         crisp = bool(getattr(scene, "cad_crisp", True))
         geometry = self.scene_geom(thin, dense)          # repere de la scene : meme dessin que dans un lot
@@ -826,6 +993,8 @@ class _DimText(QGraphicsItem):
         parent = self.parentItem()
         if not self._text or parent is None:
             return
+        if self._height * device_scale(painter) < TEXT_MIN_PX:
+            return                                       # trop petit pour etre vu (cotes d'un plan vu en entier)
         hidden, faded = cad_module_look(self.scene())
         if hidden:
             return                                       # module CAD masque (selecteur de modules du board)
@@ -836,7 +1005,8 @@ class _DimText(QGraphicsItem):
         painter.scale(scale, scale)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
         painter.setFont(self._font())
-        painter.setPen(QColor(parent.props()["color"]))
+        ink = parent.props()["color"]
+        painter.setPen(QColor(fade_ink(ink) if faded else ink))
         painter.drawText(QPointF(self._rect.x() + 4.0, 0.0), self._text)      # ligne de base au point d'ancrage
         painter.restore()
 
@@ -882,6 +1052,14 @@ class CadDimItem(CadCurveItem):
 
 # -- textes (TEXTE / MTEXTE, voir cad_text) ----------------------------------------------------------------------------
 TEXT_FONT_PX = 100.0                # corps du dessin des textes, mis a l'echelle de leur hauteur de capitales
+# Lettres plus petites a l'ecran (hauteur de capitales, pixels) : pas dessinees, invisibles de toute facon (un plan
+# vu en entier : des centaines de textes de 0,01 pixel coutaient chacun un `drawText` a chaque image).
+TEXT_MIN_PX = 0.75
+
+
+def device_scale(painter) -> float:
+    """Echelle du peintre vers l'ecran (pixels de l'appareil par unite locale)."""
+    return math.sqrt(abs(painter.deviceTransform().determinant()))
 _TEXT_METRICS: dict = {}
 
 
@@ -949,6 +1127,8 @@ class _TextLabel(QGraphicsItem):
         found = self._found
         if found is None or parent is None or not found["lines"]:
             return
+        if found["height"] * device_scale(painter) < TEXT_MIN_PX:
+            return                                       # trop petit pour etre vu
         hidden, faded = cad_module_look(self.scene())
         if hidden:
             return                                       # module CAD masque (selecteur de modules du board)
@@ -962,11 +1142,642 @@ class _TextLabel(QGraphicsItem):
         painter.setRenderHint(QPainter.TextAntialiasing, True)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setFont(text_font(style["font"], style["bold"], style["italic"]))
-        painter.setPen(QColor(parent.props()["color"]))
+        ink = parent.props()["color"]
+        painter.setPen(QColor(fade_ink(ink) if faded else ink))
         for line, x, y in found["lines"]:
             if line:
                 painter.drawText(QPointF(x / k, -y / k), line)
         painter.restore()
+
+
+class CadPointItem(CadCurveItem):
+    """Point (`cad_point`, voir cad_point) : sa figure (PDMODE / PDSIZE) est faite de primitives ordinaires (lots, GPU,
+    choix au clic) ; l'accrochage ne voit que le point (extremite) ; poignee unique a sa position (deplace)."""
+
+    def props(self) -> dict:
+        props = super().props()
+        if not props.get("_flat"):
+            props = dict(props)
+            props.update(pattern=(), end1=dict(cad_model.END_DEFAULT), end2=dict(cad_model.END_DEFAULT),
+                         inner=dict(cad_model.END_DEFAULT), _flat=True)
+            self._props = props
+        return props
+
+    def snap_primitives(self):
+        return cad_point.snap_prims(self.data, self.doc_offset())
+
+    def points(self) -> tuple[tuple, tuple]:
+        p = cad_point.position(self.data, self.doc_offset())
+        return p, p
+
+    def length(self) -> float:
+        return 0.0
+
+    def closed(self) -> bool:
+        return False
+
+
+class _InsertTexts(QGraphicsItem):
+    """Textes d'une reference de bloc (`cad_insert`) : enfant `_text_item` de l'element (peint par la scene, et par la
+    couche GPU en mode pur comme les autres textes : `BoardView._paint_gpu_texts`)."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._found = []
+        self._masks = QPainterPath()            # masques (WIPEOUT) du bloc : couleur du fond, sous les textes
+        self._rect = QRectF()
+        self.setFlag(QGraphicsItem.ItemIsSelectable, False)
+        self.setAcceptedMouseButtons(Qt.NoButton)
+        self.setCacheMode(QGraphicsItem.NoCache)
+
+    def set_texts(self, texts, masks=()):
+        found = [(cad_text.layout(data), data.get("color")) for data in texts]
+        path = QPainterPath()
+        path.setFillRule(Qt.WindingFill)
+        for loops in masks:
+            for loop in loops:
+                path.moveTo(loop[0][0], -loop[0][1])
+                for x, y in loop[1:]:
+                    path.lineTo(x, -y)
+                path.closeSubpath()
+        self._masks = path
+        rect = path.boundingRect() if masks else QRectF()
+        for layout, _color in found:
+            x0, y0, x1, y1 = cad_text.bounds(layout)
+            rect = rect.united(QRectF(x0, -y1, x1 - x0, y1 - y0))
+        if rect != self._rect:
+            self.prepareGeometryChange()
+            self._rect = rect
+        self._found = found
+        self.update()
+
+    def boundingRect(self) -> QRectF:
+        return self._rect.adjusted(-1.0, -1.0, 1.0, 1.0)
+
+    def paint(self, painter, option, widget=None):
+        parent = self.parentItem()
+        if (not self._found and self._masks.isEmpty()) or parent is None:
+            return
+        hidden, faded = cad_module_look(self.scene())
+        if hidden:
+            return
+        if not self._masks.isEmpty():
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(getattr(self.scene(), "background", QColor("#ffffff"))))
+            painter.drawPath(self._masks)
+        if faded:
+            painter.setOpacity(painter.opacity() * FADE_OPACITY)
+        own = parent.props()["color"]
+        scale = device_scale(painter)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        for found, color in self._found:
+            if not found["lines"] or found["height"] * scale < TEXT_MIN_PX:
+                continue
+            ink = own if color in (None, cad_model.BYLAYER) or not isinstance(color, str) else color
+            style = found["style"]
+            _metrics, cap = text_metrics(style["font"], style["bold"], style["italic"])
+            k = found["height"] / cap
+            painter.save()
+            painter.translate(found["origin"][0], -found["origin"][1])
+            painter.rotate(-found["rot"])
+            painter.scale(k, k)
+            painter.setFont(text_font(style["font"], style["bold"], style["italic"]))
+            painter.setPen(QColor(fade_ink(ink) if faded else ink))
+            for line, x, y in found["lines"]:
+                if line:
+                    painter.drawText(QPointF(x / k, -y / k), line)
+            painter.restore()
+
+
+class _InsertFills(QGraphicsItem):
+    """Remplissages PLEINS des hachures d'une reference de bloc : enfant `_fill` (sous les traits ; couche GPU :
+    `BoardView._paint_gpu_under`)."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._paths = []
+        self._solid = False
+        self.setAcceptedMouseButtons(Qt.NoButton)
+        self.setCacheMode(QGraphicsItem.NoCache)
+        self.setFlag(QGraphicsItem.ItemStacksBehindParent, True)
+
+    def set_fills(self, fills):
+        paths = []
+        for loops, alpha, color, *more in fills:
+            path = QPainterPath()
+            path.setFillRule(Qt.OddEvenFill)
+            for loop in loops:
+                path.moveTo(loop[0][0], -loop[0][1])
+                for x, y in loop[1:]:
+                    path.lineTo(x, -y)
+                path.closeSubpath()
+            paths.append((path, alpha / 100.0, color, more[0] if more else None))
+        self.prepareGeometryChange()
+        self._paths = paths
+        self._solid = bool(paths)
+        self.update()
+
+    def boundingRect(self) -> QRectF:
+        rect = QRectF()
+        for path, _a, _c, _g in self._paths:
+            rect = rect.united(path.boundingRect())
+        return rect.adjusted(-1.0, -1.0, 1.0, 1.0)
+
+    def paint(self, painter, option, widget=None):
+        parent = self.parentItem()
+        if not self._paths or parent is None:
+            return
+        hidden, faded = cad_module_look(self.scene())
+        if hidden:
+            return
+        if faded:
+            painter.setOpacity(painter.opacity() * FADE_OPACITY)
+        own = parent.props()["color"]
+        painter.setPen(Qt.NoPen)
+        for path, alpha, color, gradient in self._paths:
+            ink = own if color in (None, cad_model.BYLAYER) or not isinstance(color, str) else color
+            fill = QColor(fade_ink(ink) if faded else ink)
+            fill.setAlphaF(alpha)
+            if gradient is not None:
+                second = QColor(fade_ink(gradient["color2"]) if faded else gradient["color2"])
+                second.setAlphaF(alpha)
+                painter.setBrush(gradient_brush(gradient, path.boundingRect(), fill, second))
+            else:
+                painter.setBrush(fill)
+            painter.drawPath(path)
+
+
+class _InsertStrokes(QGraphicsItem):
+    """Traits d'une reference de bloc d'une AUTRE encre que la sienne (couleur / epaisseur propres des entites du
+    bloc) : enfant `_strokes`, peint par QPainter hors du mode GPU (sinon : instances de la couche GPU,
+    `cad_gpu.item_instances` lit `_ink_groups`)."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._groups = []
+        self._rect = QRectF()
+        self.setAcceptedMouseButtons(Qt.NoButton)
+        self.setCacheMode(QGraphicsItem.NoCache)
+
+    def set_groups(self, groups):
+        built, rect = [], QRectF()
+        for ink, weight, prims in groups:
+            path = scene_path(prims)
+            built.append((QColor(ink), float(weight), path))
+            rect = rect.united(path.boundingRect().adjusted(-weight, -weight, weight, weight))
+        if rect != self._rect:
+            self.prepareGeometryChange()
+            self._rect = rect
+        self._groups = built
+        self.update()
+
+    def boundingRect(self) -> QRectF:
+        return self._rect.adjusted(-1.0, -1.0, 1.0, 1.0)
+
+    def paint(self, painter, option, widget=None):
+        scene = self.scene()
+        if not self._groups or (getattr(scene, "cad_gpu", False) and not getattr(scene, "exporting", False)):
+            return
+        hidden, faded = cad_module_look(scene)
+        if hidden:
+            return
+        if faded:
+            painter.setOpacity(painter.opacity() * FADE_OPACITY)
+        painter.setRenderHint(QPainter.Antialiasing, bool(getattr(scene, "cad_antialiasing", True)))
+        painter.setBrush(Qt.NoBrush)
+        scale = device_scale(painter)
+        for ink, weight, path in self._groups:
+            color = QColor(fade_ink(ink.name())) if faded else ink
+            if weight * scale < 1.0:
+                pen = QPen(color, 1.0)
+                pen.setCosmetic(True)
+            else:
+                pen = QPen(color, weight, Qt.SolidLine, Qt.FlatCap, Qt.MiterJoin)
+            painter.setPen(pen)
+            painter.drawPath(path)
+
+
+class CadInsertItem(CadCurveItem):
+    """Reference de bloc (`cad_insert`, voir cad_block) : une entite comme les autres (calque, couleur, selection,
+    poignee au point d'insertion, deplacement, rotation, miroir, echelle, copie, annulation). Ses traits = ceux de
+    toutes les entites du bloc transformees (un lot / des instances GPU) ; ses textes et pleins : enfants
+    `_text_item` / `_fill`. Accrochable sur la geometrie du bloc et au point d'insertion."""
+
+    TEXTED = True
+
+    def __init__(self, data: dict):
+        self._parts = None
+        self._parts_key = None
+        self._text_item = None
+        self._fill = None
+        self._strokes = None
+        self._ink_groups = []               # [(couleur, epaisseur, primitives)] des traits d'une autre encre
+        self._ink_key = None
+        self._ink_main = None
+        super().__init__(data)
+        self._text_item = _InsertTexts(self)
+        self._fill = _InsertFills(self)
+        self._strokes = _InsertStrokes(self)
+        self._update_children()
+
+    def props(self) -> dict:
+        props = super().props()
+        if not props.get("_flat"):
+            props = dict(props)
+            props.update(pattern=(), end1=dict(cad_model.END_DEFAULT), end2=dict(cad_model.END_DEFAULT),
+                         inner=dict(cad_model.END_DEFAULT), _flat=True)
+            self._props = props
+        return props
+
+    def block_parts(self) -> dict:
+        """Parties de la reference dans le repere LOCAL de l'element (place Qt non comprise), gardees tant que ni la
+        reference ni la definition du bloc ne changent."""
+        scene = self.scene()
+        cad = cad_model.page_cad(scene.page) if scene is not None and hasattr(scene, "page") else {}
+        definition = cad_block.blocks(cad).get(str(self.data.get("block") or ""))
+        key = (id(definition), cad_block.signature(cad, self.data) if definition is not None else None,
+               tuple(repr(self.data.get(k)) for k in cad_block.DRAWN_KEYS))
+        if key != self._parts_key or self._parts is None:
+            self._parts_key = key
+            if definition is None:
+                self._parts = {"prims": [], "strokes": {}, "texts": [], "fills": [], "count": 0}
+            else:
+                self._parts = cad_block.parts(cad, self.data, unit_of(scene, cad) if scene is not None else 1.0)
+        return self._parts
+
+    def _inks(self):
+        """(traits de l'encre de la reference, [(couleur, epaisseur, traits)] des autres encres)."""
+        found = self.block_parts()
+        props = self.props() if self.scene() is not None else None
+        own = (str(props["color"]).lower(), float(props["lineweight"])) if props is not None else None
+        key = (id(found), own)
+        if key != self._ink_key or self._ink_main is None:
+            main, others = [], []
+            for (ink, weight), prims in found.get("strokes", {}).items():
+                if own is None or (str(ink).lower(), float(weight)) == own:
+                    main.extend(prims)
+                else:
+                    others.append((ink, weight, prims))
+            self._ink_key, self._ink_main, self._ink_groups = key, main, others
+        return self._ink_main, self._ink_groups
+
+    def page_changed(self):
+        """Calques changes : la reference ET les entites de son bloc sur d'autres calques (couleur, epaisseur,
+        visibilite) ; refaite seulement si son dessin change (`cad_block.signature`)."""
+        old = self._parts
+        changed = old is not None and self.block_parts() is not old
+        if changed:
+            self._geom_key = None
+        super().page_changed()
+        if changed:
+            self.sync()
+            self._touch(restyle=True)
+            self.update()
+
+    def refresh_block(self):
+        """Definition du bloc changee (BLOC redefini) : la reference se redessine."""
+        self._parts_key = None
+        self._geom_key = None
+        self.sync()
+
+    def _local_prims(self):
+        found = self._inks()[0]
+        if found:
+            return found
+        p = cad_shapes._pt(self.data.get("pos"))
+        return [("segment", p, p)]
+
+    def prims(self) -> list:
+        ox, oy = self.doc_offset()
+        out = []
+        found = self.block_parts()["prims"]
+        if not found:
+            p = cad_shapes._pt(self.data.get("pos"))
+            found = [("segment", p, p)]
+        for p in found:
+            if p[0] == "segment":
+                out.append(("segment", (p[1][0] + ox, p[1][1] + oy), (p[2][0] + ox, p[2][1] + oy)))
+            else:
+                out.append(("arc", (p[1][0] + ox, p[1][1] + oy)) + tuple(p[2:]))
+        return out
+
+    def snap_primitives(self):
+        ox, oy = self.doc_offset()
+        p = cad_shapes._pt(self.data.get("pos"))
+        return self.prims() + [("segment", (p[0] + ox, p[1] + oy), (p[0] + ox, p[1] + oy))]
+
+    def points(self) -> tuple[tuple, tuple]:
+        ox, oy = self.doc_offset()
+        p = cad_shapes._pt(self.data.get("pos"))
+        return (p[0] + ox, p[1] + oy), (p[0] + ox, p[1] + oy)
+
+    def length(self) -> float:
+        return 0.0
+
+    def closed(self) -> bool:
+        return False
+
+    def sync(self):
+        super().sync()
+        self._update_children()
+
+    def _update_children(self):
+        if self._text_item is None or self._fill is None:
+            return
+        found = self.block_parts()
+        self._text_item.set_texts(found["texts"], found.get("masks", ()))
+        self._fill.set_fills(found["fills"])
+        if self._strokes is not None:
+            self._strokes.set_groups(self._inks()[1])
+
+
+IMAGE_MAX_PX = 4096                 # image lue au plus a cette taille (cote le plus long) : memoire bornee
+_PICTURES: dict = {}                # chemin -> (date du fichier, QImage ou None) : chaque fichier lu une fois
+
+
+def picture(path: str):
+    """QImage du fichier (lue une fois, reduite a IMAGE_MAX_PX) ; None = absent ou illisible."""
+    import os
+    from PySide6.QtGui import QImageReader
+    try:
+        stamp = os.stat(path).st_mtime_ns
+    except (OSError, ValueError):
+        return None
+    found = _PICTURES.get(path)
+    if found is not None and found[0] == stamp:
+        return found[1]
+    reader = QImageReader(path)
+    reader.setAutoTransform(True)
+    size = reader.size()
+    if size.isValid() and max(size.width(), size.height()) > IMAGE_MAX_PX:
+        reader.setScaledSize(size.scaled(IMAGE_MAX_PX, IMAGE_MAX_PX, Qt.KeepAspectRatio))
+    image = reader.read()
+    image = None if image.isNull() else image
+    if len(_PICTURES) > 64:
+        _PICTURES.clear()
+    _PICTURES[path] = (stamp, image)
+    return image
+
+
+class _ImagePicture(QGraphicsItem):
+    """Image d'une entite `cad_image` : enfant `_fill` (peint SOUS les traits : par la scene, ou par la couche GPU,
+    `BoardView._paint_gpu_under`). `_solid` faux = fichier absent (seul le cadre se voit)."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._image = None
+        self._place = QTransform()
+        self._rect = QRectF()
+        self._solid = False
+        self._opacity = 1.0
+        self.setAcceptedMouseButtons(Qt.NoButton)
+        self.setCacheMode(QGraphicsItem.NoCache)
+        self.setFlag(QGraphicsItem.ItemStacksBehindParent, True)
+
+    def set_picture(self, image, corners, opacity: float):
+        """`corners` : coins (bas gauche, bas droit, haut droit, haut gauche) dans le repere LOCAL (document)."""
+        self.prepareGeometryChange()
+        self._image = image
+        self._opacity = opacity
+        p0, p1, _p2, p3 = [(x, -y) for x, y in corners]             # repere de la scene : Y vers le bas
+        xs, ys = [c[0] for c in (p0, p1, _p2, p3)], [c[1] for c in (p0, p1, _p2, p3)]
+        self._rect = QRectF(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+        self._solid = image is not None
+        if image is not None and image.width() > 0 and image.height() > 0:
+            w, h = float(image.width()), float(image.height())
+            right = ((p1[0] - p0[0]) / w, (p1[1] - p0[1]) / w)          # pixel (x, y) -> haut gauche + x u + y v
+            down = ((p0[0] - p3[0]) / h, (p0[1] - p3[1]) / h)
+            self._place = QTransform(right[0], right[1], down[0], down[1], p3[0], p3[1])
+        self.update()
+
+    def area_path(self) -> QPainterPath:
+        path = QPainterPath()
+        path.addRect(self._rect)
+        return path
+
+    def boundingRect(self) -> QRectF:
+        return self._rect.adjusted(-1.0, -1.0, 1.0, 1.0)
+
+    def paint(self, painter, option, widget=None):
+        if self._image is None:
+            return
+        hidden, faded = cad_module_look(self.scene())
+        if hidden:
+            return
+        painter.save()
+        painter.setOpacity(painter.opacity() * self._opacity * (FADE_OPACITY if faded else 1.0))
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        painter.setTransform(self._place, True)
+        painter.drawImage(0, 0, self._image)
+        painter.restore()
+
+
+class CadImageItem(CadCurveItem):
+    """Image referencee (`cad_image`, voir cad_image) : une entite comme les autres (calque, selection, deplacement,
+    rotation, miroir, echelle, copie, annulation). Son cadre = ses traits (accrochable, comme IMAGEFRAME 1) ; l'image
+    un enfant `_fill` peint sous les traits ; on la choisit en cliquant dedans."""
+
+    TEXTED = True                   # peinte en partie par la scene (enfant), comme les hachures
+    AREA = True                     # choisie en cliquant dedans ; jamais arete de coupe ni contour de hachures
+
+    def __init__(self, data: dict):
+        self._fill = None
+        self._reach = 0.0
+        super().__init__(data)
+        self._fill = _ImagePicture(self)
+        self._update_picture()
+
+    def props(self) -> dict:
+        props = super().props()
+        if not props.get("_flat"):
+            props = dict(props)
+            props.update(pattern=(), end1=dict(cad_model.END_DEFAULT), end2=dict(cad_model.END_DEFAULT),
+                         inner=dict(cad_model.END_DEFAULT), _flat=True)
+            self._props = props
+        return props
+
+    def _local_prims(self):
+        return cad_image.prims(self.data)
+
+    def points(self) -> tuple[tuple, tuple]:
+        p = cad_image.corners(self.data, self.doc_offset())[0]
+        return p, p
+
+    def length(self) -> float:
+        return 0.0
+
+    def closed(self) -> bool:
+        return False
+
+    def distance_to(self, p) -> float:
+        ox, oy = self.doc_offset()
+        if cad_image.inside(self.data, (p[0] - ox, p[1] - oy)):
+            return min(cad_shapes.distance_to(self.prims(), p), self._reach * 0.99)
+        return cad_shapes.distance_to(self.prims(), p)
+
+    def shape(self) -> QPainterPath:
+        return self._fill.area_path() if self._fill is not None else super().shape()
+
+    def sync(self):
+        super().sync()
+        self._update_picture()
+
+    def _update_picture(self):
+        if self._fill is None:
+            return
+        s = cad_image.style_of(self.data)
+        image = picture(s["path"]) if s["path"] else None
+        key = (id(image), repr(s))
+        if key == getattr(self, "_picture_key", None):
+            return                                      # rien de change : pas de prepareGeometryChange a chaque sync
+        self._picture_key = key
+        self._fill.set_picture(image, cad_image.corners(self.data), 1.0 - s["fade"] / 100.0)
+
+
+def _visible_doc_rect(painter, margin: float = 0.0) -> tuple:
+    """Rectangle (document, repere LOCAL de l'element : Y vers le haut) couvert par le peintre (zone decoupee, sinon
+    toute la surface), elargi de `margin`."""
+    if painter.hasClipping():
+        local = painter.clipBoundingRect()
+    else:
+        device = painter.device()
+        inverse, ok = painter.transform().inverted()
+        local = inverse.mapRect(QRectF(0, 0, device.width(), device.height())) if ok else QRectF()
+    local = local.adjusted(-margin, -margin, margin, margin)
+    return local.left(), -local.bottom(), local.right(), -local.top()
+
+
+class _XlinePaint(QGraphicsItem):
+    """Dessin d'une ligne de construction : la droite DECOUPEE au rectangle peint (scene, ou passe des textes de la
+    couche GPU), jamais tracee sur toute sa longueur de calcul."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._rect = QRectF()
+        self._solid = True
+        self.setAcceptedMouseButtons(Qt.NoButton)
+        self.setCacheMode(QGraphicsItem.NoCache)
+
+    def set_rect(self, rect: QRectF):
+        if rect != self._rect:
+            self.prepareGeometryChange()
+            self._rect = rect
+
+    def boundingRect(self) -> QRectF:
+        return self._rect
+
+    def paint(self, painter, option, widget=None):
+        parent = self.parentItem()
+        if parent is None:
+            return
+        hidden, faded = cad_module_look(self.scene())
+        if hidden:
+            return
+        found = cad_xline.clip(parent.kind, parent.data, _visible_doc_rect(painter, 4.0))
+        if found is None:
+            return
+        props = parent.props()
+        color = QColor(fade_ink(props["color"]) if faded else props["color"])
+        weight = float(props["lineweight"])
+        if weight * device_scale(painter) < 1.0:
+            pen = QPen(color, 1.0)
+            pen.setCosmetic(True)
+        else:
+            pen = QPen(color, weight, Qt.SolidLine, Qt.FlatCap)
+        if faded:
+            painter.setOpacity(painter.opacity() * FADE_OPACITY)
+        painter.setRenderHint(QPainter.Antialiasing, bool(getattr(self.scene(), "cad_antialiasing", True)))
+        painter.setPen(pen)
+        (x0, y0), (x1, y1) = found
+        painter.drawLine(QPointF(x0, -y0), QPointF(x1, -y1))
+
+
+class CadXlineItem(CadCurveItem):
+    """Ligne de construction (`cad_xline` : droite ; `cad_ray` : demi-droite ; voir cad_xline) : une entite comme
+    une ligne (calque, couleur, selection, poignees base / direction, deplacer, tourner, miroir, copie, ajuster...).
+    Dessin : enfant `_text_item` (`_XlinePaint`) ; hors des lots et du GPU (`INFINITE`) ; son emprise pour le zoom
+    etendu et l'index de la scene = ses deux points."""
+
+    INFINITE = True
+    TEXTED = True
+
+    def __init__(self, data: dict):
+        self._text_item = None
+        super().__init__(data)
+        self._text_item = _XlinePaint(self)
+        self._update_paint()
+
+    def props(self) -> dict:
+        props = super().props()
+        if not props.get("_flat"):
+            props = dict(props)
+            props.update(pattern=(), end1=dict(cad_model.END_DEFAULT), end2=dict(cad_model.END_DEFAULT),
+                         inner=dict(cad_model.END_DEFAULT), _flat=True)
+            self._props = props
+        return props
+
+    def _local_prims(self):
+        return cad_xline.prims(self.kind, self.data)
+
+    def closed(self) -> bool:
+        return False
+
+    def points(self) -> tuple[tuple, tuple]:
+        ox, oy = self.doc_offset()
+        a = cad_shapes._pt(self.data.get("p1"))
+        b = cad_shapes._pt(self.data.get("p2"))
+        return (a[0] + ox, a[1] + oy), (b[0] + ox, b[1] + oy)
+
+    def scene_bounds(self) -> QRectF:
+        """Ses deux points seulement (zoom etendu, etendue de la scene) : la droite est infinie."""
+        a, b = (cad_shapes._pt(self.data.get(k)) for k in ("p1", "p2"))
+        rect = QRectF(QPointF(min(a[0], b[0]), -max(a[1], b[1])), QPointF(max(a[0], b[0]), -min(a[1], b[1])))
+        return rect.adjusted(-1.0, -1.0, 1.0, 1.0).translated(self.pos())
+
+    def scene_rect(self) -> QRectF:
+        return self.scene_bounds()
+
+    def paint(self, painter, option, widget=None):
+        pass                                            # l'enfant `_XlinePaint` dessine
+
+    def outline(self, tol: float) -> list:
+        """Survol / fantomes : le morceau visible (vue du board), pas les 2 x 10^7 unites du segment de calcul."""
+        scene = self.scene()
+        views = scene.views() if scene is not None else []
+        if views:
+            view = views[0]
+            r = view.mapToScene(view.viewport().rect()).boundingRect()
+            ox, oy = self.doc_offset()
+            found = cad_xline.clip(self.kind, self.data, (r.left(), -r.bottom(), r.right(), -r.top()), (ox, oy))
+            return [found] if found is not None else []
+        return super().outline(tol)
+
+    def paint_selection(self, painter):
+        if not self.isSelected():
+            return
+        found = cad_xline.clip(self.kind, self.data, _visible_doc_rect(painter, 4.0))
+        accent = QColor(getattr(self.scene(), "accent", GRIP_COLOR))
+        halo = QColor(accent)
+        halo.setAlpha(110)
+        pen = QPen(halo, 3.0, Qt.DashLine)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        if found is not None:
+            (x0, y0), (x1, y1) = found
+            painter.drawLine(QPointF(x0, -y0), QPointF(x1, -y1))
+        if getattr(self.scene(), "cad_show_grips", True) and not self.locked():
+            a, b = (cad_shapes._pt(self.data.get(k)) for k in ("p1", "p2"))
+            self._paint_grips(painter, (QPointF(a[0], -a[1]), QPointF(b[0], -b[1])))
+
+    def sync(self):
+        super().sync()
+        self._update_paint()
+
+    def _update_paint(self):
+        if self._text_item is not None:
+            self._text_item.set_rect(self._bounds)
 
 
 class CadTextItem(CadCurveItem):
@@ -1084,6 +1895,27 @@ class CadTextItem(CadCurveItem):
             self._paint_grips(painter, [QPointF(p[0], -p[1]) for _name, p in cad_shapes.grips(self.kind, self.data)])
 
 
+def gradient_brush(style: dict, rect: QRectF, color1: QColor, color2: QColor):
+    """Pinceau d'un DEGRADE (`cad_hatch.GRADIENT`) sur `rect` (repere de la scene : Y vers le bas) : lineaire /
+    cylindre / courbe le long de l'angle, sphere / hemisphere autour du centre (decale vers le bas pour l'hemisphere)."""
+    from PySide6.QtGui import QLinearGradient, QRadialGradient
+    name = style["gradient"]
+    c = rect.center()
+    base = name[3:] if name.startswith("INV") else name
+    if base in ("SPHERICAL", "HEMISPHERICAL"):
+        radius = max(1e-6, math.hypot(rect.width(), rect.height()) / 2.0)
+        center = c if base == "SPHERICAL" or style["centered"] else QPointF(c.x(), rect.bottom())
+        gradient = QRadialGradient(center, radius if base == "SPHERICAL" else radius * 1.4)
+    else:
+        a = math.radians(-style["angle"])
+        dx, dy = math.cos(a), math.sin(a)
+        half = abs(dx) * rect.width() / 2.0 + abs(dy) * rect.height() / 2.0
+        gradient = QLinearGradient(c.x() - dx * half, c.y() - dy * half, c.x() + dx * half, c.y() + dy * half)
+    for t, which in cad_hatch.gradient_stops(name):
+        gradient.setColorAt(t, color1 if which == 1 else color2)
+    return gradient
+
+
 class _HatchFill(QGraphicsItem):
     """Remplissage PLEIN d'une hachure : enfant de l'element (peint par la scene, sous les traits)."""
 
@@ -1092,10 +1924,12 @@ class _HatchFill(QGraphicsItem):
         self._path = QPainterPath()
         self._solid = False
         self._alpha = 1.0
+        self._gradient = None           # style de la hachure si c'est un degrade
         self.setAcceptedMouseButtons(Qt.NoButton)
         self.setCacheMode(QGraphicsItem.NoCache)
 
-    def set_area(self, loops, solid: bool, alpha: float):
+    def set_area(self, loops, solid: bool, alpha: float, gradient: dict | None = None):
+        self._gradient = gradient
         path = QPainterPath()
         path.setFillRule(Qt.OddEvenFill)
         for loop in loops:
@@ -1123,10 +1957,50 @@ class _HatchFill(QGraphicsItem):
             return                                       # module CAD masque (selecteur de modules du board)
         if faded:
             painter.setOpacity(painter.opacity() * FADE_OPACITY)
-        color = QColor(parent.props()["color"])
+        ink = parent.props()["color"]
+        color = QColor(fade_ink(ink) if faded else ink)
         color.setAlphaF(self._alpha)
         painter.setPen(Qt.NoPen)
-        painter.setBrush(color)
+        if self._gradient is not None:
+            second = QColor(fade_ink(self._gradient["color2"]) if faded else self._gradient["color2"])
+            second.setAlphaF(self._alpha)
+            painter.setBrush(gradient_brush(self._gradient, self._path.boundingRect(), color, second))
+        else:
+            painter.setBrush(color)
+        painter.drawPath(self._path)
+
+
+class _HatchMask(QGraphicsItem):
+    """MASQUE (hachure de motif « wipeout », WIPEOUT d'AutoCAD) : la zone peinte de la couleur du FOND, PAR-DESSUS les
+    traits (enfant `_text_item` : passe des textes de la couche GPU, masques peints avant les textes,
+    `BoardView._paint_gpu_texts`). `_solid` faux pour une hachure ordinaire (rien a peindre)."""
+
+    MASK = True
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._path = QPainterPath()
+        self._solid = False
+        self.setAcceptedMouseButtons(Qt.NoButton)
+        self.setCacheMode(QGraphicsItem.NoCache)
+
+    def set_area(self, path: QPainterPath, on: bool):
+        if path != self._path or on != self._solid:
+            self.prepareGeometryChange()
+        self._path, self._solid = path, on
+        self.update()
+
+    def boundingRect(self) -> QRectF:
+        return self._path.boundingRect().adjusted(-1.0, -1.0, 1.0, 1.0) if self._solid else QRectF()
+
+    def paint(self, painter, option, widget=None):
+        if not self._solid or self._path.isEmpty():
+            return
+        scene = self.scene()
+        if cad_module_look(scene)[0]:
+            return
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(getattr(scene, "background", QColor("#ffffff"))))
         painter.drawPath(self._path)
 
 
@@ -1141,12 +2015,14 @@ class CadHatchItem(CadCurveItem):
 
     def __init__(self, data: dict):
         self._fill = None
+        self._text_item = None
         self._hatch_key = None
         self._loops_cache = []
         self._prims_cache = []
         self._reach = 0.0           # portee de selection du dernier clic (unites du document), posee par `pick_all`
         super().__init__(data)
         self._fill = _HatchFill(self)
+        self._text_item = _HatchMask(self)
         self._update_fill()
 
     def props(self) -> dict:
@@ -1161,7 +2037,7 @@ class CadHatchItem(CadCurveItem):
     # -- geometrie (en cache : un motif compte des milliers de traits) --
     def _refresh_cache(self):
         key = (repr(self.data.get("loops")), self.data.get("hatch_pattern"), self.data.get("hatch_angle"),
-               self.data.get("hatch_spacing"), repr(self.data.get("hatch_origin")))
+               self.data.get("hatch_spacing"), repr(self.data.get("hatch_origin")), repr(self.data.get("hatch_lines")))
         if key != self._hatch_key:
             self._hatch_key = key
             self._loops_cache = cad_hatch.clean_loops(self.data.get("loops"))
@@ -1231,7 +2107,13 @@ class CadHatchItem(CadCurveItem):
     def _update_fill(self):
         if self._fill is not None:
             style = cad_hatch.style_of(self.data)
-            self._fill.set_area(self._loops_cache, style["pattern"] == "solid", style["alpha"])
+            self._fill.set_area(self._loops_cache, style["pattern"] in ("solid", cad_hatch.WIPEOUT, cad_hatch.GRADIENT),
+                                style["alpha"], style if style["pattern"] == cad_hatch.GRADIENT else None)
+            mask = style["pattern"] == cad_hatch.WIPEOUT
+            if mask:
+                self._fill._solid = False               # masque : peint au-dessus des traits, pas dessous
+            if self._text_item is not None:
+                self._text_item.set_area(self._fill.area_path(), mask)
 
     def shape(self) -> QPainterPath:
         return self._fill.area_path() if self._fill is not None else QPainterPath()
@@ -1675,6 +2557,8 @@ class CadBatch(QGraphicsItem):
             self._tess_band = band
         for op in self._ops_for(zoom):
             (thin, _dense, color), _items, cache = op[0], op[1], self._op_cache(op)
+            if faded:
+                color = fade_ink(color)
             if target is not None and draw_geometry_linear(painter, thin, color, cache, self._op_bounds(op), crisp,
                                                            target):
                 continue
@@ -1697,11 +2581,26 @@ class CadLayer:
         self.batches: list[CadBatch] = []
         self.enabled = True
         self.changed: dict = {}                 # lignes ajoutees / retirees / deplacees (index des accrochages)
+        # Entites a enfants peints par QPainter avec le rendu GPU (textes, cotes, hachures : `TEXTED`) : la couche GPU
+        # ne parcourt plus TOUS les elements a chaque image (81 000 entites : ~2 parcours par image) ; `extras_rev`
+        # change avec l'une d'elles (image des textes refaite, `BoardView._gpu_text_key`).
+        self.extras: dict = {}
+        self.extras_rev = 0
         self.gpu = None                         # couche OpenGL (cad_gpu) : peint les entites a la place des lots
         self._timer = QTimer(scene)
         self._timer.setSingleShot(True)
         self._timer.setInterval(0)
         self._timer.timeout.connect(self.rebuild)
+        # Cotations associatives (`cad_assoc`) : objets auxquels une cotation est liee ; un changement de l'un d'eux
+        # fait SUIVRE ses cotations au tour suivant de la boucle (`_follow_dims` : aucune etape d'annulation propre,
+        # elles suivent aussi une annulation).
+        self.assoc_ids: set = set()
+        self._assoc_pending: set = set()
+        self._following = False
+        self._follow_timer = QTimer(scene)
+        self._follow_timer.setSingleShot(True)
+        self._follow_timer.setInterval(0)
+        self._follow_timer.timeout.connect(self._follow_dims)
 
     @classmethod
     def of(cls, scene) -> "CadLayer":
@@ -1715,10 +2614,61 @@ class CadLayer:
         """Emprise d'une ligne changee (ajout, retrait, deplacement, epaisseur) : l'index spatial du CAD la
         remettra a jour, elle seule (`take_changes`)."""
         self.changed[id(item)] = item
+        if getattr(item, "TEXTED", False):
+            self.extras_rev += 1
+            if getattr(item, "kind", "") == "cad_dim":
+                links = item.data.get("assoc")
+                if links:
+                    self.assoc_ids |= cad_assoc.targets(links)
+        if self.assoc_ids and not self._following:
+            item_id = getattr(item, "item_id", None)
+            if item_id in self.assoc_ids:
+                self._assoc_pending.add(item_id)
+                if not self._follow_timer.isActive():
+                    self._follow_timer.start()
         gpu = self.gpu
         if gpu is not None:
             gpu.store.mark(item, not removed and item.scene() is self.scene)
             gpu.request()
+
+    def _follow_dims(self):
+        """Les cotations liees aux objets changes reprennent la place de leurs poignees (`cad_assoc.follow`)."""
+        pending, self._assoc_pending = self._assoc_pending, set()
+        scene = self.scene
+        if not pending:
+            return
+
+        def lookup(item_id):
+            item = scene.item(item_id) if hasattr(scene, "item") else None
+            if item is None or item.scene() is not scene or not hasattr(item, "grips"):
+                return None
+            circle = None
+            if item.kind in ("cad_circle", "cad_arc"):
+                g = item.geometry()
+                circle = ((float(g["center"][0]), float(g["center"][1])), float(g["radius"]))
+            return item.grips(), circle
+        for dim in list(self.extras.values()):
+            if getattr(dim, "kind", "") != "cad_dim" or dim.scene() is not scene:
+                continue
+            links = dim.data.get("assoc")
+            if not links or not (cad_assoc.targets(links) & pending):
+                continue
+            ox, oy = dim.doc_offset()
+            keys = ("p1", "p2", "center") if dim.data.get("dim_type") == "angular" else ("p1", "p2")
+            points = {key: (float(p[0]) + ox, float(p[1]) + oy) for key in keys
+                      if (p := dim.data.get(key)) is not None}
+            moved, new_links = cad_assoc.follow(points, links, lookup)
+            if not moved and new_links == cad_assoc.clean(links):
+                continue
+            dim.data["assoc"] = new_links
+            for key, p in moved.items():
+                dim.data[key] = [p[0] - ox, p[1] - oy]
+            self._following = True
+            try:
+                dim.sync()
+                dim.update()
+            finally:
+                self._following = False
 
     def set_gpu(self, layer):
         """Rendu GPU allume (`layer` = GpuCadLayer) ou eteint (None : lots du processeur). Les entites passent d'un
@@ -1775,7 +2725,7 @@ class CadLayer:
         if self.gpu is not None or not self.enabled or not getattr(scene, "_bulk_cad_tail", False) or not items:
             return
         batch = self.batches[-1] if self.batches else None
-        if (any(not isinstance(item, CadLineItem) for item in items)
+        if (any(not isinstance(item, CadLineItem) or item.INFINITE for item in items)
                 or self._timer.isActive()                       # regroupement complet deja demande
                 or (batch is not None and batch.members and items[0].zValue() < batch.members[-1].zValue())
                 or any(b.zValue() > items[0].zValue() for b in self.batches[:-1])):
@@ -1806,7 +2756,7 @@ class CadLayer:
         runs, current = [], None
         if self.enabled and self.gpu is None:
             for item in sorted(items, key=lambda i: i.zValue()):    # tri stable : ordre d'insertion a z egal
-                if isinstance(item, CadLineItem) and item.scene() is scene:
+                if isinstance(item, CadLineItem) and not item.INFINITE and item.scene() is scene:
                     if current is None:
                         current = []
                         runs.append(current)
@@ -1834,3 +2784,8 @@ for _kind in ("cad_arc", "cad_circle", "cad_pline"):
 ITEM_CLASSES["cad_dim"] = CadDimItem
 ITEM_CLASSES["cad_hatch"] = CadHatchItem
 ITEM_CLASSES["cad_text"] = CadTextItem
+ITEM_CLASSES["cad_point"] = CadPointItem
+ITEM_CLASSES["cad_insert"] = CadInsertItem
+ITEM_CLASSES["cad_image"] = CadImageItem
+ITEM_CLASSES["cad_xline"] = CadXlineItem
+ITEM_CLASSES["cad_ray"] = CadXlineItem

@@ -104,3 +104,5 @@ RIEN de la fenêtre principale (elle lui pose des `HOOKS`).
   cursifs à l'import ; avar2.
 - Limites connues : rendu vérifié en offscreen seulement (pas d'écran ici) ; la tablette (pression) n'est testée
   que par la valeur transmise aux outils (`canvas.pressure`), pas avec un vrai stylet.
+
+- BARRE FLOTTANTE (2026-11-03) : la bande d'outils de l'éditeur est une barre de fm_theme posée sur les pages (`FontPane._build_bars`, `BarManager(self.pages)`, boutons à texte), visible seulement sur la page Éditeur ; disposition retenue dans `typo_bars` (état temps réel). Ouverture par SIMPLE CLIC sur une police dans les colonnes (demande du 2026-11-03, remplace « jamais au double-clic ») ; le bouton « précédent » de la souris le referme.

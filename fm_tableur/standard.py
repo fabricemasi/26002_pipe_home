@@ -90,7 +90,18 @@ class StandardPane(QWidget):
     def eventFilter(self, obj, event):
         if obj is self.board and event.type() == QEvent.Resize:
             self.setGeometry(self.board.rect())
+        elif obj is self.board and event.type() == QEvent.ChildAdded and event.child() is not self:
+            # Un élément du board créé APRÈS l'ouverture (barres flottantes du module, barre des modules…) se
+            # pose au-dessus de ses frères : le mode Standard (plein cadre) reprend sa place, au-dessus de tout.
+            QTimer.singleShot(0, self._stay_on_top)
         return super().eventFilter(obj, event)
+
+    def _stay_on_top(self):
+        try:
+            if self.isVisible() and getattr(self.board, "_tableur_standard", None) is self:
+                self.raise_()
+        except RuntimeError:
+            pass
 
     def close_pane(self):
         """Retour au Board : rien n'est recopié, l'élément affiche la même session."""

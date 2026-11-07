@@ -49,6 +49,7 @@ def values(settings: dict | None) -> dict:
         "max_zoom": _int(get("max_zoom_pct"), d["max_zoom_pct"], 100, 6400) / 100.0,
         "cursor_outline": bool(get("cursor_outline")),
         "history_mb": _int(get("history_mb"), d["history_mb"], 16, 4096),
+        "new_paste_clipboard": bool(get("new_paste_clipboard")),
     }
 
 

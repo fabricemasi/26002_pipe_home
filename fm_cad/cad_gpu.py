@@ -48,14 +48,16 @@ import time
 
 import numpy as np
 
-from PySide6.QtCore import QRect, Qt, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QSurfaceFormat
+from PySide6.QtCore import QPointF, QRect, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QImage, QPainter, QSurfaceFormat, QTransform
 
 from . import cad_shapes
-from .cad_items import FADE_OPACITY, cad_module_look
+from . import cad_items
+from .cad_items import cad_module_look
 
 EPS = 1e-9
 FILTER_RADIUS = 0.75               # rayon (pixels de sortie) par defaut du filtre en triangle du suréchantillonnage
+KEPT_MARGIN = 0.25              # images gardees (textes, remplissages) : marge de chaque cote, fraction de la vue
 SYNC_BUDGET_S = 0.006           # temps maximal de reconstruction des lots par image
 CHUNK = 2048                    # entites par lot
 CAP_CODES = {"flat": 0, "round": 1, "radius": 2}
@@ -306,7 +308,7 @@ def item_instances(item, dense: bool, tol: float):
     """Instances (tableau float64 (n, 12), coordonnees de SCENE absolues) d'une entite CAD ; None = rien a dessiner.
     `dense` : motif trop serre a ce zoom (trait continu) ; `tol` : fleche de tessellation des courbes (unites de scene)."""
     props = item.props()
-    if not props["visible"]:
+    if not props["visible"] or item.INFINITE:          # ligne de construction : dessinee decoupee a la vue (QPainter)
         return None
     hw = float(props["lineweight"]) / 2.0
     color = _rgba(props["color"])
@@ -336,9 +338,30 @@ def item_instances(item, dense: bool, tol: float):
         prims = item._prims_local
         closed = item.closed()
         length = item._length
+        # Trait epais sur une petite courbe : le bord INTERIEUR des segments s'ecarte du cercle de ~ (r + hw) * a^2 / 8
+        # (a = angle d'un segment) et non r * a^2 / 8 : trou « carre » d'un cercle tres epais (signale 2026-11-05).
+        # La fleche est donc tenue sur le rayon r + hw.
+        radii = [p[2] for p in prims if p[0] == "arc" and p[2] > 0]
+        ctol = tol * min(radii) / (min(radii) + hw) if radii and hw > 0 else tol
+
+        def clear_ends(pts, start_style, end_style):
+            """Bout franc / border radius : aucun sommet a moins d'une demi-epaisseur de l'extremite. Sinon le disque
+            du joint voisin (rayon hw) DEBORDE au-dela de la coupe et le bout parait entierement rond (signale
+            2026-11-05 : « border radius » rendu en demi-cercle)."""
+            if len(pts) < 3 or hw <= 0:
+                return pts
+            out = list(pts)
+            if start_style[0] in (0, 2):                     # corde depuis l'extremite >= hw
+                while len(out) > 2 and math.hypot(out[1][0] - out[0][0], out[1][1] - out[0][1]) < hw:
+                    del out[1]
+            if end_style[0] in (0, 2):
+                while len(out) > 2 and math.hypot(out[-1][0] - out[-2][0], out[-1][1] - out[-2][1]) < hw:
+                    del out[-2]
+            return out
 
         def chains(parts, start_style, end_style):
-            for pts in cad_shapes.tessellate(parts, tol):
+            for pts in cad_shapes.tessellate(parts, ctol):
+                pts = clear_ends(pts, start_style, end_style)
                 n = len(pts) - 1
                 for k in range(n):
                     p, q = pts[k], pts[k + 1]
@@ -369,6 +392,10 @@ def item_instances(item, dense: bool, tol: float):
                 first = (c1, r1) if (u0 <= EPS and not closed) else (ci, ri)
                 last = (c2, r2) if (u1 >= length - EPS and not closed) else (ci, ri)
                 chains(parts, first, last)
+        for ink, weight, group in getattr(item, "_ink_groups", None) or ():
+            hw = float(weight) / 2.0                         # reference de bloc : traits d'une autre encre
+            color = _rgba(ink)
+            chains(group, (c1, r1), (c2, r2))
     if not rows:
         return None
     return np.array(rows, dtype=np.float64)
@@ -578,15 +605,21 @@ out vec4 frag;
 
 float to_srgb(float c) { return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055; }
 
+// Un bout du trait, `t` = distance au-dela de son extremite le long de l'axe (> 0 : dehors). Disque (rond, joint de
+// courbe) : demi-disque de rayon hw ; sinon bout franc aux coins arrondis de rayon rr (border radius).
+float end_sdf(float t, float v, float hw, float rr, bool disc) {
+    if (disc) return t > 0.0 ? length(vec2(t, v)) - hw : abs(v) - hw;
+    vec2 q = vec2(t + rr, abs(v) - hw + rr);
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - rr;
+}
+
 void main() {
     float u = v_loc.x, v = v_loc.y, len = v_loc.z, hw = v_loc.w;
-    float u0 = -v_ext.x, u1 = len + v_ext.y;
-    float cu = 0.5 * (u0 + u1);
-    float hl = 0.5 * (u1 - u0);
-    float rr = u < cu ? v_ext.z : v_ext.w;
-    rr = min(rr, min(hl, hw));
-    vec2 q = abs(vec2(u - cu, v)) - vec2(hl, hw) + rr;       // boite arrondie (rayons propres a chaque bout)
-    float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - rr;
+    // Chaque bout a SA forme, quelle que soit la longueur du segment (avant, une seule boite arrondie bornee par la
+    // demi-longueur : sur le dernier segment court d'un arc epais, le joint n'etait plus un demi-disque et le
+    // « border radius » se deformait — signale 2026-11-05, bout d'un cercle coupe).
+    float d = max(end_sdf(-u, v, hw, min(v_ext.z, hw), v_ext.x > 0.0),
+                  end_sdf(u - len, v, hw, min(v_ext.w, hw), v_ext.y > 0.0));
     float cov = clamp(0.5 - d, 0.0, 1.0);
     if (antialias < 0.5) cov = step(0.5, cov);
     float a = cov;
@@ -634,10 +667,13 @@ in vec2 uv;
 uniform sampler2D tex;
 uniform float mimic;                              // 1 : meme rendu qu'une couche translucide (voir `_draw_via_texture`)
 uniform float fade;                               // module CAD grise (selecteur de modules du board) : < 1
+uniform float sat;                                // saturation des elements grises (1 = couleurs gardees)
 out vec4 frag;
 void main() {
     vec4 t = texture(tex, uv);                    // premultiplie : pose par (ONE, ONE_MINUS_SRC_ALPHA)
     if (mimic > 0.5) t.rgb *= t.a;
+    float l = dot(t.rgb, vec3(0.2126, 0.7152, 0.0722));
+    t.rgb = mix(vec3(l), t.rgb, sat);
     frag = t * fade;
 }
 """
@@ -697,6 +733,7 @@ def _make_layer_class():
     from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
     class _Layer(QOpenGLWidget):
+        crossReady = Signal()                       # reticule en negatif : image fraiche copiee (repos)
         failed = Signal(str)
 
         def __init__(self, view):
@@ -712,8 +749,21 @@ def _make_layer_class():
             self.fbo_cad = None                         # (fbo, texture, largeur, hauteur) du mode pur
             self.store = GpuStore()
             self.paint_hook = None                      # rappel(painter) : selection, apercus, reticule (QPainter)
-            self.under_hook = None                      # rappel(painter, transform) : remplissages (hachures pleines), SOUS les traits
-            self.under_bounds = None                    # rappel() -> QRect (viewport) de ce dessin
+            # Remplissages des hachures pleines (QPainter SOUS les traits) : image GARDEE comme celle des textes, refaite
+            # seulement quand la vue, la taille ou `under_key()` changent (878 remplissages d'un DWG repeints ET mesures
+            # a chaque image : ~35 ms par image, chargement de 12 a 18 s).
+            self.under_hook = None                      # rappel(painter, transform) -> vrai si quelque chose a ete peint
+            self.under_key = None                       # rappel() -> cle de ce qui change les remplissages
+            # Textes du mode pur (textes, cotes : QPainter PAR-DESSUS les traits) : image GARDEE, refaite seulement quand
+            # la vue, la taille ou `text_key()` changent (un mouvement du curseur, une selection ne la refont plus ;
+            # 1 357 textes repeints a chaque image : ~650 ms par image, DWG de 81 000 entites).
+            self.text_hook = None                       # rappel(painter, transform) -> vrai si quelque chose a ete peint
+            self.text_key = None                        # rappel() -> cle de ce qui change les textes
+            self._kept = {}                             # images gardees (`_kept_image`) : "text", "under"
+            self._settle = QTimer(self)                 # repos apres un pan a decalage fractionnaire
+            self._settle.setSingleShot(True)
+            self._settle.setInterval(150)
+            self._settle.timeout.connect(self._settled)
             self.paint_bounds = None                    # rappel() -> QRect (viewport) qui contient ce dessin ; None = tout
             self.obstacles = lambda: []                 # zones (viewport) des panneaux flottants a laisser libres
             self.broken = False
@@ -722,7 +772,6 @@ def _make_layer_class():
             self._band = None
             self.frame_ms = 0.0
             self._overlay_images = []                  # une image par zone peinte (`_paint_qt`)
-            self._under_image = None
             fmt = QSurfaceFormat()
             fmt.setVersion(3, 3)
             fmt.setProfile(QSurfaceFormat.CoreProfile)
@@ -985,9 +1034,157 @@ def _make_layer_class():
             if late:
                 self.update()
 
+        def read_cross(self, point, reach: int):
+            """Pixels sous un reticule (negatif sur les zones de sa couleur, `cad_negative`) : (ligne, colonne) BGRA
+            PREMULTIPLIES de 2 * reach + 1 pixels physiques centres sur `point` (coordonnees logiques de la couche).
+            AUCUN appel OpenGL ici (makeCurrent coute ~5 ms) : la bande d'image autour du pointeur est copiee PENDANT
+            le dessin (`_copy_cross_block`, depuis la copie asynchrone de l'image precedente, `_queue_frame_read`).
+            None si rien n'est encore copie. Pixels inconnus : -1."""
+            ratio = self.devicePixelRatioF() or 1.0
+            cx, cy = math.floor(point.x() * ratio), math.floor(point.y() * ratio)
+            self.want_frame = True
+            self.cross_point = (cx, cy, reach)
+            block = getattr(self, "_block", None)
+            if block is None:
+                self.request()                              # une image : de quoi copier
+                return None
+            data, top, left = block
+            size = 2 * reach + 1
+            row = np.full((size, 4), -1, dtype=np.int16)
+            col = np.full((size, 4), -1, dtype=np.int16)
+            rows, cols = data.shape[0], data.shape[1]
+            if top <= cy < top + rows:
+                x0, x1 = max(left, cx - reach), min(left + cols, cx + reach + 1)
+                if x0 < x1:
+                    row[x0 - (cx - reach):x1 - (cx - reach)] = data[cy - top, x0 - left:x1 - left]
+            y0, y1 = max(top, cy - reach), min(top + rows, cy + reach + 1)
+            if left <= cx < left + cols and y0 < y1:
+                col[y0 - (cy - reach):y1 - (cy - reach)] = data[y0 - top:y1 - top, cx - left]
+            if not (top <= cy - reach and cy + reach < top + rows and left <= cx - reach and cx + reach < left + cols):
+                self.request()                              # pointeur sorti du carre copie : le recopier autour de lui
+            return row, col
+
+        def _schedule_fresh_cross(self):
+            """Au repos (40 ms sans nouvelle image) : copie de la DERNIERE image et reticule refait (`crossReady`) ; sans
+            cela, le pointeur immobile apres un defilement garderait le negatif de l'image d'avant (decale)."""
+            timer = getattr(self, "_fresh_timer", None)
+            if timer is None:
+                from PySide6.QtCore import QTimer
+                timer = self._fresh_timer = QTimer(self)
+                timer.setSingleShot(True)
+                timer.setInterval(40)
+                timer.timeout.connect(self._fresh_cross)
+            timer.start()
+
+        def _fresh_cross(self):
+            if getattr(self, "_GL", None) is None or not self.isVisible():
+                return
+            try:
+                self.makeCurrent()                          # ~5 ms, une fois au repos (jamais par mouvement)
+                self._copy_cross_block(wait=True)
+                self.doneCurrent()
+            except Exception:                               # noqa: BLE001
+                return
+            self.crossReady.emit()
+
+        def _copy_cross_block(self, wait: bool = False):
+            """Pendant le dessin (contexte courant) : rangees de la derniere image COPIEE (barriere passee, sans attendre)
+            autour du pointeur (`cross_point`), recopiees dans `_block` (lues sans OpenGL par `read_cross`)."""
+            point = getattr(self, "cross_point", None)
+            reads = getattr(self, "_reads", None)
+            if point is None or not reads:
+                return
+            import ctypes
+            GL = self._GL
+            entry = None
+            for candidate in sorted(reads, key=lambda e: -e["n"]):
+                sync = candidate.get("sync")
+                if sync is not None:
+                    # Au repos (`wait`) : la derniere copie est attendue (au plus 20 ms) plutot qu'une image plus ancienne.
+                    state = GL.glClientWaitSync(sync, GL.GL_SYNC_FLUSH_COMMANDS_BIT, 20_000_000 if wait else 0)
+                    if state in (GL.GL_ALREADY_SIGNALED, GL.GL_CONDITION_SATISFIED):
+                        GL.glDeleteSync(sync)
+                        candidate["sync"], candidate["done"] = None, True
+                if candidate.get("done"):
+                    entry = candidate
+                    break
+            if entry is None:
+                return
+            cx, cy, reach = point
+            width, height = entry["w"], entry["h"]
+            margin = 2 * reach + 64                         # le pointeur peut bouger avant l'image suivante
+            y0, y1 = max(0, cy - margin), min(height, cy + margin + 1)
+            if y0 >= y1:
+                return
+            first, count = height - y1, y1 - y0             # rangees GL : de bas en haut
+            GL.glBindBuffer(GL.GL_PIXEL_PACK_BUFFER, entry["pbo"])
+            ptr = GL.glMapBufferRange(GL.GL_PIXEL_PACK_BUFFER, first * width * 4, count * width * 4, GL.GL_MAP_READ_BIT)
+            address = ptr if isinstance(ptr, int) else ctypes.cast(ptr, ctypes.c_void_p).value
+            if address:
+                view = np.frombuffer((ctypes.c_ubyte * (count * width * 4)).from_address(address),
+                                     dtype=np.uint8).reshape(count, width, 4)
+                x0, x1 = max(0, cx - margin), min(width, cx + margin + 1)
+                self._block = (view[::-1, x0:x1].copy(), y0, x0)       # haut en premier ; carre autour du pointeur
+                GL.glUnmapBuffer(GL.GL_PIXEL_PACK_BUFFER)
+            GL.glBindBuffer(GL.GL_PIXEL_PACK_BUFFER, 0)
+
+        def _queue_frame_read(self):
+            """Fin d'image : copie ASYNCHRONE de l'image dans un tampon de pixels (deux, en alternance), resolue d'abord
+            (tampon multi-echantillons, setSamples(4)). Seulement si un reticule en negatif l'a demande."""
+            if not getattr(self, "want_frame", False):
+                return
+            GL = self._GL
+            ratio = self.devicePixelRatioF() or 1.0
+            width, height = round(self.width() * ratio), round(self.height() * ratio)
+            if width <= 0 or height <= 0:
+                return
+            import ctypes
+            from OpenGL.raw.GL.VERSION.GL_1_0 import glReadPixels as raw_read_pixels
+            fbo, rb, cap = getattr(self, "_cross_fbo", (None, None, (0, 0)))
+            if fbo is None or cap != (width, height):
+                if fbo is not None:
+                    GL.glDeleteFramebuffers(1, [fbo])
+                    GL.glDeleteRenderbuffers(1, [rb])
+                fbo, rb, cap = GL.glGenFramebuffers(1), GL.glGenRenderbuffers(1), (width, height)
+                GL.glBindRenderbuffer(GL.GL_RENDERBUFFER, rb)
+                GL.glRenderbufferStorage(GL.GL_RENDERBUFFER, GL.GL_RGBA8, width, height)
+                GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, fbo)
+                GL.glFramebufferRenderbuffer(GL.GL_FRAMEBUFFER, GL.GL_COLOR_ATTACHMENT0, GL.GL_RENDERBUFFER, rb)
+                self._cross_fbo = (fbo, rb, cap)
+                for entry in getattr(self, "_reads", None) or ():
+                    GL.glDeleteBuffers(1, [entry["pbo"]])
+                    if entry.get("sync") is not None:
+                        GL.glDeleteSync(entry["sync"])
+                self._reads = [{"pbo": GL.glGenBuffers(1), "n": 0, "w": width, "h": height, "sync": None,
+                                "done": False} for _ in range(2)]
+                for entry in self._reads:
+                    GL.glBindBuffer(GL.GL_PIXEL_PACK_BUFFER, entry["pbo"])
+                    GL.glBufferData(GL.GL_PIXEL_PACK_BUFFER, width * height * 4, None, GL.GL_STREAM_READ)
+                GL.glBindBuffer(GL.GL_PIXEL_PACK_BUFFER, 0)
+            self._read_n = getattr(self, "_read_n", 0) + 1
+            entry = min(self._reads, key=lambda e: e["n"])  # la plus ancienne des deux
+            if entry.get("sync") is not None:
+                GL.glDeleteSync(entry["sync"])
+            source = self.defaultFramebufferObject()
+            GL.glBindFramebuffer(GL.GL_READ_FRAMEBUFFER, source)
+            GL.glBindFramebuffer(GL.GL_DRAW_FRAMEBUFFER, fbo)
+            GL.glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL.GL_COLOR_BUFFER_BIT, GL.GL_NEAREST)
+            GL.glBindFramebuffer(GL.GL_READ_FRAMEBUFFER, fbo)
+            GL.glBindBuffer(GL.GL_PIXEL_PACK_BUFFER, entry["pbo"])
+            GL.glPixelStorei(GL.GL_PACK_ALIGNMENT, 1)
+            raw_read_pixels(0, 0, width, height, GL.GL_BGRA, GL.GL_UNSIGNED_BYTE, ctypes.c_void_p(0))
+            GL.glBindBuffer(GL.GL_PIXEL_PACK_BUFFER, 0)
+            entry["sync"] = GL.glFenceSync(GL.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
+            entry["n"], entry["done"] = self._read_n, False
+            GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, source)
+
         def paintGL(self):
             try:
                 self._paint_gl()
+                if getattr(self, "want_frame", False):      # reticule en negatif : image precedente, puis celle-ci
+                    self._copy_cross_block()
+                    self._queue_frame_read()
+                    self._schedule_fresh_cross()
             except Exception as exc:                      # noqa: BLE001 - jamais un ecran noir permanent
                 self._paint_failed(exc)
 
@@ -1048,6 +1245,8 @@ def _make_layer_class():
                 else:
                     self._draw(scene, vt, zoom, ratio, width, height)
             GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, fbo)
+            if self.pure and self.text_hook is not None:
+                self._paint_texts(vt)
             self._paint_qt(scene, vt)
             self._clear_obstacles(GL, ratio, height)
             self.frame_ms = (time.perf_counter() - t0) * 1000.0
@@ -1187,8 +1386,9 @@ def _make_layer_class():
             # 2e fois : traits un peu plus fins que le rendu du processeur, mesure) ; pendant un deplacement la couche est
             # opaque : meme rendu reproduit ici pour que le trait ne change pas d'epaisseur au debut / a la fin du geste.
             GL.glUniform1f(GL.glGetUniformLocation(program, "mimic"), 1.0 if (self.tex_mode and not self.pure) else 0.0)
-            GL.glUniform1f(GL.glGetUniformLocation(program, "fade"),
-                           FADE_OPACITY if cad_module_look(scene)[1] else 1.0)
+            faded = cad_module_look(scene)[1]
+            GL.glUniform1f(GL.glGetUniformLocation(program, "fade"), cad_items.FADE_OPACITY if faded else 1.0)
+            GL.glUniform1f(GL.glGetUniformLocation(program, "sat"), cad_items.FADE_SATURATION if faded else 1.0)
             if ss > 1:
                 GL.glUniform1i(GL.glGetUniformLocation(program, "ss"), int(ss))
                 radius = float(getattr(scene, "cad_filter", FILTER_RADIUS * 100.0)) / 100.0
@@ -1230,29 +1430,55 @@ def _make_layer_class():
             GL.glDisable(GL.GL_BLEND)
             GL.glUseProgram(0)
 
-        def _paint_under(self, GL, fbo, vt, width, height):
-            """Remplissages des hachures pleines (peints par QPainter) entre la grille et les traits."""
-            bounds = self.under_bounds() if self.under_bounds is not None else self.rect()
-            area = self.rect().intersected(bounds)
-            if area.isEmpty():
-                return
-            ratio = self.devicePixelRatioF()
-            size = (max(1, int(area.width() * ratio)), max(1, int(area.height() * ratio)))
-            image = self._under_image
+        def _kept_image(self, slot: str, hook, key_fn, vt):
+            """Image GARDEE d'un rappel QPainter (`text_hook`, `under_hook`) : (image, decalage) a poser, ou None si
+            rien n'y est peint. Peinte avec une MARGE (`KEPT_MARGIN` de la vue de chaque cote) : un pan la reutilise
+            DECALEE (un deplacement de la vue ne change que dx / dy) tant qu'il reste dans la marge ; refaite si le
+            zoom, la taille, la cle (`key_fn()`) changent ou si le pan sort de la marge. Decalage tombe entre deux
+            pixels : refaite au repos (`_settle`), sinon textes et remplissages restaient flous / decales des traits."""
+            ratio = self.devicePixelRatioF() or 1.0
+            w, h = self.width(), self.height()
+            mx, my = int(w * KEPT_MARGIN), int(h * KEPT_MARGIN)
+            static = (vt.m11(), vt.m12(), vt.m21(), vt.m22(), w, h, ratio, key_fn() if key_fn is not None else None)
+            kept = self._kept.get(slot)
+            if kept is not None and kept["static"] == static:
+                ox, oy = vt.dx() - kept["dx"], vt.dy() - kept["dy"]
+                if abs(ox) <= mx and abs(oy) <= my:
+                    if not kept["drawn"]:
+                        return None
+                    if abs(ox * ratio - round(ox * ratio)) > 0.02 or abs(oy * ratio - round(oy * ratio)) > 0.02:
+                        self._settle.start()
+                    return kept["image"], QPointF(ox - mx, oy - my)
+            size = (max(1, int((w + 2 * mx) * ratio)), max(1, int((h + 2 * my) * ratio)))
+            image = kept["image"] if kept is not None else None
             if image is None or (image.width(), image.height()) != size:
-                image = self._under_image = QImage(size[0], size[1], QImage.Format_ARGB32_Premultiplied)
+                image = QImage(size[0], size[1], QImage.Format_ARGB32_Premultiplied)
                 image.setDevicePixelRatio(ratio)
             image.fill(0)
             raster = QPainter(image)
             raster.setRenderHint(QPainter.Antialiasing, True)
-            raster.translate(-area.x(), -area.y())
+            moved = vt * QTransform.fromTranslate(mx, my)          # vue puis decalage de la marge
             try:
-                self.under_hook(raster, vt)
+                drawn = bool(hook(raster, moved, QRectF(-mx, -my, w + 2 * mx, h + 2 * my)))
             finally:
                 raster.end()
+            self._kept[slot] = {"static": static, "dx": vt.dx(), "dy": vt.dy(), "image": image, "drawn": drawn}
+            return (image, QPointF(-mx, -my)) if drawn else None
+
+        def _settled(self):
+            """Repos apres un pan a decalage fractionnaire : images gardees refaites a la position exacte."""
+            self._kept.clear()
+            self.update()
+
+        def _paint_under(self, GL, fbo, vt, width, height):
+            """Remplissages des hachures pleines (peints par QPainter) entre la grille et les traits : image gardee
+            (`_kept_image`)."""
+            found = self._kept_image("under", self.under_hook, self.under_key, vt)
+            if found is None:
+                return
             painter = QPainter(self)
             try:
-                painter.drawImage(area.topLeft(), image)
+                painter.drawImage(found[1], found[0])
             finally:
                 painter.end()
             GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, fbo)       # QPainter laisse son etat : le notre est repose
@@ -1260,6 +1486,18 @@ def _make_layer_class():
             GL.glDisable(GL.GL_SCISSOR_TEST)
             GL.glDisable(GL.GL_BLEND)
             GL.glUseProgram(0)
+
+        def _paint_texts(self, vt):
+            """Image des textes (`text_hook`) : image gardee (`_kept_image`) ; reposee telle quelle, le moteur GL de
+            Qt garde sa texture (aucun envoi au GPU)."""
+            found = self._kept_image("text", self.text_hook, self.text_key, vt)
+            if found is None:
+                return
+            painter = QPainter(self)
+            try:
+                painter.drawImage(found[1], found[0])
+            finally:
+                painter.end()
 
         def _paint_qt(self, scene, vt):
             """Selection, apercus, reticule, infobulles : QPainter par-dessus le trace GPU."""
@@ -1301,17 +1539,47 @@ def _make_layer_class():
             self._overlay_images = images[:len(areas)]
 
         def _clear_obstacles(self, GL, ratio, height):
-            """Zones des panneaux flottants (widgets AU-DESSUS de la vue) : rien du CAD n'y est dessine."""
+            """Zones des panneaux flottants (widgets AU-DESSUS de la vue) : rien du CAD n'y est dessine. Une zone
+            (rectangle, rayons des coins) — barre d'outils arrondie — est effacee selon sa FORME : dans les coins, ligne
+            de pixels par ligne de pixels, la page reste dessinee hors de l'arrondi."""
             rects = self.obstacles()
             if not rects:
                 return
             GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, self.defaultFramebufferObject())
             GL.glEnable(GL.GL_SCISSOR_TEST)
             GL.glClearColor(0.0, 0.0, 0.0, 0.0)
+            full_h = self.height() * ratio
+
+            def clear(x0, y0, x1, y1):                       # pixels physiques, y vers le bas
+                x0, x1 = max(0, int(math.floor(x0))), int(math.ceil(x1))
+                y0, y1 = max(0, int(math.floor(y0))), int(math.ceil(y1))
+                if x1 > x0 and y1 > y0:
+                    GL.glScissor(x0, int(full_h) - y1, x1 - x0, y1 - y0)
+                    GL.glClear(GL.GL_COLOR_BUFFER_BIT)
+
             for r in rects:
-                x, y = int(r.x() * ratio), int((self.height() - r.y() - r.height()) * ratio)
-                GL.glScissor(x, y, int(math.ceil(r.width() * ratio)), int(math.ceil(r.height() * ratio)))
-                GL.glClear(GL.GL_COLOR_BUFFER_BIT)
+                if not isinstance(r, tuple):
+                    clear(r.x() * ratio, r.y() * ratio, (r.x() + r.width()) * ratio, (r.y() + r.height()) * ratio)
+                    continue
+                rect, radii = r
+                x0, y0 = rect.x() * ratio, rect.y() * ratio
+                x1, y1 = x0 + rect.width() * ratio, y0 + rect.height() * ratio
+                tl, tr = radii.get("top_left", 0) * ratio, radii.get("top_right", 0) * ratio
+                br, bl = radii.get("bottom_right", 0) * ratio, radii.get("bottom_left", 0) * ratio
+                top, bottom = max(tl, tr), max(bl, br)
+                clear(x0, y0 + top, x1, y1 - bottom)         # le milieu d'un bloc
+
+                def inset(radius, d):                         # retrait de l'arrondi à la distance d du bord
+                    if radius <= 0 or d >= radius:
+                        return 0.0
+                    return radius - math.sqrt(max(0.0, radius * radius - (radius - d) ** 2))
+
+                for row in range(int(math.ceil(top))):        # bande du haut, ligne par ligne
+                    d = row + 0.5
+                    clear(x0 + inset(tl, d), y0 + row, x1 - inset(tr, d), y0 + row + 1)
+                for row in range(int(math.ceil(bottom))):     # bande du bas
+                    d = row + 0.5
+                    clear(x0 + inset(bl, d), y1 - row - 1, x1 - inset(br, d), y1 - row)
             GL.glDisable(GL.GL_SCISSOR_TEST)
 
         def release(self):

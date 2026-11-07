@@ -118,6 +118,9 @@ class InputLookTest(unittest.TestCase):
 
     def test_separator_uses_the_same_font_as_the_texts_and_updates_in_place(self):
         bar = self.win.titlebar
+        import browser_core as _bc                                      # separateur « taille des textes »
+        _bc.apply_all_settings({**settings_store.load_settings(), "crumb_sep_font_size": 0, "crumb_sep_font_family": ""})
+        bar.refresh_crumbs()
         bar.set_crumbs([("set", "a", lambda: None), ("set", "b", lambda: None)], force=True)
         chips = bar.crumbs.findChildren(pb._CrumbChip)
         separators = [w for w in bar.crumbs.findChildren(pb.QLabel)]
@@ -128,7 +131,9 @@ class InputLookTest(unittest.TestCase):
         before = (id(chips[0]), id(separators[0]))
         import ui_state
         import browser_core
-        browser_core.apply_all_settings({**settings_store.load_settings(), "crumb_font_size": 17, "crumb_spacing": 12})
+        browser_core.apply_all_settings({**settings_store.load_settings(), "crumb_font_size": 17, "crumb_spacing": 12,
+                                       # separateur « taille des textes » (sinon : le reglage de l'utilisateur)
+                                       "crumb_sep_font_size": 0, "crumb_sep_font_family": ""})
         bar.refresh_crumbs()
         chips = bar.crumbs.findChildren(pb._CrumbChip)
         separators = [w for w in bar.crumbs.findChildren(pb.QLabel)]

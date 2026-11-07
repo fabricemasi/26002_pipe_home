@@ -201,6 +201,7 @@ from browser_core_parts.icons import (
     software_choices,
     software_icon_pixmap,
     _row_icon_pixmap,
+    tinted_icon,
     _PIN_ICON_CACHE,
     _pin_icon_pixmap,
     project_thumbnail_path,
@@ -322,7 +323,7 @@ from browser_core_parts.row_paint import (
     _paint_row_image,
     _resolve_font_family,
     _resolve_row_font_color,
-    _resolve_shortcut_font_color,
+    _resolve_shortcut_font,
 )
 
 from browser_core_parts.settings import (
@@ -338,6 +339,8 @@ from browser_core_parts.settings import (
     _persist_detail_panel_width,
     _register_settings_hooks,
     apply_all_settings,
+    apply_folder_icon_colors,
+    apply_window_border,
 )
 
 from browser_core_parts.system_ui import (
@@ -394,7 +397,7 @@ __all__ = [
     'entry_size', 'CONFIG_FRESH_S', '_CONFIG_PREFIX', '_DIR_CONFIG', '_CONFIG_STAT',
     '_CONFIG_TEXT', '_note_dir_config', 'config_state', 'read_config_text', 'forget_config',
     'forget_all_config', 'list_entries', '_fallback_software_badge_style', '_generate_software_badge', 'software_choices',
-    'software_icon_pixmap', '_row_icon_pixmap', '_PIN_ICON_CACHE', '_pin_icon_pixmap', 'project_thumbnail_path',
+    'software_icon_pixmap', '_row_icon_pixmap', 'tinted_icon', '_PIN_ICON_CACHE', '_pin_icon_pixmap', 'project_thumbnail_path',
     '_project_thumbnail_cache', 'has_project_thumbnail', 'project_thumbnail_pixmap', 'default_thumbnail', 'COLUMN_MIN_WIDTH',
     'COLUMN_MAX_WIDTH', 'COLUMN_RESIZE_MARGIN', 'GROUP_COLUMN_DEFAULT_HEIGHT', 'GROUP_COLUMN_MIN_HEIGHT', 'GROUP_COLUMN_MAX_HEIGHT',
     '_WIDGET_SIZE_MAX', 'ROW_RESIZE_MIN_HEIGHT', 'ROW_RESIZE_MAX_HEIGHT', 'STATUS_HEIGHT', 'TITLEBAR_HEIGHT',
@@ -415,10 +418,10 @@ __all__ = [
     'ROLE_SPACE_BELOW', 'ROLE_PIN_BOTTOM', 'ROLE_BOTTOM_GAP', 'ITEM_TITLE_DEFAULT_STYLE', 'item_title_style',
     'item_title_font', 'item_title_min_height', 'paint_item_title', '_paint_row_border', '_IMAGE_MASK_CACHE',
     '_IMAGE_MASK_CACHE_MAX', '_rounded_mask_pixmap', '_ROW_IMAGE_CACHE', '_ROW_IMAGE_CACHE_MAX', '_row_image_pixmap',
-    '_paint_row_image', '_resolve_font_family', '_resolve_row_font_color', '_resolve_shortcut_font_color', '_resize_width_indicator',
+    '_paint_row_image', '_resolve_font_family', '_resolve_row_font_color', '_resolve_shortcut_font', '_resize_width_indicator',
     '_refresh_resize_width_style', '_show_resize_width', '_hide_resize_width', '_show_row_resize_indicator', '_live_dialog_values',
     '_persist_row_height', '_sync_default_preset_override', '_persist_column_width', '_persist_detail_panel_width', '_register_settings_hooks',
-    'apply_all_settings', 'open_path', 'open_in_file_manager', 'reveal_in_file_manager', '_prompt_change_thumbnail',
+    'apply_all_settings', 'apply_folder_icon_colors', 'apply_window_border', 'open_path', 'open_in_file_manager', 'reveal_in_file_manager', '_prompt_change_thumbnail',
     '_prompt_capture_thumbnail', '_save_thumbnail_pixmap_for', '_prompt_reset_thumbnail', '_HoverPrime', '_GIL_USERS',
     '_SWITCH_INTERVAL', '_snappy_gil', '_fine_timer', '_FadeOverlay', '_SlideOverlay',
 ]

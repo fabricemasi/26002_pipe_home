@@ -149,7 +149,7 @@ class DesignController(GestureMixin, CommandMixin, QObject):
         """Réglages > Design changés (`design_model.LOOK`, déjà posé) : dessin temporaire et barres repeints
         (couleur de sélection, poignées, repères) ; rien n'est recréé."""
         self.refresh()
-        for widget in (self.ui.rail, self.ui.panel, self.ui.context, self.ui.pagebar):
+        for widget in (self.ui.panel, self.ui.pagebar):
             widget.update()
         for thumb in self.ui._thumbs:
             thumb.update()

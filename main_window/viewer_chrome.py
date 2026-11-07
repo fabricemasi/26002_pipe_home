@@ -585,8 +585,7 @@ class ViewerChromeMixin:
         overlay = self._focus_overlay
         if overlay is not None and overlay.zoomed():
             overlay.zoom_reset()
-        else:
-            self._set_columns_hidden(False)
+        # Sinon rien : Echap ne fait jamais sortir d'un module (demande, 2026-11-05).
 
     def _viewer_ctrl_wheel(self, event):
         """Ctrl+molette : zoom autour du curseur ; vers l'arriere sur l'image ajustee, ouvre la

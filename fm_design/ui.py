@@ -9,10 +9,12 @@ passage de boucle) ; miniatures refaites 300 ms après un changement, seulement 
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QPainter, QPen
-from PySide6.QtWidgets import QAbstractButton, QApplication, QHBoxLayout, QInputDialog, QScrollArea
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
+from PySide6.QtWidgets import QAbstractButton, QApplication, QHBoxLayout, QInputDialog, QScrollArea, QWidget
 
-from fm_board.ui import _bar, _GlyphButton, _menu, _panel, _TextButton
+from fm_board.bars import BoardBars, BoardTool
+from fm_board.ui import _bar, _GlyphButton, _menu, _panel
+from fm_theme.palette import PaletteTextButton, step
 from . import design_model as dm, document as doc
 from .menus import (_popup, _reset_crop, adjust_menu, color_menu, fill_menu, flip_menu, mask_menu,
                     position_menu, resize_menu, shadow_menu, shape_kind_menu, slider_menu, stroke_menu,
@@ -29,6 +31,17 @@ TABS = [("templates", "design_templates", "Modèles et formats"), ("elements", "
         ("layers", "design_layers", "Position et calques")]
 EXTRA_TABS = [("find", "", "Rechercher et remplacer")]       # panneaux sans bouton du rail (Ctrl+F)
 PANEL_W = 300
+
+
+def default_state() -> dict:
+    """Barres flottantes du Design par défaut (demande de l'utilisateur, 2026-11-03) : « Design » (onglets du panneau,
+    exporter, présenter) clipsée à gauche, « Sélection » (boutons de la sélection, refaits à chaque fois) en haut."""
+    keys = [name for name, _g, _t in TABS] + ["export", "present"]
+    return {"next": 3, "bars": [
+        {"id": "b1", "title": "Design", "dock": "left", "orient": "v", "along": 96, "x": 0, "y": 0, "cols": 1,
+         "rows": len(keys), "items": {key: [0, row, 1] for row, key in enumerate(keys)}},
+        {"id": "b2", "title": "Sélection", "dock": "top", "orient": "h", "along": 260, "x": 0, "y": 0, "cols": 12,
+         "rows": 1, "items": {}}]}
 THUMB_H = 54
 
 
@@ -105,21 +118,26 @@ class DesignChrome(QObject):
         self.tab = None
         self.dragging = None
         self._dirty_pages: set | None = None        # pages dont la miniature est à refaire (None = toutes)
-        self.rail, rail = _bar(pane, True)
-        rail.setAlignment(Qt.AlignHCenter)
+        # Barres FLOTTANTES (fm_theme/bar_manager.py, fm_board/bars.py) : aspect de fm_theme (section « Palette »),
+        # disposition retenue par l'utilisateur (`board_bars["design"]`).
+        self._no_bar = QWidget(pane)               # (à la place d'une barre supprimée)
+        self._no_bar.hide()
+        self.bars = BoardBars(pane, "design", default_state())
         self._rail_buttons = {}
         for name, glyph, tip in TABS:
-            button = _GlyphButton(glyph, tip, self.rail)
+            button = BoardTool(glyph, tip, key=name)
             button.clicked.connect(lambda _c=False, n=name: self.set_tab(None if self.tab == n else n))
-            rail.addWidget(button)
+            self.bars.register(name, button)
             self._rail_buttons[name] = button
-        rail.addSpacing(10)
-        export = _GlyphButton("design_export", "Exporter (PNG, JPEG, PDF, SVG)", self.rail)
+        export = BoardTool("design_export", "Exporter (PNG, JPEG, PDF, SVG)", key="export")
         export.clicked.connect(lambda: export_menu(ctl, export))
-        rail.addWidget(export)
-        present = _GlyphButton("design_present", "Présenter en plein écran (Ctrl+Alt+P)", self.rail)
+        self.bars.register("export", export)
+        present = BoardTool("design_present", "Présenter en plein écran (Ctrl+Alt+P)", key="present")
         present.clicked.connect(lambda: ctl.present())
-        rail.addWidget(present)
+        self.bars.register("present", present)
+        self.bars.restore()
+        self.bars.set_visible(False)
+        self.context_items: list = []              # boutons de la sélection (barre « Sélection », `set_dynamic`)
         self.panel, panel = _panel(pane, True)
         self.panel.setFixedWidth(PANEL_W)
         panel.setContentsMargins(10, 10, 10, 10)
@@ -137,7 +155,6 @@ class DesignChrome(QObject):
         self.scroll.viewport().setAutoFillBackground(True)
         panel.addWidget(self.scroll, 1)
         self.panel_content = None
-        self.context, self.context_layout = _bar(pane, False)
         self.pagebar, pages = _bar(pane, False)
         self.pages_layout = QHBoxLayout()
         self.pages_layout.setSpacing(4)
@@ -147,7 +164,7 @@ class DesignChrome(QObject):
         add.clicked.connect(self.add_page)
         pages.addWidget(add)
         self._thumbs: list[PageThumb] = []
-        for widget in (self.rail, self.panel, self.context, self.pagebar):
+        for widget in (self.panel, self.pagebar):
             widget.hide()
         self._sync_timer = QTimer(self)
         self._sync_timer.setSingleShot(True)
@@ -162,13 +179,26 @@ class DesignChrome(QObject):
         self.scene.contentChanged.connect(self._content_changed)
         self.scene.undo.indexChanged.connect(self._mark_from_undo)
 
+    @property
+    def rail(self):
+        """Barre des onglets (« Design ») ; un widget caché si l'utilisateur l'a vidée."""
+        bar = self.bars.manager.bar_of("templates") or self.bars.bar("b1")
+        return bar if bar is not None else self._no_bar
+
+    @property
+    def context(self):
+        """Barre de la sélection (« Sélection ») : ancre des menus ; un widget caché si elle n'existe plus."""
+        bar = self.bars.bar("b2")
+        return bar if bar is not None else self._no_bar
+
     # -- visibilité, place --
     def show(self):
-        for widget in (self.rail, self.context, self.pagebar):
-            widget.show()
+        self.pagebar.show()
+        self.bars.set_visible(True)
         # Au-dessus du board UNE fois (raise_ à chaque mise en place repeignait les barres et le panneau à chaque clic).
-        for widget in (self.rail, self.panel, self.context, self.pagebar):
+        for widget in (self.panel, self.pagebar):
             widget.raise_()
+        self.bars.raise_all()
         self.panel.setVisible(self.tab is not None)
         if self.tab is None and not self.ctl.pages():
             self.set_tab("templates")                    # aucun design : choisir un format d'abord
@@ -176,8 +206,9 @@ class DesignChrome(QObject):
         self.sync()
 
     def hide(self):
-        for widget in (self.rail, self.panel, self.context, self.pagebar):
+        for widget in (self.panel, self.pagebar):
             widget.hide()
+        self.bars.set_visible(False)
 
     def place(self):
         pane = self.pane
@@ -185,20 +216,14 @@ class DesignChrome(QObject):
             return
         margin = 16
         title = pane.title_area()
-        for widget in (self.rail, self.context, self.pagebar):
-            widget.layout().activate()
-            widget.resize(widget.sizeHint())
+        self.pagebar.layout().activate()
+        self.pagebar.resize(self.pagebar.sizeHint())
+        self.bars.set_area(pane.left_edge())
         self.ctl.rulers.place()
         top = title.bottom() + 10
-        self.rail.move(margin, max(top, (pane.height() - self.rail.height()) // 2))
-        self.panel.move(self.rail.geometry().right() + 8, top)
+        rail = self.rail
+        self.panel.move((rail.geometry().right() if rail.isVisible() else pane.left_edge()) + 8, top)
         self.panel.resize(PANEL_W, max(200, pane.height() - top - margin))
-        left = title.right() + 12
-        room = pane.width() - left - margin
-        if self.context.width() <= room:
-            self.context.move(left + max(0, (room - self.context.width()) // 2), margin)
-        else:
-            self.context.move(max(margin, (pane.width() - self.context.width()) // 2), top)
         zoom_w = pane._zoombar.width() + 24
         width = min(self.pagebar.sizeHint().width(), pane.width() - 2 * (zoom_w + margin))
         self.pagebar.resize(max(80, width), self.pagebar.sizeHint().height())
@@ -298,13 +323,9 @@ class DesignChrome(QObject):
     def sync(self):
         if not self.ctl.active:
             return
-        self._clear(self.context_layout)
-        build_context_bar(self, self.ctl)
-        for n in range(self.context_layout.count()):        # barre déjà visible : ses nouveaux boutons aussi
-            widget = self.context_layout.itemAt(n).widget()
-            if widget is not None:
-                widget.show()
-        self.context.setVisible(self.context_layout.count() > 0)
+        made = build_context_bar(self, self.ctl)
+        self.context_items = [w for _k, w in made]
+        self.bars.manager.set_dynamic("ctx", made, "b2")    # chaque bouton retrouve la case que l'utilisateur lui a donnée
         self.refresh_panel()
         self._sync_thumbs_current()
         self.place()
@@ -463,14 +484,31 @@ class DesignChrome(QObject):
 
 
 # ---------------------------------------------------------------- barre contextuelle
-def build_context_bar(chrome, ctl):
-    bar = chrome.context
-    add = chrome.context_layout.addWidget
+def build_context_bar(chrome, ctl) -> list:
+    """Boutons de la sélection courante : [(clé, widget)] pour la barre « Sélection » (`set_dynamic`). La clé suit le
+    genre du bouton (un même bouton garde sa case d'une sélection à l'autre)."""
+    made = []
+    _fill_context_bar(chrome, ctl, made)
+    return made
+
+
+def _fill_context_bar(chrome, ctl, made: list):
     sel = ctl.selection()
+
+    def add(button):
+        base = button.palette_key
+        key, n = base, 2
+        while any(k == key for k, _w in made):
+            key, n = f"{base}#{n}", n + 1
+        button.palette_key = key
+        made.append((key, button))
+
+    def cells_for(text, width):
+        return max(2, -(-max(width, QFontMetrics(QFont()).horizontalAdvance(text) + 18) // step()))
 
     # Boutons SANS focus : un clic ne termine pas l'édition d'un texte (ses menus s'appliquent à la partie choisie).
     def glyph(kind, tip, slot, on=False):
-        button = _GlyphButton(kind, tip, bar, 32)
+        button = BoardTool(kind, tip, key=f"ctx:{kind.split(':')[0]}")
         button.setFocusPolicy(Qt.NoFocus)
         button.set_on(on)
         button.clicked.connect(lambda _c=False, b=button: slot(b))
@@ -478,14 +516,14 @@ def build_context_bar(chrome, ctl):
         return button
 
     def text_button(text, tip, slot, width=0):
-        button = _TextButton(text, tip, bar, width)
+        button = PaletteTextButton(f"ctx:{tip}", text, tip, cells=cells_for(text, width))
         button.setFocusPolicy(Qt.NoFocus)
         button.clicked.connect(lambda _c=False, b=button: slot(b))
         add(button)
         return button
 
     def swatch(color, tip, slot):
-        button = _GlyphButton("swatch", tip, bar, 32)
+        button = BoardTool("swatch", tip, key=f"ctx:swatch:{tip}")
         button.setFocusPolicy(Qt.NoFocus)
         button.set_swatch(color or "#ffffff")
         button.clicked.connect(lambda _c=False, b=button: slot(b))

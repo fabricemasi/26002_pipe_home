@@ -1,61 +1,33 @@
-"""Module CAD du board : INTERFACE — barre d'outils CAD (en haut de la page), barre de commande (en bas),
-panneau Proprietes (a droite), gestionnaire de calques, fenetre des accrochages, menus.
+"""Module CAD du board : INTERFACE — barres d'outils FLOTTANTES (`cad_bars.py` : Dessin, Modification, Annotations,
+Propriétés, Gestion, Précision, Vue), barre de commande (en bas), panneau Proprietes (a droite), gestionnaire de
+calques, fenetre des accrochages, menus.
 
-Habillage : briques des barres du board (`_bar`, `_GlyphButton`, `_TextButton`, menus `settings_menu.Menu`,
-Reglages > Module MRO > Barres d'outils) et des reglages (tableaux `build_cells_table`, champs `_TextField`,
-`_SelectField`, `_SliderField`, `_Toggle`, fenetres additionnelles, « Changement de style a la volee » pour
-les accrochages) : aucun style invente. Seuls les outils REELLEMENT disponibles sont activables ; ceux des
+Habillage : les barres d'outils sont celles de fm_theme (reglages `palette_*`, section « Palette » de l'editeur) ; la
+barre de commande et le panneau Proprietes gardent les briques des barres du board (`_bar`, `_panel`, menus
+`settings_menu.Menu`, Reglages > Module MRO > Barres d'outils) et des reglages (tableaux `build_cells_table`, champs
+`_TextField`, `_SelectField`, `_SliderField`, `_Toggle`, fenetres additionnelles, « Changement de style a la volee »
+pour les accrochages) : aucun style invente. Seuls les outils REELLEMENT disponibles sont activables ; ceux des
 phases suivantes sont montres grises (infobulle : phase prevue)."""
 from __future__ import annotations
 
 import html
+import math
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtCore import QObject, QEvent, Signal
 from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QLineEdit, QVBoxLayout, QWidget
 
-from . import cad_commands, cad_hatch, cad_input, cad_model, cad_snap, cad_text
+from . import cad_attrib, cad_block, cad_commands, cad_hatch, cad_input, cad_model, cad_snap, cad_text
 from . import cad_geometry as geo
+from .cad_bars import (
+    PRECISION, SECTIONS, CadModeButton, CadTextButton, CadTool, cad_default_state,
+)
+from fm_board.bars import BoardBars, BoardTool, ZoomText
 from fm_board.ui import (
-    _GlyphButton, _TextButton, _bar, _menu as _board_menu, _panel, _SwatchGrid, custom_icon, look_key, negative,
+    _GlyphButton, _bar, _menu as _board_menu, _panel, _SwatchGrid, custom_icon, look_key, negative,
 )
 
-# Barre d'outils : (section, [(genre d'icone, commande, infobulle, disponible)])
-SECTIONS = [
-    ("Dessin", [("cad_line", "LINE", "Ligne (L)", True),
-                ("cad_pline", "PLINE", "Polyligne (PL)", True),
-                ("cad_circle", "CIRCLE", "Cercle (C)", True),
-                ("cad_arc", "ARC", "Arc (A)", True),
-                ("cad_rect", "RECTANGLE", "Rectangle (REC)", True),
-                ("cad_hatch", "HATCH", "Hachures (H)", True)]),
-    ("Modification", [("cad_move", "MOVE", "Déplacer (M)", True),
-                      ("cad_copy", "COPY", "Copier (CO)", True),
-                      ("cad_erase", "ERASE", "Effacer (E, Suppr)", True),
-                      ("cad_match", "MATCHPROP", "Pipette : copier les propriétés d'un objet sur d'autres (MA)", True),
-                      ("cad_rotate", "ROTATE", "Rotation (RO)", True),
-                      ("cad_mirror", "MIRROR", "Miroir (MI)", True),
-                      ("cad_scale", "SCALE", "Échelle (SC)", True),
-                      ("cad_trim", "TRIM", "Ajuster (TR)", True),
-                      ("cad_offset", "OFFSET", "Décaler (O)", True),
-                      ("cad_chamfer", "CHAMFER", "Chanfrein (CHA)", True),
-                      ("cad_fillet", "FILLET", "Raccord / arrondi (F)", True),
-                      ("cad_explode", "EXPLODE", "Décomposer : polyligne en lignes et arcs, cotation en traits et "
-                                                 "texte (X)", True)]),
-    ("Annotations", [("cad_text", "TEXT", "Texte (DT) : une ligne par Entrée", True),
-                     ("cad_mtext", "MTEXT", "Texte multiligne (MT) : cadre, Entrée = paragraphe, "
-                                            "Ctrl+Entrée = fin", True),
-                     ("cad_dim", "DIMLINEAR", "Cotation linéaire (DLI)", True),
-                     ("cad_dim_aligned", "DIMALIGNED", "Cotation alignée (DAL)", True),
-                     ("cad_dim_radius", "DIMRADIUS", "Cotation de rayon (DRA)", True),
-                     ("cad_dim_diameter", "DIMDIAMETER", "Cotation de diamètre (DDI)", True),
-                     ("cad_dim_angular", "DIMANGULAR", "Cotation angulaire (DAN)", True)]),
-]
-PRECISION = [("osnap", "OSNAP", "Accrochages aux objets (F3)"), ("ortho", "ORTHO", "Mode orthogonal (F8)"),
-             ("polar", "POLAIRE", "Suivi polaire (F10)"), ("otrack", "OTRACK", "Suivi d'accrochage (F11)"),
-             ("dyn", "DYN", "Saisie dynamique (F12)"), ("grid", "GRILLE", "Grille (F7)"),
-             ("grid_snap", "RESOL", "Accrochage à la grille (F9)"),
-             ("lineweight", "ÉPAIS.", "Afficher les épaisseurs de ligne (LWT) : éteint = simples lignes d'un pixel, comme AutoCAD")]
 OVERRIDE_TAG = "ovr:"         # fenetre des reglages du dessin : interrupteur d'override d'une ligne
 WEIGHTS = (0.0, 0.1, 0.18, 0.25, 0.35, 0.5, 0.7, 1.0, 1.4, 2.0, 3.0, 5.0)   # menu des epaisseurs (unite du dessin)
 HISTORY_LINES = 3
@@ -193,6 +165,10 @@ def paint_cad_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
     elif kind == "cad_layers":
         for dy in (-0.9, 0.0, 0.9):
             painter.drawPolygon(QPolygonF([P(-1.5, dy), P(0, dy - 0.6), P(1.5, dy), P(0, dy + 0.6)]))
+    elif kind == "cad_photoshop":                      # image (montagne + soleil) : envoi vers Photoshop
+        painter.drawRect(QRectF(P(-1.5, -1.2), P(1.5, 1.2)))
+        painter.drawPolyline(QPolygonF([P(-1.5, 0.9), P(-0.4, -0.3), P(0.3, 0.4), P(0.8, 0.0), P(1.5, 0.7)]))
+        painter.drawEllipse(P(0.7, -0.6), 0.25 * s, 0.25 * s)
     elif kind == "cad_properties":
         for dy in (-1.0, 0.0, 1.0):
             painter.drawLine(P(-1.4, dy), P(-0.8, dy))
@@ -213,6 +189,57 @@ def paint_cad_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
         painter.drawLine(P(-0.7, -0.8), P(0.7, -0.8))
     elif kind == "cad_history":
         painter.drawPolyline(QPolygonF([P(-1.0, 0.4), P(0, -0.6), P(1.0, 0.4)]))
+    elif kind == "cad_block":                          # trois formes groupees dans un cadre pointille
+        dash = QPen(pen)
+        dash.setStyle(Qt.DashLine)
+        painter.setPen(dash)
+        painter.drawRect(QRectF(P(-1.5, -1.5), P(1.5, 1.5)))
+        painter.setPen(pen)
+        painter.drawEllipse(P(-0.6, -0.6), 0.5 * s, 0.5 * s)
+        painter.drawRect(QRectF(P(0.1, -1.0), P(1.0, -0.1)))
+        painter.drawPolygon(QPolygonF([P(-1.0, 1.0), P(-0.1, 1.0), P(-0.55, 0.1)]))
+    elif kind == "cad_insert":                         # bloc + fleche d'insertion
+        painter.drawRect(QRectF(P(-0.2, -1.4), P(1.4, 0.2)))
+        painter.drawLine(P(-1.5, 1.5), P(-0.2, 0.2))
+        painter.drawPolyline(QPolygonF([P(-0.9, 0.2), P(-0.2, 0.2), P(-0.2, 0.9)]))
+    elif kind == "cad_point":                          # cercle + croix (PDMODE 34)
+        painter.drawEllipse(c, 0.9 * s, 0.9 * s)
+        painter.drawLine(P(-1.4, 0), P(1.4, 0))
+        painter.drawLine(P(0, -1.4), P(0, 1.4))
+    elif kind == "cad_ellipse":
+        painter.drawEllipse(c, 1.5 * s, 0.85 * s)
+    elif kind == "cad_polygon":                        # hexagone
+        painter.drawPolygon(QPolygonF([P(1.45 * math.cos(math.radians(a)), 1.45 * math.sin(math.radians(a)))
+                                       for a in range(0, 360, 60)]))
+    elif kind == "cad_extend":                         # trait prolonge (pointille) jusqu'a une limite
+        painter.drawLine(P(1.3, -1.5), P(1.3, 1.5))
+        painter.drawLine(P(-1.5, 0.3), P(-0.2, 0.3))
+        dash = QPen(pen)
+        dash.setStyle(Qt.DotLine)
+        painter.setPen(dash)
+        painter.drawLine(P(-0.2, 0.3), P(1.3, 0.3))
+        painter.setPen(pen)
+    elif kind == "cad_stretch":                        # capture pointillee + coin tire
+        dash = QPen(pen)
+        dash.setStyle(Qt.DashLine)
+        painter.setPen(dash)
+        painter.drawRect(QRectF(P(0.1, -1.2), P(1.5, 0.4)))
+        painter.setPen(pen)
+        painter.drawPolyline(QPolygonF([P(-1.5, 1.2), P(-1.5, -0.6), P(0.9, -0.6)]))
+        box(P(0.9, -0.6))
+    elif kind == "cad_break":                          # trait coupe
+        painter.drawLine(P(-1.5, 0.6), P(-0.35, 0.1))
+        painter.drawLine(P(0.35, -0.2), P(1.5, -0.7))
+        box(P(-0.35, 0.1), 0.22)
+        box(P(0.35, -0.2), 0.22)
+    elif kind == "cad_join":                           # deux traits relies en un sommet
+        painter.drawPolyline(QPolygonF([P(-1.5, 1.0), P(0, -0.6), P(1.5, 1.0)]))
+        painter.setBrush(color)
+        painter.drawEllipse(P(0, -0.6), 0.25 * s, 0.25 * s)
+        painter.setBrush(Qt.NoBrush)
+    elif kind == "cad_array":                          # grille 2 x 2 de carres
+        for x, y in ((-0.85, -0.85), (0.85, -0.85), (-0.85, 0.85), (0.85, 0.85)):
+            box(P(x, y), 0.55)
 
 
 def _bar_look(widget) -> dict | None:
@@ -268,41 +295,6 @@ class _CadButton(_GlyphButton):
             paint_cad_glyph(painter, self.kind, rect, QColor(self.glyph_ink(invert)))
 
 
-class _ModeButton(_CadButton):
-    """Bascule de precision (OSNAP, ORTHO…) : texte court, fond accent quand le mode est actif."""
-
-    def __init__(self, text, tip, parent=None):
-        super().__init__(f"txt:{text}", tip, parent, 30)
-        self.text_value = text
-        self.setFixedWidth(max(46, 9 * len(text) + 12))
-
-    def paint_key(self) -> tuple:
-        return (self.text_value, self._on, look_key(getattr(self, "look", None)))
-
-    def paint_content(self, painter):
-        from app_style import C
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        look = getattr(self, "look", None) or {}
-        rect = QRectF(self.rect()).adjusted(1, 3, -1, -3)
-        if self._on or self.underMouse():
-            color = (look.get("focus_color", "#6e3f6f9f") if self._on else look.get("hover_color", C["hover"]))
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(QColor(color))
-            radius = look.get("focus_radius", 6) if self._on else look.get("hover_radius", 6)
-            painter.drawRoundedRect(rect, radius, radius)
-        text = look.get("text") or C["text"]
-        color = QColor(text)
-        if not self._on:
-            color.setAlphaF(0.55)
-        painter.setPen(color)
-        font = look.get("font")
-        if font is not None:
-            font = type(font)(font)
-            font.setBold(self._on)
-            painter.setFont(font)
-        painter.drawText(rect, Qt.AlignCenter, self.text_value)
-
-
 def _mix(first: str, second: str, ratio: float) -> str:
     """`first` mele a `ratio` de `second` (#rrggbb)."""
     a, b = QColor(first), QColor(second)
@@ -331,9 +323,12 @@ class CadChrome:
         self._snap_timer.setSingleShot(True)
         self._snap_timer.setInterval(250)
         self._snap_timer.timeout.connect(self._flush_snap)
+        self._no_bar = QWidget(pane)                # (a la place de la barre « Dessin » supprimee : `toolbar` reste utilisable)
+        self._no_bar.hide()
         self._build_toolbar()
         self._build_command_bar()
         self._build_properties()
+        self.bars.manager.layoutChanged.connect(self.place)       # barre posee / deplacee : la commande lui laisse la place
         self._sync_timer = QTimer(pane)
         self._sync_timer.setSingleShot(True)
         self._sync_timer.setInterval(0)
@@ -353,88 +348,81 @@ class CadChrome:
 
     # -- construction --
     def _build_toolbar(self):
-        from settings_theme import _text_label
-        bar, outer = _bar(self.pane, True)
-        outer.setSpacing(6)
-        self.toolbar = bar
-        self._rows = []
-        for _n in range(2):                       # 2e rangee : seulement quand la page est trop etroite
-            row_layout = QHBoxLayout()
-            row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(10)
-            outer.addLayout(row_layout)
-            self._rows.append(row_layout)
-        layout = self._rows[0]
-        self._sections = []
-        self._wrapped = None
+        """Barres FLOTTANTES du CAD (cad_bars.py) : chaque outil, chaque bascule de precision et chaque bouton de
+        propriete est une case inscrite (cle stable) dans le gestionnaire du module ; la disposition retenue par
+        l'utilisateur est celle de `board_bars["cad"]`."""
+        pane = self.pane
+        self.bars = BoardBars(pane, "cad", cad_default_state())
+        register = self.bars.register
         self.buttons = {}
-        self.captions = []
-
-        def section(title):
-            box = QWidget(bar)
-            box.setAttribute(Qt.WA_TranslucentBackground, True)
-            v = QVBoxLayout(box)
-            v.setContentsMargins(0, 0, 0, 0)
-            v.setSpacing(1)
-            caption = _text_label(title.upper(), "mini_label")
-            caption.setAlignment(Qt.AlignHCenter)
-            self.captions.append(caption)
-            v.addWidget(caption)
-            row = QHBoxLayout()
-            row.setContentsMargins(0, 0, 0, 0)
-            row.setSpacing(1)
-            v.addLayout(row)
-            layout.addWidget(box)
-            self._sections.append(box)
-            return row, box
-
-        for title, tools in SECTIONS:
-            row, box = section(title)
+        for _title, tools in SECTIONS:
             for kind, command, tip, available in tools:
-                button = _CadButton(kind, tip, box)
+                button = CadTool(kind, tip, key=command)
                 button.setEnabled(available)
                 button.clicked.connect(lambda _c=False, name=command: self._run(name))
-                row.addWidget(button)
+                register(command, button)
                 self.buttons[command] = button
-        row, box = section("Propriétés")
-        self.layer_button = _TextButton("0", "Calque courant (ou de la sélection)", box, 110)
-        self.layer_button.setFocusPolicy(Qt.NoFocus)
+        self.layer_button = CadTextButton("layer", "0", "Calque courant (ou de la sélection)", cells=3)
         self.layer_button.clicked.connect(lambda: self.layer_menu(self.layer_button))
-        row.addWidget(self.layer_button)
-        self.color_button = _CadButton("swatch", "Couleur (ByLayer ou propre)", box, 30)
+        register("layer", self.layer_button)
+        self.color_button = CadTool("swatch", "Couleur (ByLayer ou propre)", key="color")
         self.color_button.clicked.connect(lambda: self.color_menu(self.color_button, target="toolbar"))
-        row.addWidget(self.color_button)
-        self.weight_button = _TextButton("ByLayer", "Épaisseur (unité de mesure du dessin ; 0 = trait fin)", box, 74)
-        self.weight_button.setFocusPolicy(Qt.NoFocus)
+        register("color", self.color_button)
+        self.weight_button = CadTextButton("weight", "ByLayer", "Épaisseur (unité de mesure du dessin ; 0 = trait fin)",
+                                           cells=2)
         self.weight_button.clicked.connect(lambda: self.weight_menu(self.weight_button))
-        row.addWidget(self.weight_button)
-        self.linetype_button = _TextButton("ByLayer", "Type de ligne", box, 86)
-        self.linetype_button.setFocusPolicy(Qt.NoFocus)
+        register("weight", self.weight_button)
+        self.linetype_button = CadTextButton("linetype", "ByLayer", "Type de ligne", cells=3)
         self.linetype_button.clicked.connect(lambda: self.linetype_menu(self.linetype_button))
-        row.addWidget(self.linetype_button)
-        row, box = section("Précision")
+        register("linetype", self.linetype_button)
         self.mode_buttons = {}
         for name, text, tip in PRECISION:
-            button = _ModeButton(text, tip, box)
+            button = CadModeButton(name, text, tip)
             button.clicked.connect(lambda _c=False, n=name: self.ctl.toggle(n))
-            row.addWidget(button)
+            register(button.palette_key, button)
             self.mode_buttons[name] = button
-        settings = _CadButton("cad_settings", "Réglages des accrochages, du suivi et de la grille (OS)", box)
+        settings = CadTool("cad_settings", "Réglages des accrochages, du suivi et de la grille (OS)")
         settings.clicked.connect(self.open_snap_settings)
-        row.addWidget(settings)
-        row, box = section("Gestion")
+        register("cad_settings", settings)
         for kind, tip, slot in (("cad_layers", "Gestionnaire des calques (LA)", self.open_layers),
                                 ("cad_properties", "Propriétés (Ctrl+1)", self.toggle_properties)):
-            button = _CadButton(kind, tip, box)
+            button = CadTool(kind, tip)
             button.clicked.connect(slot)
-            row.addWidget(button)
+            register(kind, button)
             self.buttons[kind] = button
-        row, box = section("Réglages")
-        button = _CadButton("cad_drawing", "Réglages du dessin en cours (unité, décimales, échelle des types de ligne, "
-                                           "grille)", box)
+        button = CadTool("cad_photoshop", "Ouvrir la sélection dans Photoshop (PS) — clic droit : PNG / PSD, vectoriel")
+        button.clicked.connect(lambda: self.ctl.photoshop("open"))
+        button.setContextMenuPolicy(Qt.CustomContextMenu)
+        button.customContextMenuRequested.connect(
+            lambda pos, b=button: self.photoshop_menu(b).popup(b.mapToGlobal(pos)))
+        register("cad_photoshop", button)
+        self.buttons["cad_photoshop"] = button
+        button = CadTool("cad_drawing", "Réglages du dessin en cours (unité, décimales, échelle des types de ligne, "
+                                        "grille)")
         button.clicked.connect(self.open_drawing_settings)
-        row.addWidget(button)
+        register("cad_drawing", button)
         self.buttons["cad_drawing"] = button
+        for kind, command, tip in (("cad_block", "BLOCK", "Créer un bloc (B) : nom, point de base, objets"),
+                                   ("cad_insert", "INSERT", "Insérer un bloc (I) : nom, point, échelle, rotation")):
+            button = CadTool(kind, tip, key=command)
+            button.clicked.connect(lambda _c=False, name=command: self._run(name))
+            register(command, button)
+            self.buttons[command] = button
+        # Vue : le zoom du board (la barre « Vue » de Miro n'est visible qu'avec Miro).
+        view = pane.view
+        minus = BoardTool("minus", "Dézoomer (-)", key="zoom_out")
+        minus.clicked.connect(lambda: view.zoom_by(1 / 1.25))
+        register("zoom_out", minus)
+        zoom = ZoomText(view)
+        zoom.clicked.connect(lambda: view.set_zoom(1.0))
+        register("zoom", zoom)
+        plus = BoardTool("plus", "Zoomer (+)", key="zoom_in")
+        plus.clicked.connect(lambda: view.zoom_by(1.25))
+        register("zoom_in", plus)
+        fit = BoardTool("fit", "Tout voir (Maj+1)")
+        fit.clicked.connect(view.fit_all)
+        register("fit", fit)
+        self.bars.restore()
 
     def _build_command_bar(self):
         from settings_theme import _text_label
@@ -460,7 +448,7 @@ class CadChrome:
         row.addWidget(self.input, 1)
         self.hint_label = _text_label("", "value_muted")
         row.addWidget(self.hint_label)
-        expand = _CadButton("cad_history", "Agrandir / réduire l'historique (F2)", bar, 26)
+        expand = self.history_button = _CadButton("cad_history", "Agrandir / réduire l'historique (F2)", bar, 26)
         expand.clicked.connect(self.toggle_history)
         row.addWidget(expand)
         layout.addLayout(row)
@@ -536,70 +524,80 @@ class CadChrome:
 
     # -- visibilite / place --
     def show(self):
-        self.toolbar.show()
         self.command_bar.show()
         self.properties.setVisible(self._properties_open)
+        self.bars.set_visible(True)
         self.sync()
         self.place()
 
     def hide(self):
-        for widget in (self.toolbar, self.command_bar, self.properties):
+        for widget in (self.command_bar, self.properties):
             widget.hide()
+        self.bars.set_visible(False)
 
     def widgets(self):
-        return [self.toolbar, self.command_bar, self.properties]
+        return [*self.bars.manager.bars, self.command_bar, self.properties]
+
+    @property
+    def toolbar(self):
+        """Compatibilite : l'ancienne barre d'outils est la barre « Dessin » (un widget cache si l'utilisateur l'a supprimee)."""
+        bar = self.bars.bar("b1")
+        return bar if bar is not None else self._no_bar
 
     def place(self):
+        """Barre de commande et panneau Proprietes, puis tout au premier plan ; les barres flottantes se placent seules
+        (leur zone : le board a droite de la barre des modules)."""
+        if not self.ctl.active:
+            return
+        self._layout_panels()
+        for panel in (self.command_bar, self.properties):
+            panel.raise_()
+        self.bars.raise_all()
+
+    def _layout_panels(self):
+        """La barre de commande se place ENTRE les barres posees au bas du board (Precision a gauche, Vue a droite) ; le
+        panneau Proprietes sous les barres du haut, a gauche de celles du bord droit."""
         pane = self.pane
         if not self.ctl.active:
             return
         margin = 16
-        for panel in (self.toolbar, self.command_bar, self.properties):
+        left = pane.left_edge()
+        self.bars.set_area(left)
+        for panel in (self.command_bar, self.properties):
             panel.layout().activate()
-        title = pane.title_area()                   # nom du board + selecteur de modules
-        left = title.right() + 12
-        room = pane.width() - left - margin
-        self._reflow(pane.width() - 2 * margin)
-        self.toolbar.layout().activate()
-        self.toolbar.resize(self.toolbar.sizeHint())
-        if self.toolbar.width() <= room:            # a cote du nom du board, centree dans la place restante
-            self.toolbar.move(left + max(0, (room - self.toolbar.width()) // 2), margin)
-        else:                                       # sous le nom du board
-            self.toolbar.move(max(margin, (pane.width() - self.toolbar.width()) // 2), title.bottom() + 8)
-        zoom_w = pane._zoombar.width() if pane._zoombar.isVisible() else 0
-        width = max(360, min(980, pane.width() - 2 * margin - 2 * (zoom_w + 12)))
+        low, high, top, right = left, pane.width() - margin, margin, pane.width() - margin
+        middle = (left + pane.width()) // 2
+        for bar in self.bars.manager.bars:
+            if bar.isHidden():
+                continue
+            box = bar.geometry()
+            if bar.dock == "bottom":
+                if box.center().x() < middle:
+                    low = max(low, box.right() + 12)
+                else:
+                    high = min(high, box.left() - 12)
+            elif bar.dock == "top":
+                top = max(top, box.bottom() + 1)
+            elif bar.dock == "right":
+                right = min(right, box.left() - 10)
+        width = max(360, min(980, high - low))
         self.input.setFixedWidth(max(160, width - self.prompt_label.sizeHint().width() - 200))
         self.command_bar.resize(width, self.command_bar.sizeHint().height())
-        self.command_bar.move(max(margin, (pane.width() - width) // 2),
-                              pane.height() - self.command_bar.height() - margin)
+        self.command_bar.move(low + max(0, (high - low - width) // 2), pane.height() - self.command_bar.height() - margin)
         if self.properties.isVisible():
-            top = self.toolbar.geometry().bottom() + 10
+            top += 10 if top > margin else 0
             room = max(160, self.command_bar.geometry().top() - 10 - top)
             table = self.properties_table
             content = table.sizeHint() if table is not None else self.properties_body.sizeHint()
             self.properties_scroll.setFixedWidth(content.width() + 14)
             self.properties_scroll.setFixedHeight(min(content.height() + 2, room - 60))
             self.properties.resize(self.properties.sizeHint().width(), min(self.properties.sizeHint().height(), room))
-            self.properties.move(pane.width() - self.properties.width() - margin, top)
-        for panel in (self.toolbar, self.command_bar, self.properties):
-            panel.raise_()
-
-    def _reflow(self, available: int):
-        """Sections sur une rangee, ou deux si la page est trop etroite (rien ne sort de l'ecran)."""
-        one_row = sum(box.sizeHint().width() for box in self._sections) + 10 * (len(self._sections) - 1) + 24
-        wrap = one_row > available
-        if wrap == self._wrapped:
-            return
-        self._wrapped = wrap
-        split = (len(self._sections) + 1) // 2 if wrap else len(self._sections)
-        for index, box in enumerate(self._sections):
-            for row in self._rows:
-                row.removeWidget(box)
-            self._rows[0 if index < split else 1].addWidget(box)
+            self.properties.move(right - self.properties.width(), top)
 
     def set_look(self, look: dict):
-        """`look` = habillage des barres d'outils du board ; le fond des barres du CAD (barre d'outils et barre de
-        commande) est le leur : Reglages > Module CAD > Affichage > « Fond des barres du CAD » (10, 10, 10 d'origine)."""
+        """`look` = habillage des barres d'outils du board ; le fond de la barre de commande est celui du CAD :
+        Reglages > Module CAD > Affichage > « Fond de la barre de commande du CAD » (10, 10, 10 d'origine). Les barres
+        d'outils ont l'aspect de fm_theme (reglages `palette_*`), plus ce reglage."""
         self._board_look = look
         self.apply_bar_look()
 
@@ -610,9 +608,8 @@ class CadChrome:
         if base is None:
             return
         back = resolve_color_ref(self.ctl.setting("board_cad_bar_color"), "#0a0a0a")
-        if getattr(self, "_look", None) is not None and self._look.get("cad_bar") == back and \
-                self._look.get("board_key") == base.get("key"):
-            return                                          # rien n'a change : barres non refaites
+        if getattr(self, "_look", None) is not None and self._look.get("cad_bar") == back and                 self._look.get("board_key") == base.get("key"):
+            return                                          # rien n'a change : barre non refaite
         look = dict(base)                                   # texte de la barre garanti lisible sur son fond
         look["bg"] = back
         look["board_key"] = base.get("key")
@@ -620,23 +617,10 @@ class CadChrome:
         look["key"] = f"{base.get('key')}|cad-bar:{back}"
         look["text"] = readable_on(look["text"], look["bg"], 4.5)
         muted = _mix(look["bg"], look["text"], 0.62)
-        for bar in (self.toolbar, self.command_bar):
-            bar.set_look(look)
-        for button in self.mode_buttons.values():
-            button.look = look
-            button.update()
-        css = f"color: {look['text']}; background: transparent;"
-        for caption in self.captions:
-            caption.setStyleSheet(f"color: {muted}; background: transparent;")
-        self.prompt_label.setStyleSheet(css)
+        self.command_bar.set_look(look)
+        self.prompt_label.setStyleSheet(f"color: {look['text']}; background: transparent;")
         for label in (self.history_label, self.hint_label):
             label.setStyleSheet(f"color: {muted}; background: transparent;")
-        tone = _mix(look["bg"], look["text"], 0.08)
-        size = look["font"].pixelSize() if look["font"].pixelSize() > 0 else 12
-        for button in (self.layer_button, self.weight_button, self.linetype_button):
-            button.setStyleSheet(
-                f"QPushButton {{ color: {look['text']}; font-size: {size}px; background: {tone}; }} "
-                f"QPushButton:hover {{ background: {_mix(look['bg'], look['text'], 0.16)}; }}")
         self._look = look
         self.sync()
         self.place()
@@ -654,7 +638,7 @@ class CadChrome:
             button.set_on(ctl.mode_on(name))
         running = ctl.command.NAME if ctl.command is not None else None
         for name, button in self.buttons.items():
-            button.set_on(name == running)
+            button.set_on(self._properties_open if name == "cad_properties" else name == running)
         self.prompt_label.setText(ctl.prompt_line())
         shown = ctl.buffer.replace("\n", " ¶ ") if ctl.text_prompt() else ctl.buffer
         if self.input.text() != shown and not self.input.hasFocus():
@@ -668,7 +652,7 @@ class CadChrome:
         self.hint_label.setText(hint)
         self._sync_history()
         self._sync_properties_buttons()
-        self.place()
+        self._layout_panels()
 
     def _sync_history(self):
         from settings_store import M
@@ -779,7 +763,18 @@ class CadChrome:
         menu.addAction("Propriétés…").triggered.connect(self.show_properties)
         menu.addAction("Calques…").triggered.connect(self.open_layers)
         menu.addAction("Accrochages et suivi…").triggered.connect(self.open_snap_settings)
+        menu.addSeparator()
+        menu.addMenu(self.photoshop_menu(menu))
         menu.popup(global_pos)
+
+    def photoshop_menu(self, parent):
+        """Envoi vers Photoshop (cad_photoshop) : la selection, sinon tout le dessin."""
+        sub = _menu(parent, "cad_photoshop")
+        sub.setTitle("Photoshop")
+        for label, action in (("Ouvrir dans Photoshop", "open"), ("Enregistrer en PNG / PSD…", "save"),
+                              ("Exporter en vectoriel (PDF / SVG)…", "vector")):
+            sub.addAction(label).triggered.connect(lambda _c=False, a=action: self.ctl.photoshop(a))
+        return sub
 
     def layer_menu(self, anchor):
         ctl = self.ctl
@@ -1000,7 +995,7 @@ class CadChrome:
         import settings_window_v2 as v2
         precision = next(s for s in v2.CATALOG["CAD : Affichage"] if s.key == "board_cad_precision")
         return (list(v2.CATALOG["CAD : Unités"]) + [precision] + list(v2.CATALOG["CAD : Réticule"])
-                + list(v2.CATALOG["MRO : Grille"]))
+                + list(v2.CATALOG["Board : Grille"]))
 
     def drawing_rows(self) -> list:
         """Lignes de la fenetre : (libelle, champ, lecteur, interrupteur). Les reglages remplacables ont leur
@@ -1250,11 +1245,26 @@ class PropertyRows:
             geometry = single.geometry()
             names = {"cad_arc": "Arc", "cad_circle": "Cercle", "cad_pline": "Polyligne", "cad_dim": "Cotation",
                      "cad_hatch": "Hachures",
-                     "cad_text": "Texte multiligne" if single.data.get("mtext") else "Texte"}
+                     "cad_text": "Texte multiligne" if single.data.get("mtext") else "Texte", "cad_point": "Point",
+                     "cad_insert": "Référence de bloc", "cad_image": "Image", "cad_xline": "Ligne de construction",
+                     "cad_ray": "Demi-droite"}
+            if single.kind == "cad_hatch" and single.data.get("hatch_pattern") == "wipeout":
+                names["cad_hatch"] = "Masque"
             out.append(("kind", "Objet", "value", names.get(single.kind, single.kind), None))
+            if single.kind == "cad_image":
+                from . import cad_image
+                s = cad_image.style_of(single.data)
+                w, h = cad_image.size(single.data)
+                out.append(("image_path", "Fichier", "value", s["path"] or "?", None))
+                out.append(("image_size", f"Taille ({symbol})", "value",
+                            f"{ctl.fmt(w)} x {ctl.fmt(h)}", None))
+                out.append(("image_found", "Image trouvée", "value",
+                            "oui" if single._fill is not None and single._fill._image is not None else "non (cadre seul)",
+                            None))
             if single.kind in ("cad_arc", "cad_circle"):
                 out.append(("center", f"Centre ({symbol})", "value", ctl.fmt_point(geometry["center"]), None))
-                out.append(("radius", f"Rayon ({symbol})", "value", ctl.fmt(geometry["radius"]), None))
+                # Modifiable (demande, 2026-11-05) : une etape d'annulation, les cotes associatives suivent.
+                out.append(("radius", f"Rayon ({symbol})", "text", ctl.fmt(geometry["radius"]), f"en {symbol}"))
             if single.kind == "cad_arc":
                 out.append(("angles", "Angles de départ / fin", "value",
                             f"{cad_input.format_angle(geometry['start'], 2)} / {cad_input.format_angle(geometry['end'], 2)}",
@@ -1262,16 +1272,47 @@ class PropertyRows:
             if single.kind == "cad_hatch":
                 style = cad_hatch.style_of(single.data)
                 labels = tuple(cad_commands.HATCH_PATTERN_LABELS.values())
-                out.append(("hatch_pattern", "Motif", "select", cad_commands.HATCH_PATTERN_LABELS[style["pattern"]], labels))
+                current = cad_commands.hatch_pattern_label(style)
+                if style["pattern"] == cad_hatch.DXF:            # motif d'AutoCAD importe : propose en premier
+                    labels = (current,) + labels
+                out.append(("hatch_pattern", "Motif", "select", current, labels))
                 out.append(("hatch_angle", "Angle du motif (°)", "text", f"{style['angle']:g}", "degrés"))
                 out.append(("hatch_spacing", f"Espacement ({symbol})", "text", ctl.fmt(style["spacing"]),
                             f"en {symbol}"))
+                out.append(("hatch_alpha", "Opacité du plein", "slider", int(round(style["alpha"])),
+                            style["pattern"] in ("solid", cad_hatch.GRADIENT)))
+                if style["pattern"] == cad_hatch.GRADIENT:
+                    out.append(("hatch_gradient", "Forme du dégradé", "select",
+                                cad_hatch.GRADIENT_LABELS[style["gradient"]], tuple(cad_hatch.GRADIENT_LABELS.values())))
+                    out.append(("hatch_color2", "Seconde couleur (#rrggbb)", "text", style["color2"],
+                                "la première est la couleur de l'objet"))
                 out.append(("contours", "Contours", "value", f"{len(single.data.get('loops') or [])}", None))
+            if single.kind == "cad_insert":
+                s = single.data
+                out.append(("block_name", "Bloc", "value", str(s.get("block") or "?"), None))
+                out.append(("block_scale", "Échelle", "value", f"{float(s.get('scale', 1.0)):g}"
+                            + (" (miroir)" if s.get("mirror") else ""), None))
+                out.append(("block_rot", "Rotation", "value", f"{float(s.get('rot', 0.0)):g}°", None))
+                out.append(("block_count", "Objets du bloc", "value", str(single.block_parts()["count"]), None))
+                definition = cad_block.blocks(ctl.cad_page()).get(str(s.get("block") or ""))
+                if (definition or {}).get("dynamic"):
+                    out.append(("block_dynamic", "Bloc dynamique", "value", str(definition["dynamic"]), None))
+                names = tuple(cad_block.states(definition))
+                if names:
+                    out.append(("block_state", "État de visibilité", "select",
+                                cad_block.state_of(definition, s), names))
+                for attdef in cad_attrib.asked(definition):
+                    out.append((f"attr|{attdef['tag']}", f"{attdef['prompt']} ({attdef['tag']})", "text",
+                                cad_attrib.value_of(attdef, s), "valeur de l'attribut"))
             if single.kind == "cad_dim":
                 kinds = {"linear": "linéaire", "aligned": "alignée", "radius": "de rayon", "diameter": "de diamètre",
                          "angular": "angulaire"}
                 out.append(("dimtype", "Type de cotation", "value", kinds.get(single.data.get("dim_type"), "?"), None))
                 out.append(("dimvalue", "Texte affiché", "value", single.measured_text(), None))
+                links = single.data.get("assoc") or {}
+                count = len([k for k in ("p1", "p2", "circle") if links.get(k)])
+                out.append(("dimassoc", "Associative", "value",
+                            "oui (suit l'objet coté)" if count else "non", None))
                 out.append(("dim_str", "Texte imposé (« <> » = valeur mesurée)", "text",
                             str(single.data.get("dim_str") or ""), "Vide = la valeur mesurée."))
             if single.kind == "cad_text":
@@ -1316,11 +1357,12 @@ class PropertyRows:
         handlers = {"layer": self._set_layer, "linetype": self._set_linetype, "weight": self._set_weight,
                     "ltscale": self._set_ltscale, "dim_str": self._set_dim_text,
                     "hatch_pattern": self._set_hatch_pattern, "hatch_angle": self._set_hatch_angle,
-                    "hatch_spacing": self._set_hatch_spacing,
+                    "hatch_spacing": self._set_hatch_spacing, "radius": self._set_radius,
                     "text_value": self._set_text_value, "text_height": self._set_text_height,
                     "text_rot": self._set_text_rot, "text_justify": self._set_text_justify,
                     "text_font": self._set_text_font, "text_width": self._set_text_width,
-                    "text_spacing": self._set_text_spacing}
+                    "text_spacing": self._set_text_spacing, "block_state": self._set_block_state,
+                    "hatch_gradient": self._set_hatch_gradient, "hatch_color2": self._set_hatch_color2}
         for key, label, kind, value, extra in specs:
             if kind == "select":
                 if key.endswith(":style"):
@@ -1329,7 +1371,9 @@ class PropertyRows:
                     handler = handlers[key]
                 cell = self._select(list(extra), value, handler, key)
             elif kind == "text":
-                if ":" in key:
+                if key.startswith("attr|"):
+                    handler = (lambda t, tag=key[5:]: self._set_attrib(tag, t))
+                elif ":" in key:
                     end, axis = key.split(":")
                     handler = (lambda t, k=end, a=0 if axis == "x" else 1: self._set_coord(k, a, t))
                 else:
@@ -1339,6 +1383,8 @@ class PropertyRows:
                 cell = self._color_cell(value, extra, key)
             elif kind == "radius":
                 cell = self._radius(value, extra, key.split(":")[0], key)
+            elif kind == "slider":
+                cell = self._hatch_alpha(value, extra, key)
             elif kind == "bool":
                 cell = self._toggle(value, extra, key, self._set_distribute if key == "distribute" else self._set_resize)
             else:
@@ -1516,6 +1562,30 @@ class PropertyRows:
             item.data[key] = end
         self.ctl.scene.live_change(f"cad-radius-{key}", items, change, END_TITLES[key] + " : border radius")
 
+    def _hatch_alpha(self, value, enabled, key):
+        """Opacite du remplissage plein (demande de l'utilisateur) : en direct a chaque cran, une etape par geste ;
+        grise tant que le motif n'est pas « Plein »."""
+        from settings_widgets import _SliderField
+        field = _SliderField(0, 100, int(value), unit="%", slider_width=100, box_width=58)
+        field.setEnabled(bool(enabled))
+        field.setToolTip("Opacité du remplissage plein : 0 % = invisible, 100 % = opaque")
+        field.valueChanged.connect(self._live_hatch_alpha)
+
+        def update(new, on):
+            field.setEnabled(bool(on))
+            if field.value() != int(new) and not (QApplication.mouseButtons() & Qt.LeftButton):
+                field.blockSignals(True)
+                field.setValue(int(new))
+                field.blockSignals(False)
+        self.updaters[key] = update
+        return (field, "left", "center")
+
+    def _live_hatch_alpha(self, value):
+        items = self.ctl.editable(self._hatches())
+        if items:
+            self.ctl.scene.live_change("cad-hatch-alpha", items, lambda item: item.data.update(hatch_alpha=float(value)),
+                                       "Opacité des hachures")
+
     # -- application (une etape d'annulation chacune) --
     def _apply_current(self, mutate, text):
         cad = cad_model.copy_cad(self.ctl.cad_page())
@@ -1589,6 +1659,17 @@ class PropertyRows:
             return
         self.ctl.change_entities(self._hatches(), {"hatch_spacing": value * self.ctl.unit()}, "Espacement des hachures")
 
+    def _set_radius(self, text):
+        """Rayon du cercle (ou de l'arc) selectionne, saisi dans l'unite affichee."""
+        value = cad_input.parse_number(text)
+        items = [i for i in self.ctl.editable(self.ctl.selection()) if i.kind in ("cad_circle", "cad_arc")]
+        if value is None or value <= 0:
+            self.ctl.message(f"Rayon « {text} » invalide (nombre > 0).", error=True)
+            self.chrome._rebuild_properties()
+            return
+        if items:
+            self.ctl.set_geometry([(i, {"radius": value * self.ctl.unit()}) for i in items], "Rayon")
+
     def _texts(self):
         return [i for i in self.ctl.selection() if i.kind == "cad_text"]
 
@@ -1637,6 +1718,41 @@ class PropertyRows:
         value = self._text_number(text, "Interligne")
         if value is not None:
             self.ctl.change_entities(self._texts(), {"spacing": value / 100.0}, "Interligne du texte")
+
+    def _set_hatch_gradient(self, label):
+        keys = {v: k for k, v in cad_hatch.GRADIENT_LABELS.items()}
+        if self._hatches() and label in keys:
+            self.ctl.change_entities(self._hatches(), {"hatch_gradient": keys[label]}, "Forme du dégradé")
+
+    def _set_hatch_color2(self, text):
+        value = str(text).strip().lower()
+        if not value.startswith("#"):
+            value = "#" + value
+        try:
+            ok = len(value) in (7, 9) and int(value[1:], 16) >= 0
+        except ValueError:
+            ok = False
+        if not ok:
+            self.ctl.message(f"Couleur « {text} » invalide (#rrggbb).", error=True)
+            self.chrome._rebuild_properties()
+            return
+        if self._hatches():
+            self.ctl.change_entities(self._hatches(), {"hatch_color2": value}, "Seconde couleur du dégradé")
+
+    def _refs(self):
+        return [i for i in self.ctl.selection() if i.kind == "cad_insert"]
+
+    def _set_block_state(self, name):
+        items = self._refs()
+        if items:
+            self.ctl.change_entities(items, {"state": str(name)}, "État de visibilité")
+
+    def _set_attrib(self, tag, text):
+        items = self._refs()
+        if len(items) == 1:
+            values = dict(cad_attrib.clean_attribs(items[0].data.get("attribs")))
+            values[tag] = str(text)
+            self.ctl.change_entities(items, {"attribs": values}, f"Attribut {tag}")
 
     def _set_dim_text(self, text):
         items = [i for i in self.ctl.selection() if i.kind == "cad_dim"]

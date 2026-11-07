@@ -65,6 +65,19 @@ class ColorAlphaTest(unittest.TestCase):
         self.assertEqual(row.control.findChild(_SliderField).value() if not isinstance(row.control, _SliderField)
                          else row.control.value(), 60)
 
+    def test_menu_marks_the_current_color_until_another_is_chosen(self):
+        other = sorted(app_style.SEMANTIC_COLOR_SLOTS, key=lambda t: t[2])[-1]       # pas la 1re de la liste
+        field = _CompactAppOrCustomColorField(f"@{other[0]}/40", {REAL: "#204060"})
+        shown = []
+        original = sm.Menu.exec
+        sm.Menu.exec = lambda menu, *a, **k: shown.append(menu)
+        try:
+            field._open_menu()
+        finally:
+            sm.Menu.exec = original
+        marked = [a.text() for a in shown[0].actions() if a.property("ctxCurrent")]
+        self.assertEqual(marked, [other[2]])                  # seule la couleur en cours, marque permanente
+
 
 if __name__ == "__main__":
     unittest.main()

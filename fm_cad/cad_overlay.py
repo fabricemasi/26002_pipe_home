@@ -354,6 +354,9 @@ class CadOverlay(QWidget):
         self.backdrop, self._origin = found
         self._fresh = True
         self.setAttribute(Qt.WA_OpaquePaintEvent, True)
+        refresh = getattr(self.ctl, "negative_refresh", None)
+        if refresh is not None:
+            refresh()                                   # reticule en negatif : motif de la nouvelle image
 
     def _window_image(self, shown: QRect):
         """(image de la partie VISIBLE du viewport, son coin dans le widget) lue dans la memoire de la
@@ -753,6 +756,24 @@ class CadOverlay(QWidget):
             painter.fillRect(QRectF(x * unit, y * unit, w * unit, h * unit), ink)
         painter.setRenderHint(QPainter.Antialiasing, True)
 
+    def _paint_cursor_pixels(self, painter, rects, color):
+        """Reticule peint : pixels en NEGATIF sur les zones de sa couleur (`cad_negative`, fond = `backdrop`)."""
+        tol = int((getattr(self.ctl, "look", None) or {}).get("negative", 0) or 0)
+        if not tol or self.backdrop is None:
+            self._paint_pixels(painter, rects, color)
+            return
+        from . import cad_negative
+        array = cad_negative.backdrop_array(self.backdrop)
+        ratio = self.devicePixelRatioF() or 1.0
+        origin = self._origin or QPoint(0, 0)
+        pieces = cad_negative.split(rects, color, tol, array, -math.floor(origin.x() * ratio),
+                                    -math.floor(origin.y() * ratio))
+        unit = 1.0 / ratio
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        for x, y, w, h, ink in pieces:
+            painter.fillRect(QRectF(x * unit, y * unit, w * unit, h * unit), ink)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
     def _centre_pixel(self, c: QPointF) -> tuple:
         ratio = self.devicePixelRatioF() or 1.0
         return math.floor(c.x() * ratio), math.floor(c.y() * ratio), ratio
@@ -763,21 +784,21 @@ class CadOverlay(QWidget):
             rects = crosshair_rects(cx, cy, round(reach * ratio), gap, box=False)     # `gap` : pixels physiques
         else:
             rects = crosshair_rects(cx, cy, round(reach * ratio), round(half * ratio))
-        self._paint_pixels(painter, rects, color)
+        self._paint_cursor_pixels(painter, rects, color)
 
     def _paint_cursor_h(self, painter, look, c, color, width, half=0):
         cx, cy, ratio = self._centre_pixel(c)
         end = math.ceil(width * ratio)
         gap = round(half * ratio)
         rects = [(0, cy, end, 1)] if gap <= 0 else [(0, cy, max(0, cx - gap), 1), (cx + gap + 1, cy, end, 1)]
-        self._paint_pixels(painter, rects, color)
+        self._paint_cursor_pixels(painter, rects, color)
 
     def _paint_cursor_v(self, painter, look, c, color, height, half=0):
         cx, cy, ratio = self._centre_pixel(c)
         end = math.ceil(height * ratio)
         gap = round(half * ratio)
         rects = [(cx, 0, 1, end)] if gap <= 0 else [(cx, 0, 1, max(0, cy - gap)), (cx, cy + gap + 1, 1, end)]
-        self._paint_pixels(painter, rects, color)
+        self._paint_cursor_pixels(painter, rects, color)
 
     def _paint_badge(self, painter, look, c, color, source):
         paint_memory_badge(painter, c.x() + 0.5, c.y() + 0.5, source, color)

@@ -934,13 +934,13 @@ class RowTextTarget(TextTarget):
         self.apply(None)
 
     def general(self, settings: dict) -> dict:
-        from browser_core import ROLE_IS_SHORTCUT, _resolve_shortcut_font_color
+        from browser_core import ROLE_IS_SHORTCUT, _resolve_shortcut_font
         delegate = self.view.itemDelegate()
         base_font = getattr(delegate, "type_font", getattr(delegate, "font_name", self.widget.font()))
         base_color = getattr(delegate, "type_color", getattr(delegate, "color_name", "#d6d9dc"))
         index = _row_index(self.view, self.path)
         if index is not None and index.data(ROLE_IS_SHORTCUT):
-            base_font, base_color = _resolve_shortcut_font_color()
+            base_font = _resolve_shortcut_font()
         size = _editable_font_size(base_font)
         out = dict(settings)
         out.update({"text_font_family": base_font.family(), "text_font_bold": base_font.weight() >= QFont.DemiBold,
@@ -1303,8 +1303,7 @@ class ToggleTarget(Target):
 
     def specs(self) -> list:
         import settings_window_v2 as v2
-        kind, frame, check = v2._toggle_specs(self.prefix)
-        return [*kind, *frame, *check]
+        return [spec for part in v2._toggle_specs(self.prefix) for spec in part]
 
     def apply(self, values):
         apply_toggle_look(self.widget, values, self.prefix)
@@ -1530,7 +1529,9 @@ def add_override_actions(widget: QWidget, menu: QMenu, space: dict | None = None
         if target.has_override():
             menu.addAction("Retirer l'override", lambda t=target: remove_override(t))
         return
-    sub = menu.addMenu("Override settings")
+    # Sous-menus PARENTES au menu : sans parent, PySide les detruisait avec leur objet Python (sous-menu vide).
+    sub = QMenu("Override settings", menu)
+    menu.addMenu(sub)
     scoped = [t for t in targets if getattr(t, "scope_label", None)]     # portees d'un tableau
     others = [t for t in targets if t not in scoped]
 
@@ -1548,7 +1549,10 @@ def add_override_actions(widget: QWidget, menu: QMenu, space: dict | None = None
     fill(sub, others, False)
     if scoped:
         table = scoped[-1]
-        into = sub.addMenu(f"Tableau {table.label}") if others else sub
+        into = sub
+        if others:
+            into = QMenu(f"Tableau {table.label}", sub)
+            sub.addMenu(into)
         fill(into, scoped, True)
 
 

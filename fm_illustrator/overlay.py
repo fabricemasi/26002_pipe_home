@@ -12,13 +12,14 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QGraphicsItem
 
+from fm_board import snap_guides
+
 from . import bezier as bz, model
 from . import tools as _tools                       # tailles lues à chaque usage (réglages : look.push)
 from .tools import box_handles, visible_handles
 
 OVERLAY_Z = 1e8
 ANCHOR_SIDE = 5.0               # côté d'un point d'ancrage (pixels) ; réglable (look.push)
-GUIDE_COLOR = "#ff2fd0"         # repères commentés (réglable)
 MAX_ANCHORS = 6000
 
 
@@ -146,10 +147,8 @@ class IllOverlay(QGraphicsItem):
             painter.drawRect(ctl.marquee)
         if ctl.preview is not None:
             self._paint_preview(painter, z, accent)
-        if ctl.guides:                                  # repères commentés : magenta (comme Illustrator)
-            painter.setPen(QPen(QColor(GUIDE_COLOR), 1.0 / z))
-            for line in ctl.guides:
-                painter.drawLine(line)
+        if ctl.guides:                  # repères commentés : Réglages > Module MRO > Magnétisme (par sorte)
+            snap_guides.draw(painter, ctl.guides)
         origin = self._origin()
         if origin is not None:                          # point d'origine des outils Rotation / Échelle / Symétrie
             r = 6.0 / z

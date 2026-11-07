@@ -298,6 +298,7 @@ class CopyCommand(MoveCommand):
     NAME = "COPY"
     LABEL = "Copier"
     COPY = True
+    CROSS_ONLY = True       # curseur : le reticule SANS son carre central, toute la commande (demande, 2026-11-05)
 
 
 # ==========================================================================
@@ -1612,6 +1613,7 @@ class _DimCommand(Command):
     def _make(self, pos):
         item = self.ctx.create_entity("cad_dim", self._entity(pos))
         self.ctx.commit_created([item], self.TEXT)
+        self.ctx.tool_memory["last_dim"] = item.item_id          # COTATION CONTINUE / DE LIGNE DE BASE
         self.finish()
 
     def ghosts(self, p):
@@ -1645,6 +1647,7 @@ class DimLinearCommand(_DimCommand):
         self.picking = False
         self.force = None                   # None (auto) | angle de mesure impose
         self.asking_angle = False
+        self.assoc = {}                     # liens aux objets cotes (cotation associative, `cad_assoc`)
 
     def ready(self):
         return self.p1 is not None and self.p2 is not None and not self.asking_angle
@@ -1667,13 +1670,21 @@ class DimLinearCommand(_DimCommand):
         p = (float(p[0]), float(p[1]))
         if self.p1 is None:
             self.p1 = p
+            self._link("p1", self.ctx.snap_link(p))
         elif self.p2 is None:
             if geo.distance(self.p1, p) <= geo.EPS:
                 self.ctx.message("Les deux origines sont identiques.", error=True)
                 return
             self.p2 = p
+            self._link("p2", self.ctx.snap_link(p))
         else:
             self._make(p)
+
+    def _link(self, key, link):
+        if link is not None:
+            self.assoc[key] = link
+        else:
+            self.assoc.pop(key, None)
 
     def picked(self, items):
         if self.p1 is not None or not items:
@@ -1687,6 +1698,8 @@ class DimLinearCommand(_DimCommand):
             self.ctx.message("Objet sans longueur à coter.", error=True)
             return
         self.p1, self.p2 = a, b
+        self._link("p1", self.ctx.link_to(item, a))
+        self._link("p2", self.ctx.link_to(item, b))
         self.picking = False
 
     def keyword(self, key):
@@ -1713,7 +1726,7 @@ class DimLinearCommand(_DimCommand):
         self.finish()
 
     def data(self, pos) -> dict:
-        out = {"p1": list(self.p1), "p2": list(self.p2)}
+        out = {"p1": list(self.p1), "p2": list(self.p2), "assoc": {k: list(v) for k, v in self.assoc.items()}}
         if not self.ALIGNED:
             out["rot"] = self.force if self.force is not None else _auto_rotation(self.p1, self.p2, pos)
         return out
@@ -1764,13 +1777,14 @@ class _DimCircleCommand(_DimCommand):
         else:
             direction = (1.0, 0.0)
         self.point_on = geo.add(self.center, geo.mul(direction, self.radius))
+        self.link = [item.item_id, self.center[0], self.center[1], self.radius]
 
     def point(self, p):
         if self.center is not None:
             self._make((float(p[0]), float(p[1])))
 
     def data(self, pos) -> dict:
-        return {"p1": list(self.center), "p2": list(self.point_on)}
+        return {"p1": list(self.center), "p2": list(self.point_on), "assoc": {"circle": list(self.link)}}
 
 
 class DimRadiusCommand(_DimCircleCommand):
@@ -1800,6 +1814,7 @@ class DimAngularCommand(_DimCommand):
         self.vertex = self.p1 = self.p2 = None
         self.first_line = None              # (ligne, point cliqué)
         self.mode = "pick"                  # pick | vertex
+        self.assoc = {}                     # cotation associative (cad_assoc : lines / arc / poignees)
 
     def ready(self):
         return self.vertex is not None and self.p1 is not None and self.p2 is not None
@@ -1826,6 +1841,7 @@ class DimAngularCommand(_DimCommand):
             geometry = item.geometry()
             self.vertex = (float(geometry["center"][0]), float(geometry["center"][1]))
             self.p1, self.p2 = item.points()
+            self.assoc = {"arc": [item.item_id, self.vertex[0], self.vertex[1]]}
             return
         if item.kind != "cad_line":
             self.ctx.message("Choisissez une ligne ou un arc.", error=True)
@@ -1844,6 +1860,10 @@ class DimAngularCommand(_DimCommand):
         self.vertex = (float(vertex[0]), float(vertex[1]))
         self.p1 = (float(self.first_line[1][0]), float(self.first_line[1][1]))
         self.p2 = (float(click[0]), float(click[1]))
+        from . import cad_assoc
+        first = self.first_line[0]
+        self.assoc = {"lines": [first.item_id, cad_assoc.fraction(a, b, self.p1), item.item_id,
+                                cad_assoc.fraction(c, d, self.p2), self.vertex[0], self.vertex[1]]}
 
     def enter(self):
         if self.mode == "pick" and self.first_line is None and self.vertex is None:
@@ -1857,13 +1877,22 @@ class DimAngularCommand(_DimCommand):
             self._make(p)
         elif self.mode == "vertex" and self.vertex is None:
             self.vertex = p
+            self._link("center", p)
         elif self.mode == "vertex" and self.p1 is None:
             self.p1 = p
+            self._link("p1", p)
         elif self.mode == "vertex" and self.p2 is None:
             self.p2 = p
+            self._link("p2", p)
+
+    def _link(self, key, p):
+        link = self.ctx.snap_link(p)
+        if link is not None:
+            self.assoc[key] = link
 
     def data(self, pos) -> dict:
-        return {"center": list(self.vertex), "p1": list(self.p1), "p2": list(self.p2)}
+        return {"center": list(self.vertex), "p1": list(self.p1), "p2": list(self.p2),
+                "assoc": {k: list(v) for k, v in self.assoc.items()}}
 
     def preview(self, p):
         if self.mode == "vertex" and self.vertex is not None and not self.ready():
@@ -1875,14 +1904,22 @@ class DimAngularCommand(_DimCommand):
 # HACHURES (HATCH) — voir cad_hatch
 # ==========================================================================
 
-HATCH_PATTERN_LABELS = {"solid": "Plein", "lines": "Lignes", "cross": "Croisé", "brick": "Briques"}
+HATCH_PATTERN_LABELS = {"solid": "Plein", "lines": "Lignes", "cross": "Croisé", "brick": "Briques",
+                        "wipeout": "Masque (couleur du fond)", "gradient": "Dégradé"}
+
+
+def hatch_pattern_label(style: dict) -> str:
+    """Nom du motif affiche (panneau Proprietes) ; motif d'AutoCAD importe : « AutoCAD : ANSI31 »."""
+    if style["pattern"] == cad_hatch.DXF:
+        return f"AutoCAD : {style['name'] or 'motif'}"
+    return HATCH_PATTERN_LABELS[style["pattern"]]
 
 
 def _object_loops(items, tol: float) -> list:
     """Contours fermes des objets choisis : cercle et polyligne fermee tels quels, traits ouverts mis bout a bout."""
     loops, loose = [], []
     for item in items:
-        if item.kind in ("cad_hatch", "cad_dim", "cad_text"):
+        if item.kind in ("cad_hatch", "cad_dim", "cad_text", "cad_point", "cad_image"):
             continue
         pieces = cad_shapes.tessellate(item.prims(), tol)
         if item.closed():
@@ -1993,7 +2030,7 @@ class HatchCommand(Command):
         if self.mode != "objects":
             return
         for item in items:
-            if item.kind not in ("cad_hatch", "cad_dim", "cad_text") and item not in self.chosen:
+            if item.kind not in ("cad_hatch", "cad_dim", "cad_text", "cad_point", "cad_image") and item not in self.chosen:
                 self.chosen.append(item)
         self.ctx.highlight(self.chosen)
         self.ctx.message(f"{len(self.chosen)} objet(s) choisi(s) : Entrée pour hachurer.")
@@ -2165,10 +2202,14 @@ class TrimCommand(Command):
         else:
             self.enter()
 
+    def _wants_extend(self, shift: bool) -> bool:
+        """Ce clic prolonge (AJUSTER : avec Maj ; PROLONGER, `cad_commands_more.ExtendCommand` : sans Maj)."""
+        return shift
+
     # ------------------------------------------------------------------ aretes de coupe
     @staticmethod
     def _can_cut(item) -> bool:
-        return not getattr(item, "AREA", False) and item.kind not in ("cad_dim", "cad_text")
+        return not getattr(item, "AREA", False) and item.kind not in ("cad_dim", "cad_text", "cad_point")
 
     def _cutter_items(self, target, rect=None) -> list:
         """Aretes de coupe pour `target` ; `rect` (document) : seulement celles qui le touchent (aretes non
@@ -2216,10 +2257,10 @@ class TrimCommand(Command):
         if item.locked():
             self.ctx.message("Objet verrouillé.", error=True)
             return
-        if getattr(self.ctx, "last_pick_shift", False):
+        if self._wants_extend(getattr(self.ctx, "last_pick_shift", False)):
             self._extend(item, point)
             return
-        if item.kind not in TRIMMABLE:
+        if item.kind not in TRIMMABLE + ("cad_xline", "cad_ray"):
             self.ctx.message("On ne peut ajuster que des lignes, arcs, cercles et polylignes.", error=True)
             return
         result = cad_trim.trim_points(item.kind, item.to_dict(), self._cutter_prims(item), [point],
@@ -2257,7 +2298,11 @@ class TrimCommand(Command):
             if result.get("delete"):
                 deleted.append(item)
                 continue
-            entities = [cad_shapes.prims_to_entity(piece, False) for piece in result["pieces"]]
+            if item.kind in ("cad_xline", "cad_ray"):          # droite ajustee : demi-droite(s) ou ligne
+                from . import cad_xline
+                entities = [cad_xline.piece_entity(item.kind, item.to_dict(), piece) for piece in result["pieces"]]
+            else:
+                entities = [cad_shapes.prims_to_entity(piece, False) for piece in result["pieces"]]
             kept = False
             for index, (kind, geometry) in enumerate(entities):
                 if index == 0 and kind == item.kind:
@@ -2280,7 +2325,8 @@ class TrimCommand(Command):
     # ------------------------------------------------------------------ trajets (clôture, main levée, capture)
     def _candidates(self, a, b) -> list:
         rect = (min(a[0], b[0]), min(a[1], b[1]), max(a[0], b[0]), max(a[1], b[1]))
-        return [i for i in self.ctx._source(rect) if i.kind in TRIMMABLE and not i.locked()]
+        return [i for i in self.ctx._source(rect) if i.kind in TRIMMABLE + ("cad_xline", "cad_ray")
+                and not i.locked()]
 
     def _path_targets(self, path) -> dict:
         """{objet: [points ou le trajet le croise]}."""
@@ -2395,7 +2441,7 @@ class TrimCommand(Command):
         if self.cutters is None or self.step is not None or item is None or cursor is None:
             return []
         tol = self.ctx.tess_tol()
-        if getattr(self.ctx, "shift_held", lambda: False)():
+        if self._wants_extend(getattr(self.ctx, "shift_held", lambda: False)()):
             result = cad_trim.extend(item.kind, item.to_dict(), self._cutter_prims(item, local=False), cursor,
                                      self.extend_edges)
             if isinstance(result, str):
@@ -2831,6 +2877,11 @@ def exploded(item) -> list | None:
             out.append((kind, {**geometry, **props, "lineweight": 0.0}, None))
         out.append(("cad_text", {**cad_text.from_dim(found), **props}, None))
         return out
+    if item.kind == "cad_insert":                      # reference de bloc : ses entites (un niveau)
+        from . import cad_model
+        from .cad_commands_blocks import exploded_insert
+        scene = item.scene()
+        return exploded_insert(item, cad_model.page_cad(scene.page)) if scene is not None else None
     return None
 
 
@@ -2855,7 +2906,7 @@ class ExplodeCommand(_SelectingCommand):
             made = self.ctx.apply_edit([], created, "Décomposer", deleted=gone)
             self.ctx.message(f"Décomposer : {len(gone)} objet(s) en {len(made)} objet(s).")
         if skipped:
-            self.ctx.message(f"{skipped} objet(s) ne se décompose(nt) pas (seulement polylignes et cotations).",
+            self.ctx.message(f"{skipped} objet(s) ne se décompose(nt) pas (polylignes, cotations et blocs).",
                              error=not gone)
         self.finish()
 
@@ -2911,6 +2962,12 @@ REGISTRY: list[Entry] = [
     Entry("DXFOUT", "Exporter les lignes CAD en DXF", ("EXPORTDXF", "DXF"), _immediate("export_file", ".dxf")),
     Entry("DWGOUT", "Exporter les lignes CAD en DWG (ODA File Converter)", ("EXPORTDWG", "DWG"),
           _immediate("export_file", ".dwg")),
+    Entry("PHOTOSHOP", "Ouvrir la sélection dans Photoshop (PNG transparent)", ("PS", "PSOUT", "ENVOYERPS"),
+          _immediate("photoshop", "open")),
+    Entry("PNGOUT", "Enregistrer la sélection en PNG ou PSD", ("PSDOUT", "EXPORTPNG", "EXPORTPSD"),
+          _immediate("photoshop", "save")),
+    Entry("SVGOUT", "Exporter la sélection en vectoriel (PDF / SVG)", ("PDFOUT", "EXPORTPDF", "EXPORTSVG", "VECTEUR"),
+          _immediate("photoshop", "vector")),
     Entry("REGEN", "Régénérer l'affichage", ("RG", "REGENERER"), _immediate("regen")),
     Entry("REGENALL", "Régénérer l'affichage", ("REGNTOUT",), _immediate("regen")),
     Entry("HELP", "Liste des commandes", ("AIDE", "?"), _immediate("help")),
@@ -2945,6 +3002,17 @@ for _entry in REGISTRY:
     for _word in (_entry.name, *_entry.aliases):
         _BY_WORD.setdefault(_word.upper(), _entry)
 
+
+# Commandes dans des fichiers a part (`cad_commands.py` ne grossit plus) : phases 2 et 3 (ellipse, polygone,
+# prolonger…), mesure / cotations continues / repere / allonger / pedit / zoom, aligner / doublons / spline. Chacune
+# s'inscrit aussi elle-meme a la fin de son import (importee AVANT ce fichier, elle n'etait pas encore complete ici).
+import importlib as _importlib  # noqa: E402
+for _name in ("cad_commands_more", "cad_commands_extra", "cad_commands_tools", "cad_commands_blocks",
+              "cad_commands_attribs", "cad_commands_dynamic", "cad_commands_images", "cad_commands_xline",
+              "cad_commands_plot"):
+    _module = _importlib.import_module(f".{_name}", __package__)
+    if hasattr(_module, "register"):
+        _module.register(REGISTRY, Entry, _BY_WORD)
 
 USER_ALIASES: dict[str, Entry] = {}      # alias du fichier .pgp choisi (`cad_aliases.install`) : passent avant ceux d'origine
 

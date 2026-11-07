@@ -24,7 +24,7 @@ from PySide6.QtTest import QTest  # noqa: E402
 
 from _photoshop_case import APP, PsCase, settle  # noqa: E402
 from fm_board import serialization  # noqa: E402
-from fm_photoshop import compose as C, session as S  # noqa: E402
+from fm_photoshop import compose as C, look, session as S  # noqa: E402
 from fm_photoshop.board_item import PsItem  # noqa: E402
 
 
@@ -140,6 +140,78 @@ class BoardPathTest(PsCase):
         QTest.mouseRelease(view.viewport(), Qt.LeftButton, Qt.ControlModifier, p0 + QPoint(90, 50))
         settle()
         self.assertNotEqual(a.pos(), start)
+
+    def _open_new_dialog(self, choose):
+        """Clique « Nouveau document… » (vrai chemin) ; `choose(dialog)` agit sur la fenêtre avant de l'accepter."""
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QApplication
+        from fm_photoshop.board_ui import NewDocumentDialog
+        if self.pane.module != "photoshop":
+            self.pane._modulebar.rows["photoshop"].icon.click()
+        settle()
+        seen = []
+
+        def fill():
+            for widget in QApplication.topLevelWidgets():
+                if isinstance(widget, NewDocumentDialog) and widget.isVisible():
+                    seen.append([widget.preset.itemText(i) for i in range(widget.preset.count())])
+                    self.dialog_start = (widget.preset.currentIndex(), widget.width_box.value(), widget.height_box.value())
+                    choose(widget)
+                    widget.accept()
+        QTimer.singleShot(50, fill)
+        self.pane.photoshop.buttons["new"].click()
+        settle()
+        return seen[0]
+
+    def test_new_document_offers_the_clipboard_image_size(self):
+        from PySide6.QtGui import QColor, QGuiApplication, QImage
+        clipboard = QGuiApplication.clipboard()
+        clipboard.clear()
+        try:
+            # presse-papiers sans image : aucune entrée, les formats gardent leur ordre
+            before = len([i for i in self.pane.scene.board_items() if isinstance(i, PsItem)])
+            labels = self._open_new_dialog(lambda d: d.preset.setCurrentIndex(1))
+            self.assertFalse(any(label.startswith("Presse-papiers") for label in labels), labels)
+            self.assertEqual(labels[:2], ["Personnalisé", "Web 1920 × 1080"])
+            self.assertEqual(self.dialog_start, (0, 1280, 720))          # sans image : « Personnalisé » et les valeurs par défaut
+            items = [i for i in self.pane.scene.board_items() if isinstance(i, PsItem)]
+            self.assertEqual(len(items), before + 1)
+            self.assertEqual((items[-1].session.doc.width, items[-1].session.doc.height), (1920, 1080))
+            # image dans le presse-papiers : sa taille est proposée juste après « Personnalisé », PRÉSÉLECTIONNÉE (dimensions déjà
+            # reprises à l'ouverture), et crée un document de cette taille
+            image = QImage(37, 21, QImage.Format_RGBA8888)
+            image.fill(QColor(10, 20, 30))
+            clipboard.setImage(image)
+            labels = self._open_new_dialog(lambda d: d.dpi_box.setValue(150))
+            self.assertEqual(labels[:3], ["Personnalisé", "Presse-papiers 37 × 21", "Web 1920 × 1080"])
+            self.assertEqual(self.dialog_start, (1, 37, 21))
+            items = [i for i in self.pane.scene.board_items() if isinstance(i, PsItem)]
+            self.assertEqual(len(items), before + 2)
+            doc = items[-1].session.doc
+            self.assertEqual((doc.width, doc.height), (37, 21))
+            self.assertEqual(doc.dpi, 150)                  # la résolution du champ n'est pas écrasée par la taille du presse-papiers
+            # réglage actif (défaut) : l'image est collée dans un calque au-dessus du fond, annulable
+            session = items[-1].session
+            self.assertEqual([l.name for l in doc.layers][-1], "Calque collé")
+            self.assertEqual(len(doc.layers), 2)
+            self.assertEqual(session.layer().name, "Calque collé")
+            self.assertEqual(list(doc.layers[-1].pix.read((0, 0, 37, 21))[10, 20]), [10, 20, 30, 255])
+            session.undo()
+            self.assertEqual(len(doc.layers), 1)
+            # un format fixe placé après l'entrée du presse-papiers garde son propre choix (décalage d'index correct) et ne colle rien
+            self._open_new_dialog(lambda d: d.preset.setCurrentIndex(3))
+            items = [i for i in self.pane.scene.board_items() if isinstance(i, PsItem)]
+            self.assertEqual((items[-1].session.doc.width, items[-1].session.doc.height), (1080, 1080))
+            self.assertEqual(len(items[-1].session.doc.layers), 1)
+            # réglage coupé : la taille est reprise, mais aucune image n'est collée
+            self.pane.apply_settings({**self.pane._settings, "board_ps_new_paste_clipboard": False})
+            self._open_new_dialog(lambda d: None)
+            items = [i for i in self.pane.scene.board_items() if isinstance(i, PsItem)]
+            doc = items[-1].session.doc
+            self.assertEqual((doc.width, doc.height, len(doc.layers)), (37, 21, 1))
+        finally:
+            clipboard.clear()
+            look.apply_settings(None)                       # LOOK est global : défauts pour les tests suivants
 
     def test_missing_asset_is_reported_and_never_overwritten(self):
         item = self.create_via_ui(30, 30, "Perdu")

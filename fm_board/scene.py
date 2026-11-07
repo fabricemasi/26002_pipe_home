@@ -11,7 +11,9 @@ par image, pas de scintillement pendant le deplacement).
 
 MAGNETISME (Reglages > Module MRO, `snap` ; Alt tenu = sans) : bords et centres des elements visibles, grille (le
 niveau de grille le plus fin affiche), en deplacement comme en redimensionnement ; seuil en pixels d'ecran
-(meme effet a tout zoom) ; guides magenta le long des alignements."""
+(meme effet a tout zoom) ; guides le long des alignements, chacun avec sa SORTE (`snap_guides`) : « objets internes
+aux documents » quand il ne longe QUE des objets internes a un document (traces d'Illustrator, elements d'une page
+de Design : `snap_inner()` vrai), « bords des documents » sinon (un bord de document l'emporte)."""
 from __future__ import annotations
 
 import copy
@@ -23,15 +25,17 @@ import time
 
 from PySide6.QtCore import QLineF, QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QImage, QPaintEngine, QPainter, QPen, QPixmap, QTransform, QUndoStack
-from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene
+from PySide6.QtWidgets import QGraphicsColorizeEffect, QGraphicsItem, QGraphicsScene
 
 from fm_cad import cad_items, cad_model  # noqa: F401 - cad_items : enregistre le type « cad_line »
 from fm_design import items as design_items  # noqa: F401 - enregistre les types du module Design
 from fm_tableur import board_item as tableur_items  # noqa: F401 - enregistre le type « sheet » du module Tableur
 from fm_illustrator import items as ill_items  # noqa: F401 - enregistre les types du module Illustrator
 from fm_photoshop import board_item as ps_item  # noqa: F401 - enregistre le type du module Photoshop
-from . import model, serialization
-from fm_cad.cad_items import FADE_OPACITY, unit_of
+from fm_pdf import board_item as pdf_item  # noqa: F401 - enregistre le type du module PDF
+from . import model, serialization, snap_guides
+from .snap_guides import GuideLine
+from fm_cad.cad_items import unit_of
 from .commands import StateCommand
 from fm_miro.items import BoardItem, CommentItem, ConnectorItem, FrameItem, InkItem, make_item
 
@@ -42,9 +46,43 @@ INDEX_MIN = 2000.0                      # demi-etendue minimale de l'index de la
 PAGE = "__page__"
 # Modules du board (selecteur du board, `BoardPane.set_module`) : leurs elements se grisent ou se masquent a part
 # (demande de l'utilisateur). Grise = visible en transparence, ni selectionnable ni modifiable.
-MODULES = ("miro", "cad", "design", "tableur", "illustrator", "photoshop")
+MODULES = ("miro", "cad", "design", "tableur", "illustrator", "photoshop", "pdf")
 CLIPBOARD_MIME = "application/x-pipeline-board"
 SNAP_DEFAULTS = {"enabled": True, "objects": True, "grid": False, "guides": True, "resize": True, "distance": 6}
+
+
+class _SnapRect(QRectF):
+    """Cadre d'un element vers lequel aimanter, avec sa sorte (`inner` : objet interne a un document)."""
+
+    def __init__(self, rect: QRectF, inner: bool):
+        super().__init__(rect)
+        self.inner = inner
+
+
+def _snap_target(item) -> _SnapRect:
+    inner = getattr(item, "snap_inner", None)
+    return _SnapRect(item.scene_rect(), bool(inner()) if inner is not None else False)
+
+
+def _near(others, value: float, axis: int) -> list:
+    """Cadres dont un bord ou le centre (axe 0 = x, 1 = y) tombe sur `value`."""
+    if axis == 0:
+        return [o for o in others if min(abs(o.left() - value), abs(o.center().x() - value), abs(o.right() - value)) < 0.5]
+    return [o for o in others if min(abs(o.top() - value), abs(o.center().y() - value), abs(o.bottom() - value)) < 0.5]
+
+
+def guide_kind(near) -> str:
+    """Sorte d'un guide qui longe les cadres `near` : « objets internes » s'ils le sont TOUS, « bords des documents »
+    sinon (rien d'aligne, la grille : bords)."""
+    return snap_guides.INNER if near and all(getattr(o, "inner", False) for o in near) else snap_guides.DOCUMENTS
+
+
+class _FadeEffect(QGraphicsColorizeEffect):
+    """Desaturation d'un element grise : niveaux de gris (teinte noire = rien d'ajoute), dosee par la force."""
+
+    def __init__(self):
+        super().__init__()
+        self.setColor(QColor(0, 0, 0))
 
 
 # Grille UNIQUE du board et du module CAD (Reglages > Module MRO > Grille, cles `board_grid_*`) : niveaux de pas
@@ -144,12 +182,14 @@ class BoardScene(QGraphicsScene):
         look = look or {}
         self.board_path = board_path
         self.zoom = 1.0
+        self.pad_zoom = 1.0                         # zoom par paliers des marges des elements (voir set_zoom)
         self.accent = look.get("accent", model.MIRO_ACCENT)
-        self.guide_color = QColor(look.get("guides", "#ff2fd0"))
         self.page = dict(model.PAGE_DEFAULTS)
         self.background = QColor(model.MIRO_BACKGROUND)
         self.show_resolved = False
         self.module_look = {module: {"fade": False, "hide": False} for module in MODULES}
+        # Etat choisi dans la barre des modules (masquer, griser, isoler) ; `module_look` = ce qui en resulte.
+        self.module_state = {module: {"fade": False, "hide": False, "solo": False} for module in MODULES}
         self.snap = dict(SNAP_DEFAULTS)
         self.exporting = False
         self.export_grid = False
@@ -166,6 +206,7 @@ class BoardScene(QGraphicsScene):
         self.commands: list[StateCommand] = []
         self._items: dict[str, BoardItem] = {}
         self._zoomers: list | None = None           # cadres et fleches (zone dependant du zoom), voir set_zoom
+        self._plain: list | None = None             # elements hors CAD (voir plain_items)
         self._foreign: list[dict] = []
         self._extra: dict = {}
         self._load_job: dict | None = None          # chargement par tranches en cours (load_data)
@@ -187,6 +228,13 @@ class BoardScene(QGraphicsScene):
 
     def board_items(self) -> list[BoardItem]:
         return list(self._items.values())
+
+    def plain_items(self) -> list[BoardItem]:
+        """Elements du board HORS CAD, gardes jusqu'au prochain ajout / retrait : le zoom (images gardees, marge des
+        elements) ne parcourt plus les dizaines de milliers d'entites d'un dessin CAD a chaque geste."""
+        if self._plain is None:
+            self._plain = [i for i in self._items.values() if not getattr(i, "CAD", False)]
+        return self._plain
 
     def fit_index(self, rect: QRectF):
         """Etendue de la scene = celle de son index spatial (arbre BSP de Qt, profondeur selon le nombre
@@ -213,13 +261,16 @@ class BoardScene(QGraphicsScene):
         self.addItem(item)
         self._items[item.item_id] = item
         self._zoomers = None
+        self._plain = None
         hook = getattr(item, "added_to_scene", None)      # module Design : element rattache a sa page
         if hook is not None:
             hook(self)
-        item.sync()
+        if not getattr(item, "SYNCED_ON_ADD", False):     # entites CAD : deja fait a l'entree dans la scene
+            item.sync()
         if self.module_styled(self.module_of(item)):
             self.apply_module_look(item)
-        self.fit_index(item.scene_rect())
+        if not getattr(item, "SYNCED_ON_ADD", False):     # entites CAD : leur `sync` a deja suivi l'emprise
+            self.fit_index(item.scene_rect())
         if isinstance(item, CommentItem):
             item.follow_target()
         return item
@@ -227,6 +278,7 @@ class BoardScene(QGraphicsScene):
     def _remove(self, item_id):
         item = self._items.pop(item_id, None)
         self._zoomers = None
+        self._plain = None
         if item is not None:
             if item.text_item is not None and item.text_item.editing():
                 item.text_item.stop()
@@ -392,16 +444,34 @@ class BoardScene(QGraphicsScene):
         l'ecran au dezoom). Un ancien seuil les cachait sous 18 % : mesure, 600 elements textes, 2400 x 1300 :
         deplacement identique (images gardees), zoom ~40 -> ~47 ms par cran — retire (bug signale)."""
         if zoom != self.zoom:
-            self.zoom = zoom
-            # Seuls les elements dont la zone depend du zoom (selectionnes : poignees ; cadres ; fleches) :
-            # parcourir tous les elements a chaque cran coutait ~8 ms a 5 000 elements.
+            # PLANTAGES a l'effacement (2026-11-03). L'index BSP de Qt range chaque element sous sa zone
+            # (`boundingRect`) et, a sa suppression, ne le retire que des cases de sa zone DU MOMENT : une zone
+            # changee sans `prepareGeometryChange` AVANT laisse l'element dans des cases, pointeur mort une fois
+            # l'element detruit, relu a la peinture / au survol suivants (mesure : 18 elements retires sur 500 encore
+            # trouves par `items()` apres un dezoom puis un zoom). Deux fautes : (1) la marge des elements NON
+            # selectionnes (anticrenelage, 2-3 px d'ecran) suivait le zoom sans que personne ne previenne Qt ;
+            # (2) les autres (cadres, fleches, selection) etaient prevenus APRES le changement de `self.zoom`.
+            # Donc : prevenus d'abord, zoom change ensuite ; la marge hors selection suit `pad_zoom`, puissance de
+            # 2 sous le zoom (marge de 1 a 2 fois la voulue) : tous les elements ne sont prevenus qu'au changement
+            # de palier (rare). Les elements du CAD (zone sans le zoom hors selection) ne le sont pas.
+            # Seuls les elements dont la zone suit le zoom a chaque cran (selectionnes : poignees ; cadres ;
+            # fleches) : parcourir tous les elements a chaque cran coutait ~8 ms a 5 000 elements.
             if self._zoomers is None:
                 self._zoomers = [i for i in self._items.values() if isinstance(i, (FrameItem, ConnectorItem))]
-            for item in self._zoomers:
+            targets = self._zoomers + [i for i in self.selectedItems() if isinstance(i, BoardItem)
+                                       and not isinstance(i, (FrameItem, ConnectorItem))]
+            pad = 2.0 ** math.floor(math.log2(max(zoom, 1e-6)))
+            padded = ()
+            if pad != self.pad_zoom:                         # palier franchi : les autres aussi (hors CAD)
+                padded = [i for i in self.plain_items() if not i.isSelected()
+                          and not isinstance(i, (FrameItem, ConnectorItem))]
+                for item in padded:
+                    item.prepareGeometryChange()             # zone d'avant : retiree de l'index
+            for item in targets:
+                item.prepareGeometryChange()
+            self.zoom, self.pad_zoom = zoom, pad
+            for item in targets:
                 item.zoom_changed()
-            for item in self.selectedItems():
-                if isinstance(item, BoardItem) and not isinstance(item, (FrameItem, ConnectorItem)):
-                    item.zoom_changed()
 
     # -- page (reglages du .mro) --
     def set_page(self, page: dict, record: bool = True, text: str = "Réglages de la page", replace: bool = False):
@@ -454,7 +524,7 @@ class BoardScene(QGraphicsScene):
         hook = getattr(item, "module_opacity", None)          # module Design : opacite propre, page grisee seule
         if hook is not None:
             return hook(self.module_faded(self.module_of(item)))
-        return FADE_OPACITY if self.module_faded(self.module_of(item)) else 1.0
+        return cad_items.FADE_OPACITY if self.module_faded(self.module_of(item)) else 1.0
 
     def set_module_look(self, module: str, fade: bool | None = None, hide: bool | None = None):
         """Grise / masque les elements d'un module (affichage seulement : rien dans le fichier ni dans l'annulation)."""
@@ -475,6 +545,35 @@ class BoardScene(QGraphicsScene):
                     self.apply_module_look(item)
         self.update()
 
+    def set_module_state(self, module: str, **changes):
+        """Barre des modules : masquer (« hide »), griser (« fade »), isoler (« solo »). Isoler : seuls les modules
+        isoles restent visibles (masquer ne vaut plus pour eux, griser si) ; les autres sont masques."""
+        self.module_state[module] = dict(self.module_state[module], **{k: bool(v) for k, v in changes.items()})
+        self._apply_module_states()
+
+    def reset_module_states(self, solo_only: bool = False):
+        """Tout afficher et sortir de l'isolation (`solo_only` : sortir de l'isolation seulement)."""
+        for state in self.module_state.values():
+            state["solo"] = False
+            if not solo_only:
+                state["fade"] = state["hide"] = False
+        self._apply_module_states()
+
+    def _apply_module_states(self):
+        solo_any = any(s["solo"] for s in self.module_state.values())
+        for module, state in self.module_state.items():
+            hide = (not state["solo"]) if solo_any else state["hide"]
+            self.set_module_look(module, fade=state["fade"], hide=hide)
+
+    def refresh_faded(self):
+        """Opacite ou saturation des elements grises changee (reglage) : elements des modules grises remis a jour."""
+        for module in self.module_look:
+            if self.module_faded(module) and module != "cad":
+                for item in list(self._items.values()):
+                    if self.module_of(item) == module:
+                        self.apply_module_look(item)
+        self.update()
+
     def apply_module_look(self, item):
         module = self.module_of(item)
         if module == "cad":
@@ -484,10 +583,29 @@ class BoardScene(QGraphicsScene):
             item.setSelected(False)
         item.setEnabled(active)                         # desactive : ni clic, ni selection (Qt), ni edition
         item.setOpacity(self.item_opacity(item))
+        self._fade_effect(item, module)
         if isinstance(item, CommentItem):
             item.sync()
         else:
             item.setVisible(not self.module_hidden(module))
+
+    def _fade_effect(self, item, module: str):
+        """Saturation des elements grises (reglage, `cad_items.FADE_SATURATION`) : effet de desaturation pose sur
+        l'element de tete seulement (ses enfants du meme module en heritent), retire des qu'il ne sert plus. Aucun
+        effet a la saturation 100 % (le cas par defaut : rien de plus a peindre)."""
+        sat = cad_items.FADE_SATURATION
+        parent = item.parentItem()
+        want = self.module_faded(module) and sat < 0.999 and not (
+            parent is not None and self.module_of(parent) == module)
+        effect = item.graphicsEffect()
+        if want:
+            if effect is None:
+                effect = _FadeEffect()
+                item.setGraphicsEffect(effect)
+            if isinstance(effect, _FadeEffect):
+                effect.setStrength(1.0 - sat)
+        elif isinstance(effect, _FadeEffect):
+            item.setGraphicsEffect(None)
 
     def cad_style_changed(self):
         """Reglages generaux du CAD (types de ligne, unite) changes : proprietes des lignes relues (seules celles dont
@@ -838,7 +956,7 @@ class BoardScene(QGraphicsScene):
         if cached is not None and cached[0] == key:
             return cached[1]
         area = self.visible_rect if self.visible_rect.isValid() else QRectF(-1e5, -1e5, 2e5, 2e5)
-        rects = [i.scene_rect() for i in self._items.values()
+        rects = [_snap_target(i) for i in self._items.values()
                  if i.item_id not in exclude and not isinstance(i, (ConnectorItem, CommentItem, InkItem))
                  and not getattr(i, "CAD", False)
                  and i.isVisible() and i.scene_rect().intersects(area)]
@@ -896,17 +1014,32 @@ class BoardScene(QGraphicsScene):
         guides = []
         if best_x and best_x[1] is not None:
             x = best_x[1]
-            near = [o for o in others if min(abs(o.left() - x), abs(o.center().x() - x), abs(o.right() - x)) < 0.5]
+            near = _near(others, x, 0)
             top = min([rect.top()] + [o.top() for o in near])
             bottom = max([rect.bottom()] + [o.bottom() for o in near])
-            guides.append(QLineF(x, top, x, bottom))
+            guides.append(GuideLine(x, top, x, bottom, kind=guide_kind(near)))
         if best_y and best_y[1] is not None:
             y = best_y[1]
-            near = [o for o in others if min(abs(o.top() - y), abs(o.center().y() - y), abs(o.bottom() - y)) < 0.5]
+            near = _near(others, y, 1)
             left = min([rect.left()] + [o.left() for o in near])
             right = max([rect.right()] + [o.right() for o in near])
-            guides.append(QLineF(left, y, right, y))
+            guides.append(GuideLine(left, y, right, y, kind=guide_kind(near)))
         return guides
+
+    def _edge_kind(self, others, value: float, axis: int) -> str:
+        """Sorte du guide d'un redimensionnement, le long de `value` (un bord ou centre des cadres `others`, axe 0 = x,
+        1 = y) : table {valeur : tous internes ?} faite UNE fois par liste de candidats (un geste), puis lue sans
+        parcourir les elements (2 000 elements visibles : 2,3 ms par guide et par mouvement autrement)."""
+        kept = getattr(self, "_edge_kinds", None)
+        if kept is None or kept[0] is not others:
+            tables = ({}, {})
+            for o in others:
+                for table, values in ((tables[0], (o.left(), o.center().x(), o.right())),
+                                      (tables[1], (o.top(), o.center().y(), o.bottom()))):
+                    for v in values:
+                        table[v] = table.get(v, True) and o.inner
+            kept = self._edge_kinds = (others, tables)
+        return snap_guides.INNER if kept[1][axis].get(value) else snap_guides.DOCUMENTS
 
     def snap_resize(self, item, rect: QRectF, transform, handle: str, modifiers, ratio=None) -> QRectF:
         """Redimensionnement (element sans rotation) : les bords TIRES collent aux bords des autres elements et
@@ -929,27 +1062,49 @@ class BoardScene(QGraphicsScene):
             xs += [self.grid_snap(scene_rect.left(), 0, step), self.grid_snap(scene_rect.right(), 0, step)]
             ys += [self.grid_snap(scene_rect.top(), 1, step), self.grid_snap(scene_rect.bottom(), 1, step)]
         guides = []
+        show = self.snap.get("guides", True)            # guides (et leur sorte) faits seulement s'ils sont montres
         left, top, right, bottom = scene_rect.left(), scene_rect.top(), scene_rect.right(), scene_rect.bottom()
+        # Cadre sur SON document (PDF : bas d'une page, largeur du contenu) : tailles de cadre où un bord du
+        # document tombe sur le bord du cadre, pour la taille proposee ; plus proches qu'un autre repere : elles
+        # l'emportent (guide « Cadre sur son document », `snap_guides.FRAME`).
+        own_sizes = getattr(item, "snap_document_sizes", None)
         for side in handle:
             if side in "lr":
                 value = left if side == "l" else right
                 best = self._best((value,), xs, threshold)
+                kind = None
+                if own_sizes is not None:
+                    widths = own_sizes(right - left, bottom - top)[0]
+                    own = self._best((value,), [left + s if side == "r" else right - s for s in widths], threshold)
+                    if own and (best is None or abs(own[0]) <= abs(best[0])):
+                        best, kind = own, snap_guides.FRAME
                 if best:
                     if side == "l":
                         left += best[0]
                     else:
                         right += best[0]
-                    guides.append(QLineF(best[1], top - 40, best[1], bottom + 40))
+                    if show:
+                        guides.append(GuideLine(best[1], top - 40, best[1], bottom + 40,
+                                                kind=kind or self._edge_kind(others, best[1], 0)))
             elif side in "tb":
                 value = top if side == "t" else bottom
                 best = self._best((value,), ys, threshold)
+                kind = None
+                if own_sizes is not None:
+                    heights = own_sizes(right - left, bottom - top)[1]
+                    own = self._best((value,), [top + s if side == "b" else bottom - s for s in heights], threshold)
+                    if own and (best is None or abs(own[0]) <= abs(best[0])):
+                        best, kind = own, snap_guides.FRAME
                 if best:
                     if side == "t":
                         top += best[0]
                     else:
                         bottom += best[0]
-                    guides.append(QLineF(left - 40, best[1], right + 40, best[1]))
-        self._set_guides(guides if self.snap.get("guides", True) else [])
+                    if show:
+                        y = bottom if kind else best[1]         # le bas de la page tombe sur le bas du cadre
+                        guides.append(GuideLine(left - 40, y, right + 40, y,
+                                                kind=kind or self._edge_kind(others, best[1], 1)))
+        self._set_guides(guides)
         out = QRectF(QPointF(left, top), QPointF(right, bottom)).normalized()
         return out.translated(-offset)
 
@@ -995,11 +1150,13 @@ class BoardScene(QGraphicsScene):
         if best_x and (best_y is None or abs(best_x[0]) <= abs(best_y[0])):
             width = abs(best_x[1] - fixed_x)
             height = width / ratio
-            guides.append(QLineF(best_x[1], scene_rect.top() - 40, best_x[1], scene_rect.bottom() + 40))
+            guides.append(GuideLine(best_x[1], scene_rect.top() - 40, best_x[1], scene_rect.bottom() + 40,
+                                    kind=self._edge_kind(others, best_x[1], 0)))
         elif best_y:
             height = abs(best_y[1] - fixed_y)
             width = height * ratio
-            guides.append(QLineF(scene_rect.left() - 40, best_y[1], scene_rect.right() + 40, best_y[1]))
+            guides.append(GuideLine(scene_rect.left() - 40, best_y[1], scene_rect.right() + 40, best_y[1],
+                                    kind=self._edge_kind(others, best_y[1], 1)))
         if width < 1 or height < 1:
             self._set_guides([])
             return rect
@@ -1180,8 +1337,4 @@ class BoardScene(QGraphicsScene):
             painter.drawRect(self.highlight.adjusted(-m, -m, m, m))
         if not self.guides:
             return
-        pen = QPen(self.guide_color, 1)
-        pen.setCosmetic(True)
-        painter.setPen(pen)
-        for line in self.guides:
-            painter.drawLine(line)
+        snap_guides.draw(painter, self.guides)          # chacun selon sa sorte (Reglages > Module MRO > Magnetisme)

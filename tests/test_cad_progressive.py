@@ -11,9 +11,10 @@ import shutil
 import tempfile
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QGraphicsItem, QWidget
 
 APP = QApplication.instance() or QApplication([])
 
@@ -134,6 +135,104 @@ class ProgressiveLoadTest(unittest.TestCase):
         from PySide6.QtCore import QCoreApplication, QEvent
         QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
         self.assertEqual(gc.get_threshold(), self.thresholds)               # scene fermee avant la fin
+
+    def test_hidden_and_locked_layers_apply_to_loaded_lines(self):
+        """Proprietes, verrou et visibilite calcules a l'entree dans la scene, avec les VRAIS calques (plus a la
+        creation de l'element, avec une page vide)."""
+        data = drawing(scene_mod.LOAD_PROGRESSIVE_MIN + 200)
+        cad = data["page"]["cad"]
+        cad["layers"].append({**cad_model.LAYER_DEFAULTS, "id": "cache", "name": "Cache", "visible": False})
+        cad["layers"].append({**cad_model.LAYER_DEFAULTS, "id": "verrou", "name": "Verrou", "locked": True})
+        for n, item in enumerate(data["items"]):
+            item["layer"] = ("cache", "verrou", cad_model.LAYER0)[n % 3]
+        scene = self.pane.scene
+        scene.load_data(model.normalize(data), progressive=True)
+        self.wait_loaded(scene)
+        APP.processEvents()
+        lines = [i for i in scene._items.values() if isinstance(i, CadLineItem)]
+        by_layer = {key: [line for line in lines if line.data["layer"] == key]
+                    for key in ("cache", "verrou", cad_model.LAYER0)}
+        self.assertTrue(by_layer["cache"] and not any(line.isVisible() for line in by_layer["cache"]))
+        self.assertTrue(all(line.isVisible() and line.locked() and not line.flags() & QGraphicsItem.ItemIsMovable
+                            for line in by_layer["verrou"]))
+        self.assertTrue(all(line.isVisible() and line.flags() & QGraphicsItem.ItemIsMovable for line in by_layer["0"]))
+
+    def test_loading_shares_properties_and_never_reclassifies_after_qt_polish(self):
+        """Gros dessin : proprietes effectives calculees une fois par style (`resolve_shared`), et les
+        notifications de visibilite que Qt envoie a chaque element ajoute (« polish », visibilite inchangee) ne
+        reclassent plus les lignes dans leur lot."""
+        from unittest import mock
+        from fm_cad import cad_items
+        data = drawing(scene_mod.LOAD_PROGRESSIVE_MIN + 1000)
+        resolves, changed = [], []
+        real_resolve, real_changed = cad_model.resolve, cad_items.CadBatch.member_changed
+        with mock.patch.object(cad_model, "resolve", lambda *a, **k: resolves.append(1) or real_resolve(*a, **k)), \
+                mock.patch.object(cad_items.CadBatch, "member_changed",
+                                  lambda self, *a: changed.append(1) or real_changed(self, *a)):
+            scene = self.pane.scene
+            scene.load_data(data, progressive=True)
+            self.wait_loaded(scene)
+            for _ in range(3):
+                APP.processEvents()
+        self.assertEqual(len(scene._items), len(data["items"]))
+        self.assertLess(len(resolves), 10)                                  # 1 style ici (+ calques de la page)
+        self.assertEqual(changed, [])
+
+    def test_snap_index_of_a_big_drawing_is_built_in_background_slices(self):
+        """Gros dessin : l'index des accrochages se construit EN FOND des la fin du chargement, par tranches courtes
+        (plus de figement d'~1 s au 1er mouvement de souris) ; les entites supprimees / ajoutees pendant ce temps sont
+        reprises a la fin."""
+        from fm_cad import cad as cad_mod
+        self.pane.toggle_cad(True)
+        ctl = self.pane.cad
+        data = drawing(cad_mod.BACKGROUND_INDEX_MIN + 500)
+        scene = self.pane.scene
+        steps = []
+        real_step = cad_mod.CadController._index_step
+
+        def timed(controller):
+            t = time.perf_counter()
+            real_step(controller)
+            steps.append(time.perf_counter() - t)
+        with mock.patch.object(cad_mod.CadController, "_index_step", timed):
+            scene.load_data(data, progressive=True)
+            self.wait_loaded(scene)
+            APP.processEvents()
+            self.assertIsNotNone(ctl._index_job)                            # lance a la fin du chargement
+            t = time.perf_counter()
+            ctl._source((-1.0, -10.0, 16.0, 1.0))                           # 1er mouvement : rien n'attend
+            self.assertLess(time.perf_counter() - t, 0.2)
+            lines = [i for i in scene._items.values() if isinstance(i, CadLineItem)]
+            gone = lines[0]
+            scene._remove(gone.item_id)
+            cad = scene.page["cad"]
+            added = scene._add(model.new_item("cad_line", **cad_model.new_line_values(cad, (5000.0, 5000.0),
+                                                                                       (5040.0, 5000.0))))
+            end = time.monotonic() + 30
+            while ctl._index_job is not None:
+                APP.processEvents()
+                self.assertLess(time.monotonic(), end, "index jamais fini")
+        self.assertGreater(len(steps), 3)                                    # vraiment par tranches
+        self.assertLess(max(steps), 0.15)
+        self.assertEqual(gc.get_threshold(), self.thresholds)               # ramasse-miettes rendu
+        self.assertIn(lines[1], ctl._source((19.0, -1.0, 36.0, 10.0)))                 # ligne (20, 0)-(35, 9)
+        self.assertIn(added, ctl._source((5010.0, 4990.0, 5020.0, 5010.0)))
+        self.assertNotIn(gone, ctl._index.objects.values())
+
+    def test_line_added_outside_loading_paints_itself_until_batched(self):
+        """Creee sans contenu peint (`ITEM_FLAGS`) : hors chargement et sans GPU, elle se peint seule tout de suite,
+        puis son lot la reprend a la boucle suivante."""
+        scene = self.pane.scene
+        scene.load_data(drawing(5))
+        APP.processEvents()
+        cad = scene.page["cad"]
+        line = scene._add(model.new_item("cad_line", **cad_model.new_line_values(cad, (0.0, 0.0), (50.0, 0.0))))
+        self.assertFalse(line.flags() & QGraphicsItem.ItemHasNoContents)
+        self.assertIsNone(line._batch)
+        for _ in range(3):
+            APP.processEvents()
+        self.assertIsNotNone(line._batch)
+        self.assertTrue(line.flags() & QGraphicsItem.ItemHasNoContents)               # peinte par son lot
 
 
 class CloneDataTest(unittest.TestCase):

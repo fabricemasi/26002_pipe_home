@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 
+import shiboken6
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
@@ -20,8 +21,10 @@ from settings_cells import _TextField
 import settings_store
 from settings_store import M, _load_window_geometry, _save_window_geometry, load_settings, save_settings, theme_in_use
 from settings_widgets import _Btn, _SelectField
+from theme_side_detail import SideDetail, page_scroller
 
 LAST_PRESET_KEY = "fm_theme:preset"       # preset ouvert la derniere fois (etat des fenetres de reglages)
+PREVIEW_WIDTH_KEY = "fm_theme:preview_width"   # largeur de l'apercu (tiree a la souris), meme fichier
 DELETE_CONFIRM_MS = 3000
 
 
@@ -162,7 +165,7 @@ class PresetBar(QWidget):
 # Section de l'editeur -> type d'element a variantes (fm_theme.presets.TYPE_PREFIXES). Toggles : leurs styles.
 SECTION_TYPES = {"TITRES": "titres", "Sliders": "slider", "Zone de saisie": "champ", "Bouton": "bouton",
                  "Tableaux": "tableau", "Tabs": "onglets", "Menu contextuel": "menu",
-                 "Fenêtres additionnelles": "fenetre"}
+                 "Fenêtres additionnelles": "fenetre", "Palette": "palette"}
 
 
 class VariantBar(QWidget):
@@ -275,6 +278,7 @@ class ThemeEditor:
         _save_window_geometry(name, LAST_PRESET_KEY)
         self.store = ThemeStore(name)
         window = self.window = v2.SettingsWindowV2(None, module="theme", store=self.store)
+        self.detail = None                   # volet des paramètres (`theme_side_detail`), posé par _follow_sections
         window.titlebar._title.setText(f"fm_theme : {name}")
         window._tab_subbar.layout().insertWidget(0, PresetBar(self))
         window.settingsChanged.connect(self._broadcast)
@@ -288,7 +292,7 @@ class ThemeEditor:
             old.deleteLater()
 
     def _add_preview(self, window) -> PreviewPanel:
-        """Aperçu à gauche des sections (demande de l'utilisateur) : la pile des pages passe à droite."""
+        """Aperçu à DROITE des sections (demande de l'utilisateur, 2026-11-02 ; il était à gauche avant) : la pile des pages reste à gauche."""
         stack = window.stack
         root = stack.parentWidget().layout()
         index = root.indexOf(stack)
@@ -297,24 +301,32 @@ class ThemeEditor:
         row = QHBoxLayout(holder)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(0)
-        preview = PreviewPanel(lambda: window.settings)
-        row.addWidget(preview)
+        try:
+            width = int(_load_window_geometry(PREVIEW_WIDTH_KEY) or PREVIEW_WIDTH)
+        except (TypeError, ValueError):
+            width = PREVIEW_WIDTH
+        preview = PreviewPanel(lambda: window.settings, width=width)
+        preview.widthChanged.connect(lambda w: _save_window_geometry(str(w), PREVIEW_WIDTH_KEY))
         row.addWidget(stack, 1)
+        row.addWidget(preview)
         root.insertWidget(index, holder, 1)
-        if window.width() < 760 + PREVIEW_WIDTH:
-            window.resize(760 + PREVIEW_WIDTH, window.height())
+        if window.width() < 760 + preview.width():
+            window.resize(760 + preview.width(), window.height())
         window.settingsChanged.connect(self._refresh_preview)
         return preview
 
     def _follow_sections(self, window, tries: int = 20):
         """L'aperçu suit la section ouverte (sections de 1er niveau de la page, construite à la 1re visite)."""
-        if window is not self.window:
+        if window is not self.window or not shiboken6.isValid(window):
             return
         nodes = [n for n in window.stack.findChildren(v2._LazyNode) if n.level == 1]
         if not nodes:
             if tries:
                 QTimer.singleShot(50, lambda: self._follow_sections(window, tries - 1))
             return
+        scroller = page_scroller(nodes[0])
+        if scroller is not None:             # titres fixes à gauche, paramètres de la section ouverte à droite
+            self.detail = SideDetail(scroller, nodes)
         for node in nodes:
             node._head.collapsedChanged.connect(lambda collapsed, n=node: self._section_toggled(n, collapsed))
         opened = [n for n in nodes if not n.is_collapsed()]
@@ -324,6 +336,8 @@ class ThemeEditor:
     def _section_toggled(self, node, collapsed: bool):
         if not collapsed:
             self.preview.show_section(node.node.title)
+            # Seules ses sous-sections apparaissent, repliées : un tableau se monte quand on la déplie
+            # (demande de l'utilisateur, 2026-11-03 ; avant : tout se déroulait d'un coup).
         elif self.preview.section() == node.node.title:
             self.preview.show_section(None)
         self._refresh_variant_bar()

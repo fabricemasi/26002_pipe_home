@@ -35,7 +35,11 @@ def _groups() -> dict:
         Spec("board_ps_history_mb", "Historique : mémoire maximale des étapes de pixels (Mo)", "slider", 384,
              {"min": 16, "max": 4096, "unit": "Mo", "box": 70}),
     ]
-    return {"Photoshop : Établi": bench, "Photoshop : Navigation": navigation, "Photoshop : Mémoire": memory}
+    documents = [
+        Spec("board_ps_new_paste_clipboard", "Nouveau document à la taille du presse-papiers : y coller l'image", "bool", True),
+    ]
+    return {"Photoshop : Établi": bench, "Photoshop : Navigation": navigation, "Photoshop : Mémoire": memory,
+            "Photoshop : Documents": documents}
 
 
 CATALOG.update(_groups())
@@ -44,4 +48,6 @@ PS_TREE = (
     Node("Établi", "Photoshop : Établi"),
     Node("Navigation", "Photoshop : Navigation"),
     Node("Mémoire", "Photoshop : Mémoire"),
+    Node("Documents", "Photoshop : Documents"),
+    Node("Icônes", "Photoshop : Icônes"),          # lignes : fm_board/settings.py (ICON_GROUPS_BY_MODULE)
 )

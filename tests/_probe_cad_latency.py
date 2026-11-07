@@ -8,6 +8,7 @@ hors de l'ecran n'est jamais peinte : rien a mesurer). Ne pas toucher la souris 
     RATE=<Hz>   (mouvements de souris par seconde, 250 par defaut ; une souris de jeu : 1000)
     FULL_CROSSHAIR=1   reticule jusqu'aux bords de la vue
     NOGRID=1          grille du board eteinte (mesure de ce que coute le fond raster)
+    PROFILE=1         profil cProfile de chaque scenario (30 fonctions les plus lourdes)
     GPU=1             rendu GPU du CAD (fm_cad/cad_gpu.py ; interpreteur du projet : .venv, PyOpenGL)
     GL=1              viewport OpenGL (QOpenGLWidget) au lieu du viewport raster
     CURVES=N          N arcs et cercles en plus des lignes
@@ -305,6 +306,8 @@ def main():
                 import shutil
                 shutil.copy(os.environ["FILE"], path)
             pane.open(path)
+            while pane.scene.loading():                 # gros dessin : charge par tranches, attendre la fin
+                APP.processEvents()
             if os.environ.get("NOGRID"):
                 pane.scene.set_page({"grid": False}, record=False)
             pane.show()
@@ -360,6 +363,11 @@ def main():
             if os.environ.get("PAINTS"):
                 APP.paints = {}
             REC.reset()
+            prof = None
+            if os.environ.get("PROFILE"):                # PROFILE=1 : profil (cProfile) du scenario, 30 plus lourds
+                import cProfile
+                prof = cProfile.Profile()
+                prof.enable()
             if scenario == "zoom":
                 run_wheel(pane, seconds)
             elif scenario == "draw":
@@ -376,6 +384,13 @@ def main():
             else:
                 run_moves(pane, seconds)
             APP.update_cb = None
+            if prof is not None:
+                import io
+                import pstats
+                prof.disable()
+                out = io.StringIO()
+                pstats.Stats(prof, stream=out).sort_stats("cumulative").print_stats(30)
+                print(out.getvalue()[:6000])
             if getattr(APP, "syncs", None):
                 worst = sorted(APP.syncs, reverse=True)[:5]
                 print("  _sync GPU, pires :", ", ".join(f"{ms:.0f} ms ({n} lots)" for ms, n in worst))

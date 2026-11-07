@@ -15,6 +15,11 @@ from .history import CallCommand
 from .model import BLEND_LABELS, BLEND_MODES
 
 
+import os as _os
+
+PEN_LOG_FOLDER = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "data", "pen_logs")
+
+
 def _title(text: str) -> QLabel:
     from settings_theme import _text_label
     return _text_label(text, "card_title")
@@ -28,14 +33,14 @@ def _button(text: str, tip: str, slot, parent=None, checkable=False) -> QPushBut
     return button
 
 
-def _slider(label: str, minimum, maximum, value, unit, on_change, parent=None):
+def _slider(label: str, minimum, maximum, value, unit, on_change, parent=None, label_width=64):
     from fm_board.ui import _slider as make
     box = QWidget(parent)
     row = QHBoxLayout(box)
     row.setContentsMargins(0, 0, 0, 0)
     row.setSpacing(6)
     text = QLabel(label)
-    text.setFixedWidth(64)
+    text.setFixedWidth(label_width)
     field = make(minimum, maximum, value, unit)
     field.valueChanged.connect(on_change)
     row.addWidget(text)
@@ -61,22 +66,27 @@ class Swatch(QPushButton):
         painter.drawRect(self.rect().adjusted(3, 3, -4, -4))
 
     def _pick(self):
-        from settings_widgets import _ColorPickerPopup
-        r, g, b = self.getter()
-        popup = _ColorPickerPopup("#%02x%02x%02x" % (r, g, b), self.label, self.window())
-        popup.colorChanged.connect(self._set)
-        popup.committed.connect(self._set)
-        popup.show_near(self)
-        self._popup = popup
+        from .bars import pick_color
+        self._popup = pick_color(self, self.getter, self._set, self.label)
 
-    def _set(self, color):
-        c = QColor(color)
-        self.setter((c.red(), c.green(), c.blue()))
+    def _set(self, rgb):
+        self.setter(rgb)
         self.update()
 
 
+class _Row:
+    """Ligne de réglage dont le champ (`field`) est un élément d'une barre flottante : mêmes noms que `_slider`."""
+
+    def __init__(self, field):
+        self.field = field
+
+
 class BrushPanel(QWidget):
-    """Brosse : taille, dureté, opacité, débit, espacement, lissage ; pression ; couleurs ; présélections."""
+    """Brosse : espacement, lissage, rayon de retouche, modes, pression ; présélections. Taille, dureté, opacité et débit
+    (`QUICK`) et les couleurs de premier plan / arrière-plan sont des éléments des barres flottantes du module
+    (`bars.StandardPalettes`) : créés ici (ils pilotent la brosse de la session), posés dans les barres par l'éditeur."""
+
+    QUICK = ("size", "hardness", "opacity", "flow")
 
     def __init__(self, session, canvas, parent=None, settings=None):
         super().__init__(parent)
@@ -103,29 +113,200 @@ class BrushPanel(QWidget):
                 ("spacing", "Espacement", 2, 200, b.spacing * 100, "%", 100),
                 ("smoothing", "Lissage", 0, 95, b.smoothing * 100, "%", 100),
                 ("sigma", "Rayon retouche", 1, 50, b.sigma, "px", 1)):
-            row = _slider(label, lo, hi, round(value), unit, lambda v, k=key, s=scale: self._set(k, v / s), self)
+            change = lambda v, k=key, s=scale: self._set(k, v / s)
+            if key in self.QUICK:
+                from fm_theme.palette import PaletteSliderBar
+                bar = PaletteSliderBar("brush_" + key, label, lo, hi, round(value), unit)
+                bar.valueChanged.connect(change)
+                self.rows[key] = _Row(bar)
+                continue
+            row = _slider(label, lo, hi, round(value), unit, change, self)
             self.rows[key] = row
             box.addWidget(row)
+        from .brush import SMOOTHING_LABELS
+        mode_line = QHBoxLayout()
+        mode_label = QLabel("Mode lissage")
+        mode_label.setFixedWidth(64)
+        self.smoothing_mode = QComboBox(self)
+        self.smoothing_mode.setToolTip("Aucun : la trajectoire du stylet telle quelle. Adaptatif : filtre One Euro (petits mouvements "
+                                       "lents lissés, gestes rapides intacts). Pondéré : moyenne sur la distance, angles conservés. "
+                                       "Stabilisateur : corde tirée pour l'encrage.")
+        for kind, label in SMOOTHING_LABELS.items():
+            self.smoothing_mode.addItem(label, kind)
+        self.smoothing_mode.setCurrentIndex(self.smoothing_mode.findData(b.smoothing_kind()))
+        self.smoothing_mode.activated.connect(self._mode_chosen)
+        mode_line.addWidget(mode_label)
+        mode_line.addWidget(self.smoothing_mode, 1)
+        box.addLayout(mode_line)
+        from .brush import PAINT_LABELS
+        paint_line = QHBoxLayout()
+        paint_label = QLabel("Dépôt")
+        paint_label.setFixedWidth(64)
+        self.paint_mode = QComboBox(self)
+        self.paint_mode.setToolTip("Plafond : l'opacité est une limite, repasser dans le trait n'ajoute rien au-delà ; le débit règle "
+                                   "la vitesse pour l'atteindre. Accumulation naturelle : un passage dépose son opacité de façon "
+                                   "homogène, chaque retour sur une zone déjà peinte s'y ajoute (deux passages à 30 % donnent 51 %). "
+                                   "Indépendant de la pression.")
+        for kind, label in PAINT_LABELS.items():
+            self.paint_mode.addItem(label, kind)
+        self.paint_mode.setCurrentIndex(self.paint_mode.findData(b.paint_mode))
+        self.paint_mode.activated.connect(lambda i: setattr(self.session.brush, "paint_mode", self.paint_mode.itemData(i)))
+        paint_line.addWidget(paint_label)
+        paint_line.addWidget(self.paint_mode, 1)
+        box.addLayout(paint_line)
         flags = QHBoxLayout()
-        self.pressure_size = QCheckBox("Pression : taille")
-        self.pressure_flow = QCheckBox("Pression : débit")
-        self.pressure_size.setChecked(b.pressure_size)
-        self.pressure_flow.setChecked(b.pressure_flow)
-        self.pressure_size.toggled.connect(lambda on: setattr(session.brush, "pressure_size", on))
-        self.pressure_flow.toggled.connect(lambda on: setattr(session.brush, "pressure_flow", on))
+        self.pressure_size = QCheckBox("Taille")
+        self.pressure_flow = QCheckBox("Débit")
+        self.pressure_opacity = QCheckBox("Opacité")
+        self.airbrush = QCheckBox("Aérographe")
+        self.airbrush.setToolTip("Le dépôt dépend du TEMPS : la peinture continue de s'ajouter tant que le stylet reste appuyé, même "
+                                 "immobile (le débit = part déposée par seconde). Les modes Plafond / Accumulation gardent leur sens.")
+        self.airbrush.setChecked(b.airbrush)
+        self.airbrush.toggled.connect(lambda on: setattr(session.brush, "airbrush", on))
+        for check, key in ((self.pressure_size, "pressure_size"), (self.pressure_flow, "pressure_flow"),
+                           (self.pressure_opacity, "pressure_opacity")):
+            check.setChecked(getattr(b, key))
+            check.setToolTip("La pression du stylet commande : " + check.text().lower())
+            check.toggled.connect(lambda on, k=key: setattr(session.brush, k, on))
+        flags.addWidget(QLabel("Pression :"))
         flags.addWidget(self.pressure_size)
         flags.addWidget(self.pressure_flow)
+        flags.addWidget(self.pressure_opacity)
+        flags.addStretch(1)
+        flags.addWidget(self.airbrush)
         box.addLayout(flags)
-        colors = QHBoxLayout()
-        self.fg = Swatch(lambda: session.fg, lambda c: setattr(session, "fg", c), "Couleur de premier plan", self)
-        self.bg = Swatch(lambda: session.bg, lambda c: setattr(session, "bg", c), "Couleur d'arrière-plan", self)
-        colors.addWidget(self.fg)
-        colors.addWidget(self.bg)
-        colors.addWidget(_button("⇄", "Permuter les couleurs (X)", self.swap, self))
-        colors.addStretch(1)
-        box.addLayout(colors)
+        self._build_tuning(box)
+        from .bars import PsSwatch
+        self.fg = PsSwatch("fg", lambda: session.fg, lambda c: setattr(session, "fg", c), "Couleur de premier plan")
+        self.bg = PsSwatch("bg", lambda: session.bg, lambda c: setattr(session, "bg", c), "Couleur d'arrière-plan")
         canvas.colorsChanged.connect(self.sync)
         self._fill_presets()
+
+    # -- réglages d'essai du moteur de trait (temporaires : pour trouver les bonnes valeurs) --
+    TUNING_SLIDERS = (                                # (clé, libellé, min, max, unité, échelle)
+        ("pressure_filter", "Filtre pression", 5, 100, "%", 100),
+        ("size_gamma", "Courbe taille", 30, 300, "", 100),
+        ("opacity_gamma", "Courbe opacité", 30, 300, "", 100),
+        ("flow_gamma", "Courbe débit", 30, 300, "", 100),
+        ("min_diameter", "Diamètre min.", 0, 100, "%", 100),
+        ("oe_cutoff_max", "Adaptatif : coupure", 2, 100, "Hz", 1),
+        ("oe_beta", "Adaptatif : vitesse", 0, 100, "/100", 100),
+        ("weighted_px", "Pondéré : fenêtre", 5, 200, "px", 1),
+        ("rope_px", "Stabilis. : corde", 10, 400, "px", 1),
+        ("continuous_spacing", "Espacement serré", 1, 35, "%", 100),
+        ("curve_chord", "Pas de courbe", 3, 40, "/10 px", 10),
+        ("feather", "Douceur du bord", 0, 40, "/10 px", 10),
+        ("hard_feather", "Douceur bord dur", 0, 30, "/10 px", 10),
+        ("soft_union", "Fusion pointes douces", 0, 100, "%", 100),
+        ("air_rate", "Aérographe : vitesse", 10, 500, "%", 100),
+        ("catch_up_speed", "Vitesse rattrapage", 2, 100, "%", 100))
+    TUNING_TOGGLES = (("zoom_adjust", "Ajuster pour le zoom"),
+                      ("catch_up_end", "Rattrapage en fin de trait"),
+                      ("catch_up_pause", "Rattrapage pendant une pause"),
+                      ("pressure_at_tip", "Pression suivant la pointe"))
+
+    def _build_tuning(self, box):
+        from .brush import TUNING
+        self.tuning_toggle = _button("Réglages d'essai ▾", "Valeurs du moteur de trait à essayer (temporaire)",
+                                     self._show_tuning, self, checkable=True)
+        self.tuning_toggle.setChecked(True)
+        box.addWidget(self.tuning_toggle)
+        self.tuning_box = QWidget(self)
+        inner = QVBoxLayout(self.tuning_box)
+        inner.setContentsMargins(0, 0, 0, 0)
+        inner.setSpacing(4)
+        self.tuning_rows, self.tuning_flags = {}, {}
+        for key, label, lo, hi, unit, scale in self.TUNING_SLIDERS:
+            row = _slider(label, lo, hi, round(getattr(TUNING, key) * scale), unit,
+                          lambda v, k=key, s=scale: setattr(TUNING, k, v / s), self.tuning_box, label_width=104)
+            self.tuning_rows[key] = row
+            inner.addWidget(row)
+        for key, label in self.TUNING_TOGGLES:
+            check = QCheckBox(label)
+            check.setChecked(getattr(TUNING, key))
+            check.toggled.connect(lambda on, k=key: setattr(TUNING, k, on))
+            self.tuning_flags[key] = check
+            inner.addWidget(check)
+        line = QHBoxLayout()
+        line.addWidget(_button("Valeurs d'origine", "Remet les réglages d'essai aux valeurs par défaut",
+                               self._reset_tuning, self.tuning_box))
+        line.addWidget(_button("Copier les valeurs", "Copie les valeurs dans le presse-papiers (à me coller)",
+                               self._copy_tuning, self.tuning_box))
+        inner.addLayout(line)
+        journal = QHBoxLayout()
+        self.log_toggle = QCheckBox("Journal du stylet")
+        self.log_toggle.setToolTip("Enregistre ce que le stylet envoie (position, pression brute, cadence, source) "
+                                   "et ce que le moteur en fait")
+        self.log_toggle.toggled.connect(self._log_enabled)
+        self.trace_toggle = QCheckBox("Points du trait")
+        self.trace_toggle.setToolTip("Superpose, sur le dernier trait : points bruts (rouge), trajectoire filtrée (vert), "
+                                     "centres des empreintes (bleu)")
+        self.trace_toggle.toggled.connect(self._trace_enabled)
+        journal.addWidget(self.trace_toggle)
+        journal.addWidget(self.log_toggle)
+        journal.addWidget(_button("Enregistrer", "Écrit le journal en JSON (dossier data/pen_logs) et affiche les statistiques",
+                                  self.save_log, self.tuning_box))
+        inner.addLayout(journal)
+        box.addWidget(self.tuning_box)
+
+    def _mode_chosen(self, index):
+        b = self.session.brush
+        b.smoothing_mode = self.smoothing_mode.itemData(index)
+        if b.smoothing_mode != "none" and b.smoothing <= 0.0:
+            b.smoothing = 0.3                           # un mode sans intensité ne changerait rien : intensité de départ
+        self.sync()
+
+    def _trace_enabled(self, on):
+        self.canvas.debug_trace = on
+        if not on:
+            self.canvas._last_trace = None
+        self.canvas.update()
+
+    def _log_enabled(self, on):
+        from .pen_log import PenLog
+        self.canvas.pen_log = PenLog() if on else None
+
+    def save_log(self):
+        """Écrit le journal du stylet (JSON) et affiche les statistiques d'entrée (cadence, pression, double évènements)."""
+        import os
+        import time as _time
+        log = self.canvas.pen_log
+        if log is None or not log.events:
+            self.canvas.message.emit("Journal du stylet vide : cochez « Journal du stylet », tracez, puis enregistrez.")
+            return None
+        folder = PEN_LOG_FOLDER
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, "stylet_" + _time.strftime("%Y%m%d_%H%M%S") + ".json")
+        log.save(path)
+        self.canvas.message.emit("Journal enregistré : " + path + " | " + log.summary())
+        return path
+
+    def _show_tuning(self):
+        on = self.tuning_toggle.isChecked()
+        self.tuning_box.setVisible(on)
+        self.tuning_toggle.setText("Réglages d'essai ▾" if on else "Réglages d'essai ▸")
+
+    def _sync_tuning(self):
+        from .brush import TUNING
+        for key, scale in ((k, s) for k, _l, _a, _b, _u, s in self.TUNING_SLIDERS):
+            field = self.tuning_rows[key].field
+            with QSignalBlocker(field):
+                field.setValue(round(getattr(TUNING, key) * scale))
+        for key, check in self.tuning_flags.items():
+            with QSignalBlocker(check):
+                check.setChecked(getattr(TUNING, key))
+
+    def _reset_tuning(self):
+        from .brush import TUNING
+        TUNING.reset()
+        self._sync_tuning()
+
+    def _copy_tuning(self):
+        from PySide6.QtGui import QGuiApplication
+        from .brush import TUNING
+        text = TUNING.as_text()
+        QGuiApplication.clipboard().setText(text)
+        self.canvas.message.emit("Valeurs copiées : " + text)
 
     # -- présélections (persistantes) --
     def _settings(self) -> dict:
@@ -160,8 +341,8 @@ class BrushPanel(QWidget):
         if data:
             keep = self.session.brush
             brush = Brush.from_dict(data)
-            for key in ("size", "hardness", "opacity", "flow", "spacing", "smoothing", "pressure_size",
-                        "pressure_flow", "sigma"):
+            for key in ("size", "hardness", "opacity", "flow", "spacing", "smoothing", "smoothing_mode", "paint_mode", "airbrush",
+                        "pressure_size", "pressure_flow", "pressure_opacity", "sigma"):
                 setattr(keep, key, getattr(brush, key))
             self.sync()
 
@@ -209,6 +390,16 @@ class BrushPanel(QWidget):
             field = self.rows[key].field
             with QSignalBlocker(field):
                 field.setValue(round(value))
+        for box, value in ((self.pressure_size, b.pressure_size), (self.pressure_flow, b.pressure_flow),
+                           (self.pressure_opacity, b.pressure_opacity)):
+            with QSignalBlocker(box):
+                box.setChecked(value)
+        with QSignalBlocker(self.smoothing_mode):
+            self.smoothing_mode.setCurrentIndex(self.smoothing_mode.findData(b.smoothing_kind()))
+        with QSignalBlocker(self.airbrush):
+            self.airbrush.setChecked(b.airbrush)
+        with QSignalBlocker(self.paint_mode):
+            self.paint_mode.setCurrentIndex(self.paint_mode.findData(b.paint_mode))
         self.fg.update()
         self.bg.update()
         self.canvas.update()
@@ -277,52 +468,49 @@ class LayersPanel(QWidget):
         self.list.currentRowChanged.connect(self._row_changed)
         self.list.itemChanged.connect(self._item_changed)
         box.addWidget(self.list, 1)
-        for actions in ((("Nouveau", "Nouveau calque", self.add), ("Groupe", "Nouveau groupe", self.add_group),
-                         ("Dupliquer", "Dupliquer le calque", self.duplicate),
-                         ("Supprimer", "Supprimer le calque", self.remove)),
-                        (("Monter", "Monter le calque", lambda: self.move(1)),
-                         ("Descendre", "Descendre le calque", lambda: self.move(-1)),
-                         ("Fusionner", "Fusionner avec le calque inférieur", self.merge),
-                         ("Aplatir", "Aplatir l'image", self.flatten))):
-            row = QHBoxLayout()
-            row.setSpacing(2)
-            for text, tip, slot in actions:
-                row.addWidget(_button(text, tip, slot, self))
-            box.addLayout(row)
-        self.opacity = _slider("Opacité", 0, 100, 100, "%", self._opacity_changed, self)
-        box.addWidget(self.opacity)
+        # Commandes des calques et des masques : éléments des barres flottantes « Calques » et « Masque »
+        # (`bars.StandardPalettes`), pas de ce panneau.
+        from .bars import text_button
+        self.action_buttons = {key: text_button("layer_" + key, text, tip, slot) for key, text, tip, slot in (
+            ("add", "Nouveau", "Nouveau calque", self.add), ("group", "Groupe", "Nouveau groupe (ou grouper la sélection)",
+                                                             self.add_group),
+            ("duplicate", "Dupliquer", "Dupliquer le calque", self.duplicate),
+            ("remove", "Supprimer", "Supprimer le calque", self.remove),
+            ("up", "Monter", "Monter le calque", lambda: self.move(1)),
+            ("down", "Descendre", "Descendre le calque", lambda: self.move(-1)),
+            ("merge", "Fusionner", "Fusionner avec le calque inférieur", self.merge),
+            ("flatten", "Aplatir", "Aplatir l'image", self.flatten))}
+        # Opacité, fusion et nom : éléments de la barre flottante « Calque » (`bars.StandardPalettes`), pas de ce panneau.
+        from fm_theme.palette import PaletteInputBar, PaletteSelectBar, PaletteSliderBar
+        opacity = PaletteSliderBar("layer_opacity", "Opacité", 0, 100, 100, "%")
+        opacity.valueChanged.connect(self._opacity_changed)
+        self.opacity = _Row(opacity)
+        self.blend = PaletteSelectBar("layer_blend", "Fusion", [BLEND_LABELS[m] for m in BLEND_MODES], BLEND_LABELS["normal"])
+        self.blend.valueChanged.connect(self._blend_chosen)
+        self.name_edit = PaletteInputBar("layer_name", "Nom", "", "Nom du calque")
+        self.name_edit.valueChanged.connect(self._renamed)
         line = QHBoxLayout()
-        self.blend = QComboBox(self)
-        for mode in BLEND_MODES:
-            self.blend.addItem(BLEND_LABELS[mode], mode)
-        self.blend.currentIndexChanged.connect(self._blend_changed)
         self.locked = QCheckBox("Verrouillé")
         self.locked.toggled.connect(lambda on: self._prop(locked=on, label="Verrouiller le calque"))
         self.clip = QCheckBox("Écrêtage")
         self.clip.setToolTip("Limiter le calque à l'opacité du calque situé dessous")
         self.clip.toggled.connect(lambda on: self._prop(clip=on, label="Masque d'écrêtage"))
-        line.addWidget(self.blend, 1)
         line.addWidget(self.locked)
         line.addWidget(self.clip)
+        line.addStretch(1)
         box.addLayout(line)
-        box.addWidget(_title("Masque"))
-        masks = QHBoxLayout()
-        masks.setSpacing(2)
         self.mask_buttons = {}
         for key, text, tip, slot in (("add", "Ajouter", "Ajouter un masque (révèle tout)", self.mask_add),
                                      ("toggle", "Activer", "Activer / désactiver le masque", self.mask_toggle),
                                      ("invert", "Inverser", "Inverser le masque", self.mask_invert),
                                      ("apply", "Appliquer", "Appliquer le masque aux pixels", self.mask_apply),
                                      ("remove", "Retirer", "Supprimer le masque", self.mask_remove)):
-            self.mask_buttons[key] = _button(text, tip, slot, self)
-            masks.addWidget(self.mask_buttons[key])
-        box.addLayout(masks)
-        target = QHBoxLayout()
-        self.target_pixels = _button("Cible : pixels", "Les outils peignent les pixels du calque", lambda: self.set_target("pixels"), self, True)
-        self.target_mask = _button("Cible : masque", "Les outils peignent le masque (noir cache, blanc révèle)", lambda: self.set_target("mask"), self, True)
-        target.addWidget(self.target_pixels)
-        target.addWidget(self.target_mask)
-        box.addLayout(target)
+            self.mask_buttons[key] = text_button("mask_" + key, text, tip, slot)
+        self.target_pixels = text_button("target_pixels", "Sur pixels", "Cible : les outils peignent les pixels du calque",
+                                         lambda: self.set_target("pixels"))
+        self.target_mask = text_button("target_mask", "Sur masque",
+                                       "Cible : les outils peignent le masque (noir cache, blanc révèle)",
+                                       lambda: self.set_target("mask"))
         session.listeners.append(self._on_session)
         self.refresh()
 
@@ -429,8 +617,9 @@ class LayersPanel(QWidget):
         field = self.opacity.field
         with QSignalBlocker(field):
             field.setValue(round(layer.opacity * 100))
-        with QSignalBlocker(self.blend):
-            self.blend.setCurrentIndex(self.blend.findData(layer.blend))
+        self.blend.field.setValue(BLEND_LABELS.get(layer.blend, BLEND_LABELS["normal"]))
+        with QSignalBlocker(self.name_edit.field):
+            self.name_edit.field.setText(layer.name)
         with QSignalBlocker(self.locked):
             self.locked.setChecked(layer.locked)
         with QSignalBlocker(self.clip):
@@ -439,11 +628,10 @@ class LayersPanel(QWidget):
         for key in ("toggle", "invert", "apply", "remove"):
             self.mask_buttons[key].setEnabled(has)
         self.mask_buttons["add"].setEnabled(not has and not layer.is_group())
-        self.mask_buttons["toggle"].setText("Désactiver" if has and layer.mask.enabled else "Activer")
+        self.mask_buttons["toggle"].set_text("Désactiver" if has and layer.mask.enabled else "Activer")
         self.target_mask.setEnabled(has)
-        self.target_pixels.setChecked(self.session.target == "pixels")
-        self.target_mask.setChecked(self.session.target == "mask")
-        self.blend.setEnabled(not layer.is_group() or True)
+        self.target_pixels.set_active(self.session.target == "pixels")
+        self.target_mask.set_active(self.session.target == "mask")
 
     def _row_changed(self, row):
         flat = self._flat()
@@ -565,10 +753,17 @@ class LayersPanel(QWidget):
         if any(getattr(layer, k) != v for k, v in changes.items()):
             self.session.do(ops.set_props(layer, label, **changes))
 
-    def _blend_changed(self, _index):
-        mode = self.blend.currentData()
+    def _blend_chosen(self, label):
+        mode = next((m for m in BLEND_MODES if BLEND_LABELS[m] == label), None)
         if mode:
             self._prop("Mode de fusion", blend=mode)
+
+    def _renamed(self, text):
+        name = (text or "").strip()
+        if name:
+            self._prop("Renommer le calque", name=name)
+        else:
+            self.name_edit.field.setText(self.session.layer().name)             # un nom vide est refusé : l'ancien revient
 
     def _opacity_changed(self, value):
         """Curseur d'opacité : appliqué à chaque cran, UNE étape d'annulation (350 ms après le dernier)."""

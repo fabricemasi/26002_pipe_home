@@ -20,14 +20,17 @@ from __future__ import annotations
 
 import math
 
-from . import cad_dims, cad_hatch, cad_text
+from . import cad_dims, cad_hatch, cad_image, cad_point, cad_text, cad_xline
 from . import cad_geometry as geo
 
-CAD_TYPES = ("cad_line", "cad_arc", "cad_circle", "cad_pline", "cad_dim", "cad_hatch", "cad_text")
+CAD_TYPES = ("cad_line", "cad_arc", "cad_circle", "cad_pline", "cad_dim", "cad_hatch", "cad_text", "cad_point",
+             "cad_insert", "cad_image", "cad_xline", "cad_ray")
 GEOMETRY_KEYS = {"cad_line": ("p1", "p2"), "cad_arc": ("center", "radius", "start", "end"),
                  "cad_circle": ("center", "radius"), "cad_pline": ("vertices", "closed"),
                  "cad_dim": cad_dims.GEOMETRY_KEYS, "cad_hatch": cad_hatch.GEOMETRY_KEYS,
-                 "cad_text": cad_text.GEOMETRY_KEYS}
+                 "cad_text": cad_text.GEOMETRY_KEYS, "cad_point": cad_point.GEOMETRY_KEYS,
+                 "cad_insert": ("pos", "scale", "rot", "mirror"), "cad_image": cad_image.GEOMETRY_KEYS,
+                 "cad_xline": ("p1", "p2"), "cad_ray": ("p1", "p2")}
 MAX_TESS = 2048                     # segments au plus par arc tessele
 ARC_EPS = 1e-9
 
@@ -96,6 +99,16 @@ def prims(kind: str, data: dict, offset=(0.0, 0.0)) -> list:
         return [("arc", c, r, start, arc_sweep(start, _num(data.get("end"), start + 90.0)))]
     if kind == "cad_hatch":
         return cad_hatch.prims(data, offset)
+    if kind == "cad_point":
+        return cad_point.prims(data, offset)
+    if kind == "cad_image":                             # son cadre
+        return cad_image.prims(data, offset)
+    if kind in cad_xline.KINDS:                         # un segment tres long (calculs) ; dessin decoupe a la vue
+        return cad_xline.prims(kind, data, offset)
+    if kind == "cad_insert":                            # sans les definitions de blocs : le point d'insertion
+        p = _pt(data.get("pos"))
+        p = (p[0] + ox, p[1] + oy)
+        return [("segment", p, p)]
     if kind == "cad_text":                              # le cadre du texte (choix, fenetres, apercus)
         corners = cad_text.layout(data, offset)["corners"]
         return [("segment", a, b) for a, b in cad_text.box_segments(corners)]
@@ -454,9 +467,15 @@ def grips(kind: str, data: dict, offset=(0.0, 0.0)) -> list:
     cercle = centre + quadrants ; polyligne = sommets (v<i>) + milieux des segments (m<i>)."""
     if kind == "cad_dim":
         return cad_dims.grips(data, offset)
-    if kind == "cad_text":
+    if kind in ("cad_text", "cad_point", "cad_insert"):
         p = _pt(data.get("pos"))
         return [("pos", (p[0] + offset[0], p[1] + offset[1]))]
+    if kind == "cad_image":                             # coin d'insertion (deplace l'image), puis les autres coins
+        c = cad_image.corners(data, offset)
+        return [("pos", c[0])]
+    if kind in cad_xline.KINDS:                         # point de base (deplace), point de direction (tourne)
+        a, b = _pt(data.get("p1")), _pt(data.get("p2"))
+        return [("p1", (a[0] + offset[0], a[1] + offset[1])), ("p2", (b[0] + offset[0], b[1] + offset[1]))]
     if kind == "cad_hatch":
         loops = cad_hatch.clean_loops(data.get("loops"))
         c = cad_hatch.centroid(loops)
@@ -487,7 +506,7 @@ def grips(kind: str, data: dict, offset=(0.0, 0.0)) -> list:
 
 def move_grip_names(kind: str, names) -> bool:
     """Ces poignees deplacent l'entite entiere (et non une partie)."""
-    return any(n == "center" or (kind == "cad_line" and n == "mid") or (kind == "cad_text" and n == "pos")
+    return any(n == "center" or (kind == "cad_line" and n == "mid") or (kind in ("cad_text", "cad_point", "cad_insert", "cad_image") and n == "pos") or (kind in cad_xline.KINDS and n == "p1")
                for n in names)
 
 
@@ -505,7 +524,11 @@ def _translated_part(kind: str, data: dict, delta) -> dict:
         return cad_hatch.translate(data, delta)
     if kind == "cad_text":
         return cad_text.translate(data, delta)
-    if kind == "cad_line":
+    if kind in ("cad_point", "cad_insert"):
+        return cad_point.translate(data, delta)
+    if kind == "cad_image":
+        return cad_image.translate(data, delta)
+    if kind == "cad_line" or kind in cad_xline.KINDS:
         a, b = _pt(data.get("p1")), _pt(data.get("p2"))
         return {"p1": [a[0] + dx, a[1] + dy], "p2": [b[0] + dx, b[1] + dy]}
     if kind in ("cad_arc", "cad_circle"):
@@ -523,6 +546,9 @@ def grip_edit(kind: str, data: dict, names, delta, move: bool):
     if move or move_grip_names(kind, names):
         return translated(kind, data, delta)
     names = set(names)
+    if kind in cad_xline.KINDS and "p2" in names:       # point de direction : la droite tourne autour de sa base
+        a, b = _pt(data.get("p1")), geo.add(_pt(data.get("p2")), delta)
+        return None if geo.distance(a, b) <= geo.EPS else {"p1": list(a), "p2": list(b)}
     if kind == "cad_dim":
         out = {}
         for name in names:
@@ -625,7 +651,7 @@ def transformed(kind: str, data: dict, point_fn, angle_fn, flips: bool) -> dict:
     """Champs geometriques de l'entite dont chaque point passe par `point_fn` ; `angle_fn(degres)` transforme une
     direction (rotation : + angle ; miroir : 2 phi - angle) ; `flips` (miroir) inverse l'orientation (renflements,
     debut et fin d'un arc)."""
-    if kind == "cad_line":
+    if kind == "cad_line" or kind in cad_xline.KINDS:
         a, b = point_fn(_pt(data.get("p1"))), point_fn(_pt(data.get("p2")))
         return {"p1": list(a), "p2": list(b)}
     if kind == "cad_circle":
@@ -645,9 +671,22 @@ def transformed(kind: str, data: dict, point_fn, angle_fn, flips: bool) -> dict:
     if kind == "cad_dim":
         return cad_dims.transform(data, point_fn, angle_fn)
     if kind == "cad_hatch":
-        return cad_hatch.transform(data, point_fn, angle_fn)
+        return cad_hatch.transform(data, point_fn, angle_fn, flips)
     if kind == "cad_text":
         return cad_text.transform(data, point_fn, angle_fn, flips)
+    if kind == "cad_point":
+        return cad_point.transform(data, point_fn)
+    if kind == "cad_image":
+        return cad_image.transform(data, point_fn)
+    if kind == "cad_insert":                            # rotation : + angle ; miroir (axe d'angle phi) : 2 phi + 180 - r
+        rot = _num(data.get("rot"))
+        out = {"pos": list(point_fn(_pt(data.get("pos"))))}
+        if flips:
+            out["rot"] = (angle_fn(0.0) + 180.0 - rot) % 360.0
+            out["mirror"] = not bool(data.get("mirror", False))
+        else:
+            out["rot"] = (angle_fn(rot)) % 360.0
+        return out
     return {}
 
 
@@ -681,6 +720,8 @@ def scaled(kind: str, data: dict, base, factor: float) -> dict:
         out["hatch_spacing"] = _num(data.get("hatch_spacing")) * factor
     if kind == "cad_text":
         out.update(cad_text.scale(data, factor))
+    if kind == "cad_insert":
+        out["scale"] = max(1e-12, _num(data.get("scale"), 1.0)) * factor
     return out
 
 

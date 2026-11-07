@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
-from fm_cad import cad_aliases, cad_model
+from fm_cad import cad_aliases, cad_items, cad_model
 from . import export, model, serialization
 from fm_miro import miro_io
 from fm_miro.items import BoardItem, CommentItem, max_radius, shape_path
@@ -37,6 +37,8 @@ from .scene import BoardScene
 from .view import DRAW_TOOLS, ERASER_SIZES, BoardView, paint_render_badge
 
 AUTOSAVE_MS = 800
+AUTOSAVE_RETRY_MS = 120      # un module prépare ses ressources en arrière-plan : on repasse peu après
+AUTOSAVE_MAX_WAITS = 100     # (≈ 12 s au plus : ensuite l'enregistrement attend lui-même le travail en cours)
 FADE_MS = 160
 TOOLS = [("select", "Sélection (V)"), ("hand", "Main (H, ou Espace)"), ("sticky", "Post-it (N)"),
          ("text", "Texte (T)"), ("shape", "Formes (S ; R rectangle, O ellipse)"), ("connector", "Connecteur (L)"),
@@ -52,7 +54,11 @@ MODULES = [("miro", "Miro", "Module Miro : post-it, textes, formes, dessin, comm
            ("illustrator", "Illustrator", "Module Illustrator : illustration vectorielle, plans de travail, plume, "
                                           "formes, export SVG (à la manière d'Adobe Illustrator)"),
            ("photoshop", "Photoshop", "Module Photoshop : retouche et composition d'images matricielles (calques, masques, "
-                                      "brosses, export PNG / TIFF)")]
+                                      "brosses, export PNG / TIFF)"),
+           ("pdf", "PDF", "Module PDF : documents liés, éditeur PDF plein cadre (lecture, formulaires AcroForm et XFA, "
+                          "conception de formulaires, annotations, pages)")]
+# barre des modules > couleur de fond de la vue : couleurs par defaut d'AutoCAD (espace objet, sombre) et de Miro
+VIEW_BACKGROUNDS = [("AutoCAD (sombre)", "#212830"), ("Miro", model.MIRO_BACKGROUND)]
 DRAW_BAR = [("pen", "Stylo"), ("highlighter", "Surligneur"), ("smart", "Dessin intelligent (formes reconnues)"),
             ("eraser", "Gomme (traits entiers)"), ("precision_eraser", "Gomme de précision (coupe les traits)"),
             ("lasso", "Lasso (sélection à main levée)")]
@@ -100,6 +106,18 @@ def paint_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
     if kind == "illustrator" or kind.startswith("ill_"):
         from fm_illustrator.glyphs import paint_ill_glyph      # module Illustrator : ses icones
         paint_ill_glyph(painter, kind, rect, color)
+        return
+    if kind == "pdf":                                           # module PDF : une page cornée et un champ
+        painter.setPen(QPen(color, 1.4))
+        painter.setBrush(Qt.NoBrush)
+        s = min(rect.width(), rect.height()) * 0.3
+        c = rect.center()
+        x0, y0, x1, y1 = c.x() - s * 0.8, c.y() - s, c.x() + s * 0.8, c.y() + s
+        f = s * 0.45
+        painter.drawPolygon([QPointF(x0, y0), QPointF(x1 - f, y0), QPointF(x1, y0 + f), QPointF(x1, y1),
+                             QPointF(x0, y1)])
+        painter.drawLine(QPointF(x0 + s * 0.3, c.y() - s * 0.2), QPointF(x1 - s * 0.3, c.y() - s * 0.2))
+        painter.drawRect(QRectF(x0 + s * 0.3, c.y() + s * 0.25, x1 - x0 - s * 0.6, s * 0.35))
         return
     if kind == "photoshop":                                     # module Photoshop : une image (cadre, montagnes, soleil)
         painter.setPen(QPen(color, 1.4))
@@ -237,12 +255,59 @@ def paint_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
             painter.drawLine(QPointF(cx - r, cy + v), QPointF(cx + r, cy + v))
     elif kind == "miro":                                    # module Miro : post-it
         paint_glyph(painter, "sticky", rect, color)
-    elif kind == "fade":                                    # griser : carre plein en transparence
-        faded = QColor(color)
-        faded.setAlpha(90)
-        box = QRectF(cx - s * 1.3, cy - s * 1.3, s * 2.6, s * 2.6)
-        painter.fillRect(box, faded)
-        painter.drawRect(box)
+    elif kind == "fade":                                    # griser : cercle a moitie plein (barre des modules)
+        r = s * 1.45
+        painter.drawEllipse(QPointF(cx, cy), r, r)
+        half = QPainterPath()
+        half.moveTo(cx, cy - r)
+        half.arcTo(QRectF(cx - r, cy - r, 2 * r, 2 * r), 90, 180)
+        half.closeSubpath()
+        painter.fillPath(half, color)
+    elif kind == "show":                                    # afficher : oeil ouvert
+        eye = QPainterPath()
+        eye.moveTo(cx - s * 1.6, cy)
+        eye.quadTo(cx, cy - s * 1.7, cx + s * 1.6, cy)
+        eye.quadTo(cx, cy + s * 1.7, cx - s * 1.6, cy)
+        painter.drawPath(eye)
+        painter.drawEllipse(QPointF(cx, cy), s * 0.55, s * 0.55)
+    elif kind == "solo":                                    # isoler : cible
+        r = s * 1.15
+        painter.drawEllipse(QPointF(cx, cy), r, r)
+        painter.setBrush(color)
+        painter.drawEllipse(QPointF(cx, cy), s * 0.42, s * 0.42)
+        for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+            painter.drawLine(QPointF(cx + dx * s * 1.65, cy + dy * s * 1.65),
+                             QPointF(cx + dx * s * 2.1, cy + dy * s * 2.1))
+    elif kind == "solo_exit":                               # quitter l'isolation : cible barree
+        paint_glyph(painter, "solo", rect, color)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawLine(QPointF(cx - s * 1.9, cy + s * 1.9), QPointF(cx + s * 1.9, cy - s * 1.9))
+    elif kind in ("modules_fold", "modules_unfold"):     # replier / deplier la barre : panneau + chevron
+        k = s * 1.3 / 8                                    # coordonnees de la maquette (boite de 24)
+
+        def p(x, y):
+            return QPointF(cx + (x - 12) * k, cy + (y - 12) * k)
+        painter.drawPolygon(QPolygonF([p(4, 4), p(20, 4), p(20, 20), p(4, 20)]))
+        painter.drawLine(p(9, 4), p(9, 20))
+        tip = [p(15, 9), p(12, 12), p(15, 15)] if kind == "modules_fold" else [p(13, 9), p(16, 12), p(13, 15)]
+        painter.drawPolyline(QPolygonF(tip))
+    elif kind == "modules_bg":                              # couleur de fond de la vue : carre a moitie plein
+        r = s * 1.25
+        painter.drawRoundedRect(QRectF(cx - r, cy - r, 2 * r, 2 * r), s * 0.3, s * 0.3)
+        painter.save()
+        painter.setBrush(color)
+        painter.drawPolygon(QPolygonF([QPointF(cx - r, cy + r), QPointF(cx + r, cy - r), QPointF(cx + r, cy + r)]))
+        painter.restore()
+    elif kind == "modules_reset":                           # tout reinitialiser : fleche circulaire
+        r = s * 1.35
+        arc = QPainterPath()
+        arc.arcMoveTo(QRectF(cx - r, cy - r, 2 * r, 2 * r), 135)
+        arc.arcTo(QRectF(cx - r, cy - r, 2 * r, 2 * r), 135, 270)
+        painter.drawPath(arc)
+        tip = QPointF(cx - r * 0.707, cy - r * 0.707)
+        painter.drawPolyline(QPolygonF([QPointF(tip.x(), tip.y() - s * 0.9), tip,
+                                        QPointF(tip.x() + s * 0.9, tip.y())]))
     elif kind == "hide":                                    # masquer : oeil barre
         eye = QPainterPath()
         eye.moveTo(cx - s * 1.6, cy)
@@ -351,6 +416,9 @@ def refresh_glyph_buttons(root):
     global _GLYPH_GENERATION
     _GLYPH_GENERATION += 1
     for button in root.findChildren(_GlyphButton):
+        button.update()
+    from fm_theme.palette import PaletteButton
+    for button in root.findChildren(PaletteButton):
         button.update()
 
 
@@ -479,18 +547,21 @@ class _TextButton(QPushButton):
             self.setFixedWidth(width)
 
 
-class _RenderBadge(QWidget):
+class RenderBadge(QWidget):
     """Encart en haut a droite : mode de rendu REEL du board, mis a jour des qu'il change (`BoardView.renderModeChanged`) :
     OPEN GL (vert) quand la couche GPU est active, CLASSIQUE (rouge) sinon ; fond noir a 15 %, coins de 3 px. Rendu
     classique : ce widget le peint ; rendu OpenGL : il est cache et la couche GPU peint l'encart a sa place
-    (`BoardView.gpu_badge`)."""
+    (`BoardView.gpu_badge`). Un clic passe d'un mode a l'autre (`clicked`, `BoardPane.toggle_render_mode`)."""
 
-    def __init__(self, parent):
+    clicked = Signal()
+
+    def __init__(self, parent, hanging: bool = False):
         super().__init__(parent)
         self._gl = False
-        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.hanging = hanging                              # accroche en bas d'une barre (barre de navigation)
+        self.setCursor(Qt.PointingHandCursor)
         font = self.font()
-        font.setPixelSize(12)
+        font.setPixelSize(10 if hanging else 12)            # accroche : tient sous les boutons de la fenetre
         font.setBold(True)
         self.setFont(font)
         self._fit()
@@ -510,13 +581,28 @@ class _RenderBadge(QWidget):
     def label(self) -> str:
         return "OPEN GL" if self._gl else "CLASSIQUE"
 
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
+            self.clicked.emit()
+            return
+        super().mouseReleaseEvent(event)
+
     def _fit(self):
         width = self.fontMetrics().horizontalAdvance(self.label())
-        self.resize(width + 20, self.fontMetrics().height() + 10)
+        if self.hanging:
+            self.resize(width + 16, self.fontMetrics().height() + 4)
+        else:
+            self.resize(width + 20, self.fontMetrics().height() + 10)
 
     def paintEvent(self, _event):
         painter = QPainter(self)
-        paint_render_badge(painter, self.rect(), self._gl)
+        paint_render_badge(painter, self.rect(), self._gl, self.hanging, self.font().pixelSize())
 
 
 class _ZoomLabel(_GlyphButton):
@@ -1133,7 +1219,10 @@ class BoardPane(QWidget):
     """Board ouvert au centre de la zone des colonnes."""
 
     dirtyChanged = Signal(bool)
+    saveStateChanged = Signal(str, bool)    # etat d'enregistrement (texte, modifie) : barre d'etat de l'appli
     closeRequested = Signal()
+    # Fondu d'ouverture termine : le board couvre tout (l'hote peut cacher ce qu'il recouvre, voir fade_in).
+    coveringShown = Signal()
     stateChanged = Signal()                 # annuler / retablir disponibles, zoom : boutons de la barre a jour
 
     def __init__(self, parent: QWidget, settings: dict | None = None):
@@ -1163,8 +1252,10 @@ class BoardPane(QWidget):
         self._context_timer.setInterval(0)
         self._context_timer.timeout.connect(self._sync_context_bar)
         self.scene.selectionChanged.connect(self._context_timer.start)   # une fois par passage de boucle
-        self.scene.undo.canUndoChanged.connect(lambda _c: self.stateChanged.emit())
-        self.scene.undo.canRedoChanged.connect(lambda _c: self.stateChanged.emit())
+        # Signal vers signal (pas de lambda) : coupe par Qt quand le board est detruit (sinon « Unknown return
+        # type » dans error_log a chaque annuler / retablir apres la fermeture).
+        self.scene.undo.canUndoChanged.connect(self.stateChanged)
+        self.scene.undo.canRedoChanged.connect(self.stateChanged)
         self.view.toolChanged.connect(self._sync_tools)
         self.view.zoomChanged.connect(self._on_zoom)
         self.view.commentOpened.connect(self._open_comment)
@@ -1172,15 +1263,18 @@ class BoardPane(QWidget):
         self._autosave = QTimer(self)
         self._autosave.setSingleShot(True)
         self._autosave.setInterval(AUTOSAVE_MS)
-        self._autosave.timeout.connect(self.save)
+        self._autosave.timeout.connect(self._autosave_due)
+        self._autosave_waits = 0
         self._presets = self._load_presets()
         self._preset_index = {"pen": 0, "highlighter": 0, "smart": 0}
         self._draw_tool = "pen"
+        self._drawing = False                   # un outil de dessin est choisi (module Miro) : sa barre et ses presets se montrent
         self.cad = None                         # module CAD (fm_cad/cad.py), cree au 1er usage
         self.design = None                      # module Design (fm_design/controller.py), cree au 1er usage
         self.tableur = None                     # module Tableur (fm_tableur/board_ui.py), cree au 1er usage
         self.illustrator = None                 # module Illustrator (fm_illustrator/controller.py), cree au 1er usage
         self.photoshop = None                   # module Photoshop (fm_photoshop/board_ui.py), cree au 1er usage
+        self.pdf = None                         # module PDF (fm_pdf/board_ui.py), cree au 1er usage
         self.module = None                      # module actif : "miro", "cad", "design" ou None (aucune barre)
         self._cad_export_units = "mm"           # unites du dernier export DXF / DWG (session)
         self.view.cad = None
@@ -1195,9 +1289,13 @@ class BoardPane(QWidget):
         refaites que si leur habillage a change."""
         self._settings = dict(settings or {})
         look = toolbar_look(self._settings)
-        if getattr(self, "_toolbar_key", None) != look["key"] and hasattr(self, "_toolbar"):
+        if getattr(self, "_toolbar_key", None) != look["key"] and hasattr(self, "_title"):
             self._toolbar_key = look["key"]
             self._apply_toolbar_look(look)
+        if hasattr(self, "_modulebar"):
+            self._apply_modulebar_settings()
+        from fm_theme.palette import restyle_palettes_in        # barres flottantes : section « Palette » de l'editeur fm_theme
+        restyle_palettes_in(self, self._settings)
         self.scene.snap = {
             "enabled": bool(self._settings.get("board_snap_enabled", True)),
             "objects": bool(self._settings.get("board_snap_objects", True)),
@@ -1220,6 +1318,8 @@ class BoardPane(QWidget):
         if restyle:
             self.scene.cad_style_changed()
             self.scene.update()
+        from . import snap_guides                                 # guides du magnetisme (apres les types de ligne)
+        snap_guides.apply_settings(self._settings)
         pgp = str(self._settings.get("board_cad_pgp_path", "") or "").strip()
         if pgp != cad_aliases._state["path"]:
             cad_aliases.install(pgp)                              # alias de commandes du fichier .pgp choisi
@@ -1243,6 +1343,47 @@ class BoardPane(QWidget):
         if ps_look.apply_settings(self._settings) and self.photoshop is not None:
             self.photoshop.refresh_look()
 
+    def _apply_modulebar_settings(self):
+        """Reglages : Board > Board > Barre de selection : habillage (refait seulement s'il a change) et opacite des
+        elements grises (rien n'est refait si elle n'a pas change)."""
+        from . import modulebar
+        if modulebar.set_look(modulebar.modulebar_look(self._settings)) \
+                or getattr(self, "_modulebar_key", None) != modulebar.LOOK["key"]:
+            self._modulebar_key = modulebar.LOOK["key"]
+            self._modulebar.restyle()
+            self._module_tab.restyle()
+            self._sync_modules()
+        try:
+            opacity = max(5, min(90, int(self._settings.get("board_modules_fade_opacity", 30)))) / 100.0
+        except (TypeError, ValueError):
+            opacity = 0.3
+        try:
+            saturation = max(0, min(100, int(self._settings.get("board_modules_fade_saturation", 100)))) / 100.0
+        except (TypeError, ValueError):
+            saturation = 1.0
+        if abs(opacity - cad_items.FADE_OPACITY) > 1e-6 or abs(saturation - cad_items.FADE_SATURATION) > 1e-6:
+            cad_items.FADE_OPACITY = opacity                  # lu au dessin (CAD, Design, Illustrator) et par la scene
+            cad_items.FADE_SATURATION = saturation            # idem (CAD : couleur des traits, shader GPU ; autres : effet)
+            self.scene.refresh_faded()
+            layer = getattr(self.view, "gpu", None)
+            if layer is not None:
+                layer.request()
+
+    def toggle_render_mode(self):
+        """Clic sur l'encart OPEN GL / CLASSIQUE : l'autre mode de rendu, retenu dans le reglage `board_cad_gpu`."""
+        on = not self.view.gpu_active()
+        ok = self.view.set_gpu(on)
+        value = bool(on and ok)
+        self._settings["board_cad_gpu"] = value
+        if on and not ok and self.cad is not None:
+            self.cad.message("Rendu OpenGL indisponible : rendu classique.", error=True)
+        writer = SETTING_WRITER
+        if writer is not None:
+            try:
+                writer("board_cad_gpu", value)
+            except Exception:                        # noqa: BLE001 - la session garde la valeur
+                pass
+
     def _on_gpu_failed(self, message: str):
         """Rendu GPU impossible : le reglage est remis a faux (pas de nouvel essai a chaque ouverture) et signale."""
         self._settings["board_cad_gpu"] = False
@@ -1263,9 +1404,27 @@ class BoardPane(QWidget):
         self.view.setFocus()
 
     def _sync_grid_button(self):
-        button = getattr(self, "_grid_button", None)
-        if button is not None:
-            button.set_on(bool(self.scene.page.get("grid", True)))
+        on = bool(self.scene.page.get("grid", True))
+        for button in (getattr(self, "_grid_button", None), getattr(getattr(self, "_modulebar", None), "grid", None)):
+            if button is not None:
+                button.set_on(on)
+
+    def _open_background_menu(self, anchor=None):
+        """Barre des modules : couleur de fond de la vue (couleur du canvas de ce board), avec les couleurs par defaut
+        d'AutoCAD (sombre) et de Miro, ou une couleur au choix."""
+        menu = _menu(self, "modules_bg")
+        current = self.scene.page.get("background") or model.MIRO_BACKGROUND
+        for label, color in VIEW_BACKGROUNDS:
+            action = menu.addAction(f"{label} ({color})")
+            action.setCheckable(True)
+            action.setChecked(current.lower() == color)
+            action.triggered.connect(lambda _c=False, c=color: self.scene.set_page(
+                {"background": None if c == model.MIRO_BACKGROUND else c}, text="Couleur du canvas"))
+        menu.addSeparator()
+        menu.addAction("Autre couleur…").triggered.connect(
+            lambda: QTimer.singleShot(0, lambda: self._pick_page_color(anchor)))
+        anchor = anchor or self._page_button
+        menu.popup(anchor.mapToGlobal(anchor.rect().topRight()))
 
     def toggle_invert(self):
         """Bouton de la barre d'outils : icones et textes en negatif (meme reglage que Reglages > Module MRO > Barres
@@ -1281,12 +1440,8 @@ class BoardPane(QWidget):
 
     def _apply_toolbar_look(self, look: dict):
         self.toolbar_style = look
-        for bar in (self._toolbar, self._drawbar, self._title, self._zoombar, self._contextbar, self._modulebar):
+        for bar in (self._title,):
             bar.set_look(look)
-            if bar is self._toolbar:
-                margins = bar.layout().contentsMargins()
-                horizontal = max(margins.left(), margins.right())
-                bar.layout().setContentsMargins(horizontal, margins.top(), horizontal, margins.bottom())
             for button in bar.findChildren(_GlyphButton):
                 button.update()                             # icones (negatif) repeintes
         self._style_bar_texts()
@@ -1299,7 +1454,7 @@ class BoardPane(QWidget):
         look = getattr(self, "toolbar_style", None)
         if look is None:
             return
-        for bar in (self._toolbar, self._drawbar, self._title, self._zoombar, self._contextbar, self._modulebar):
+        for bar in (self._title,):
             font = look["font"]
             size = font.pixelSize() if font.pixelSize() > 0 else round(font.pointSizeF() * 4 / 3)
             # Dans la feuille de style (celle de l'appli fixe la police des boutons, setFont seul serait ignore).
@@ -1344,45 +1499,54 @@ class BoardPane(QWidget):
     # -- panneaux flottants --
     def _build_chrome(self):
         from settings_theme import _text_label
-        self._toolbar, tools = _bar(self, True)
-        tools.setAlignment(Qt.AlignHCenter)
+        # Barres FLOTTANTES de Miro (fm_theme/bar_manager.py, fm_board/bars.py) : outils, dessin, page, vue, selection. Leur
+        # aspect est celui de fm_theme (section « Palette » de l'editeur) ; la disposition est retenue par l'utilisateur.
+        from .bars import BoardBars, BoardTool, ZoomText, miro_default_state
+        self._no_bar = QWidget(self)               # (a la place d'une barre supprimee : `_toolbar`... restent utilisables)
+        self._no_bar.hide()
+        self._miro_bars = BoardBars(self, "miro", miro_default_state())
+        register = self._miro_bars.register
         self._tool_buttons = {}
         for kind, tip in TOOLS:
-            button = _GlyphButton(kind, tip, self._toolbar)
+            button = BoardTool(kind, tip)
             button.clicked.connect(lambda _c=False, k=kind: self._on_tool_button(k))
-            tools.addWidget(button)
+            register(kind, button)
             self._tool_buttons[kind] = button
-        tools.addSpacing(10)
-        page = _GlyphButton("page", "Réglages de la page (ce board)", self._toolbar)
+        page = BoardTool("page", "Réglages de la page (ce board)")
         page.clicked.connect(self._open_page_menu)
-        tools.addWidget(page)
+        register("page", page)
         self._page_button = page
-        grid = _GlyphButton("grid", "Grille (ce board ; F7 en mode CAD)", self._toolbar)
+        grid = BoardTool("grid", "Grille (ce board ; F7 en mode CAD)")
         grid.clicked.connect(self.toggle_grid)
-        tools.addWidget(grid)
+        register("grid", grid)
         self._grid_button = grid
         self.scene.pageChanged.connect(self._sync_grid_button)
         self._sync_grid_button()
-        invert = _GlyphButton("invert", "Icônes et textes en négatif", self._toolbar)
-        invert.clicked.connect(self.toggle_invert)
-        tools.addWidget(invert)
-        self._invert_button = invert
-
-        self._drawbar, draw = _bar(self, True)
         self._draw_buttons = {}
         for kind, tip in DRAW_BAR:
-            button = _GlyphButton(kind, tip, self._drawbar)
+            button = BoardTool(kind, tip)
             button.clicked.connect(lambda _c=False, k=kind: self._choose_draw_tool(k))
-            draw.addWidget(button)
+            register(kind, button)
             self._draw_buttons[kind] = button
-        draw.addSpacing(8)
         self._preset_buttons = []
         for index in range(3):
-            button = _GlyphButton("swatch", "Preset (re-cliquer pour le modifier)", self._drawbar)
+            button = BoardTool("swatch", "Preset (re-cliquer pour le modifier)", key=f"preset{index}")
             button.clicked.connect(lambda _c=False, i=index: self._on_preset(i))
-            draw.addWidget(button)
+            register(f"preset{index}", button)
             self._preset_buttons.append(button)
-        self._drawbar.hide()
+        minus = BoardTool("minus", "Dézoomer (-)", key="zoom_out")
+        minus.clicked.connect(lambda: self.view.zoom_by(1 / 1.25))
+        register("zoom_out", minus)
+        self._zoom_label = ZoomText(self.view)
+        self._zoom_label.clicked.connect(lambda: self.view.set_zoom(1.0))
+        register("zoom", self._zoom_label)
+        plus = BoardTool("plus", "Zoomer (+)", key="zoom_in")
+        plus.clicked.connect(lambda: self.view.zoom_by(1.25))
+        register("zoom_in", plus)
+        fit = BoardTool("fit", "Tout voir (Maj+1)")
+        fit.clicked.connect(self.view.fit_all)
+        register("fit", fit)
+        self._miro_bars.restore()
 
         self._title, title = _bar(self, False)
         title.setContentsMargins(12, 6, 12, 6)
@@ -1392,40 +1556,30 @@ class BoardPane(QWidget):
         title.addWidget(self._name)
         title.addWidget(self._state)
 
-        self._zoombar, zoom = _bar(self, False)
-        minus = _GlyphButton("minus", "Dézoomer (-)", self._zoombar, 30)
-        minus.clicked.connect(lambda: self.view.zoom_by(1 / 1.25))
-        self._badge = _RenderBadge(self)
+        self._badge = RenderBadge(self)
         self.view.renderModeChanged.connect(self._badge.set_gl)
         self._badge.set_gl(self.view.gpu_active())
-        self._zoom_label = _ZoomLabel(self.view, self._zoombar)
-        self._zoom_label.clicked.connect(lambda: self.view.set_zoom(1.0))
-        plus = _GlyphButton("plus", "Zoomer (+)", self._zoombar, 30)
-        plus.clicked.connect(lambda: self.view.zoom_by(1.25))
-        fit = _GlyphButton("fit", "Tout voir (Maj+1)", self._zoombar, 30)
-        fit.clicked.connect(self.view.fit_all)
-        for button in (minus, self._zoom_label, plus, fit):
-            zoom.addWidget(button)
-
-        self._contextbar, self._context_layout = _bar(self, False)
-        self._contextbar.hide()
+        self._badge.clicked.connect(self.toggle_render_mode)
         self._comment_panel = CommentPanel(self)
 
-        self._modulebar, modules = _bar(self, False)
-        self._module_buttons = {}
-        for index, (name, label, tip) in enumerate(MODULES):
-            if index:
-                modules.addSpacing(10)
-            button = _GlyphButton(name, tip, self._modulebar)
-            button.clicked.connect(lambda _c=False, n=name: self.set_module(None if self.module == n else n))
-            fade = _GlyphButton("fade", f"Griser les éléments {label} (visibles, ni sélectionnables ni modifiables)",
-                                self._modulebar, 30)
-            fade.clicked.connect(lambda _c=False, n=name: self.toggle_module_look(n, "fade"))
-            hide = _GlyphButton("hide", f"Masquer les éléments {label}", self._modulebar, 30)
-            hide.clicked.connect(lambda _c=False, n=name: self.toggle_module_look(n, "hide"))
-            for widget in (button, fade, hide):
-                modules.addWidget(widget, 0, Qt.AlignVCenter)
-            self._module_buttons[name] = (button, fade, hide)
+        # Barre des modules (fm_board/modulebar.py) : panneau du bord gauche (repliee : etroite, icones seules, ou
+        # cachee derriere une languette, au choix des reglages), encart « Isolé » dans la barre.
+        from .modulebar import FoldTab, ModuleBar
+        self._modulebar = ModuleBar(MODULES, self)
+        self._modulebar.moduleClicked.connect(self._on_module_icon)
+        self._modulebar.lookToggled.connect(self.toggle_module_look)
+        self._modulebar.resetClicked.connect(self.reset_module_looks)
+        self._modulebar.gridClicked.connect(self.toggle_grid)
+        self._modulebar.backgroundClicked.connect(lambda: self._open_background_menu(self._modulebar.background))
+        self._sync_grid_button()
+        self._modulebar.foldClicked.connect(lambda: self.set_modulebar_folded(not self.modulebar_folded))
+        self._module_tab = FoldTab(self)
+        self._module_tab.clicked.connect(lambda: self.set_modulebar_folded(not self.modulebar_folded))
+        self._modulebar.exitSoloClicked.connect(lambda: self.reset_module_looks(solo_only=True))
+        self.modulebar_folded = bool(self._settings.get("board_modulebar_folded", False))
+        # Par module : (icone, afficher / masquer, griser, isoler).
+        self._module_buttons = {name: (row.icon, row.vis, row.dim, row.solo)
+                                for name, row in self._modulebar.rows.items()}
         self._sync_tools(self.view.tool)
         self._sync_modules()
 
@@ -1441,6 +1595,8 @@ class BoardPane(QWidget):
             self.illustrator.deactivate()
         if name != "photoshop" and self.photoshop is not None and self.photoshop.active:
             self.photoshop.deactivate()
+        if name != "pdf" and self.pdf is not None and self.pdf.active:
+            self.pdf.deactivate()
         self.module = name
         if name == "cad":
             self.toggle_cad(True)
@@ -1448,42 +1604,97 @@ class BoardPane(QWidget):
         if self.cad_active():
             self.toggle_cad(False)
         if name == "design":
-            self._contextbar.hide()
+            self._clear_context_items()
             if self.design is None:
                 from fm_design.controller import DesignController
                 self.design = DesignController(self)
                 self.view.design = self.design
             self.design.activate()
         if name == "tableur":
-            self._contextbar.hide()
+            self._clear_context_items()
             if self.tableur is None:
                 from fm_tableur.board_ui import TableurController
                 self.tableur = TableurController(self)
             self.tableur.activate()
         if name == "illustrator":
-            self._contextbar.hide()
+            self._clear_context_items()
             if self.illustrator is None:
                 from fm_illustrator.controller import IllustratorController
                 self.illustrator = IllustratorController(self)
                 self.view.illustrator = self.illustrator
             self.illustrator.activate()
         if name == "photoshop":
-            self._contextbar.hide()
+            self._clear_context_items()
             if self.photoshop is None:
                 from fm_photoshop.board_ui import PhotoshopController
                 self.photoshop = PhotoshopController(self)
             self.photoshop.activate()
+        if name == "pdf":
+            self._clear_context_items()
+            if self.pdf is None:
+                from fm_pdf.board_ui import PdfBoardController
+                self.pdf = PdfBoardController(self)
+            self.pdf.activate()
         if name is None and self.view.tool != "hand":
             self.view.set_tool("select")
+        if name is None:                        # aucun module : rien ne reste choisi (demande de l'utilisateur)
+            self.view.finish_text_edit()
+            self.scene.clearSelection()
         self._sync_tools(self.view.tool)
         self._sync_context_bar()
         self._sync_modules()
         self.view.setFocus()
 
+    def _on_module_icon(self, name: str, alt: bool):
+        """Icone d'un module de la barre : clic = l'activer (re-clic : aucun module) ; Alt + clic = l'isoler."""
+        from .modulebar import LOOK
+        if alt and LOOK["alt_solo"]:
+            self.toggle_module_look(name, "solo")
+        else:
+            self.set_module(None if self.module == name else name)
+
     def toggle_module_look(self, module: str, what: str):
-        """Bouton griser (« fade ») ou masquer (« hide ») d'un module."""
-        current = self.scene.module_look[module][what]
-        self.scene.set_module_look(module, **{what: not current})
+        """Barre des modules : masquer (« hide »), griser (« fade ») ou isoler (« solo ») les elements d'un module."""
+        current = self.scene.module_state[module][what]
+        self.scene.set_module_state(module, **{what: not current})
+        self._module_looks_changed()
+        if what == "solo" and not current and self.module != module:
+            self.set_module(module)                     # isole : le module devient actif (demande, 2026-11-05)
+
+    def reset_module_looks(self, solo_only: bool = False):
+        """Tout afficher et sortir de l'isolation (pastille « Isolé » : sortir de l'isolation seulement)."""
+        self.scene.reset_module_states(solo_only)
+        self._module_looks_changed()
+
+    def set_modulebar_folded(self, folded: bool, save: bool = True):
+        """Bouton du haut de la barre des modules (ou languette) : repliee ou depliee ; retenue."""
+        folded = bool(folded)
+        if folded != self.modulebar_folded:
+            self.modulebar_folded = folded
+            self._settings["board_modulebar_folded"] = folded
+            self._sync_modules()
+        if save:
+            try:
+                from settings_store import save_live_state
+                import ui_state
+                save_live_state("board_modulebar_folded", folded)
+                if isinstance(ui_state.APPLIED_SETTINGS, dict):
+                    ui_state.APPLIED_SETTINGS["board_modulebar_folded"] = folded
+            except Exception:
+                pass
+
+    def modulebar_tabbed(self) -> bool:
+        """Repli « languette » (reglage) : la barre repliee est cachee entierement."""
+        from .modulebar import LOOK
+        return LOOK["fold_style"] == "tab"
+
+    def left_edge(self) -> int:
+        """Premier x libre a gauche du board (a droite de la barre des modules, ou de sa languette)."""
+        if self.modulebar_tabbed() and self.modulebar_folded:
+            return self._module_tab.geometry().right() + 1
+        return self._modulebar.geometry().right() + 1      # les barres d'outils se collent contre elle (demande de l'utilisateur)
+
+    def _module_looks_changed(self):
         layer = getattr(self.view, "gpu", None)
         if layer is not None:
             layer.request()                             # rendu GPU du CAD : nouvelle image
@@ -1493,18 +1704,22 @@ class BoardPane(QWidget):
         self._sync_modules()
 
     def _sync_modules(self):
-        for name, (button, fade, hide) in self._module_buttons.items():
-            look = self.scene.module_look[name]
-            button.set_on(self.module == name)
-            fade.set_on(look["fade"])
-            hide.set_on(look["hide"])
-        self._toolbar.setVisible(self.module == "miro")
-        self._drawbar.setVisible(self.module == "miro" and self.view.tool in DRAW_TOOLS)
+        states = self.scene.module_state
+        tabbed = self.modulebar_tabbed()
+        self._modulebar.set_folded(self.modulebar_folded and not tabbed)
+        solo = [label for name, label, _tip in MODULES if states[name]["solo"]]
+        self._modulebar.sync(self.module, states, solo)
+        self._modulebar.setVisible(not (tabbed and self.modulebar_folded))
+        self._module_tab.set_state(not self.modulebar_folded, bool(solo))
+        self._module_tab.setVisible(tabbed)
+        self._sync_miro_bars()
         self._place_chrome()
 
     def title_area(self) -> QRect:
-        """Zone occupee en haut a gauche (nom du board + selecteur de modules) : les barres du CAD se placent a cote."""
-        return self._title.geometry().united(self._modulebar.geometry())
+        """Zone de reference en haut a gauche (a droite de la barre des modules) : les barres du haut des modules se
+        placent a cote / dessous. Le cartouche nom + etat n'est plus montre (l'etat d'enregistrement est dans la barre
+        d'etat de l'appli, `saveStateChanged`) : zone vide, de la hauteur d'une barre."""
+        return QRect(self.left_edge(), 16, 0, self._title.sizeHint().height())
 
     def toggle_cad(self, on: bool | None = None):
         """Active / desactive le mode CAD sur ce board (les entites CAD restent visibles) ; module « cad » du
@@ -1518,6 +1733,8 @@ class BoardPane(QWidget):
             self.illustrator.deactivate()
         if on and self.photoshop is not None and self.photoshop.active:
             self.photoshop.deactivate()
+        if on and self.pdf is not None and self.pdf.active:
+            self.pdf.deactivate()
         if on:
             self.module = "cad"
         elif self.module == "cad":
@@ -1533,7 +1750,7 @@ class BoardPane(QWidget):
             return
         if on:
             self.view.set_tool("select")
-            self._contextbar.hide()
+            self._clear_context_items()
             self.cad.activate()
         else:
             self.cad.deactivate()
@@ -1580,12 +1797,11 @@ class BoardPane(QWidget):
         for kind, button in self._tool_buttons.items():
             button.set_on(not cad and (kind == tool or (kind == "draw" and tool in DRAW_TOOLS)))
         drawing = tool in DRAW_TOOLS
-        self._drawbar.setVisible(drawing and self.module == "miro")
         if drawing:
             self._draw_tool = tool
             for kind, button in self._draw_buttons.items():
                 button.set_on(kind == tool)
-            self._sync_presets()
+        self._sync_miro_bars()
         self._place_chrome()
 
     def _choose_draw_tool(self, tool: str):
@@ -1600,7 +1816,7 @@ class BoardPane(QWidget):
                 button.set_swatch("#1a1a1a", ring={"S": 4, "M": 8, "L": 14}[size])
                 button.set_on(self.view.eraser_size == size)
                 button.setToolTip(f"Taille {size} ({ERASER_SIZES[size]} px)")
-                button.show()
+                button.setVisible(self._drawing)
             return
         presets = self._presets.get(tool)
         for index, button in enumerate(self._preset_buttons):
@@ -1611,7 +1827,7 @@ class BoardPane(QWidget):
             button.set_swatch(preset["color"], ring=min(18.0, 3.0 + float(preset["width"]) * 0.9))
             button.set_on(index == self._preset_index.get(tool, 0))
             button.setToolTip("Preset (re-cliquer pour le modifier)")
-            button.show()
+            button.setVisible(self._drawing)
 
     def _apply_preset(self):
         tool = self._draw_tool
@@ -1698,30 +1914,23 @@ class BoardPane(QWidget):
     def _selected(self) -> list[BoardItem]:
         return [i for i in self.scene.selectedItems() if isinstance(i, BoardItem)]
 
-    def _clear_context_bar(self):
-        layout = self._context_layout
-        while layout.count():
-            entry = layout.takeAt(0)
-            widget = entry.widget()
-            if widget is not None:
-                widget.deleteLater()
-
     def _sync_context_bar(self):
         """Commandes de la selection (seulement celles qui s'appliquent a au moins un element)."""
         self.scene.commit_live()
         items = [i for i in self._selected() if not isinstance(i, CommentItem)]
-        self._clear_context_bar()
         if not items or self.module != "miro":     # mode CAD (ses propres proprietes) ou aucun module : pas de barre
-            self._contextbar.hide()
+            self._clear_context_items()
             return
         kinds = {i.kind for i in items}
         first = items[0]
-        add = self._context_layout.addWidget
-        bar = self._contextbar
+        made: list = []                        # boutons de la selection : poses dans la barre « Selection » (ou la ou l'utilisateur les a mis)
+        add = made.append
         locked = all(i.locked() for i in items)
+        from .bars import BoardTool
+        from fm_theme.palette import PaletteTextButton
 
-        def glyph(kind, tip, slot, on=False):
-            button = _GlyphButton(kind, tip, bar, 32)
+        def glyph(kind, tip, slot, on=False, key=None):
+            button = BoardTool(kind, tip, key=key)
             button.set_on(on)
             button.clicked.connect(lambda _c=False, b=button: slot(b))
             add(button)
@@ -1730,20 +1939,20 @@ class BoardPane(QWidget):
         if not locked:
             if "shape" in kinds:
                 shape = next(i for i in items if i.kind == "shape").data.get("shape", "rect")
-                glyph(f"shape:{shape}", "Forme", lambda b: self._open_shape_menu(b, create=False))
+                glyph(f"shape:{shape}", "Forme", lambda b: self._open_shape_menu(b, create=False), key="shape")
             if kinds & set(TEXT_KINDS):
                 text_item = next(i for i in items if i.kind in TEXT_KINDS)
                 from fm_miro.items import resolve_family
                 chosen_family = text_item.data.get("font_family") or ""
                 missing = bool(chosen_family) and not font_installed(chosen_family)   # police du fichier absente
                 family = chosen_family or resolve_family("")                    # par defaut : Noto Sans ou repli
-                font_button = _TextButton(family + (" (absente)" if missing else ""),
-                                          "Police (non installée : remplacée à l'affichage)" if missing else "Police",
-                                          bar, 130)
+                font_button = PaletteTextButton("font", family + (" (absente)" if missing else ""),
+                                                "Police (non installée : remplacée à l'affichage)" if missing else "Police",
+                                                cells=4)
                 font_button.clicked.connect(lambda _c=False, b=font_button: self._open_font_menu(b))
                 add(font_button)
                 size = int(text_item.data.get("font_size", 0) or 0)
-                size_button = _TextButton("Auto" if size <= 0 else str(size), "Taille du texte", bar, 52)
+                size_button = PaletteTextButton("size", "Auto" if size <= 0 else str(size), "Taille du texte", cells=2)
                 size_button.clicked.connect(lambda _c=False, b=size_button: self._open_size_menu(b))
                 add(size_button)
                 glyph("text_style", "Style du texte (gras, italique, souligné, barré)",
@@ -1768,16 +1977,60 @@ class BoardPane(QWidget):
         glyph("lock", "Déverrouiller (Ctrl+Maj+L)" if locked else "Verrouiller (Ctrl+Maj+L)",
               lambda _b: (self.view.toggle_lock(self._selected()), self._sync_context_bar()), on=locked)
         glyph("more", "Plus…", lambda b: self._open_more_menu(b))
-        self._style_bar_texts()
-        # Barre deja affichee (ex. double-clic pour editer un texte : la selection est refaite) : des enfants
-        # ajoutes a un widget VISIBLE restent caches tant qu'on ne les montre pas — la mise en page les
-        # ignorait et la barre tombait a 12 x 12 px (bug signale).
-        for index in range(self._context_layout.count()):
-            widget = self._context_layout.itemAt(index).widget()
-            if widget is not None:
-                widget.show()
-        bar.show()
+        self._set_context_items(made)
+
+    def _set_context_items(self, made: list):
+        """Boutons de la selection : remplacent les precedents (detruits) ; chacun retrouve la case que l'utilisateur lui
+        avait donnee, sinon la premiere libre de la barre « Selection »."""
+        self._miro_bars.manager.set_dynamic("ctx", [(w.palette_key, w) for w in made], "b6")
+        self._sync_miro_bars()
         self._place_chrome()
+
+    def _clear_context_items(self):
+        bars = getattr(self, "_miro_bars", None)
+        if bars is not None and bars.manager.dynamic.get("ctx"):
+            bars.manager.set_dynamic("ctx", [], "b6")
+            self._sync_miro_bars()
+
+    def _sync_miro_bars(self):
+        """Barres de Miro : visibles seulement avec le module ; l'outil de dessin choisi montre la barre « Dessin » et
+        ses presets (les autres outils les cachent : une barre dont tout est cache disparait)."""
+        bars = getattr(self, "_miro_bars", None)
+        if bars is None:
+            return
+        miro = self.module == "miro"
+        self._drawing = miro and self.view.tool in DRAW_TOOLS
+        for button in self._draw_buttons.values():
+            button.setVisible(self._drawing)
+        if self._drawing:
+            self._sync_presets()
+        else:
+            for button in self._preset_buttons:
+                button.hide()
+        bars.set_visible(miro)
+
+    # Compatibilite : les anciennes barres de Miro sont des barres flottantes du gestionnaire (b1 outils, b4 vue, b5 dessin,
+    # b6 selection) ; une barre supprimee ou videe par l'utilisateur est remplacee par un widget cache.
+    def _miro_bar(self, bar_id: str):
+        bars = getattr(self, "_miro_bars", None)
+        bar = bars.bar(bar_id) if bars is not None else None
+        return bar if bar is not None else self._no_bar
+
+    @property
+    def _toolbar(self):
+        return self._miro_bar("b1")
+
+    @property
+    def _zoombar(self):
+        return self._miro_bar("b4")
+
+    @property
+    def _drawbar(self):
+        return self._miro_bar("b5")
+
+    @property
+    def _contextbar(self):
+        return self._miro_bar("b6")
 
     def _targets(self, kinds=None, key=None) -> list[BoardItem]:
         items = [i for i in self._selected() if not i.locked() and not isinstance(i, CommentItem)]
@@ -1804,7 +2057,7 @@ class BoardPane(QWidget):
 
     def _open_font_menu(self, anchor):
         """Polices avec APERCU (chaque nom ecrit dans sa police) : la liste habituelle, puis toutes les polices
-        installees (liste lue une fois, filtre a la frappe) ; une police du .mro absente est montree comme
+        installees (liste lue une fois, filtre a la frappe) ; une police du board absente est montree comme
         telle (le texte s'affiche avec la police de remplacement, la valeur du fichier est gardee)."""
         from settings_menu import menu_row
         menu = _menu(self, "font")
@@ -2166,7 +2419,7 @@ class BoardPane(QWidget):
     def _open_comment(self, comment, fresh: bool):
         self._comment_panel.open(comment, fresh)
 
-    # -- reglages de la PAGE (propres a ce .mro) --
+    # -- reglages de la PAGE (propres a ce board) --
     def _open_page_menu(self):
         from settings_menu import menu_row
         menu = _menu(self, "page")
@@ -2243,7 +2496,7 @@ class BoardPane(QWidget):
         reset.triggered.connect(lambda: self.scene.set_page({"zoom_min": 0.1, "zoom_max": 4.0},
                                                             text="Limites de zoom"))
 
-    def _pick_page_color(self):
+    def _pick_page_color(self, anchor=None):
         from settings_widgets import _ColorPickerPopup
         before = dict(self.scene.page)
         popup = _ColorPickerPopup(before.get("background") or model.MIRO_BACKGROUND, "Couleur du canvas", self)
@@ -2254,7 +2507,7 @@ class BoardPane(QWidget):
             self.scene.set_page({"background": c}, text="Couleur du canvas")
         popup.committed.connect(commit)
         popup.cancelled.connect(lambda: self.scene.set_page(before, record=False))
-        popup.show_near(self._page_button)
+        popup.show_near(anchor or self._page_button)
 
     def import_miro_dialog(self):
         path, _ = QFileDialog.getOpenFileName(self, "Importer depuis Miro", str(self.path.parent if self.path else ""),
@@ -2308,8 +2561,7 @@ class BoardPane(QWidget):
                 if self._comment_panel.isVisible():
                     self._comment_panel.close_panel()
                     return True
-                self.closeRequested.emit()
-                return True
+                return True                         # Echap ne fait jamais sortir du module (demande, 2026-11-05)
         elif obj is self.view and event.type() == QEvent.KeyPress and event.key() == Qt.Key_P \
                 and not event.modifiers() and not self.view.editing_text():
             self._choose_draw_tool(self._draw_tool if self._draw_tool in ("pen", "highlighter", "smart") else "pen")
@@ -2329,22 +2581,22 @@ class BoardPane(QWidget):
 
     def _place_chrome(self):
         margin = 16
-        for panel in (self._toolbar, self._title, self._zoombar, self._contextbar, self._drawbar, self._modulebar):
-            panel.layout().activate()                      # contenu refait (barre contextuelle) : taille juste
+        for panel in (self._title,):
+            panel.layout().activate()
             panel.resize(panel.sizeHint())
-        self._toolbar.move(margin, max(margin + 50, (self.height() - self._toolbar.height()) // 2))
-        self._drawbar.move(self._toolbar.geometry().right() + 8,
-                           max(margin + 50, (self.height() - self._drawbar.height()) // 2))
-        self._title.move(margin, margin)
-        title = self._title.geometry()
-        self._modulebar.move(title.right() + 8, title.center().y() - self._modulebar.height() // 2)
-        self._zoombar.move(self.width() - self._zoombar.width() - margin,
-                           self.height() - self._zoombar.height() - margin)
-        self._contextbar.move(max(margin, (self.width() - self._contextbar.width()) // 2), margin)
+        # Barre des modules : collee au bord gauche, toute la hauteur ; languette (repli « tab ») a sa droite.
+        self._modulebar.layout().activate()
+        self._modulebar.setGeometry(0, 0, self._modulebar.sizeHint().width(), self.height())
+        tab_x = 0 if self.modulebar_folded else self._modulebar.width()
+        self._module_tab.move(tab_x, (self.height() - self._module_tab.height()) // 2)
+        left = self.left_edge()
+        self._miro_bars.set_area(left)                 # barres flottantes : le board a droite de la barre des modules
+        self._title.move(left, margin)
+        self._title.hide()                             # etat d'enregistrement : barre d'etat de l'appli
         self._badge.move(self.width() - self._badge.width() - margin, margin)
         self._sync_badge()
-        for panel in (self._toolbar, self._drawbar, self._title, self._zoombar, self._contextbar, self._modulebar,
-                      self._comment_panel, self._badge):
+        self._miro_bars.raise_all()
+        for panel in (self._title, self._modulebar, self._module_tab, self._comment_panel, self._badge):
             panel.raise_()
         if self.cad_active():
             self.cad.ui.place()
@@ -2356,13 +2608,25 @@ class BoardPane(QWidget):
             self.illustrator.ui.place()
         if self.photoshop is not None and self.photoshop.active:
             self.photoshop.ui.place()
+        if self.pdf is not None:
+            self.pdf.place()
+        standard = getattr(self, "_tableur_standard", None)
+        if standard is not None:          # mode Standard du Tableur (plein cadre) : AU-DESSUS du décor du board,
+            standard.raise_()             # que la mise en page vient de remonter (barres, barre des modules…)
+
+    def set_external_badge(self, on: bool = True):
+        """L'appli montre l'encart du mode de rendu ailleurs (barre de navigation, `RenderBadge`) : celui du board se
+        cache, la couche GPU ne le peint plus."""
+        self.external_badge = bool(on)
+        self._sync_badge()
 
     def _sync_badge(self):
         """Rendu OpenGL : l'encart est peint par la couche GPU (le widget se cache) ; classique : le widget."""
+        external = getattr(self, "external_badge", False)
         gl = self._badge._gl and self.view.gpu_active()
-        self._badge.setVisible(not gl)
+        self._badge.setVisible(not gl and not external)
         rect = None
-        if gl:
+        if gl and not external:
             top_left = self.view.viewport().mapFrom(self, self._badge.pos())
             rect = QRect(top_left, self._badge.size())
         if rect != self.view.gpu_badge:
@@ -2402,7 +2666,7 @@ class BoardPane(QWidget):
 
     def open_import(self, data: dict, source: Path, normalized: bool = False) -> bool:
         """Dessin DXF / DWG lu par `cad_import` (hors du fil de l'interface) : board en MEMOIRE, le dessin d'origine
-        n'est jamais reecrit. Modifie, il est propose en `.mro` a cote a la fermeture (`confirm_leave`) ; images non
+        n'est jamais reecrit. Modifie, il est propose en `.brd` a cote a la fermeture (`confirm_leave`) ; images non
         disponibles tant qu'il n'est pas enregistre (pas de dossier d'images)."""
         if self.cad is not None:
             self.cad.end_command()
@@ -2418,7 +2682,7 @@ class BoardPane(QWidget):
         return True
 
     def companion_path(self) -> Path | None:
-        """`.mro` propose pour garder un dessin importe : a cote, « plan.mro », sinon « plan_dxf.mro », « plan_dxf_2.mro »..."""
+        """`.brd` propose pour garder un dessin importe : a cote, « plan.brd », sinon « plan_dxf.brd », « plan_dxf_2.brd »..."""
         if self.source is None:
             return None
         candidate = self.source.with_suffix(model.EXTENSION)
@@ -2469,8 +2733,19 @@ class BoardPane(QWidget):
 
     def _on_changed(self):
         self._set_dirty(True)
-        self._autosave.start()
+        self._autosave.start(AUTOSAVE_MS)           # (start(ms) change l'intervalle : le report de _autosave_due ne doit pas le garder)
         self.stateChanged.emit()
+
+    def _autosave_due(self):
+        """Enregistrement automatique. Un élément qui prépare ses ressources en arrière-plan (`save_pending`, Photoshop :
+        encodage PNG d'une grande page) est attendu un instant : l'enregistrement ne bloque alors jamais l'interface,
+        donc le curseur reste fluide. Au pire, `save` attend lui-même ce travail."""
+        if self._autosave_waits < AUTOSAVE_MAX_WAITS and any(
+                getattr(item, "save_pending", None) is not None and item.save_pending() for item in self.scene.board_items()):
+            self._autosave_waits += 1
+            self._autosave.start(AUTOSAVE_RETRY_MS)
+            return
+        self.save()
 
     def _set_dirty(self, dirty: bool):
         from settings_store import M
@@ -2486,6 +2761,11 @@ class BoardPane(QWidget):
             self._state.setText("enregistré" if self.path is not None else
                                 "importé, non enregistré" if self.source is not None else "")
         self._title.adjustSize()
+        self.saveStateChanged.emit(*self.save_state())
+
+    def save_state(self) -> tuple:
+        """(texte, modifie) de l'etat d'enregistrement (« modifié », « enregistré », « importé, non enregistré »)."""
+        return self._state.text(), self._dirty
 
     def is_dirty(self) -> bool:
         return self._dirty
@@ -2494,6 +2774,7 @@ class BoardPane(QWidget):
         """Ecrit le board (contenu modifie, ou la vue quand on ferme). Modifie ailleurs : on demande. Apres un
         enregistrement REUSSI seulement : images inutilisees retirees (voir `serialization`)."""
         self._autosave.stop()
+        self._autosave_waits = 0
         path = self.path
         if path is None:
             return True
@@ -2515,6 +2796,16 @@ class BoardPane(QWidget):
                 return self.reload()
             if box.clickedButton() is not keep:
                 return False
+        if serialization.migrated_path(path) is not None:   # ancien `.mro` : renomme en `.brd`, puis ecrit
+            old, path = path, serialization.migrate_legacy(path)
+            if path != old:
+                self.path = self.scene.board_path = path
+                self._name.setText(path.stem)
+                try:
+                    import previews
+                    previews.forget_mtime(old)
+                except Exception:
+                    pass
         data = self.scene.to_data(view)
         try:
             serialization.save(path, data)
@@ -2556,6 +2847,11 @@ class BoardPane(QWidget):
     def confirm_leave(self) -> bool:
         """Avant de fermer : enregistre (contenu et vue) puis retire les images qui ne servent plus (la pile
         d'annulation disparait). Echec : on demande s'il faut fermer quand meme (rien n'est retire)."""
+        from fm_pdf import board_docs               # documents PDF lies modifies (fm_pdf) : enregistrer d'abord ?
+        if self.pdf is not None and not self.pdf.confirm_leave():
+            return False
+        if self.pdf is None and not board_docs.confirm_leave(self, self.scene):
+            return False
         self._comment_panel.close_panel()
         if self.cad is not None:
             self.cad.end_command()                  # segments deja traces : gardes, dans l'annulation
@@ -2572,7 +2868,7 @@ class BoardPane(QWidget):
             box = QMessageBox(QMessageBox.Question, "Dessin modifié",
                               f"« {self.source.name} » a été modifié dans le board (le fichier d'origine n'est jamais "
                               f"réécrit).\nL'enregistrer en board « {target.name} » à côté ?", parent=self)
-            keep = box.addButton("Enregistrer en .mro", QMessageBox.AcceptRole)
+            keep = box.addButton("Enregistrer en .brd", QMessageBox.AcceptRole)
             drop = box.addButton("Fermer sans enregistrer", QMessageBox.DestructiveRole)
             box.addButton("Annuler", QMessageBox.RejectRole)
             box.exec()
@@ -2681,7 +2977,7 @@ class BoardPane(QWidget):
         self.show()
         self.raise_()
         self.restore_view()
-        self._fade(0.0, 1.0, None)
+        self._fade(0.0, 1.0, self.coveringShown.emit)
         self.view.setFocus()
 
     def fade_out(self, done):

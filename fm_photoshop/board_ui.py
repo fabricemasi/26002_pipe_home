@@ -1,5 +1,6 @@
-"""Module Photoshop dans la barre des modules du Board (Qt) : sa barre d'outils (nouveau document, importer une image,
-éditeur Standard, exporter). Activé par `BoardPane.set_module("photoshop")`, comme le Tableur.
+"""Module Photoshop dans la barre des modules du Board (Qt) : sa barre FLOTTANTE « Document » (nouveau document, importer une
+image, image comme calque, éditeur Standard, exporter) et celles de l'éditeur Standard (`bars.py`). Activé par
+`BoardPane.set_module("photoshop")`, comme le Tableur.
 
 Le module ne prend ni la souris ni le clavier de la vue (pas de crochets `view.*`) : les éléments « ps_doc » gèrent eux-mêmes
 leurs gestes (double-clic ou ⤢ = éditeur Standard, Ctrl + glisser = déplacer)."""
@@ -8,20 +9,32 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QPointF
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QLineEdit, QMessageBox,
                                QSpinBox)
 
 from fm_board import model
-from fm_board.ui import _bar, _TextButton
 from . import board_model as bm, io_images, look
+from .bars import PhotoshopBars
 
 PRESETS = (("Web 1920 × 1080", 1920, 1080, 72), ("Carré 1080 × 1080", 1080, 1080, 72),
            ("4K 3840 × 2160", 3840, 2160, 72), ("A4 300 dpi (2480 × 3508)", 2480, 3508, 300),
            ("Petit 800 × 600", 800, 600, 72))
 
 
+def clipboard_image_size() -> tuple[int, int] | None:
+    """(largeur, hauteur) de l'image du presse-papiers du système, ou None s'il n'y en a pas."""
+    app = QGuiApplication.instance()
+    mime = app.clipboard().mimeData() if app is not None else None      # None quand le presse-papiers est vide
+    if mime is None or not mime.hasImage():
+        return None
+    image = app.clipboard().image()
+    return None if image.isNull() else (image.width(), image.height())
+
+
 class NewDocumentDialog(QDialog):
-    """Dimensions, résolution, fond, nom d'un document neuf."""
+    """Dimensions, résolution, fond, nom d'un document neuf. Une image dans le presse-papiers ajoute sa taille aux formats
+    (juste après « Personnalisé ») et cette entrée est présélectionnée."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -30,8 +43,16 @@ class NewDocumentDialog(QDialog):
         self.name = QLineEdit("Sans titre")
         self.preset = QComboBox()
         self.preset.addItem("Personnalisé")
-        for label, *_ in PRESETS:
+        self._formats = [None]                                    # une entrée par ligne du choix : (largeur, hauteur, ppp | None)
+        from .model import MAX_SIDE
+        clip = clipboard_image_size()
+        clip_listed = self._clip_listed = clip is not None and all(1 <= side <= MAX_SIDE for side in clip)
+        if clip_listed:
+            self.preset.addItem(f"Presse-papiers {clip[0]} × {clip[1]}")
+            self._formats.append((clip[0], clip[1], None))        # résolution du champ laissée telle quelle
+        for label, w, h, dpi in PRESETS:
             self.preset.addItem(label)
+            self._formats.append((w, h, dpi))
         self.width_box, self.height_box, self.dpi_box = QSpinBox(), QSpinBox(), QSpinBox()
         for box, value, hi in ((self.width_box, 1280, 30000), (self.height_box, 720, 30000), (self.dpi_box, 72, 2400)):
             box.setRange(1, hi)
@@ -49,18 +70,22 @@ class NewDocumentDialog(QDialog):
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
         self.preset.currentIndexChanged.connect(self._preset)
+        if clip_listed:
+            self.preset.setCurrentIndex(1)                        # présélectionné : largeur et hauteur reprises par `_preset`
 
     def _preset(self, index):
         if index > 0:
-            _label, w, h, dpi = PRESETS[index - 1]
+            w, h, dpi = self._formats[index]
             self.width_box.setValue(w)
             self.height_box.setValue(h)
-            self.dpi_box.setValue(dpi)
+            if dpi is not None:
+                self.dpi_box.setValue(dpi)
 
     def values(self) -> dict:
         bg = {"Blanc": [255, 255, 255, 255], "Transparent": None, "Noir": [0, 0, 0, 255]}[self.background.currentText()]
         return {"w": self.width_box.value(), "h": self.height_box.value(), "dpi": self.dpi_box.value(),
-                "name": self.name.text().strip() or "Sans titre", "background": bg}
+                "name": self.name.text().strip() or "Sans titre", "background": bg,
+                "from_clipboard": self._clip_listed and self.preset.currentIndex() == 1}     # l'entrée « Presse-papiers » est choisie
 
 
 class PhotoshopController(QObject):
@@ -69,20 +94,13 @@ class PhotoshopController(QObject):
         self.pane = pane
         self.active = False
         self.ui = self
-        self.bar, row = _bar(pane, False)
-        self.buttons = {}
-        for key, text, tip, slot in (
-                ("new", "Nouveau document…", "Poser un nouveau document au centre de la vue", self.new_document_dialog),
-                ("import", "Importer…", "Une image (PNG, JPEG, TIFF, WebP) devient un nouveau document", self.import_file),
-                ("layer", "Image comme calque…", "Ajouter une image comme calque du document choisi",
-                 self.import_as_layer),
-                ("standard", "Mode Standard", "Ouvrir le document choisi en plein cadre", self.open_standard),
-                ("export", "Exporter…", "Composition du document choisi : PNG, TIFF, JPEG, WebP", self.export)):
-            button = _TextButton(text, tip, self.bar)
-            button.clicked.connect(lambda _c=False, s=slot: s())
-            row.addWidget(button)
-            self.buttons[key] = button
-        self.bar.hide()
+        self.bars = PhotoshopBars(self)                   # barres flottantes du module (fm_theme), disposition `board_bars["photoshop"]`
+        self.buttons = self.bars.buttons                  # (clé -> bouton de la barre « Document »)
+
+    @property
+    def bar(self):
+        """La barre « Document » (un widget caché si l'utilisateur l'a supprimée)."""
+        return self.bars.document_bar()
 
     def refresh_look(self):
         """Réglages `board_ps_*` changés (déjà posés dans `look`) : seul le contenu concerné est repeint."""
@@ -96,21 +114,19 @@ class PhotoshopController(QObject):
 
     def activate(self):
         self.active = True
-        self.bar.show()
+        self.bars.refresh()
         self.place()
 
     def deactivate(self):
         self.active = False
-        self.bar.hide()
+        self.bars.refresh()
 
     def place(self):
-        if not self.active:
+        """Zone des barres : le Board à droite de la barre des modules (ou l'établi de l'éditeur Standard ouvert)."""
+        if not self.active and self.bars.std is None:
             return
-        self.bar.layout().activate()
-        self.bar.resize(self.bar.sizeHint())
-        area = self.pane.title_area()
-        self.bar.move(area.right() + 12, area.top() + (area.height() - self.bar.height()) // 2)
-        self.bar.raise_()
+        self.bars.place()
+        self.bars.raise_all()
 
     # -- commandes --
     def _center(self) -> QPointF:
@@ -138,7 +154,11 @@ class PhotoshopController(QObject):
         if dialog.exec() != QDialog.Accepted:
             return None
         v = dialog.values()
-        return self.new_document(v["w"], v["h"], v["name"], v["dpi"], v["background"])
+        item = self.new_document(v["w"], v["h"], v["name"], v["dpi"], v["background"])
+        if item is not None and v["from_clipboard"] and look.LOOK["new_paste_clipboard"]:
+            from .actions import Actions
+            Actions(item.session).paste()               # l'image du presse-papiers dans un calque (annulable), centrée
+        return item
 
     def import_file(self, path: str | None = None):
         if path is None:

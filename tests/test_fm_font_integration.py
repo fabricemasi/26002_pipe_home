@@ -107,7 +107,7 @@ class IntegrationTest(WindowTestCase):
         self.assertEqual(v2.MODULE_SCOPES["font"], [(TYPO_TAB, None)])
         self.assertEqual(v2.MODULE_TITLES["font"], "Typographie")
         keys = {spec.key for name, specs in CATALOG.items() if name.startswith("Typographie") for spec in specs}
-        self.assertEqual(keys, set(TYPO_DEFAULTS) - {"typo_preview_text"})
+        self.assertEqual(keys, set(TYPO_DEFAULTS) - {"typo_preview_text", "typo_bars"})     # (états temps réel)
         window = track(v2.SettingsWindowV2(None, module="font"))
         texts = {label.text() for label in window.findChildren(QLabel)}
         self.assertIn("Réglages : Typographie", texts)

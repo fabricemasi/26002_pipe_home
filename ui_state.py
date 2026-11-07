@@ -18,6 +18,10 @@ DETAIL_PANEL_WIDTH = 300
 # Rayon de bordure de la fenetre principale (Parametres > General). Voir
 # PipelineBrowser.__init__ (WA_TranslucentBackground) pour le mecanisme.
 WINDOW_RADIUS = 0
+# Bordure du pourtour de la fenetre principale (Theme > General > « Bordure des fenetres », resolue) :
+# {"sides": {cote: bool}, "colors": {cote: couleur}, "thickness": px}. Peinte par main_window.helpers.CentralFrame.
+WINDOW_BORDER: dict = {"sides": {"top": True, "right": True, "bottom": True, "left": True}, "colors": {},
+                       "thickness": 1}
 
 # Rayon de bordure applique a TOUS les boutons (Parametres > Boutons) : voir
 # app_style.set_button_radius / build_stylesheet.
@@ -69,15 +73,18 @@ STEP_BADGE_STYLE: dict = {
     "font_smoothing_enabled": False, "font_smoothing": "current",
 }
 
-# Police/couleur des lignes "raccourci" (voir ROLE_IS_SHORTCUT, Settings >
-# RACCOURCI) — DISTINCTES du reste du texte de la ligne, pour reperer un
-# raccourci au premier coup d'oeil, meme rendu partage (_paint_unified_row)
-# que le reste : voir la remarque de l'utilisateur, "police : choix de la
-# police avec toggle : app ou systeme, toggle gras ou regulier, couleur,
-# taille".
+# Police des lignes "raccourci" (voir ROLE_IS_SHORTCUT, Settings > RACCOURCI), meme rendu partage
+# (_paint_unified_row) que le reste. Leur couleur : FOLDER_TEXT_COLORS["shortcut"] (plus de couleur dediee ici,
+# demande de l'utilisateur).
 SHORTCUT_TEXT_STYLE: dict = {
-    "font_family": "", "font_bold": False, "color": "#8fb4d5", "font_size": 11,
+    "font_family": "", "font_bold": False, "font_size": 11,
 }
+
+# Teinte de l'icone des dossiers selon leur sorte (Settings > Icones > General) : multipliee sur l'icone (blanc =
+# inchangee). Cles : standard, shortcut, lightroom (raccourci lie a un catalogue Lightroom).
+FOLDER_ICON_COLORS: dict = {"standard": "#ffffff", "shortcut": "#ffffff", "lightroom": "#ffffff"}
+# Couleur du texte des dossiers par sorte (memes cles) ; absente = couleur du texte de la colonne.
+FOLDER_TEXT_COLORS: dict = {}
 
 # Bouton de repliement de colonne (voir Column.set_collapsed/toggle_btn) :
 # "chevrons" (defaut, comportement inchange, voir IconButton kind

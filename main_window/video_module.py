@@ -95,6 +95,12 @@ class VideoModuleMixin:
             return False
         if not self._leave_font():
             return False
+        leave_pdf = getattr(self, "_leave_pdf", None)          # éditeur PDF ouvert : fermé d'abord (fm_pdf)
+        if leave_pdf is not None and not leave_pdf():
+            return False
+        leave_agenda = getattr(self, "_leave_agenda", None)    # agenda ouvert : rangé d'abord (fm_agenda)
+        if leave_agenda is not None:
+            leave_agenda()
         self._install_video_hooks()
         if self._video is None:
             from fm_video.pane import VideoPane

@@ -50,3 +50,24 @@ fontbakery
 # Module Photoshop (paquet fm_photoshop/) : import de fichiers PSD en LECTURE SEULE (psd-tools, MIT) ; Pillow (calculs
 # d'images, profils ICC par LittleCMS) et NumPy sont déjà requis. Sans psd-tools, l'import PSD le dit (aucune autre fonction touchée).
 psd-tools
+# Module PDF (paquet fm_pdf/) : PDFium (BSD) par les bindings ctypes de pypdfium2 (Apache-2.0 / BSD-3, version ÉPINGLÉE :
+# elle doit correspondre au moteur V8 + XFA installé par `python tools/install_pdfium_xfa.py`) ; structure PDF, mises à
+# jour incrémentales (pikepdf / qpdf, MPL-2.0 / Apache-2.0) ; création de formulaires AcroForm, annotations, pages,
+# caviardage (PyMuPDF, AGPL-3.0 : usage personnel) ; chiffrement des flux (cryptography, Apache-2.0 / BSD).
+pypdfium2==5.14.0
+pikepdf
+PyMuPDF
+cryptography
+# Module PDF, facultatifs : signatures numériques (pyHanko, MIT) ; OCR par le moteur intégré à Windows (pywinrt, MIT) ;
+# pywin32 seulement pour tools/acrobat_crosscheck.py (contre-vérification par Acrobat).
+pyhanko
+winrt-runtime
+winrt-Windows.Media.Ocr
+winrt-Windows.Graphics.Imaging
+winrt-Windows.Storage.Streams
+winrt-Windows.Globalization
+winrt-Windows.Foundation
+winrt-Windows.Foundation.Collections
+# Agenda (paquet fm_agenda/) : récurrences RFC 5545 (python-dateutil, Apache-2.0 / BSD) et base des fuseaux IANA pour Windows (tzdata, Apache-2.0). Requis par l'agenda (sans tzdata : fuseau de Windows seul).
+python-dateutil
+tzdata

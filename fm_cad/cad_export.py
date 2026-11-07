@@ -24,7 +24,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from . import cad_dims, cad_hatch, cad_model, cad_text
+from . import cad_attrib, cad_block, cad_dims, cad_image, cad_hatch, cad_model, cad_point, cad_shapes, cad_text
 
 UNITS = {                                  # cle -> (libelle, facteur unite du document -> unite du fichier, $INSUNITS)
     "mm": ("Millimètres (taille réelle : 1 unité = 1/96 de pouce)", 25.4 / 96.0, 4),
@@ -104,6 +104,7 @@ def build_document(cad: dict, lines: list, units: str = "mm", unit: float = 1.0)
     doc.header["$LWDISPLAY"] = 1
     used = {layer["linetype"] for layer in cad["layers"]}
     used |= {data.get("linetype") for _a, _b, data in lines}
+    used |= {e.get("linetype") for d in cad_block.blocks(cad).values() for e in d.get("items") or []}
     for key in sorted(k for k in used if k in cad_model.LINETYPES and k != "continuous"):
         label, pattern = cad_model.LINETYPES[key]
         elements = [float(v) * unit * factor for v in pattern]
@@ -129,95 +130,167 @@ def build_document(cad: dict, lines: list, units: str = "mm", unit: float = 1.0)
     current = cad.get("current")
     if current in names:
         doc.header["$CLAYER"] = names[current]
-    space = doc.modelspace()
-    for entry in lines:
-        if isinstance(entry[0], str):
-            kind, geometry, data = entry
-        else:
-            kind, geometry, data = "cad_line", {"p1": entry[0], "p2": entry[1]}, entry[2]
-        attribs = {"layer": names.get(data.get("layer"), "0")}
-        color = data.get("color", cad_model.BYLAYER)
-        weight = data.get("lineweight", cad_model.BYLAYER)
-        linetype = data.get("linetype", cad_model.BYLAYER)
-        attribs["linetype"] = "BYLAYER" if linetype == cad_model.BYLAYER else _linetype_name(linetype)
-        attribs["lineweight"] = -1 if weight == cad_model.BYLAYER else dxf_lineweight(weight)
-        scale = float(data.get("ltscale", 1.0) or 1.0)
-        if scale != 1.0:
-            attribs["ltscale"] = scale
-        f = factor
-        if kind == "cad_line":
-            a, b = geometry["p1"], geometry["p2"]
-            entity = space.add_line((a[0] * f, a[1] * f), (b[0] * f, b[1] * f), dxfattribs=attribs)
-        elif kind in ("cad_arc", "cad_circle"):
-            c = geometry["center"]
-            if kind == "cad_circle":
-                entity = space.add_circle((c[0] * f, c[1] * f), geometry["radius"] * f, dxfattribs=attribs)
+    def write(space, lines):
+        """Entites [(type, champs geometriques, donnees)] dans `space` (espace objet ou un bloc)."""
+        for entry in lines:
+            if isinstance(entry[0], str):
+                kind, geometry, data = entry
             else:
-                entity = space.add_arc((c[0] * f, c[1] * f), geometry["radius"] * f, geometry["start"],
-                                       geometry["end"], dxfattribs=attribs)
-        elif kind == "cad_pline":
-            points = [(v[0] * f, v[1] * f, 0.0, 0.0, v[2] if len(v) > 2 else 0.0) for v in geometry["vertices"]]
-            entity = space.add_lwpolyline(points, format="xyseb", close=bool(geometry.get("closed")),
-                                          dxfattribs=attribs)
-        elif kind == "cad_hatch":                # hachures : traits du motif en LINE, remplissage plein en HATCH
-            merged = {**data, **geometry}
-            loops = cad_hatch.clean_loops(merged.get("loops"))
-            made = []
-            style = cad_hatch.style_of(merged)
-            if style["pattern"] == "solid":
-                hatch = space.add_hatch(color=7, dxfattribs=attribs)
-                for loop in loops:
-                    hatch.paths.add_polyline_path([(p[0] * f, p[1] * f) for p in loop], is_closed=True)
-                made.append(hatch)
-            else:
-                for a, b in cad_hatch.pattern_segments(loops, style):
-                    made.append(space.add_line((a[0] * f, a[1] * f), (b[0] * f, b[1] * f), dxfattribs=attribs))
-            if color != cad_model.BYLAYER:
-                rgb = _rgb(color)
-                for entity in made:
-                    entity.dxf.color = _nearest_aci(rgb)
-                    if hasattr(entity, "rgb"):
-                        entity.rgb = rgb
-            continue
-        elif kind == "cad_text":                 # texte : TEXT par ligne, ou MTEXT
-            made = _text_entities(space, {**data, **geometry}, f, attribs)
-            if color != cad_model.BYLAYER:
-                rgb = _rgb(color)
-                for entity in made:
-                    entity.dxf.color = _nearest_aci(rgb)
-                    entity.rgb = rgb
-            continue
-        elif kind == "cad_dim":                  # cotation : traits (lignes, arc de cote) + texte, a plat
-            found = cad_dims.geometry({**data, **geometry})
-            made = []
-            for prim in found["prims"]:
-                if prim[0] == "segment":
-                    a, b = prim[1], prim[2]
-                    made.append(space.add_line((a[0] * f, a[1] * f), (b[0] * f, b[1] * f), dxfattribs=attribs))
+                kind, geometry, data = "cad_line", {"p1": entry[0], "p2": entry[1]}, entry[2]
+            attribs = {"layer": names.get(data.get("layer"), "0")}
+            color = data.get("color", cad_model.BYLAYER)
+            weight = data.get("lineweight", cad_model.BYLAYER)
+            if color == cad_model.BYBLOCK:          # entite d'un bloc PARBLOC : couleur 0 d'AutoCAD
+                attribs["color"] = 0
+                color = cad_model.BYLAYER
+            if weight == cad_model.BYBLOCK:
+                weight = None
+            linetype = data.get("linetype", cad_model.BYLAYER)
+            attribs["linetype"] = "BYLAYER" if linetype == cad_model.BYLAYER else _linetype_name(linetype)
+            attribs["lineweight"] = -2 if weight is None else (
+                -1 if weight == cad_model.BYLAYER else dxf_lineweight(weight))
+            scale = float(data.get("ltscale", 1.0) or 1.0)
+            if scale != 1.0:
+                attribs["ltscale"] = scale
+            f = factor
+            if kind == "cad_line":
+                a, b = geometry["p1"], geometry["p2"]
+                entity = space.add_line((a[0] * f, a[1] * f), (b[0] * f, b[1] * f), dxfattribs=attribs)
+            elif kind in ("cad_arc", "cad_circle"):
+                c = geometry["center"]
+                if kind == "cad_circle":
+                    entity = space.add_circle((c[0] * f, c[1] * f), geometry["radius"] * f, dxfattribs=attribs)
                 else:
-                    c = prim[1]
-                    end = prim[3] + prim[4]
-                    first, last = (prim[3], end) if prim[4] >= 0 else (end, prim[3])
-                    made.append(space.add_arc((c[0] * f, c[1] * f), prim[2] * f, first % 360.0, last % 360.0,
-                                              dxfattribs=attribs))
-            text = space.add_text(found["text"], dxfattribs={**attribs, "height": found["text_height"] * f,
-                                                             "rotation": found["text_angle"]})
-            from ezdxf.enums import TextEntityAlignment
-            text.set_placement((found["text_pos"][0] * f, found["text_pos"][1] * f),
-                               align=TextEntityAlignment.BOTTOM_CENTER)
-            made.append(text)
+                    entity = space.add_arc((c[0] * f, c[1] * f), geometry["radius"] * f, geometry["start"],
+                                           geometry["end"], dxfattribs=attribs)
+            elif kind == "cad_pline":
+                points = [(v[0] * f, v[1] * f, 0.0, 0.0, v[2] if len(v) > 2 else 0.0) for v in geometry["vertices"]]
+                entity = space.add_lwpolyline(points, format="xyseb", close=bool(geometry.get("closed")),
+                                              dxfattribs=attribs)
+            elif kind == "cad_hatch":                # hachures : traits du motif en LINE, remplissage plein en HATCH
+                merged = {**data, **geometry}
+                loops = cad_hatch.clean_loops(merged.get("loops"))
+                made = []
+                style = cad_hatch.style_of(merged)
+                if style["pattern"] == cad_hatch.WIPEOUT:      # masque : un WIPEOUT par contour
+                    for loop in loops:
+                        space.add_wipeout([(p[0] * f, p[1] * f) for p in loop], dxfattribs=attribs)
+                    continue
+                if style["pattern"] == cad_hatch.GRADIENT:     # degrade : HATCH a remplissage degrade
+                    hatch = space.add_hatch(color=attribs.get("color", 256), dxfattribs=attribs)
+                    for loop in loops:
+                        hatch.paths.add_polyline_path([(p[0] * f, p[1] * f) for p in loop], is_closed=True)
+                    first = _rgb(color) if color not in (cad_model.BYLAYER, cad_model.BYBLOCK) else (0, 0, 0)
+                    hatch.set_gradient(color1=first, color2=_rgb(style["color2"]), rotation=style["angle"],
+                                       centered=0.0 if style["centered"] else 1.0, name=style["gradient"])
+                    continue
+                if style["pattern"] in ("solid", cad_hatch.DXF):  # motif d'AutoCAD importe : un vrai HATCH, son motif
+                    hatch = space.add_hatch(color=attribs.get("color", 256), dxfattribs=attribs)   # 256 = ByLayer
+                    for loop in loops:
+                        hatch.paths.add_polyline_path([(p[0] * f, p[1] * f) for p in loop], is_closed=True)
+                    if style["pattern"] == cad_hatch.DXF:
+                        from ezdxf.entities.pattern import Pattern, PatternLine
+                        hatch.dxf.solid_fill = 0
+                        hatch.dxf.pattern_name = style["name"] or "_USER"
+                        hatch.dxf.pattern_type = 2                  # motif « personnalise » : sa definition est dans le fichier
+                        hatch.dxf.pattern_angle = style["angle"]
+                        hatch.pattern = Pattern([PatternLine(a, (b[0] * f, b[1] * f), (o[0] * f, o[1] * f),
+                                                             [d * f for d in dashes])
+                                                 for a, b, o, dashes in cad_hatch.families_to_world(merged)])
+                    made.append(hatch)
+                else:
+                    for a, b in cad_hatch.pattern_segments(loops, style):
+                        made.append(space.add_line((a[0] * f, a[1] * f), (b[0] * f, b[1] * f), dxfattribs=attribs))
+                if color != cad_model.BYLAYER:
+                    rgb = _rgb(color)
+                    for entity in made:
+                        entity.dxf.color = _nearest_aci(rgb)
+                        if hasattr(entity, "rgb"):
+                            entity.rgb = rgb
+                continue
+            elif kind == "cad_text":                 # texte : TEXT par ligne, ou MTEXT ; attribut : ATTDEF
+                attdef = cad_attrib.clean_attdef(data.get("attdef"))
+                made = (_attdef_entity(space, {**data, **geometry}, attdef, f, attribs) if attdef
+                        else _text_entities(space, {**data, **geometry}, f, attribs))
+                if color != cad_model.BYLAYER:
+                    rgb = _rgb(color)
+                    for entity in made:
+                        entity.dxf.color = _nearest_aci(rgb)
+                        entity.rgb = rgb
+                continue
+            elif kind == "cad_dim":                  # cotation : traits (lignes, arc de cote) + texte, a plat
+                found = cad_dims.geometry({**data, **geometry})
+                made = []
+                for prim in found["prims"]:
+                    if prim[0] == "segment":
+                        a, b = prim[1], prim[2]
+                        made.append(space.add_line((a[0] * f, a[1] * f), (b[0] * f, b[1] * f), dxfattribs=attribs))
+                    else:
+                        c = prim[1]
+                        end = prim[3] + prim[4]
+                        first, last = (prim[3], end) if prim[4] >= 0 else (end, prim[3])
+                        made.append(space.add_arc((c[0] * f, c[1] * f), prim[2] * f, first % 360.0, last % 360.0,
+                                                  dxfattribs=attribs))
+                text = space.add_text(found["text"], dxfattribs={**attribs, "height": found["text_height"] * f,
+                                                                 "rotation": found["text_angle"]})
+                from ezdxf.enums import TextEntityAlignment
+                text.set_placement((found["text_pos"][0] * f, found["text_pos"][1] * f),
+                                   align=TextEntityAlignment.BOTTOM_CENTER)
+                made.append(text)
+                if color != cad_model.BYLAYER:
+                    rgb = _rgb(color)
+                    for entity in made:
+                        entity.dxf.color = _nearest_aci(rgb)
+                        entity.rgb = rgb
+                continue
+            elif kind == "cad_point":                # point : POINT ; sa figure dans $PDMODE / $PDSIZE (du dernier)
+                p = geometry["pos"]
+                entity = space.add_point((p[0] * f, p[1] * f), dxfattribs=attribs)
+                style = cad_point.style_of(data)
+                doc.header["$PDMODE"] = style["pdmode"]
+                doc.header["$PDSIZE"] = style["pdsize"] * f
+            elif kind in ("cad_xline", "cad_ray"):    # ligne de construction : XLINE / RAY (base + vecteur unitaire)
+                from . import cad_xline
+                a = geometry["p1"]
+                d = cad_xline.direction(geometry)
+                add = space.add_xline if kind == "cad_xline" else space.add_ray
+                entity = add((a[0] * f, a[1] * f), (d[0], d[1]), dxfattribs=attribs)
+            elif kind == "cad_image":                # image referencee : IMAGE + IMAGEDEF (une par fichier)
+                entity = _image_entity(doc, space, {**data, **geometry}, f, attribs, image_defs)
+                if entity is None:
+                    continue
+            elif kind == "cad_insert":               # reference de bloc : INSERT (miroir = echelle X negative)
+                s = cad_block.style_of({**data, **geometry})
+                if s["block"] not in block_names:
+                    continue
+                entity = space.add_blockref(block_names[s["block"]], (s["pos"][0] * f, s["pos"][1] * f),
+                                            dxfattribs={**attribs, "xscale": -s["scale"] if s["mirror"] else s["scale"],
+                                                        "yscale": s["scale"], "rotation": s["rot"]})
+                values = cad_attrib.values_for(blocks.get(s["block"]), data.get("attribs"))
+                if values:                           # valeurs des attributs : ATTRIB places par leurs ATTDEF
+                    entity.add_auto_attribs(values)
+            else:
+                continue
             if color != cad_model.BYLAYER:
                 rgb = _rgb(color)
-                for entity in made:
-                    entity.dxf.color = _nearest_aci(rgb)
-                    entity.rgb = rgb
-            continue
-        else:
-            continue
-        if color != cad_model.BYLAYER:
-            rgb = _rgb(color)
-            entity.dxf.color = _nearest_aci(rgb)
-            entity.rgb = rgb
+                entity.dxf.color = _nearest_aci(rgb)
+                entity.rgb = rgb
+    blocks = cad_block.blocks(cad)
+    image_defs: dict = {}                                   # fichier -> IMAGEDEF (partagee par ses images)
+    block_names = {}
+    for name in blocks:                                     # definitions d'abord (une reference doit les trouver)
+        clean = cad_block.clean_name(name) or "BLOC"
+        base, n = clean, 2
+        while clean.upper() in {v.upper() for v in block_names.values()} or clean.upper() in ("*MODEL_SPACE",):
+            clean, n = f"{base}_{n}", n + 1
+        block_names[name] = clean
+    for name, definition in blocks.items():
+        b = definition.get("base") or [0.0, 0.0]
+        layout = doc.blocks.new(block_names[name], base_point=(float(b[0]) * factor, float(b[1]) * factor))
+        entries = [(e.get("type"), {k: e[k] for k in cad_shapes.GEOMETRY_KEYS.get(e.get("type"), ()) if k in e}, e)
+                   for e in definition.get("items") or [] if e.get("type") in cad_shapes.CAD_TYPES]
+        write(layout, entries)
+    write(doc.modelspace(), lines)
     return doc
 
 
@@ -226,6 +299,47 @@ ATTACHMENT = {"TL": 1, "TC": 2, "TR": 3, "ML": 4, "MC": 5, "MR": 6, "BL": 7, "BC
 ALIGNMENT = {"L": "LEFT", "C": "CENTER", "R": "RIGHT", "TL": "TOP_LEFT", "TC": "TOP_CENTER", "TR": "TOP_RIGHT",
              "ML": "MIDDLE_LEFT", "MC": "MIDDLE_CENTER", "MR": "MIDDLE_RIGHT", "BL": "BOTTOM_LEFT",
              "BC": "BOTTOM_CENTER", "BR": "BOTTOM_RIGHT"}
+
+
+def _image_entity(doc, space, data: dict, f: float, attribs: dict, image_defs: dict):
+    """Image -> IMAGE (vecteurs de pixel = ses coins, cisaillement compris) ; taille en pixels lue du fichier (sinon
+    1000 x 1000)."""
+    s = cad_image.style_of(data)
+    path = s["path"]
+    found = image_defs.get(path)
+    if found is None:
+        width, height = 1000, 1000
+        try:
+            from PySide6.QtGui import QImageReader
+            size = QImageReader(path).size()
+            if size.isValid():
+                width, height = size.width(), size.height()
+        except Exception:                                   # noqa: BLE001 - lecteur indisponible : taille par defaut
+            pass
+        found = image_defs[path] = (doc.add_image_def(path or "image.png", (width, height)), (width, height))
+    image_def, (width, height) = found
+    p, u, v = s["pos"], s["pu"], s["pv"]
+    entity = space.add_image(image_def, (p[0] * f, p[1] * f), (1.0, 1.0), dxfattribs=attribs)
+    entity.dxf.u_pixel = ((u[0] - p[0]) * f / width, (u[1] - p[1]) * f / width, 0.0)
+    entity.dxf.v_pixel = ((v[0] - p[0]) * f / height, (v[1] - p[1]) * f / height, 0.0)
+    entity.dxf.image_size = (width, height)
+    if s["fade"]:
+        entity.dxf.fade = int(round(s["fade"]))
+    return entity
+
+
+def _attdef_entity(space, data: dict, attdef: dict, f: float, attribs: dict) -> list:
+    """Definition d'attribut -> ATTDEF (etiquette, question, valeur par defaut, invisible / constant)."""
+    from ezdxf.enums import TextEntityAlignment
+    s = cad_text.style_of(data)
+    pos = data.get("pos") or (0.0, 0.0)
+    flags = (1 if attdef["invisible"] else 0) | (2 if attdef["constant"] else 0)
+    entity = space.add_attdef(attdef["tag"], (float(pos[0]) * f, float(pos[1]) * f), attdef["default"],
+                              dxfattribs={**attribs, "height": s["height"] * f, "rotation": s["rot"],
+                                          "prompt": attdef["prompt"], "flags": flags})
+    entity.set_placement((float(pos[0]) * f, float(pos[1]) * f),
+                         align=TextEntityAlignment[ALIGNMENT.get(s["justify"], "LEFT")])
+    return [entity]
 
 
 def _text_entities(space, data: dict, f: float, attribs: dict) -> list:

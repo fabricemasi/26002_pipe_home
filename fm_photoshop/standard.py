@@ -3,15 +3,21 @@
 
 Même session que l'élément (document, historique, outil, brosse, calque actif, zoom, position) : l'ouvrir ne recharge
 ni ne copie rien ; revenir au Board rend la main à l'élément, qui affiche la même composition (mêmes tuiles). Le
-panneau est enfant du `BoardPane` : barres et raccourcis du Board sont dessous, intacts ; Ctrl+S enregistre le board."""
+panneau est enfant du `BoardPane` : barres et raccourcis du Board sont dessous, intacts ; Ctrl+S enregistre le board.
+
+Les palettes (outils, couleurs, brosse, calque, fichier, vue) sont les BARRES FLOTTANTES du module (`bars.py`), posées par-dessus
+l'éditeur dans la zone de l'établi ; ne restent dans la page que la ligne du titre, les menus et les panneaux à droite."""
 from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, Qt, QTimer
-from PySide6.QtWidgets import QFileDialog, QGridLayout, QHBoxLayout, QLabel, QMessageBox, QVBoxLayout, QWidget
+from types import SimpleNamespace
+
+from PySide6.QtCore import QEvent, QPoint, QRect, Qt, QTimer
+from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QMessageBox, QVBoxLayout, QWidget
 
 from . import io_images
+from .bars import StandardPalettes, controller_for
 from .canvas import CanvasView
 from .menus import MenuBar
 from .panels import BrushPanel, LayersPanel, _button
@@ -49,6 +55,8 @@ class StandardPane(QWidget):
         board._photoshop_standard = pane
         pane.show()
         pane.raise_()
+        pane.bars.raise_all()                                  # les barres flottantes AU-DESSUS de l'éditeur
+        pane._place_bars()
         pane.canvas.setFocus()
         return pane
 
@@ -80,29 +88,10 @@ class StandardPane(QWidget):
         top.addWidget(self.title, 1)
         top.addWidget(self.status)
         top.addWidget(self.state)
-        top.addWidget(_button("Annuler", "Ctrl+Z", lambda: self.canvas.undo(), self))
-        top.addWidget(_button("Rétablir", "Ctrl+Y", lambda: self.canvas.redo(), self))
-        top.addWidget(_button("Ajuster", "Tout voir (Ctrl+0)", lambda: self.canvas.fit(), self))
-        top.addWidget(_button("100 %", "Taille réelle (Ctrl+1)", lambda: self.canvas.set_zoom(1.0), self))
-        top.addWidget(_button("Importer…", "Ajouter une image comme nouveau calque", self.import_layer, self))
-        top.addWidget(_button("Enregistrer", "Ctrl+S", self._save, self))
-        top.addWidget(_button("Exporter…", "Composition ou calque : PNG, TIFF, JPEG, WebP", self.export, self))
         layout.addLayout(top)
         body = QHBoxLayout()
         body.setContentsMargins(6, 2, 6, 6)
         body.setSpacing(6)
-        tools = QGridLayout()
-        tools.setSpacing(2)
-        self.tool_buttons = {}
-        for index, (tool, text, tip) in enumerate(TOOL_ROWS):
-            button = _button(text, tip, lambda t=tool: self.canvas.set_tool(t), self, True)
-            button.setFixedWidth(84)
-            self.tool_buttons[tool] = button
-            tools.addWidget(button, index // 2, index % 2)
-        holder_tools = QVBoxLayout()
-        holder_tools.addLayout(tools)
-        holder_tools.addStretch(1)
-        body.addLayout(holder_tools)
         self.canvas = CanvasView(self.session, self)
         body.addWidget(self.canvas, 1)
         side = QVBoxLayout()
@@ -122,7 +111,12 @@ class StandardPane(QWidget):
         self.layers_panel.list.setContextMenuPolicy(Qt.CustomContextMenu)          # clic droit sur la liste des calques
         self.layers_panel.list.customContextMenuRequested.connect(
             lambda pos: self.menubar.menu_for("layer").popup(self.layers_panel.list.mapToGlobal(pos)))
+        self.palettes = StandardPalettes(self, TOOL_ROWS)             # outils, couleurs, brosse, calque, fichier, vue
+        self.tool_buttons = self.palettes.tools
+        self.zoom_field = SimpleNamespace(value_label=self.palettes.zoom.field)       # (compatibilité : la zone de saisie du zoom)
         self.canvas.toolChanged.connect(self._sync_tools)
+        self.canvas.zoomChanged.connect(self._zoom_shown)
+        self._zoom_shown(self.canvas.zoom())
         self.canvas.message.connect(self.status.setText)
         self.session.listeners.append(self._on_session)
         self._sync_tools()
@@ -131,11 +125,54 @@ class StandardPane(QWidget):
         self.setGeometry(board.rect())
         if hasattr(board, "dirtyChanged"):
             board.dirtyChanged.connect(self._sync_title)
+        self.bars = controller_for(board).bars                      # les barres flottantes du module : éléments posés ici
+        self.bars.attach(self, self.palettes.groups)
+
+    # -- barres flottantes --
+    def bars_area(self) -> QRect:
+        """La zone où les barres se clipsent : l'établi, en coordonnées du Board (les barres en sont les enfants)."""
+        return QRect(self.canvas.mapTo(self.board, QPoint(0, 0)), self.canvas.size())
+
+    def _place_bars(self):
+        if getattr(self, "bars", None) is not None and self.bars.std is self:
+            self.bars.place()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._place_bars()                                         # (la mise en page de l'éditeur est déjà faite)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(0, self._place_bars)
+
+    # -- zoom (zone de saisie), affichage --
+    def _display_chosen(self, label):
+        from .display import DISPLAY_LABELS
+        self.session.display_filter = next((k for k, v in DISPLAY_LABELS.items() if v == label), "nearest")
+        self.canvas._bicubic_key = None
+        self.canvas.update()
+
+    def _zoom_typed(self, text):
+        digits = "".join(ch for ch in str(text) if ch.isdigit())
+        if digits:
+            percent = max(2, min(6400, int(digits)))
+            if round(self.canvas.zoom() * 100) != percent:
+                self.canvas.set_zoom(percent / 100.0)
+        self._zoom_shown(self.canvas.zoom())                      # le texte reprend la valeur réellement appliquée
+        self.canvas.setFocus()
+
+    def _zoom_shown(self, zoom):
+        from PySide6.QtCore import QSignalBlocker
+        field = self.palettes.zoom.field
+        text = str(max(2, min(6400, round(zoom * 100))))
+        if field.text() != text:
+            with QSignalBlocker(field):
+                field.setText(text)
 
     # -- état --
     def _sync_tools(self, *_):
         for tool, button in self.tool_buttons.items():
-            button.setChecked(tool == self.session.tool)
+            button.set_active(tool == self.session.tool)
 
     def _on_session(self, kind, _rect):
         if kind in ("committed", "structure", "edit"):
@@ -224,6 +261,7 @@ class StandardPane(QWidget):
             pass
         if self._on_session in self.session.listeners:
             self.session.listeners.remove(self._on_session)
+        self.bars.detach(self)                                     # leurs éléments disparaissent, leur place est retenue
         self.canvas.detach()
         self.layers_panel.detach()
         self.session.standard_open = False

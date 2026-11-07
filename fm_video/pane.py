@@ -1069,8 +1069,6 @@ class VideoPane(QWidget):
         else:
             self.viewer.bg = color
             self.viewer.update()
-        if self._analysis is not None:
-            self._analysis.setStyleSheet(f'background:{color.name()};')
         self._sync_background()
         self._background_pending[key] = color.name()
         self._background_save_timer.start()
@@ -1085,7 +1083,7 @@ class VideoPane(QWidget):
     def _open_color_analysis(self, index):
         self.pause()
         if self._analysis is None:
-            from fm_video.analysis import ColorAnalysis
+            from fm_video.analysis_ui import ColorAnalysis
             self._analysis = ColorAnalysis(self.content)
             self._analysis.back.connect(self._close_color_analysis)
             self._analysis.settingsChanged.connect(self._analysis_setting)
@@ -1093,7 +1091,6 @@ class VideoPane(QWidget):
         self._analysis.apply_settings(self._settings)
         self._analysis.image.natural_width = max(1,int(getattr(self.source,'width',1500)))
         self._analysis_index = index
-        self._analysis.setStyleSheet(f'background:{self.moodboard.bg.name()};')
         self.content_layout.setCurrentWidget(self._analysis)
         image = self.moodboard.detail_pixmaps.get(index) or self.moodboard.pixmaps.get(index)
         if image is not None:
@@ -2908,7 +2905,8 @@ class VideoPane(QWidget):
         if key == Qt.Key_Escape:
             if (self.viewer.region_mode() or self.moodboard._zone_mode):
                 return lambda: self._set_zone_mode(False)       # tracé de zone annulé
-            return self.exit_fullscreen if self._fullscreen is not None else self.closeRequested.emit
+            # Echap ne fait jamais sortir du module (demande, 2026-11-05) : plein ecran quitte, rien d'autre.
+            return self.exit_fullscreen if self._fullscreen is not None else (lambda: None)
         return None
 
     def handle_key(self, event) -> bool:

@@ -461,7 +461,8 @@ class InterfaceTest(DesignTestCase):
         from fm_board.settings import _board_icon_rows
         from PySide6.QtGui import QPixmap
         ui = self.ctl.ui
-        kinds = {b.kind for b in ui.rail.findChildren(board_ui._GlyphButton)}
+        from fm_board.bars import BoardTool
+        kinds = {w.kind for w in ui.bars.manager.widgets.values() if isinstance(w, BoardTool) and w.kind != "swatch"}
         kinds |= {b.kind for b in ui.pagebar.findChildren(board_ui._GlyphButton)}
         self.assertTrue({"design_templates", "design_export", "design_present", "design_add_page"} <= kinds)
         rows = {kind for kind, _label in ICON_ROWS}
@@ -494,9 +495,9 @@ class InterfaceTest(DesignTestCase):
         for item in doc.elements(self.scene, page) + [None]:
             self.ctl._select([item] if item is not None else [])
             self.ctl.ui.sync()
-            self.assertGreater(self.ctl.ui.context_layout.count(), 0)
-            self.assertTrue(all(self.ctl.ui.context_layout.itemAt(n).widget().isVisibleTo(self.ctl.ui.context)
-                                for n in range(self.ctl.ui.context_layout.count())))
+            items = self.ctl.ui.context_items
+            self.assertGreater(len(items), 0)
+            self.assertTrue(all(self.ctl.ui.bars.manager.bar_of(w.palette_key) is not None for w in items))
 
     def test_thumbnails_redone_only_for_touched_pages(self):
         a = self.page()

@@ -1,8 +1,8 @@
 """Petits outils de la fenêtre principale : filtres d'événements (bouton « précédent » de la souris, activité), QSS.
 
 Découpé de pipeline_browser.py (2026-10-28) ; carte : docs/agents/fm_browser.md."""
-from PySide6.QtCore import QEvent, QObject, QRectF, Qt
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import QWidget
 
 import shiboken6
@@ -30,23 +30,39 @@ from app_style import set_qss as _set_qss  # noqa: E402,F401  (setStyleSheet seu
 
 
 class CentralFrame(QWidget):
-    """Cadre central de la fenetre principale : fond `C['window']`, filet 1 px `C['border']`, coins
+    """Cadre central de la fenetre principale : fond `C['window']`, bordure du pourtour (Theme > General >
+    « Bordure des fenetres », `ui_state.WINDOW_BORDER` : cotes, couleurs, epaisseur), coins
     `ui_state.WINDOW_RADIUS`, PEINTS ici. En QSS (#CentralFrame), changer le rayon ou une de ces couleurs
     repolissait TOUTE la fenetre (~35 ms par cran de curseur) ; ici : un simple `update()`."""
 
     def paintEvent(self, event):
         from app_style import C
+        from fm_theme.widgets import _paint_bordered_vector
         import ui_state
+        border = ui_state.WINDOW_BORDER
+        colors = {k: border["colors"].get(k) or C["border"] for k in ("top", "right", "bottom", "left")}
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        radius = max(0.0, float(ui_state.WINDOW_RADIUS) - 0.5)
-        painter.setPen(QPen(QColor(C["border"]), 1))
-        painter.setBrush(QColor(C["window"]))
-        painter.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
+        _paint_bordered_vector(painter, self.rect(), int(ui_state.WINDOW_RADIUS), border["sides"],
+                               border["thickness"], colors, C["window"])
+        painter.end()
+
+    def sync_margins(self):
+        """Marges du contenu = epaisseur de la bordure sur chaque cote allume : sinon les enfants (bord franc)
+        la recouvrent. Rien si elles n'ont pas change."""
+        import ui_state
+        border = ui_state.WINDOW_BORDER
+        t = {k: border["thickness"] if border["sides"].get(k) else 0 for k in ("left", "top", "right", "bottom")}
+        layout = self.layout()
+        margins = (t["left"], t["top"], t["right"], t["bottom"])
+        if layout is not None:
+            current = layout.contentsMargins()
+            if (current.left(), current.top(), current.right(), current.bottom()) != margins:
+                layout.setContentsMargins(*margins)
 
 
 class _MouseBackFilter(QObject):
-    """Bouton « precedent » : de l'image en focus vers les diapositives, puis vers les colonnes."""
+    """Bouton « precedent » : de l'image en focus vers les diapositives, puis vers les colonnes ; module Markdown ou
+    typographique ouvert (simple clic sur un fichier) : retour aux colonnes."""
 
     def __init__(self, browser: "PipelineBrowser"):
         super().__init__(browser)
@@ -56,9 +72,25 @@ class _MouseBackFilter(QObject):
         kind = event.type()
         if kind not in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease, QEvent.MouseButtonDblClick):
             return False
-        if event.button() != Qt.BackButton or not self._browser._project_columns_hidden:
+        if event.button() != Qt.BackButton:
             return False
         if not (watched.isWidgetType() and watched.window() is self._browser):
+            return False
+        browser = self._browser
+        if not browser._project_columns_hidden:
+            font = getattr(browser, "_font", None)
+            if getattr(browser, "_side_viewer", None) is not None:
+                if kind == QEvent.MouseButtonPress:
+                    browser._close_side_viewer()
+                return True
+            if getattr(browser, "_md_open", False):
+                if kind == QEvent.MouseButtonPress:
+                    browser._close_md_editor()
+                return True
+            if font is not None:
+                if kind == QEvent.MouseButtonPress and font.confirm_leave():
+                    browser._close_font()
+                return True
             return False
         if kind == QEvent.MouseButtonPress:
             if self._browser._viewer_active():

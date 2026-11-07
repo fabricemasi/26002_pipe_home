@@ -2,6 +2,8 @@
 
 - `default_settings() -> dict`, `load_settings() -> dict`, `save_settings(dict)` : réglages de l'appli
   (défauts, lecture, écriture). Sans appli : défauts vides, lecture vide, écriture ignorée.
+- `save_setting(clé, valeur)` : enregistre UN réglage changé hors de la fenêtre de réglages (clic droit sur une
+  barre d'outils : en-têtes). Sans appli : ignoré.
 - `ui_icon(nom, taille) -> QPixmap | None` : icône d'interface choisie par l'utilisateur (nom : « settings_gear »),
   None pour garder le dessin par défaut.
 
@@ -28,6 +30,13 @@ def save_settings(settings: dict) -> None:
     hook = HOOKS.get("save_settings")
     if hook is not None:
         hook(settings)
+
+
+def save_setting(key: str, value) -> None:
+    """Enregistre un réglage de l'appli hôte (une seule clé)."""
+    hook = HOOKS.get("save_setting")
+    if hook is not None:
+        hook(key, value)
 
 
 def ui_icon(name: str, size: int):

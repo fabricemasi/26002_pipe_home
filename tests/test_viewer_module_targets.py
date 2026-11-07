@@ -22,13 +22,14 @@ from browser_core import ROLE_PATH  # noqa: E402
 from main_window.board_module import BoardModuleMixin  # noqa: E402
 from main_window.chrome import ChromeMixin  # noqa: E402
 from main_window.module_targets import ModuleTargetsMixin, module_targets  # noqa: E402
+from main_window.side_module import SideModuleMixin, _SideViewer  # noqa: E402
 from main_window.viewer_chrome import ViewerChromeMixin  # noqa: E402
 from settings_widgets import Menu  # noqa: E402
 
 app = QApplication.instance() or QApplication([])
 
 
-class _Host(ModuleTargetsMixin, BoardModuleMixin, ChromeMixin, ViewerChromeMixin, QWidget):
+class _Host(ModuleTargetsMixin, SideModuleMixin, BoardModuleMixin, ChromeMixin, ViewerChromeMixin, QWidget):
     """Fenêtre principale réduite : boutons de mode, sélection, visionneuse ; les ouvertures sont notées."""
 
     def __init__(self):
@@ -86,6 +87,54 @@ class ModuleTargetsTest(WindowTestCase):
     def tearDown(self):
         super().tearDown()
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_a_single_click_opens_images_texts_and_fonts(self):
+        """Simple clic sur un fichier (demande de l'utilisateur, 2026-11-03) : image = visionneuse, texte / code =
+        module Markdown, police = module typographique ; un autre fichier (ou un dossier) ne fait rien."""
+        from main_window.module_targets import click_target
+        self.assertEqual(click_target(self.tmp / "a.png"), "viewer")
+        self.assertEqual(click_target(self.tmp / "notes.csv"), "md")
+        self.assertEqual(click_target(self.tmp / "Essai.ttf"), "font")
+        self.assertIsNone(click_target(self.tmp / "clip.mp4"))
+        self.assertIsNone(click_target(self.tmp / "Essai.ufo"))
+        host = self.track(_Host()) if hasattr(self, "track") else _Host()
+        for name in ("a.png", "notes.csv", "Essai.ttf", "clip.mp4"):
+            host.on_file_clicked(None, self.tmp / name)
+            _settle()
+        self.assertEqual(host.opened, [("viewer", self.tmp / "a.png"), ("md", self.tmp / "notes.csv"),
+                                       ("font", self.tmp / "Essai.ttf")])
+
+    def test_a_single_click_opens_the_image_beside_the_columns(self):
+        """Simple clic sur une image : visionneuse À CÔTÉ de la colonne (les colonnes restent) ; double-clic sur
+        l'image : la visionneuse pleine."""
+        host = track(QWidget())
+        host.resize(900, 500)
+        host.show()
+        image = QImage(400, 300, QImage.Format_RGB32)
+        image.fill(0xff3366)
+        full = []
+        viewer = _SideViewer(host, 300, self.tmp / "a.png", QPixmap.fromImage(image), None, lambda: full.append(1))
+        self.addCleanup(viewer.close_now)
+        self.assertEqual(viewer.geometry().getRect(), (300, 0, 600, 500))     # colonnes à gauche : visibles
+        viewer.overlay.finish_now()
+        target = viewer.overlay.current_rect()
+        self.assertTrue(QRectF(viewer.rect()).contains(target))
+        host.resize(1000, 500)
+        self.assertEqual(viewer.width(), 700)                                 # suit la fenêtre
+        viewer.overlay._on_double_click()
+        self.assertEqual(full, [1])
+
+    def test_the_markdown_pane_can_sit_beside_the_columns(self):
+        import fm_markdown.pane as md_pane
+        host = track(QWidget())
+        host.resize(900, 500)
+        pane = md_pane.MarkdownPane.__new__(md_pane.MarkdownPane)
+        QWidget.__init__(pane)
+        self.addCleanup(pane.deleteLater)
+        md_pane.MarkdownPane.attach(pane, host, 250)
+        self.assertEqual(pane.geometry().getRect(), (250, 0, 650, 500))
+        pane.set_side_left(0)                                                 # double-clic : plein
+        self.assertEqual(pane.geometry().getRect(), (0, 0, 900, 500))
 
     def test_table(self):
         self.assertEqual(module_targets(self.tmp / "notes.csv", False), ["md", "sheet"])   # deux modules : les deux

@@ -125,8 +125,7 @@ class PortedSectionsTest(unittest.TestCase):
         self.assertEqual(self.theme.wired_values()["window_radius"], 0)
 
     def test_new_navigation_and_control_sections_build(self):
-        open_nodes(self.win, 0, ("Barre de navigation",))
-        open_nodes(self.theme, 0, ("Bouton", "Tabs", "Zone de saisie"))
+        open_nodes(self.theme, 0, ("Barre de navigation", "Bouton", "Tabs", "Zone de saisie"))
         keys = {spec.key for win, label in ((self.win, "General"), (self.theme, v2.THEME_TAB))
                 for spec, _widget in win.stores[label]["specs"] if not isinstance(spec, str)}
         expected = {"navbar_height", "navbar_bottom_enabled", "navbar_title_font_family",

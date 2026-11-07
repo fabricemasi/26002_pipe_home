@@ -167,37 +167,37 @@ class ColumnFileOperationsMixin:
         return new_path
 
     def _create_board_file(self, name: str | None = None):
-        """« Créer un mro » (voir _on_context_menu) : un board vierge (paquet board/, JSON), meme mecanique que
+        """« Créer un board » (ex « Créer un mro ») (voir _on_context_menu) : un board vierge (paquet board/, JSON), meme mecanique que
         _create_text_file (nom, caracteres interdits, niveau d'une colonne fusionnee) ; il est selectionne,
         le double-clic l'ouvre dans l'appli."""
         import fm_board as board
         if name is None:
-            name, ok = QInputDialog.getText(self, "Créer un mro", "Nom du board :", QLineEdit.Normal, "Nouveau board")
+            name, ok = QInputDialog.getText(self, "Créer un board", "Nom du board :", QLineEdit.Normal, "Nouveau board")
             if not ok:
                 return None
         name = (name or "").strip()
         if not name:
             return None
         if any(ch in name for ch in '\\/:*?"<>|'):
-            QMessageBox.warning(self, "Créer un mro", "Le nom contient des caracteres interdits.")
+            QMessageBox.warning(self, "Créer un board", "Le nom contient des caracteres interdits.")
             return None
         if not name.lower().endswith(board.EXTENSION):
             name += board.EXTENSION
         target_dir = self.directory
         if self._source_dirs is not None and self._source_labels and len(self._source_dirs) > 1:
             choice, ok_level = QInputDialog.getItem(
-                self, "Créer un mro", "A quel niveau enregistrer ce board ?", self._source_labels, 0, False)
+                self, "Créer un board", "A quel niveau enregistrer ce board ?", self._source_labels, 0, False)
             if not ok_level:
                 return None
             target_dir = self._source_dirs[self._source_labels.index(choice)]
         new_path = target_dir / name
         if new_path.exists():
-            QMessageBox.warning(self, "Créer un mro", f"« {name} » existe deja.")
+            QMessageBox.warning(self, "Créer un board", f"« {name} » existe deja.")
             return None
         try:
             board.create_board_file(new_path)
         except OSError as exc:
-            QMessageBox.warning(self, "Créer un mro", f"Impossible de creer le board :\n{exc}")
+            QMessageBox.warning(self, "Créer un board", f"Impossible de creer le board :\n{exc}")
             return None
         self._refresh_and_select(new_path)
         return new_path

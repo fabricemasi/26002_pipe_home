@@ -25,6 +25,24 @@ from .render import PathCache
 from .settings_defaults import TYPO_DEFAULTS
 from .tools import TOOLS
 
+
+def tool_cells(label: str) -> int:
+    """Largeur (en cases) du bouton à texte d'un outil."""
+    from PySide6.QtGui import QFont, QFontMetrics
+    from fm_theme.palette import step
+    return max(2, -(-(QFontMetrics(QFont()).horizontalAdvance(label) + 18) // step()))
+
+
+def default_bars_state() -> dict:
+    """Barre « Outils » de l'éditeur par défaut (demande de l'utilisateur, 2026-11-03) : clipsée en haut, à gauche."""
+    items, col = {}, 0
+    for ident, cls in TOOLS.items():
+        cells = tool_cells(cls.label)
+        items[ident] = [col, 0, cells]
+        col += cells
+    return {"next": 2, "bars": [{"id": "b1", "title": "Outils", "dock": "top", "orient": "h", "along": 0, "x": 0,
+                                 "y": 0, "cols": col, "rows": 1, "items": items}]}
+
 # Posés par la fenêtre principale (main_window/font_module.py) ; défauts utilisables seuls (tests, lanceur).
 HOOKS: dict = {
     "settings": lambda: {},                 # réglages appliqués (dict complet de l'appli)
@@ -163,16 +181,6 @@ class FontPane(QWidget):
         root.addLayout(top)
 
         split = QSplitter(Qt.Horizontal, self)
-        self.tool_strip = QWidget()
-        strip = QVBoxLayout(self.tool_strip)
-        strip.setContentsMargins(4, 4, 4, 4)
-        self.tool_buttons = {}
-        for ident, cls in TOOLS.items():
-            b = button(cls.label, cls.tip, lambda i=ident: self.canvas.set_tool(i))
-            b.setCheckable(True)
-            self.tool_buttons[ident] = b
-            strip.addWidget(b)
-        strip.addStretch(1)
         self.pages = QStackedWidget()
         # Glyphes
         grid_page = QWidget()
@@ -257,11 +265,11 @@ class FontPane(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setWidget(side)
         scroll.setFrameShape(QScrollArea.NoFrame)
-        split.addWidget(self.tool_strip)
         split.addWidget(self.pages)
         split.addWidget(scroll)
-        split.setStretchFactor(1, 1)
-        split.setSizes([120, 900, 340])
+        split.setStretchFactor(0, 1)
+        split.setSizes([1020, 340])
+        self._build_bars()
         root.addWidget(split, 1)
         self.status_label = _label("", "value_muted")
         self.status_label.setContentsMargins(10, 2, 10, 4)
@@ -377,7 +385,7 @@ class FontPane(QWidget):
         self.pages.setCurrentIndex(index)
         for name, b in self.page_buttons.items():
             b.setChecked(name == page)
-        self.tool_strip.setVisible(page == "Éditeur")
+        self.tool_bars.set_visible(page == "Éditeur")
         if page != "Éditeur":
             self.pageChanged.emit(page)
         if page == "Glyphes":
@@ -410,7 +418,7 @@ class FontPane(QWidget):
         self.pages.setCurrentIndex(PAGES.index("Éditeur"))
         for page, b in self.page_buttons.items():
             b.setChecked(page == "Éditeur")
-        self.tool_strip.setVisible(True)
+        self.tool_bars.set_visible(True)
         self.canvas.set_glyph(name)
         self.canvas.setFocus()
         self.pageChanged.emit("Éditeur")
@@ -423,9 +431,36 @@ class FontPane(QWidget):
             self.glyph_panel.refresh()
             self.kerning_panel.refresh()
 
+    def _build_bars(self) -> None:
+        """Outils de l'éditeur : barre FLOTTANTE de fm_theme (aspect : section « Palette » ; disposition retenue dans
+        `typo_bars`), posée sur la page de l'éditeur, visible seulement sur elle."""
+        from fm_theme.bar_manager import BarManager
+        from fm_theme.palette import PaletteTextButton
+        self.tool_bars = BarManager(self.pages)
+        self.tool_bars.default_state = default_bars_state()
+        self.tool_buttons = {}
+        for ident, cls in TOOLS.items():
+            b = PaletteTextButton(ident, cls.label, cls.tip, cells=tool_cells(cls.label))
+            b.clicked.connect(lambda _c=False, i=ident: self.canvas.set_tool(i))
+            self.tool_bars.register(ident, b)
+            self.tool_buttons[ident] = b
+        saved = self.settings.get("typo_bars")
+        self.tool_bars.restore(saved if isinstance(saved, dict) and saved.get("bars") else None)
+        self.tool_bars.layoutChanged.connect(self._save_bars)
+        self.tool_bars.set_visible(False)
+
+    def _save_bars(self) -> None:
+        state = self.tool_bars.state()
+        self.settings["typo_bars"] = state
+        try:
+            from settings_store import save_live_state
+            save_live_state("typo_bars", state)
+        except Exception:                                  # noqa: BLE001 - la session garde la disposition
+            pass
+
     def _sync_tools(self, ident: str) -> None:
         for key, b in self.tool_buttons.items():
-            b.setChecked(key == ident)
+            b.set_active(key == ident)
 
     def masters_changed(self) -> None:
         self.cache.clear()
@@ -803,16 +838,28 @@ class FontPane(QWidget):
         if "typo_autosave_seconds" in settings:
             self._restart_autosave()
 
+    side_left = 0
+
+    def _side_geometry(self, host):
+        """Zone du panneau : toute celle des colonnes, ou à droite de la colonne cliquée (`side_left`, simple clic)."""
+        rect = host.rect()
+        return rect.adjusted(min(self.side_left, max(0, rect.width() - 200)), 0, 0, 0)
+
+    def set_side_left(self, left: int) -> None:
+        """Ouvert à côté des colonnes à partir de `left` (0 : plein, les colonnes sont recouvertes)."""
+        self.side_left = max(0, int(left))
+        if self.parentWidget() is not None:
+            self.setGeometry(self._side_geometry(self.parentWidget()))
+
     def eventFilter(self, obj, event):
         from PySide6.QtCore import QEvent
         if obj is self.parentWidget() and event.type() == QEvent.Resize:
-            self.setGeometry(obj.rect())
+            self.setGeometry(self._side_geometry(obj))
         return False
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape and self.pages.currentWidget() is not self.canvas:
-            self.request_close()
-            return
+            return                                      # Echap ne fait jamais sortir du module (2026-11-05)
         super().keyPressEvent(event)
 
     def shutdown(self) -> None:

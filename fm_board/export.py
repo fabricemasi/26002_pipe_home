@@ -59,27 +59,67 @@ def _transparent(scene) -> bool:
     return scene.page.get("export_background", "page") == "transparent"
 
 
-def render_items(scene, items, scale: float = 2.0) -> QImage:
-    """Image (PNG du presse-papiers) des elements donnes, sur le fond de la page, sans grille."""
+def items_source(items, margin: float = 20.0) -> QRectF:
+    """Emprise (scene) des elements donnes, marge comprise."""
     rect = QRectF()
     for item in items:
         rect = rect.united(item.scene_rect())
-    source = rect.adjusted(-20, -20, 20, 20)
-    scale = min(scale, 8000 / max(1.0, source.width(), source.height()))
-    size = QSize(max(1, int(source.width() * scale)), max(1, int(source.height() * scale)))
-    image = QImage(size, QImage.Format_ARGB32_Premultiplied)
-    image.fill(scene.background)
-    hidden = [i for i in scene.board_items() if i not in items and i.isVisible()]
+    return rect.adjusted(-margin, -margin, margin, margin)
+
+
+def _render_only(scene, items, painter: QPainter, target: QRectF, source: QRectF, transparent: bool):
+    """Rendu des SEULS elements donnes (les autres masques le temps du rendu)."""
+    keep = set(items)
+    hidden = [i for i in scene.board_items() if i not in keep and i.isVisible()]
     for item in hidden:
         item.setVisible(False)
     try:
-        painter = QPainter(image)
-        _render(scene, painter, QRectF(0, 0, size.width(), size.height()), source, False)
-        painter.end()
+        _render(scene, painter, target, source, transparent)
     finally:
         for item in hidden:
             item.setVisible(True)
+
+
+def render_items(scene, items, scale: float = 2.0, transparent: bool = False) -> QImage:
+    """Image (PNG du presse-papiers) des elements donnes, sur le fond de la page (ou transparente), sans grille."""
+    source = items_source(items)
+    scale = min(scale, 8000 / max(1.0, source.width(), source.height()))
+    size = QSize(max(1, int(source.width() * scale)), max(1, int(source.height() * scale)))
+    image = QImage(size, QImage.Format_ARGB32_Premultiplied)
+    image.fill(Qt.transparent if transparent else scene.background)
+    painter = QPainter(image)
+    try:
+        _render_only(scene, items, painter, QRectF(0, 0, size.width(), size.height()), source, transparent)
+    finally:
+        painter.end()
     return image
+
+
+def export_items_vector(scene, items, path) -> Path:
+    """Elements donnes en VECTORIEL, fond transparent : SVG ou PDF (selon l'extension)."""
+    source = items_source(items)
+    if Path(path).suffix.lower() == ".svg":
+        from PySide6.QtSvg import QSvgGenerator
+        device = QSvgGenerator()
+        device.setFileName(str(path))
+        device.setSize(QSize(int(source.width()), int(source.height())))
+        device.setViewBox(QRectF(0, 0, source.width(), source.height()))
+        device.setTitle(Path(path).stem)
+    else:
+        device = QPdfWriter(str(path))
+        device.setResolution(96)
+        device.setPageSize(QPageSize(QSizeF(source.width(), source.height()), QPageSize.Point))
+        device.setPageMargins(QMarginsF(0, 0, 0, 0), QPageLayout.Point)
+    painter = QPainter(device)
+    try:
+        if isinstance(device, QPdfWriter):
+            target = QRectF(0, 0, device.width(), device.height())
+        else:
+            target = QRectF(0, 0, source.width(), source.height())
+        _render_only(scene, items, painter, target, source, True)
+    finally:
+        painter.end()
+    return Path(path)
 
 
 def export_png(scene, path, scale: float = 2.0) -> Path:

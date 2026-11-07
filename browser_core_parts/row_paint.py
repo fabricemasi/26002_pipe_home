@@ -121,8 +121,8 @@ ROLE_SOURCE_STEP = Qt.UserRole + 4
 # Vrai pour une ligne "raccourci" (voir load_shortcuts/Column.refresh,
 # Column._on_context_menu "Ajouter un raccourci") : un dossier situe
 # AILLEURS sur le disque, affiche comme s'il etait physiquement dans CE
-# dossier — voir _resolve_shortcut_font_color/SHORTCUT_TEXT_STYLE (police/
-# couleur dediees, Settings > RACCOURCI) pour le distinguer visuellement,
+# dossier — voir _resolve_shortcut_font/SHORTCUT_TEXT_STYLE (police dediee,
+# Settings > RACCOURCI ; couleur : Icones > Couleur des dossiers),
 # et le menu contextuel reduit ("Retirer le raccourci" au lieu de
 # Renommer/Supprimer, qui agirait par erreur sur la VRAIE cible).
 ROLE_IS_SHORTCUT = Qt.UserRole + 5
@@ -461,11 +461,11 @@ def _resolve_row_font_color(title: str):
     row_color = resolve_color_ref(s.get("item_color") or C["text"])
     return row_font, row_color
 
-def _resolve_shortcut_font_color():
-    """Police/couleur EFFECTIVES d'une ligne "raccourci" (voir
-    ROLE_IS_SHORTCUT/SHORTCUT_TEXT_STYLE, Settings > RACCOURCI) — GENERALE
-    (pas par colonne, contrairement a _resolve_row_font_color : un
-    raccourci doit se reperer de la MEME facon partout)."""
+def _resolve_shortcut_font():
+    """Police EFFECTIVE d'une ligne "raccourci" (voir ROLE_IS_SHORTCUT/
+    SHORTCUT_TEXT_STYLE, Settings > RACCOURCI) — GENERALE (pas par colonne,
+    contrairement a _resolve_row_font_color). Sa couleur : celle de la
+    colonne, ou Icones > Couleur des dossiers (row_delegates)."""
     family = (ui_state.SHORTCUT_TEXT_STYLE.get("font_family") or "").strip()
     size = max(1, int(ui_state.SHORTCUT_TEXT_STYLE.get("font_size") or 11))
     resolved_family = _resolve_font_family(family, size, 400)
@@ -474,6 +474,4 @@ def _resolve_shortcut_font_color():
     smoothing = (
         ui_state.SHORTCUT_TEXT_STYLE.get("font_smoothing", "current")
         if ui_state.SHORTCUT_TEXT_STYLE.get("font_smoothing_enabled") else "current")
-    row_font = font(size, weight=weight, family=resolved_family, smoothing=smoothing, italic=italic)
-    row_color = resolve_color_ref(ui_state.SHORTCUT_TEXT_STYLE.get("color") or C["text"])
-    return row_font, row_color
+    return font(size, weight=weight, family=resolved_family, smoothing=smoothing, italic=italic)

@@ -28,8 +28,8 @@ from pathlib import Path
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer
 from PySide6.QtGui import QColor, QFontMetrics, QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMenu, QProxyStyle, QStyle, QWidget,
-    QWidgetAction,
+    QApplication, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMenu, QProxyStyle, QStyle, QStyleOptionMenuItem,
+    QWidget, QWidgetAction,
 )
 
 from fm_theme.style import font as app_font, resolve_color_ref
@@ -177,6 +177,8 @@ def menu_look(scope: str | None = None) -> dict:
         "hover_border_colors": hover_border_colors,
         "hover_margin": _sides(v.get("ctx_menu_hover_margin"), 0),
         "disabled": color("ctx_menu_disabled_color", "#7d858b"),
+        "ghost": color("ctx_menu_ghost_color", "#e0a040"),
+        "current": color("ctx_menu_current_color", "#4d5f9bd0"),
         "icon_size": max(8, _int(v.get("ctx_menu_icon_size"), 16)),
         "gap": _int(v.get("ctx_menu_control_gap"), 16),
         "slider_width": max(40, _int(v.get("ctx_menu_slider_width"), 140)),
@@ -302,6 +304,13 @@ def _qss(lk: dict) -> str:
         f"margin: {hm['top']}px {hm['right']}px {hm['bottom']}px {hm['left']}px; "
         f"color: {lk['text']}; background: transparent; {item_border} {hover_radius} }}"
         f"QMenu::item:selected {{ background: {lk['hover']}; color: {lk['hover_text']}; {hover_border} }}"
+        f"QMenu::item:default {{ color: {lk['ghost']}; }}"       # options fantomes (`ghost_action`), survol compris
+        # Element EN COURS (`mark_current`) : fond propre, survol compris, sans marge ni arrondi (bande pleine) ; le
+        # padding reprend la marge du survol pour que le texte ne bouge pas. Sa case a cocher n'est jamais dessinee.
+        f"QMenu::item:default:exclusive {{ color: {lk['text']}; background: {lk['current']}; margin: 0px; "
+        f"border-radius: 0px; padding: {ip['top'] + hm['top']}px {ip['right'] + hm['right']}px "
+        f"{ip['bottom'] + hm['bottom']}px {ip['left'] + hm['left']}px; }}"
+        f"QMenu::indicator:default {{ width: 0px; height: 0px; image: none; }}"
         f"QMenu::item:disabled {{ color: {lk['disabled']}; background: transparent; }}"
         f"QMenu::separator {{ height: {lk['sep_thickness']}px; background: {lk['sep_color']}; "
         f"margin: {sp['top']}px {sp['right']}px {sp['bottom']}px {sp['left']}px; }}"
@@ -620,6 +629,46 @@ class Menu(QMenu):
         super().__init__(*args)
         self.setProperty("ctxNoEdit", not editable)
         hook_menu(self, key)
+
+    def initStyleOption(self, option, action):
+        super().initStyleOption(option, action)
+        if action.property("ctxGhost"):      # option fantome : `QMenu::item:default` de la feuille de style
+            option.menuItemType = QStyleOptionMenuItem.DefaultItem
+        elif action.property("ctxCurrent"):  # element en cours : `QMenu::item:default:exclusive`
+            option.menuItemType = QStyleOptionMenuItem.DefaultItem
+            option.checkType = QStyleOptionMenuItem.Exclusive
+            option.checked = True
+
+
+# Options FANTOMES (demande de l'utilisateur) : lignes cachees, presentes seulement quand le clic droit est
+# fait avec Ctrl+Maj enfonces ; texte a la couleur « Couleur des options fantomes » (Menu contextuel > Lignes).
+GHOST_MODIFIERS = Qt.ControlModifier | Qt.ShiftModifier
+
+
+def mark_current(action) -> None:
+    """Element EN COURS d'un `Menu` (ex. la couleur « app » choisie, demande de l'utilisateur) : fond « Couleur de
+    l'element en cours » (Menu contextuel > Lignes), distinct du survol, permanent tant que le menu est ouvert, sans
+    marge ni arrondi."""
+    action.setProperty("ctxCurrent", True)
+
+
+def ghost_wanted() -> bool:
+    """Vrai quand Ctrl+Maj sont enfonces (au clic droit qui ouvre le menu)."""
+    return (QApplication.keyboardModifiers() & GHOST_MODIFIERS) == GHOST_MODIFIERS
+
+
+def ghost_action(menu: QMenu, text: str, slot=None):
+    """Ajoute une option fantome a `menu` (None sans Ctrl+Maj). Un QMenu nu (pas un `Menu`) la colore par
+    son action par defaut : une seule par menu."""
+    if not ghost_wanted():
+        return None
+    action = menu.addAction(text)
+    action.setProperty("ctxGhost", True)
+    if slot is not None:
+        action.triggered.connect(lambda _c=False: slot())
+    if not isinstance(menu, Menu) and menu.defaultAction() is None:
+        menu.setDefaultAction(action)
+    return action
 
 
 def prepare_menu(menu: QMenu) -> None:

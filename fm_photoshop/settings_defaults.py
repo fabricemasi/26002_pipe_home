@@ -14,6 +14,8 @@ PS_DEFAULTS = {
     "board_ps_max_zoom_pct": 3200,
     "board_ps_cursor_outline": True,
     "board_ps_history_mb": 384,
+    # Nouveau document à la taille du presse-papiers : l'image y est collée dans un calque
+    "board_ps_new_paste_clipboard": True,
     # Présélections de brosses de l'utilisateur (état temps réel, partagé par tous les boards) : liste de brosses
     "board_ps_brush_presets": [],
 }

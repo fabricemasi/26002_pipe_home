@@ -569,6 +569,9 @@ class EditScopeTest(unittest.TestCase):
         self.mode._include_open_windows()
         button = cells[0][1].findChild(QPushButton)
         cell = cells[0][1]
+        # Hauteur de ligne laissee par un test precedent (gabarits de la session) : place pour le decalage de 6 px.
+        cell.setMinimumHeight(button.height() + 20)
+        app.processEvents()
         QTest.mouseClick(button, Qt.LeftButton)
         self.assertEqual(self.mode.selected, [button])
         self.mode._move_selected(QPoint(28, 6))

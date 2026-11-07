@@ -807,17 +807,32 @@ class MarkdownPane(QWidget):
         self._push({"type": "reload", "path": path_text, "text": text})
 
     # -- affichage ------------------------------------------------------------------------------------------------------------
-    def attach(self, host: QWidget):
-        """Pose le panneau sur la zone des colonnes (et le garde a sa taille)."""
+    side_left = 0
+
+    def _side_geometry(self, host):
+        """Zone du panneau : toute celle des colonnes, ou à droite de la colonne cliquée (`side_left`, simple clic)."""
+        rect = host.rect()
+        return rect.adjusted(min(self.side_left, max(0, rect.width() - 200)), 0, 0, 0)
+
+    def set_side_left(self, left: int) -> None:
+        """Ouvert à côté des colonnes à partir de `left` (0 : plein, les colonnes sont recouvertes)."""
+        self.side_left = max(0, int(left))
+        if self.parentWidget() is not None:
+            self.setGeometry(self._side_geometry(self.parentWidget()))
+
+    def attach(self, host: QWidget, side_left: int = 0):
+        """Pose le panneau sur la zone des colonnes (et le garde a sa taille) ; `side_left` : à droite de la colonne
+        cliquée (simple clic), les colonnes restent visibles."""
         if self.parentWidget() is not host:
             self.setParent(host)
-        self.setGeometry(host.rect())
+        self.side_left = max(0, int(side_left))
+        self.setGeometry(self._side_geometry(host))
         host.installEventFilter(self)
 
     def eventFilter(self, obj, event):
         from PySide6.QtCore import QEvent
         if obj is self.parentWidget() and event.type() == QEvent.Resize:
-            self.setGeometry(obj.rect())
+            self.setGeometry(self._side_geometry(obj))
         return False
 
     def fade_in(self):

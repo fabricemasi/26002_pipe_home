@@ -8,10 +8,10 @@ from .brush import Brush
 FACTORY = (
     Brush(name="Rond dur 20", size=20, hardness=1.0, opacity=1.0, flow=1.0, spacing=0.1),
     Brush(name="Rond doux 60", size=60, hardness=0.1, opacity=1.0, flow=1.0, spacing=0.15),
-    Brush(name="Crayon fin", size=4, hardness=1.0, opacity=1.0, flow=1.0, spacing=0.05, smoothing=0.3),
-    Brush(name="Aérographe", size=80, hardness=0.0, opacity=1.0, flow=0.15, spacing=0.08),
+    Brush(name="Crayon fin", size=4, hardness=1.0, opacity=1.0, flow=1.0, spacing=0.05, smoothing=0.3, smoothing_mode="adaptive"),
+    Brush(name="Aérographe", size=80, hardness=0.0, opacity=1.0, flow=0.15, spacing=0.08, airbrush=True),
     Brush(name="Encre pression", size=24, hardness=0.9, opacity=1.0, flow=1.0, spacing=0.06, pressure_size=True,
-          smoothing=0.4),
+          smoothing=0.4, smoothing_mode="stabilizer"),
 )
 MAX_USER = 64
 

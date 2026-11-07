@@ -230,7 +230,10 @@ class BrushTest(unittest.TestCase):
     def test_flow_accumulates_dabs(self):
         low = B.Brush(size=10, hardness=1.0, flow=0.2, color=(0, 0, 0), spacing=0.1)
         self.stroke([(10, 32), (50, 32)], low)
-        self.assertGreater(int(self.alpha()[32, 30]), 200)                                # tampons accumulés
+        self.assertAlmostEqual(int(self.alpha()[32, 30]), 51, delta=4)                    # un passage dépose le débit : 20 %
+        self.setUp()
+        self.stroke([(10, 32), (50, 32), (10, 32), (50, 32), (10, 32)], low)              # 4 passages dans le même trait
+        self.assertAlmostEqual(int(self.alpha()[32, 30]), round(255 * (1 - 0.8 ** 4)), delta=8)   # 1 - 0,8^4 : ils s'ajoutent
 
     def test_selection_limits_and_partial_coverage(self):
         class Half:
@@ -254,9 +257,10 @@ class BrushTest(unittest.TestCase):
         self.assertEqual(int(self.alpha()[0, 0]), 255)
         small = B.Stroke(self.layer, "pixels", B.Brush(size=20, hardness=1.0, pressure_size=True, color=(9, 9, 9)),
                          self.doc.rect())
-        big_box = small.begin(10, 10, 1.0)
-        light_box = small.begin(40, 40, 0.25)
-        self.assertGreater(big_box[2] - big_box[0], light_box[2] - light_box[0])
+        small.begin(10, 10, 1.0)
+        self.assertGreater(small._size(1.0), small._size(0.25))        # la pression commande le diamètre (courbe linéaire)
+        self.assertAlmostEqual(small._size(0.25), 5.0, delta=0.01)
+        self.assertIsNone(small.begin(40, 40, 0.25))                   # avec pression : le 1er tampon attend le 1er mouvement
 
     def test_mask_painting_hides_then_reveals(self):
         self.layer.pix.set_all(0, 0, solid(64, 64, (255, 0, 0, 255)))

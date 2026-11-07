@@ -6,6 +6,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QColor,
+    QRegion,
     QDrag,
     QPainter,
     QPen,
@@ -323,6 +324,7 @@ class FileListWidget(QListWidget):
             event.accept()
             return
         self._drag_press = event.position().toPoint() if event.button() == Qt.LeftButton else None
+        self._click_press = (item, event.position().toPoint()) if plain_left and item is not None else None
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
@@ -333,7 +335,16 @@ class FileListWidget(QListWidget):
             return
         self._reorder_press = None
         pressed, self._press_on_current = self._press_on_current, None
+        click, self._click_press = getattr(self, "_click_press", None), None
         super().mouseReleaseEvent(event)
+        # Simple clic relâché sur place (pas un glisser de fichiers) : la fenêtre peut ouvrir le fichier dans un
+        # module (image, texte, police : `PipelineBrowser.on_file_clicked`).
+        if (click is not None and event.button() == Qt.LeftButton and event.modifiers() == Qt.NoModifier
+                and self.itemAt(event.position().toPoint()) is click[0]
+                and (event.position().toPoint() - click[1]).manhattanLength() < QApplication.startDragDistance()):
+            handler = getattr(self.column.window(), "on_file_clicked", None)
+            if handler is not None:
+                handler(self.column, Path(click[0].data(ROLE_PATH)))
         if (pressed is not None and event.button() == Qt.LeftButton
                 and self.itemAt(event.position().toPoint()) is pressed):
             handler = getattr(self.column.window(), "on_reclicked", None)
@@ -1303,41 +1314,59 @@ class _RoundedCornersEffect(QGraphicsEffect):
         # toute facon plus besoin d'etre actif des qu'une bordure existe
         # (voir _update_card_mask, setEnabled) : plus rien ici a compenser
         # par une marge.
+        # FLUIDITE (journal des blocages, 2026-11-05) : avant, deux pixmaps PLEINE TAILLE (masque + resultat) a
+        # chaque repeinture de la carte (~50-100 ms pour une colonne haute en 4K). Seuls les COINS ont besoin du
+        # masque antialiase : le reste est copie tel quel (decoupe RECTANGULAIRE, sans demi-teinte a perdre), et
+        # chaque coin passe par le meme masque PIXMAP qu'avant (voir plus bas : un fillPath direct en
+        # DestinationIn laissait les coins opaques). Resultat identique au pixel pres (tests/test_rounded_effect.py).
+        radius = _radius_dict(self._radius) if isinstance(self._radius, dict) else {
+            k: int(self._radius or 0) for k in ("top_left", "top_right", "bottom_right", "bottom_left")}
+        squares = []
+        for name in ("top_left", "top_right", "bottom_right", "bottom_left"):
+            r = float(radius.get(name, 0) or 0)
+            if r <= 0:
+                continue
+            # Par axe : un rayon uniforme trop grand donne un coin ELLIPTIQUE (addRoundedRect borne a w/2 et h/2).
+            # +2 : la demi-teinte de l'arc deborde d'un pixel.
+            sw, sh = min(int(min(r, w / 2)) + 2, w), min(int(min(r, h / 2)) + 2, h)
+            x = 0 if name.endswith("left") else w - sw
+            y = 0 if name.startswith("top") else h - sh
+            squares.append(QRect(x, y, sw, sh))
+        if not squares:
+            painter.drawPixmap(offset, pixmap)
+            return
+        if any(a.intersects(b) for i, a in enumerate(squares) for b in squares[i + 1:]):
+            squares = [QRect(0, 0, w, h)]                # coins qui se touchent (rayon > moitie) : masque complet
+        rest = QRegion(0, 0, w, h)
+        for square in squares:
+            rest -= QRegion(square)
+        painter.save()
+        painter.setClipRegion(rest.translated(offset), Qt.IntersectClip)
+        painter.drawPixmap(offset, pixmap)
+        painter.restore()
         path = _rounded_rect_path(QRect(0, 0, w, h), self._radius)
-        # Masque construit a la main dans un pixmap SEPARE (REMPLISSAGE
-        # antialiase dans un pixmap transparent DEDIE), PAS un fillPath
-        # DIRECT sur `masked` en mode DestinationIn — MEME correctif/MEME
-        # raison que _paint_row_image/_SquarePreviewImage._refresh (voir
-        # leurs docstrings) : un fillPath direct dans ce mode ne compose
-        # que les pixels que le CHEMIN touche reellement, laissant les
-        # coins (hors chemin) intacts/opaques des que RIEN d'autre ne les
-        # recouvre par-dessus (typiquement une bordure, qui masquait ce
-        # defaut jusqu'ici) — exactement le bug signale par l'utilisateur,
-        # "quand on n'a pas d'entete ... les coins arrondis doivent etre
-        # present" (sans bordure ni entete pour le camoufler). Un mask
-        # PIXMAP intermediaire, lui, couvre le rectangle ENTIER (drawPixmap
-        # touche tous les pixels), donc les coins y redeviennent bien
-        # transparents.
-        mask = QPixmap(pixmap.size())
-        mask.setDevicePixelRatio(dpr)
-        mask.fill(Qt.transparent)
-        mkp = QPainter(mask)
-        mkp.setRenderHint(QPainter.Antialiasing, True)
-        mkp.setPen(Qt.NoPen)
-        mkp.setBrush(Qt.white)
-        mkp.drawPath(path)
-        mkp.end()
-
-        masked = QPixmap(pixmap.size())
-        masked.setDevicePixelRatio(dpr)
-        masked.fill(Qt.transparent)
-        mp = QPainter(masked)
-        mp.setRenderHint(QPainter.Antialiasing, True)
-        mp.drawPixmap(0, 0, pixmap)
-        mp.setCompositionMode(QPainter.CompositionMode_DestinationIn)
-        mp.drawPixmap(0, 0, mask)
-        mp.end()
-        painter.drawPixmap(offset, masked)
+        for square in squares:
+            source = QRect(int(round(square.x() * dpr)), int(round(square.y() * dpr)),
+                           int(round(square.width() * dpr)), int(round(square.height() * dpr)))
+            mask = QPixmap(source.size())
+            mask.setDevicePixelRatio(dpr)
+            mask.fill(Qt.transparent)
+            mkp = QPainter(mask)
+            mkp.setRenderHint(QPainter.Antialiasing, True)
+            mkp.setPen(Qt.NoPen)
+            mkp.setBrush(Qt.white)
+            mkp.translate(-square.x(), -square.y())
+            mkp.drawPath(path)
+            mkp.end()
+            piece = QPixmap(source.size())                # ARGB transparent : la source peut etre opaque
+            piece.setDevicePixelRatio(dpr)
+            piece.fill(Qt.transparent)
+            mp = QPainter(piece)
+            mp.drawPixmap(QPoint(0, 0), pixmap, source)
+            mp.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+            mp.drawPixmap(0, 0, mask)
+            mp.end()
+            painter.drawPixmap(offset + square.topLeft(), piece)
 
 def update_card_mask(owner) -> None:
     """Decoupe arrondie de la carte d'une colonne d'apercu / de l'inspecteur (MEME mecanisme que

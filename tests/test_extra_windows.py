@@ -44,21 +44,22 @@ class ExtraWindowsTest(unittest.TestCase):
 
     def test_section_rows(self):
         labels = [spec.label for spec in v2.CATALOG["Fenêtres additionnelles"]]
-        self.assertEqual(labels, ["Bordures", "Border radius", "Ombres", "Hauteur de la barre de navigation",
-                                  "Couleur de la barre de navigation", "Texte de la barre de navigation",
-                                  "Taille des boutons de la barre de navigation", "Border radius des boutons",
-                                  "Bordure barre de navigation / interface", "Bordure interface / barre des boutons"])
+        self.assertEqual(labels, ["Border radius", "Ombres", "Bordure interface / barre des boutons"])
+        # Barre du haut des fenetres : Barre de navigation > Fenetres additionnelles (2026-11-05).
+        bar = [spec.label for spec in v2.CATALOG["Barre de navigation : Fenetres additionnelles"]]
+        self.assertEqual(bar, ["Hauteur barre", "Couleur de fond", "Texte", "Taille des boutons",
+                               "Border radius des boutons", "Bordure barre / interface"])
         self.assertIn("Fenêtres additionnelles", [n.title for n in v2.GENERAL_TREE])
         values = settings_store.load_settings()
         scope = v2.ScopeValues(values, None)
-        for spec in v2.CATALOG["Fenêtres additionnelles"]:
+        for spec in (*v2.CATALOG["Fenêtres additionnelles"], *v2.CATALOG["Barre de navigation : Fenetres additionnelles"]):
             read = v2.read_spec(spec, v2.make_field(spec, scope, values["colors"]))
             self.assertTrue(set(read) <= set(settings_store.DEFAULT_SETTINGS), read)
 
     def test_shadow_margin_border_and_title_bar(self):
         all_sides = {k: True for k in ("top", "right", "bottom", "left")}
-        win = self.window(extra_window_shadow_size=18, extra_window_border_thickness=3,
-                          extra_window_shadow_enabled=all_sides, extra_window_border_enabled=all_sides,
+        win = self.window(extra_window_shadow_size=18, window_border_thickness=3,
+                          extra_window_shadow_enabled=all_sides, window_border_enabled=all_sides,
                           extra_window_title_height=46, extra_window_radius=10)
         self.assertTrue(win.testAttribute(Qt.WA_TranslucentBackground))
         margins = sw.shadow_margins(win)
@@ -68,7 +69,7 @@ class ExtraWindowsTest(unittest.TestCase):
         self.assertEqual(win.width(), win.table.width() + 2 * win.MARGIN + 42)  # le tableau suit toujours
         # Ombre coupee, en direct : plus de marge, la fenetre se recale.
         settings = settings_store.load_settings()
-        settings.update(extra_window_shadow_size=0, extra_window_border_thickness=1, extra_window_border_enabled=all_sides)
+        settings.update(extra_window_shadow_size=0, window_border_thickness=1, window_border_enabled=all_sides)
         sw.seed_extra_window_look(settings)
         app.processEvents()
         self.assertEqual(sw.chrome_size(win), (2, 2))

@@ -99,6 +99,8 @@ UI_ICON_NAVBAR_BOARD = "ui_navbar_board"   # ouvrir le board (.mro) selectionne
 
 UI_ICON_NAVBAR_FONT = "ui_navbar_font"     # ouvrir le module typographique (fm_font) sur la police selectionnee
 
+UI_ICON_NAVBAR_PIN = "ui_navbar_pin"       # punaise : fenetre « toujours au-dessus » (clic droit sur sa barre)
+
 UI_ICON_COLLAPSE_TOGGLE = "ui_collapse_toggle"
 
 UI_ICON_SHORTCUT = "ui_shortcut"

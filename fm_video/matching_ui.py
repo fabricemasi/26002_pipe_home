@@ -109,7 +109,9 @@ class _Job(QRunnable):
                     return
                 model = fit_pair(x,y) if o['paired'] else fit_distribution(x,y)
                 before = reduce(source)
-                result = dict(model=model,before=before,after=_image(model.apply(_rgb(before),o['intensity'])))
+                # Référence réduite rendue aussi : vignette de la vue Matching sans lecture sur le fil de l'interface.
+                result = dict(model=model,before=before,after=_image(model.apply(_rgb(before),o['intensity'])),
+                              reference=reduce(reference))
             if not self.cancel.is_set():
                 self.signals.ready.emit(self.revision,result)
         except InterruptedError:

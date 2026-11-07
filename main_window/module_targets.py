@@ -17,11 +17,30 @@ MODULES = {
     "sheet": ("Ouvrir dans le tableur", "btn_board"),
     "video": ("Ouvrir dans le module vidéo", "btn_video"),
     "font": ("Ouvrir dans le module typographique", "btn_font"),
+    "pdf": ("Ouvrir dans l'éditeur PDF", "btn_pdf"),
 }
 # Clé -> méthode de PipelineBrowser qui ouvre le fichier dans le module.
 OPENERS = {"md": "_open_md_editor", "board": "_open_board", "cad": "_open_cad_drawing", "sheet": "_open_spreadsheet",
-           "video": "_open_video", "font": "_open_font"}
+           "video": "_open_video", "font": "_open_font", "pdf": "_open_pdf"}
 SPREADSHEET_SUFFIXES = (".xlsx", ".xlsm", ".csv", ".tsv")
+
+
+def click_target(path) -> str | None:
+    """Module ouvert par un SIMPLE clic sur le fichier `path` (demande de l'utilisateur, 2026-11-03) : « viewer »
+    (image : visionneuse en focus), « md » (texte / code : module Markdown), « font » (police : module typographique),
+    sinon None. Extensions seules (aucun accès disque)."""
+    from config import EXR_EXTENSIONS, HDR_EXTENSIONS, IMAGE_EXTENSIONS, PSD_EXTENSIONS, RAW_EXTENSIONS, TX_EXTENSIONS
+    path = Path(path)
+    suffix = path.suffix.lower()
+    if suffix in IMAGE_EXTENSIONS | EXR_EXTENSIONS | HDR_EXTENSIONS | PSD_EXTENSIONS | RAW_EXTENSIONS | TX_EXTENSIONS:
+        return "viewer"
+    import fm_markdown
+    if fm_markdown.is_text_file(path):
+        return "md"
+    from .font_module import font_target
+    if suffix != ".ufo" and font_target(path, False):
+        return "font"
+    return None
 
 
 def module_targets(path, is_dir: bool) -> list:
@@ -49,6 +68,9 @@ def module_targets(path, is_dir: bool) -> list:
     from .font_module import font_target
     if font_target(path, is_dir):
         keys.append("font")
+    from .pdf_module import pdf_target
+    if pdf_target(path, is_dir):
+        keys.append("pdf")
     return keys
 
 
@@ -89,6 +111,20 @@ class ModuleTargetsMixin:
             self._set_columns_hidden(False, animate=False)
         getattr(self, OPENERS[key])(path)
         self._sync_mode_buttons()
+
+    def on_file_clicked(self, column, path):
+        """Simple clic (relâché sans glisser, sans touche) sur un fichier d'une colonne : image = visionneuse en focus
+        sur elle, texte / code = module Markdown, police = module typographique, À CÔTÉ des colonnes (elles restent :
+        `main_window/side_module.py`) ; le double-clic les passe en plein ; le bouton « précédent » de la souris, ou un
+        clic sur un dossier / un autre fichier, les referme."""
+        if path is None or getattr(self, "_project_columns_hidden", False):
+            return
+        key = click_target(path)
+        if key is None or entry_is_dir(path):
+            if self._side_module_open():
+                QTimer.singleShot(0, self._close_side_modules)
+            return
+        QTimer.singleShot(0, lambda: self._open_side(key, path, column))
 
     def _open_selected_in(self, keys: tuple):
         """Bouton de mode de la barre (module fermé) : le fichier choisi s'ouvre dans le premier module de `keys`

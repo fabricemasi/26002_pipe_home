@@ -193,6 +193,14 @@ class StandardTest(BoardCase):
         self.assertIs(std.widget.grid.sheet, second)
         self.assertEqual(std.widget.grid.view.current, (3, 2))
         self.assertEqual(std.widget.formula.text(), "abc")
+        from PySide6.QtWidgets import QWidget
+        late = QWidget(self.pane)                              # décor créé après l'ouverture (barres du module…)
+        late.show()
+        self.pane._place_chrome()                              # la mise en page remonte barres et panneaux
+        settle()
+        siblings = [c for c in self.pane.children() if isinstance(c, QWidget) and c.isVisible()]
+        self.assertIs(siblings[-1], std)                       # plein cadre : toujours au-dessus de tout
+        late.deleteLater()
         std.widget.grid.select(4, 2)
         std.widget.grid.begin_edit("xyz", mode="enter")
         std.widget.grid.commit_edit()

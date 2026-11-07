@@ -133,6 +133,49 @@ class EditActionsTest(PsCase):
         QTest.keyClick(canvas, Qt.Key_D, Qt.ControlModifier)
         self.assertIsNone(s.selection)
 
+    def test_ctrl_c_copies_the_layer_and_ctrl_shift_c_the_final_image(self):
+        from fm_photoshop.actions import Actions
+        self.addCleanup(QApplication.clipboard().clear)                             # rien ne reste pour les tests suivants
+        _item, std = self.editor(64, 48)
+        canvas, s = std.canvas, std.session
+        a = canvas.actions
+        s.doc.layers[0].pix.write((10, 10, 20, 20), np.full((10, 10, 4), (0, 255, 0, 255), np.uint8))     # fond blanc + carré vert
+        a._new_layer_with(np.full((10, 10, 4), (255, 0, 0, 255), np.uint8), (30, 30), "Rouge")             # calque du dessus : carré rouge
+        self.assertEqual(s.layer().name, "Rouge")
+        # Ctrl+C : le calque en cours SEUL (ni le fond blanc, ni le vert)
+        QTest.keyClick(canvas, Qt.Key_C, Qt.ControlModifier)
+        layer_only = Actions._from_system_clipboard()
+        self.assertEqual(layer_only.shape, (10, 10, 4))
+        self.assertTrue((layer_only == (255, 0, 0, 255)).all())
+        # Ctrl+Maj+C : l'image FINALE affichée, tous les calques, taille du document
+        QTest.keyClick(canvas, Qt.Key_C, Qt.ControlModifier | Qt.ShiftModifier)
+        merged = Actions._from_system_clipboard()
+        self.assertEqual(merged.shape, (48, 64, 4))
+        self.assertTrue(np.array_equal(merged, flat(s)))
+        self.assertEqual(tuple(merged[15, 15]), (0, 255, 0, 255))
+        self.assertEqual(tuple(merged[35, 35]), (255, 0, 0, 255))
+        self.assertEqual(tuple(merged[2, 2]), (255, 255, 255, 255))
+        self.assertEqual(len(s.doc.layers), 2)                                      # la copie ne modifie pas le document
+        # calque masqué : absent de l'image finale (c'est ce qui est affiché qui est copié)
+        s.layer().visible = False
+        s.notify("structure", None)
+        QTest.keyClick(canvas, Qt.Key_C, Qt.ControlModifier | Qt.ShiftModifier)
+        self.assertEqual(tuple(Actions._from_system_clipboard()[35, 35]), (255, 255, 255, 255))
+        s.layer().visible = True
+        # sélection : seule la zone sélectionnée de l'image finale
+        s.tool = "rect_select"
+        self.drag(canvas, [self.at(canvas, 8, 8), self.at(canvas, 22, 22)])
+        QTest.keyClick(canvas, Qt.Key_C, Qt.ControlModifier | Qt.ShiftModifier)
+        part = Actions._from_system_clipboard()
+        self.assertEqual(part.shape, (14, 14, 4))
+        self.assertEqual(tuple(part[7, 7]), (0, 255, 0, 255))
+        self.assertEqual(tuple(part[0, 0]), (255, 255, 255, 255))
+        self.assertFalse((part[..., :3] == (255, 0, 0)).all(axis=-1).any())          # pas de rouge hors de la zone
+        # le calque en cours ne contient rien dans cette zone : Ctrl+C n'a rien à copier (le presse-papiers garde l'image finale)
+        QTest.keyClick(canvas, Qt.Key_C, Qt.ControlModifier)
+        self.assertEqual(Actions._from_system_clipboard().shape, (14, 14, 4))
+        self.assertEqual(a.last_message, "Rien à copier.")
+
     def test_crop_to_selection_and_sizes_through_menus(self):
         _item, std = self.editor(64, 48)
         canvas, s = std.canvas, std.session

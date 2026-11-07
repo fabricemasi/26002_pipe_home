@@ -199,13 +199,17 @@ from main_window.md_module import MdModuleMixin
 from main_window.video_module import VideoModuleMixin
 from main_window.board_module import BoardModuleMixin
 from main_window.font_module import FontModuleMixin
+from main_window.pdf_module import PdfModuleMixin
+from main_window.agenda_module import AgendaModuleMixin
 from main_window.module_targets import ModuleTargetsMixin
+from main_window.side_module import SideModuleMixin
 
 
 class PipelineBrowser(
     ColumnsMixin, CrumbsMixin, PreviewStackMixin, GroupColumnsMixin, SelectionMixin, ColumnsHiddenMixin, GalleryMixin,
     ViewerMixin, ViewerButtonsMixin, ViewerChromeMixin, CollapseMixin, SettingsLinkMixin, ChromeMixin, MdModuleMixin,
-    VideoModuleMixin, BoardModuleMixin, FontModuleMixin, ModuleTargetsMixin, QMainWindow,
+    VideoModuleMixin, BoardModuleMixin, FontModuleMixin, PdfModuleMixin, AgendaModuleMixin, ModuleTargetsMixin,
+    SideModuleMixin, QMainWindow,
 ):
     _bulk_navigation = False        # _navigate_to en cours : niveaux intermediaires sans fondu ni animation
 
@@ -218,15 +222,25 @@ class PipelineBrowser(
         """Colonnes masquees (visionneuse, planche) : le filtre du bouton « precedent » de la souris n'est
         pose qu'a ce moment. Pose en permanence sur l'application, il etait appele pour CHAQUE evenement de
         l'appli (~50 000 pendant quelques clics de navigation) pour ne rien faire."""
-        value = bool(value)
-        self.__dict__["_columns_hidden_flag"] = value
+        self.__dict__["_columns_hidden_flag"] = bool(value)
+        self._sync_mouse_back()
+
+    def _sync_mouse_back(self):
+        """Filtre du bouton « precedent » pose seulement quand il sert : colonnes masquees, module Markdown ou
+        typographique ouvert (le bouton les referme)."""
         back = self.__dict__.get("_mouse_back")
-        if back is not None:
-            app = QApplication.instance()
-            if value:
-                app.installEventFilter(back)
-            else:
-                app.removeEventFilter(back)
+        if back is None:
+            return
+        want = (self.__dict__.get("_columns_hidden_flag", False) or bool(getattr(self, "_md_open", False))
+                or getattr(self, "_font", None) is not None or getattr(self, "_side_viewer", None) is not None)
+        if want == self.__dict__.get("_mouse_back_on", False):
+            return
+        self.__dict__["_mouse_back_on"] = want
+        app = QApplication.instance()
+        if want:
+            app.installEventFilter(back)
+        else:
+            app.removeEventFilter(back)
 
 
     def __init__(self, root: Path):
@@ -463,15 +477,25 @@ class PipelineBrowser(
         # Symbol...) ne le rendait de facon fiable a cette taille — meme
         # correctif que pour les boutons min/max/close de TitleBar.
         self.btn_settings = IconButton("gear", role_color("buttons", "#c4cacf"), C["text"])
+        # Deuxieme engrenage, ORANGE (Reglages > Barre de navigation : couleur) : ouvre fm_theme (demande de
+        # l'utilisateur, 2026-11-03).
+        theme_color = (ui_state.APPLIED_SETTINGS or {}).get("navbar_theme_button_color") or "#f28c28"
+        self.btn_theme = IconButton("gear", theme_color, QColor(theme_color).lighter(130).name())
+        self.btn_theme.setToolTip("fm_theme (éditeur de l'aspect)")
+        self.btn_theme.clicked.connect(self._open_fm_theme)
         # Ancien bouton de la fenetre v1 (retiree) : cache, garde pour les chemins de widgets enregistres.
         self.btn_style = IconButton("sliders", role_color("buttons", "#c4cacf"), C["text"])
         # Repli / depli des colonnes de set (ex bouton de la colonne Focus), maintenant dans la barre.
         self.btn_collapse = IconButton("dchevron_right", role_color("buttons", "#c4cacf"), C["text"])
+        # Masquer / montrer TOUTES les colonnes (demande de l'utilisateur, 2026-11-03).
+        self.btn_columns = IconButton("fade_columns", role_color("buttons", "#c4cacf"), C["text"])
+        self.btn_columns.setToolTip("Masquer les colonnes")
+        self.btn_columns.clicked.connect(self._toggle_columns_shown)
         # Modes (demande de l'utilisateur) : visionneuse sur la selection, editeur de texte (grise tant que la
         # selection n'est pas un fichier texte, voir _sync_mode_buttons).
         self.btn_viewer = IconButton("viewer", role_color("buttons", "#c4cacf"), C["text"])
         self.btn_text_editor = IconButton("text_editor", role_color("buttons", "#c4cacf"), C["text"])
-        # Board (paquet board/, facon Miro) : grise tant que la selection n'est pas un fichier .mro.
+        # Board (paquet board/, facon Miro) : grise tant que la selection n'est pas un fichier .brd (ou un ancien .mro).
         self.btn_board = IconButton("board", role_color("buttons", "#c4cacf"), C["text"])
         # Module video (paquet fm_video/) : grise tant que la selection n'est pas une video ou une image.
         self.btn_video = IconButton("video", role_color("buttons", "#c4cacf"), C["text"])
@@ -484,9 +508,21 @@ class PipelineBrowser(
         self.btn_font.setToolTip("Module typographique (sélectionner une source .ufo / .designspace "
                                  "ou une police .ttf / .otf / .woff)")
         self.btn_font.clicked.connect(self._toggle_font)
+        # Module PDF (fm_pdf/) : grise tant que la selection n'est pas un .pdf.
+        self.btn_pdf = IconButton("pdf", role_color("buttons", "#c4cacf"), C["text"])
+        self.btn_pdf.setToolTip("Éditeur PDF : lire, remplir (AcroForm et XFA), concevoir des formulaires, annoter… "
+                                "(sélectionner un .pdf)")
+        self.btn_pdf.clicked.connect(self._toggle_pdf)
+        self._pdf = None                         # éditeur PDF (fm_pdf, main_window/pdf_module.py)
+        # Agenda (fm_agenda/) : toujours actif (ne dépend pas de la sélection), main_window/agenda_module.py.
+        self.btn_agenda = IconButton("agenda", role_color("buttons", "#c4cacf"), C["text"])
+        self.btn_agenda.setToolTip("Agenda : jour, semaine, mois, année ; rendez-vous, rappels, Google Agenda")
+        self.btn_agenda.clicked.connect(self._toggle_agenda)
+        self._agenda = None
+        self._agenda_service = None
         self.btn_viewer.setToolTip("Visionneuse (sélection en cours)")
         self.btn_text_editor.setToolTip("Éditeur Markdown / code (sélectionner une note, un fichier texte ou de code)")
-        self.btn_board.setToolTip("Board (sélectionner un fichier .mro — clic droit dans une colonne > Créer un mro)")
+        self.btn_board.setToolTip("Board (sélectionner un fichier .brd — clic droit dans une colonne > Créer un board)")
         self.btn_viewer.clicked.connect(self._on_viewer_button)
         self.btn_text_editor.clicked.connect(self._toggle_md_editor)
         self.btn_board.clicked.connect(self._toggle_board)
@@ -496,8 +532,9 @@ class PipelineBrowser(
         self._font = None                        # module typographique (fm_font, main_window/font_module.py)
         self._drawing_relay = None               # lecture de dessin DXF / DWG en cours (_open_cad_drawing)
         self._board_buttons = []
-        for btn in (self.btn_browse, self.btn_presets, self.btn_settings, self.btn_collapse, self.btn_viewer,
-                    self.btn_text_editor, self.btn_board, self.btn_video, self.btn_font):
+        for btn in (self.btn_browse, self.btn_presets, self.btn_settings, self.btn_theme, self.btn_collapse,
+                    self.btn_columns, self.btn_viewer, self.btn_text_editor, self.btn_board, self.btn_video, self.btn_font,
+                    self.btn_pdf, self.btn_agenda):
             btn.setCursor(Qt.ArrowCursor)
             btn.setFlat(True)
             btn.setStyleSheet("QPushButton { background: transparent; border: none; }"
@@ -687,8 +724,10 @@ class PipelineBrowser(
         self.titlebar = TitleBar(self)
         self.titlebar._background_status = self._background_status
         self.titlebar.add_tools(self.root_field, self.btn_browse, self.preset_picker, self.btn_presets,
-                                self.btn_settings, self.btn_collapse, self.btn_viewer, self.btn_text_editor,
-                                self.btn_board, self.btn_video, self.btn_font)
+                                self.btn_settings, self.btn_theme, self.btn_collapse, self.btn_columns,
+                                self.btn_viewer,
+                                self.btn_text_editor,
+                                self.btn_board, self.btn_video, self.btn_font, self.btn_pdf, self.btn_agenda)
         self._sync_mode_buttons()
         self.titlebar.refresh_sizes()
         self.titlebar.refresh_look()
@@ -713,11 +752,13 @@ class PipelineBrowser(
         # peinture Qt fait passer les enfants apres le fond/bordure du
         # parent, donc un enfant a bord franc la recouvre entierement.
         layout.setContentsMargins(1, 1, 1, 1)
+        central.sync_margins()             # = epaisseur de la « Bordure des fenetres » (Theme > General)
         layout.setSpacing(0)
         layout.addWidget(self.titlebar)
         layout.addWidget(self.scroll, 1)
         layout.addWidget(statusbar)
         self.setCentralWidget(central)
+        self.refresh_status_bar()                 # fm_theme > Barre d'etat
 
         self.addAction(QAction(self, shortcut="F5", triggered=self.reload))
         self.reload()
@@ -878,6 +919,9 @@ class PipelineBrowser(
     # reste. Retenu dans les reglages (`ui_spaces`, cle = chemin du widget dans la fenetre).
 
     def contextMenuEvent(self, event):
+        if self._module_open():                 # demande de l'utilisateur : pas d'espaces dans un module
+            event.ignore()
+            return
         clicked = self.childAt(event.pos())
         target = space_target(clicked, self)
         key = widget_path(target, self) if target is not None else None
@@ -960,6 +1004,8 @@ class PipelineBrowser(
         if not getattr(self, "_ui_spaces_applied", False):
             self._ui_spaces_applied = True
             QTimer.singleShot(0, self._apply_ui_spaces)
+            # Agenda (fm_agenda) : base ouverte en fond, rappels et synchronisation même module fermé.
+            QTimer.singleShot(2500, self._start_agenda_background)
 
     def closeEvent(self, event):
         video_pane = getattr(self, "_video", None)
@@ -969,6 +1015,12 @@ class PipelineBrowser(
         if board_pane is not None and not board_pane.confirm_leave():   # board : enregistre (contenu + vue)
             event.ignore()
             return
+        pdf_pane = getattr(self, "_pdf", None)
+        if pdf_pane is not None and not pdf_pane.confirm_leave():       # editeur PDF : document modifie
+            event.ignore()
+            return
+        if pdf_pane is not None:                                        # ferme AVANT la fin : moteur et images liberes
+            self._close_pdf()
         font_pane = getattr(self, "_font", None)
         if font_pane is not None and not font_pane.confirm_leave():     # typographie : projet modifie
             event.ignore()
@@ -980,6 +1032,7 @@ class PipelineBrowser(
             return
         if pane is not None and pane.parentWidget() is None:
             pane.deleteLater()           # page prechargee sans parent : detruite avant l'application (QtWebEngine)
+        self._shutdown_agenda()          # agenda : ecritures terminees, base fermee proprement (fm_agenda)
         automatic = getattr(self, "_automatic_tasks", None)
         if automatic is not None:
             automatic.stop()
@@ -1024,7 +1077,10 @@ class PipelineBrowser(
         aux bords (resizable=True, seule cette fenetre est vraiment
         redimensionnable par l'utilisateur — voir nativeEvent/WM_NCHITTEST
         pour le redimensionnement par les bords, gere a la main)."""
-        apply_dwm_frame(self, ui_state.WINDOW_RADIUS, C["border"], resizable=True)
+        border = ui_state.WINDOW_BORDER          # filet DWM : celui du haut de « Bordure des fenetres », ou aucun
+        on = border["thickness"] > 0 and border["sides"].get("top")
+        apply_dwm_frame(self, ui_state.WINDOW_RADIUS, (border["colors"].get("top") or C["border"]) if on else "none",
+                        resizable=True)
 
 
 def _save_menu_layouts(layouts: dict) -> None:
@@ -1125,10 +1181,14 @@ def main():
     except Exception:                                   # noqa: BLE001 - paquet du board absent : format par defaut
         pass
     app = QApplication(sys.argv)
+    import stall_log                          # journal des blocages : seulement si PIPELINE_STALL_LOG=1
+    stall_log.install(app)
     apply_style(app)
     _install_context_menus()
     window = PipelineBrowser(root)
     window.show()
+    if (ui_state.APPLIED_SETTINGS or {}).get("window_always_on_top"):
+        window.titlebar.set_always_on_top(True, save=False)    # punaise retenue (clic droit sur la barre)
     window._start_settings_idle_watch()     # reglages prepares apres 1 min sans activite sur l'appli (rien au lancement)
     window._start_theme_link()              # aspect : preset fm_theme lie, suivi en direct (fm_theme/live.py)
     QTimer.singleShot(6000, window._preload_md_editor)       # module Markdown / code prepare en fond

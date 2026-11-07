@@ -44,16 +44,28 @@ class TooNewError(ContainerError):
     """Fichier écrit par une version plus récente du module : refusé plutôt que perdu en silence."""
 
 
+def _png_encode(data: np.ndarray, channels: int) -> bytes:
+    """PNG d'un tableau de pixels (niveau 1 : l'archive est ré-écrite souvent). Pillow libère le GIL : utilisable en fil."""
+    mode = "RGBA" if channels == 4 else "L"
+    buf = io.BytesIO()
+    Image.fromarray(np.ascontiguousarray(data if channels == 4 else data[..., 0]), mode).save(buf, "PNG", compress_level=1)
+    return buf.getvalue()
+
+
 def _png_bytes(plane: Plane) -> bytes:
     cached = plane.png
     if cached is not None and cached[0] == plane.rev:
         return cached[1]
-    mode = "RGBA" if plane.channels == 4 else "L"
-    data = plane.data if plane.channels == 4 else plane.data[..., 0]
-    buf = io.BytesIO()
-    Image.fromarray(np.ascontiguousarray(data), mode).save(buf, "PNG", compress_level=1)
-    plane.png = (plane.rev, buf.getvalue())
+    plane.png = (plane.rev, _png_encode(plane.data, plane.channels))
     return plane.png[1]
+
+
+def _remember(plane: Plane, rev: int, payload: bytes):
+    """PNG gardé par un FIL (cliché de la révision `rev`) : jamais à la place d'un cliché plus récent. Il ne sert que tant
+    que `plane.rev == rev` (toute écriture suivante l'invalide)."""
+    current = plane.png
+    if current is None or current[0] < rev:
+        plane.png = (rev, payload)
 
 
 def _layer_entry(layer: Layer, files: dict) -> dict:
@@ -82,32 +94,75 @@ def _layer_entry(layer: Layer, files: dict) -> dict:
     return entry
 
 
+class Cancelled(Exception):
+    """Préparation d'archive abandonnée (document fermé pendant l'encodage)."""
+
+
+class Prepared:
+    """Archive en deux temps. `prepare` (fil principal, quelques ms) fige le manifeste et regarde quels plans ont un PNG
+    à jour ; `build` (lourd : encodage PNG des plans modifiés + assemblage) peut tourner dans un FIL. Avec `snapshot`,
+    les plans à encoder sont COPIÉS : le trait suivant peut commencer sans toucher à ce que le fil encode."""
+
+    def __init__(self, doc: Document, snapshot: bool = False):
+        files: dict = {}
+        manifest = dict(doc.extra)
+        manifest.update(format=FORMAT, version=VERSION, saved_by="fm_photoshop",
+                        document={"width": doc.width, "height": doc.height, "name": doc.name, "dpi": doc.dpi,
+                                  "icc_name": doc.icc_name, "depth": doc.depth, "meta": doc.meta, "uid": doc.uid},
+                        layers=[_layer_entry(layer, files) for layer in doc.layers])
+        if doc.icc_profile:
+            manifest["icc"] = "icc.bin"
+        self.manifest = json.dumps(manifest, ensure_ascii=False, indent=1)     # (texte figé ici : le fil ne lit rien de vivant)
+        self.icc = doc.icc_profile
+        self.names = list(files)
+        self.ready: dict = {}                                       # nom -> PNG déjà à jour
+        self.todo: list = []                                        # (nom, plan, révision, pixels) à encoder
+        for name, plane in files.items():
+            cached = plane.png
+            if cached is not None and cached[0] == plane.rev:
+                self.ready[name] = cached[1]
+            else:
+                self.todo.append((name, plane, plane.rev, plane.data.copy() if snapshot else plane.data))
+
+    def encode(self, cancelled=None):
+        """Encode les plans sans PNG à jour (et les garde, `Plane.png`)."""
+        for name, plane, rev, data in self.todo:
+            if cancelled is not None and cancelled():
+                raise Cancelled()
+            payload = _png_encode(data, plane.channels)
+            _remember(plane, rev, payload)
+            self.ready[name] = payload
+        self.todo = []
+
+    def build(self, preview_png: bytes | None = None, cancelled=None) -> bytes:
+        self.encode(cancelled)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as archive:
+            archive.writestr("manifest.json", self.manifest, compress_type=zipfile.ZIP_DEFLATED)
+            for name in self.names:
+                archive.writestr(name, self.ready[name], compress_type=zipfile.ZIP_STORED)    # PNG : déjà compressé
+            if self.icc:
+                archive.writestr("icc.bin", self.icc, compress_type=zipfile.ZIP_DEFLATED)
+            if preview_png is not None:
+                archive.writestr("preview.png", preview_png, compress_type=zipfile.ZIP_STORED)
+        return buf.getvalue()
+
+
+def prepare(doc: Document, snapshot: bool = False) -> Prepared:
+    return Prepared(doc, snapshot)
+
+
 def dumps(doc: Document, preview: bool = False) -> bytes:
     """Archive complète en mémoire."""
-    files: dict = {}
-    manifest = dict(doc.extra)
-    manifest.update(format=FORMAT, version=VERSION, saved_by="fm_photoshop",
-                    document={"width": doc.width, "height": doc.height, "name": doc.name, "dpi": doc.dpi,
-                              "icc_name": doc.icc_name, "depth": doc.depth, "meta": doc.meta, "uid": doc.uid},
-                    layers=[_layer_entry(layer, files) for layer in doc.layers])
-    if doc.icc_profile:
-        manifest["icc"] = "icc.bin"
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as archive:
-        archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=1),
-                         compress_type=zipfile.ZIP_DEFLATED)
-        for name, plane in files.items():
-            archive.writestr(name, _png_bytes(plane), compress_type=zipfile.ZIP_STORED)    # PNG : déjà compressé
-        if doc.icc_profile:
-            archive.writestr("icc.bin", doc.icc_profile, compress_type=zipfile.ZIP_DEFLATED)
-        if preview:
-            from .compose import flatten_u8
-            image = Image.fromarray(flatten_u8(doc), "RGBA")
-            image.thumbnail((512, 512))
-            small = io.BytesIO()
-            image.save(small, "PNG")
-            archive.writestr("preview.png", small.getvalue(), compress_type=zipfile.ZIP_STORED)
-    return buf.getvalue()
+    small = None
+    if preview:
+        from .compose import flatten_u8
+        image = Image.fromarray(flatten_u8(doc), "RGBA")
+        image.thumbnail((512, 512))
+        out = io.BytesIO()
+        image.save(out, "PNG")
+        small = out.getvalue()
+    return Prepared(doc).build(small)
 
 
 def write_atomic(path, payload: bytes, backup: bool = False):

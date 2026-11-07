@@ -1,7 +1,7 @@
 """Habillage commun des fenetres de reglages et des fenetres additionnelles (barre de titre, panneau,
 ombre, Fenetres additionnelles) et champ des omissions. L'ancienne fenetre de reglages v1
 (`SettingsWindow`) a ete retiree : la fenetre de reglages est `settings_window_v2.SettingsWindowV2`."""
-from PySide6.QtCore import QEvent, QMargins, QObject, QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QMargins, QObject, QPointF, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -85,6 +85,72 @@ class _TitleText(QLabel):
         p.end()
 
 
+def paint_pin(painter, center, s: float, color) -> None:
+    """Punaise (fenêtre « toujours au-dessus ») : tête, collerette et pointe, inclinée ; `s` = unité du glyphe."""
+    from PySide6.QtCore import QPointF, QRectF
+    from PySide6.QtGui import QPen
+    painter.save()
+    painter.translate(center)
+    painter.rotate(45)
+    pen = QPen(color)
+    pen.setWidthF(1.3)
+    painter.setPen(pen)
+    painter.setBrush(color)
+    painter.drawRoundedRect(QRectF(-s * 0.7, -s * 2.0, s * 1.4, s * 1.2), s * 0.3, s * 0.3)     # tête
+    painter.drawRect(QRectF(-s * 1.3, -s * 0.8, s * 2.6, s * 0.35))                               # collerette
+    painter.drawLine(QPointF(0, -s * 0.45), QPointF(0, s * 1.9))                                  # pointe
+    painter.restore()
+
+
+class _PinButton(QPushButton):
+    """Punaise à côté de la croix : la fenêtre est « toujours au-dessus » ; un clic la libère."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFlat(True)
+        self.setCursor(Qt.ArrowCursor)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setToolTip("Toujours au-dessus (cliquer pour libérer)")
+        self.setStyleSheet("QPushButton { background: transparent; border: none; }"
+                           "QPushButton:hover { background: " + M["close_hover_bg"] + "; }")
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        from fm_theme.hooks import ui_icon
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        side = min(self.width(), self.height())
+        custom = ui_icon("navbar_pin", max(8, int(side * 0.5)))
+        if custom is not None:
+            target = QRect(0, 0, custom.width(), custom.height())
+            target.moveCenter(self.rect().center())
+            painter.drawPixmap(target, custom)
+        else:
+            from PySide6.QtCore import QPointF
+            paint_pin(painter, QPointF(self.rect().center()), side * 0.16, QColor(M["close_fg"]))
+        painter.end()
+
+
+def toggle_always_on_top(bar: QWidget, pin: QWidget) -> None:
+    """Clic droit sur une barre de titre > « Toujours au-dessus » : la fenêtre de `bar`, la punaise montrée."""
+    from fm_theme.style import always_on_top, set_always_on_top
+    on = not always_on_top(bar)
+    set_always_on_top(bar, on)
+    pin.setVisible(on)
+
+
+def title_bar_menu(bar: QWidget, pin: QWidget, global_pos) -> None:
+    """Menu du clic droit sur une barre de titre : « Toujours au-dessus » (pas d'espaces)."""
+    from fm_theme.menu import Menu
+    from fm_theme.style import always_on_top
+    menu = Menu(bar)
+    action = menu.addAction("Toujours au-dessus")
+    action.setCheckable(True)
+    action.setChecked(always_on_top(bar))
+    action.triggered.connect(lambda _checked=False: toggle_always_on_top(bar, pin))
+    menu.exec(global_pos)
+
+
 class _SettingsTitleBar(QWidget):
     closeClicked = Signal()
     # Clic sur « modifications non enregistrees » (demande de l'utilisateur) : la fenetre enregistre.
@@ -134,6 +200,11 @@ class _SettingsTitleBar(QWidget):
         self.dirty_label.installEventFilter(self)
         self._dirty = False
         layout.addWidget(self.dirty_label)
+        self.pin_btn = _PinButton()               # punaise : « toujours au-dessus » (clic droit sur la barre)
+        self.pin_btn.setFixedSize(max(28, round(text_h * 2.0)), bar_h)
+        self.pin_btn.hide()
+        self.pin_btn.clicked.connect(lambda: toggle_always_on_top(self, self.pin_btn))
+        layout.addWidget(self.pin_btn)
         self.close_btn = _CloseButton()           # croix tracee, centree
         self.close_btn.setFixedSize(max(36, round(text_h * 2.6)), bar_h)
         self.close_btn.setCursor(Qt.ArrowCursor)
@@ -173,6 +244,7 @@ class _SettingsTitleBar(QWidget):
         height = max(int(look["title_h"]), self._text_h + 4, bh)
         self.setFixedHeight(height)
         self.close_btn.setFixedSize(bw, bh)
+        self.pin_btn.setFixedSize(max(24, round(bw * 0.8)), bh)
         glyph = QFont(self.close_btn.font())
         glyph.setPixelSize(max(10, min(round(self._text_h * 1.45), bh - 4)))
         self.close_btn.setFont(glyph)
@@ -218,6 +290,10 @@ class _SettingsTitleBar(QWidget):
             event.accept()
         else:
             super().mousePressEvent(event)
+
+    def contextMenuEvent(self, event):
+        title_bar_menu(self, self.pin_btn, event.globalPos())
+        event.accept()
 
 class _NoSqueezeScrollArea(QScrollArea):
     """QScrollArea dont le widget interne suit la LARGEUR de la fenetre
@@ -332,12 +408,13 @@ def seed_extra_window_look(settings: dict) -> None:
         return (bool(s[f"extra_window_{name}_enabled"]), res(s[f"extra_window_{name}_color"]),
                 max(0, int(s[f"extra_window_{name}_thickness"] or 0)))
 
-    sides = _coerce_side_enabled(s["extra_window_border_enabled"])
-    thickness = max(0, int(s["extra_window_border_thickness"] or 0))
+    # Bordure : celle de TOUTES les fenetres (Theme > General, `window_border_*`), plus la sienne propre.
+    sides = _coerce_side_enabled(s["window_border_enabled"])
+    thickness = max(0, int(s["window_border_thickness"] or 0))
     radius = _coerce_corner_radius(s["extra_window_radius"])
     EXTRA_WINDOW_LOOK.update(
         sides=sides, thickness=thickness, radius=radius,
-        border_colors={k: res(v) for k, v in (s["extra_window_border"] or {}).items()},
+        border_colors={k: res(v) for k, v in (s["window_border"] or {}).items()},
         # Coins des barres (titre en haut, boutons en bas) : ceux de la fenetre, moins sa bordure.
         inner_radius={k: max(0, v - thickness) for k, v in radius.items()},
         shadow=shadow_look(s, "extra_window_shadow", res),

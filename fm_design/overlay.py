@@ -9,6 +9,8 @@ from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import QGraphicsItem
 
+from fm_board import snap_guides
+
 from . import design_model as dm
 
 SIDE_PX = (16.0, 6.0)          # poignée de côté : pastille allongée
@@ -164,10 +166,8 @@ class DesignOverlay(QGraphicsItem):
             painter.setPen(QPen(QColor(dm.LOOK["guide_color"]), 1.0 / zoom, Qt.DashLine))
             a, b = (QPointF(pos, 0), QPointF(pos, h)) if axis == "v" else (QPointF(0, pos), QPointF(w, pos))
             painter.drawLine(current.mapToScene(a), current.mapToScene(b))
-        for line in c.guides:
-            pen = QPen(QColor(dm.LOOK["snap_color"]), 1.0 / zoom)
-            painter.setPen(pen)
-            painter.drawLine(line)
+        if c.guides:                    # bords de la page / objets internes : Reglages > Module MRO > Magnetisme
+            snap_guides.draw(painter, c.guides)
         if c.marquee is not None:
             fill = QColor(accent)
             fill.setAlpha(28)

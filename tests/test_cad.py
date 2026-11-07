@@ -162,13 +162,13 @@ class InputGrammarTest(unittest.TestCase):
         self.assertEqual(cad_commands.lookup("ligne").name, "LINE")
         self.assertEqual(cad_commands.lookup("M").name, "MOVE")
         self.assertTrue(cad_commands.lookup("SC").available)
-        self.assertFalse(cad_commands.lookup("EX").available)                  # prevue : jamais proposee
+        self.assertTrue(cad_commands.lookup("EX").available)                   # PROLONGER (plus rien de « prevu »)
         self.assertTrue(cad_commands.lookup("PL").available)
         names = [e.name for _w, e in cad_commands.completions("C")]
         self.assertIn("COPY", names)
         self.assertIn("CIRCLE", names)
         self.assertIn("SCALE", [e.name for _w, e in cad_commands.completions("SC")])
-        self.assertNotIn("EXTEND", [e.name for _w, e in cad_commands.completions("EX")])
+        self.assertIn("EXTEND", [e.name for _w, e in cad_commands.completions("EX")])          # disponible
         self.assertIsNone(cad_commands.lookup("ZZZ"))
 
 
@@ -237,6 +237,24 @@ class SnapEngineTest(unittest.TestCase):
         second = engine.resolve((51, 49), 1.0, cycle=1)                         # Tab : candidat suivant
         self.assertNotEqual(second.candidate.mode, "int")
 
+    def test_crowded_cursor_crosses_only_the_nearest_lines(self):
+        """Plan vu de loin : des milliers de traits sous le curseur. Les intersections ne croisent que les traits qui
+        passent a portee, au plus MAX_PAIRWISE (avant : toutes les paires de l'emprise, ~50 s par mouvement sur un
+        DWG de 81 000 entites) ; la vraie intersection sous le curseur est toujours trouvee."""
+        from unittest import mock
+        far = [((x, 300.0), (x + 1.0, 301.0)) for x in range(0, 3000, 2)]           # dans l'emprise, loin du curseur
+        fan = [((-50.0, -50.0 + k), (50.0, 50.0 - k)) for k in range(0, 100)]          # tous passent par (0, 0) a peu pres
+        engine = engine_with(((-60, 0.2), (60, 0.2)), *far, *fan, modes={"int", "appint"})
+        engine.settings.aperture_px = 400.0                                             # emprise enorme (zoom faible)
+        calls = []
+        real = cad_snap.geo.segment_intersection
+        with mock.patch.object(cad_snap.geo, "segment_intersection",
+                               lambda *a: calls.append(1) or real(*a)):
+            res = engine.resolve((0.0, 0.0), 100.0)
+        self.assertLessEqual(len(calls), cad_snap.MAX_PAIRWISE * (cad_snap.MAX_PAIRWISE - 1) // 2)
+        self.assertEqual(res.candidate.mode, "int")
+        self.assertLess(math.dist(res.point, (0.0, 0.0)), 0.5)
+
     def test_perpendicular_from_base_including_extension(self):
         engine = engine_with(((0, 0), (100, 0)), modes={"per"})
         res = engine.resolve((40, 1), 1.0, base=(30, 50))
@@ -272,6 +290,17 @@ class SnapEngineTest(unittest.TestCase):
         engine.settings.osnap = False
         self.assertEqual(engine.resolve((99, 0), 1.0).kind, "free")
         self.assertEqual(engine.resolve((99, 0), 1.0, override="end").point, (100.0, 0.0))   # ponctuel
+
+    def test_shift_inverts_ortho(self):
+        """Maj enfoncee : ORTHO inverse le temps du geste (contraint si coupe, libre si actif), reglage intact."""
+        engine = engine_with(osnap=False)
+        self.assertEqual(engine.resolve((30, 7), 1.0, base=(0, 0), ortho_toggle=True).point, (30.0, 0.0))
+        self.assertFalse(engine.settings.ortho)
+        self.assertEqual(engine.resolve((30, 7), 1.0, base=(0, 0)).point, (30, 7))
+        engine = engine_with(ortho=True, osnap=False)
+        self.assertEqual(engine.resolve((30, 7), 1.0, base=(0, 0), ortho_toggle=True).point, (30, 7))
+        engine = engine_with(polar=True, polar_angle=45.0, osnap=False)
+        self.assertEqual(engine.resolve((50, 52), 1.0, base=(0, 0), ortho_toggle=True).kind, "ortho")
 
     def test_ortho_polar_tracking_grid(self):
         engine = engine_with(ortho=True, osnap=False)
@@ -483,8 +512,10 @@ class LineCommandTest(CadBoardCase):
         self.assertAlmostEqual(b[1], 35.0)
 
     def test_unknown_and_planned_commands(self):
-        self.type("EXTEND")
-        self.assertIn("prévue", self.ctl.history[-1][0])
+        self.type("EXTEND")                                         # n'est plus « prevue » : elle demarre
+        self.assertEqual(self.ctl.command.NAME, "EXTEND")
+        QTest.keyClick(self.pane.view, Qt.Key_Escape)
+        self.assertIsNone(self.ctl.command)
         self.type("BLABLA")
         self.assertIn("inconnue", self.ctl.history[-1][0])
         self.assertIsNone(self.ctl.command)
@@ -617,6 +648,98 @@ class PropertiesAndLayersTest(CadBoardCase):
         self.assertEqual(line.data["lineweight"], 4.0)
         rows._set_weight("-1")
         self.assertEqual(line.data["lineweight"], 4.0)
+
+
+def _unpackbits(data: bytes) -> bytes:
+    out, i = bytearray(), 0
+    while i < len(data):
+        n = data[i]
+        i += 1
+        if n < 128:
+            out += data[i:i + n + 1]
+            i += n + 1
+        elif n > 128:
+            out += bytes((data[i],)) * (257 - n)
+            i += 1
+    return bytes(out)
+
+
+class PhotoshopExportTest(CadBoardCase):
+    """Envoi vers Photoshop (cad_photoshop) : PNG transparent ouvert, PNG / PSD enregistres, PDF / SVG vectoriels."""
+
+    def test_packbits_roundtrip(self):
+        from fm_cad.cad_photoshop import _packbits
+        for row in (b"", b"a", b"\0" * 300, bytes(range(256)) * 2, b"ab" + b"\0" * 129 + b"xyz" + b"\x07" * 2):
+            self.assertEqual(_unpackbits(_packbits(row)), row)
+
+    def test_psd_layer_alpha_composite_and_thumbnail(self):
+        import struct
+        from PySide6.QtGui import QImage
+        from fm_cad.cad_photoshop import write_psd
+        from preview_services.images import _decode_psd_thumbnail
+        image = QImage(5, 3, QImage.Format_ARGB32)
+        image.fill(Qt.transparent)
+        image.setPixelColor(1, 1, QColor(255, 0, 0))
+        path = write_psd(image, self.dir / "a.psd")
+        data = path.read_bytes()
+        self.assertEqual(data[:4], b"8BPS")
+        channels, height, width, depth, mode = struct.unpack(">HIIHH", data[12:26])
+        self.assertEqual((channels, height, width, depth, mode), (3, 3, 5, 8, 3))
+        pos = 26 + 4
+        pos += 4 + struct.unpack(">I", data[pos:pos + 4])[0]                       # ressources (vignette)
+        section = struct.unpack(">I", data[pos:pos + 4])[0]
+        info = pos + 8
+        self.assertEqual(struct.unpack(">h", data[info:info + 2])[0], 1)          # un calque
+        record = info + 2
+        top, left, bottom, right, nch = struct.unpack(">iiiiH", data[record:record + 18])
+        self.assertEqual((bottom, right, nch), (3, 5, 4))
+        lengths = [struct.unpack(">hI", data[record + 18 + 6 * k:record + 24 + 6 * k]) for k in range(4)]
+        extra = record + 18 + 24 + 12
+        ch = extra + 4 + struct.unpack(">I", data[extra:extra + 4])[0]
+        planes = {}
+        for cid, length in lengths:
+            block = data[ch:ch + length]
+            counts = struct.unpack(">3H", block[2:8])
+            rows, at = [], 8
+            for c in counts:
+                rows.append(_unpackbits(block[at:at + c]))
+                at += c
+            planes[cid] = b"".join(rows)
+            ch += length
+        self.assertEqual(planes[-1][1 * 5 + 1], 255)                               # alpha du point rouge
+        self.assertEqual(planes[-1][0], 0)                                          # fond transparent
+        self.assertEqual((planes[0][6], planes[1][6], planes[2][6]), (255, 0, 0))
+        merged = pos + 4 + section
+        self.assertEqual(struct.unpack(">H", data[merged:merged + 2])[0], 1)      # image fusionnee RLE
+        self.assertFalse(_decode_psd_thumbnail(path).isNull())
+
+    def test_open_save_and_vector_export_selection_or_whole_drawing(self):
+        from PySide6.QtGui import QImage
+        from fm_cad import cad_photoshop
+        a = self.line((0, 0), (200, 0))
+        self.line((0, 50), (0, 150))
+        opened = []
+        with mock.patch.object(cad_photoshop, "open_in_photoshop", lambda p: opened.append(Path(p)) or True):
+            self.type("PS")
+        self.assertEqual(len(opened), 1)
+        image = QImage(str(opened[0]))
+        self.assertGreater(max(image.width(), image.height()), 1000)              # haute definition
+        self.assertEqual(image.pixelColor(0, 0).alpha(), 0)                        # fond transparent
+        opened[0].unlink()
+        a.setSelected(True)
+        target = self.dir / "sel.psd"
+        with mock.patch.object(cad_photoshop, "_ask_path", lambda *_a: target):
+            self.ctl.photoshop("save")
+        self.assertEqual(target.read_bytes()[:4], b"8BPS")
+        for name in ("v.pdf", "v.svg"):
+            out = self.dir / name
+            with mock.patch.object(cad_photoshop, "_ask_path", lambda *_a, o=out: o):
+                self.ctl.photoshop("vector")
+            self.assertGreater(out.stat().st_size, 100)
+        self.assertIn("<svg", (self.dir / "v.svg").read_text(encoding="utf-8"))
+        self.assertEqual((self.dir / "v.pdf").read_bytes()[:4], b"%PDF")
+        self.assertEqual(cad_commands.lookup("PSDOUT").name, "PNGOUT")
+        self.assertEqual(cad_commands.lookup("PDFOUT").name, "SVGOUT")
 
 
 class SelectionAndEditingTest(CadBoardCase):
@@ -794,7 +917,7 @@ class PersistenceAndBoardTest(CadBoardCase):
         self.assertEqual(closed, [])
         self.pane.toggle_cad(False)
         QTest.keyClick(self.pane.view, Qt.Key_Escape)
-        self.assertEqual(closed, [1])
+        self.assertEqual(closed, [])                    # hors CAD non plus (demande, 2026-11-05)
 
     def test_letters_go_to_the_command_line_not_to_board_tools(self):
         QTest.keyClick(self.pane.view, "t")
@@ -919,6 +1042,40 @@ class PerformanceTest(CadBoardCase):
 
 class IncrementalIndexTest(CadBoardCase):
     """Index des accrochages tenu a jour ligne par ligne (aucune reconstruction a chaque ligne tracee)."""
+
+    def test_big_queries_and_nearest_limit_match_a_full_scan(self):
+        """Grande zone (plan vu de loin) : calcul vectoriel (numpy) identique au parcours ; `limit` rend les objets
+        dont l'emprise est la plus proche du point, du plus proche au plus loin, avec ou sans numpy, et apres une
+        modification de l'index."""
+        import random
+        rng = random.Random(7)
+        index = geo.GridIndex()
+        boxes = {}
+        for _ in range(3000):
+            x, y = rng.uniform(0, 5000), rng.uniform(0, 5000)
+            boxes[object()] = (x, y, x + rng.uniform(0, 30), y + rng.uniform(0, 30))
+        index.build(list(boxes.items()))
+        extra = object()
+        boxes[extra] = (2500.0, 2500.0, 2501.0, 2501.0)
+        index.insert(extra, boxes[extra])                                   # tableaux numpy a refaire
+
+        def gap(b, p):
+            dx, dy = max(b[0] - p[0], 0.0, p[0] - b[2]), max(b[1] - p[1], 0.0, p[1] - b[3])
+            return dx * dx + dy * dy
+        for rect in ((-10.0, -10.0, 6000.0, 6000.0), (1000.0, 1200.0, 3800.0, 4100.0), (2400.0, 2400.0, 2600.0, 2600.0)):
+            inside = [o for o, b in boxes.items()
+                      if b[0] <= rect[2] and b[2] >= rect[0] and b[1] <= rect[3] and b[3] >= rect[1]]
+            self.assertEqual({id(o) for o in index.query(rect)}, {id(o) for o in inside})
+            around = (2500.5, 2500.5)
+            for numpy_min in (geo.GridIndex.NUMPY_MIN, 10 ** 9):           # avec numpy, puis le parcours Python
+                with mock.patch.object(geo.GridIndex, "NUMPY_MIN", numpy_min):
+                    near = index.query(rect, around=around, limit=25)
+                self.assertEqual(len(near), min(25, len(inside)))
+                gaps = [gap(boxes[o], around) for o in near]
+                self.assertEqual(gaps, sorted(gaps))
+                worst = sorted(gap(b, around) for o, b in boxes.items() if o in set(inside))[:25]
+                self.assertEqual(gaps, worst)
+        self.assertIs(index.query((2500.2, 2500.2, 2500.3, 2500.3), around=(2500.2, 2500.2), limit=1)[0], extra)
 
     def test_grid_index_insert_remove_matches_a_full_scan(self):
         import random
@@ -1229,26 +1386,24 @@ class ReadabilityTest(CadBoardCase):
         self.assertGreaterEqual(settings_menu.contrast_ratio(seen["text"], "#ffffff"), 4.5)
         self.assertTrue(menu.property("ctxContrast"))
 
-    def test_cad_bars_are_10_10_10_and_the_command_field_is_the_settings_input(self):
-        shown = self.ctl.ui.toolbar.look
-        self.assertEqual(QColor(shown["bg"]).getRgb()[:3], (10, 10, 10))        # demande de l'utilisateur
-        self.assertEqual(QColor(self.ctl.ui.command_bar.look["bg"]).getRgb()[:3], (10, 10, 10))
+    def test_command_bar_is_10_10_10_and_the_command_field_is_the_settings_input(self):
+        self.assertEqual(QColor(self.ctl.ui.command_bar.look["bg"]).getRgb()[:3], (10, 10, 10))   # demande de l'utilisateur
         from settings_cells import _TextField
         self.assertEqual(self.ctl.ui.input.styleSheet(), _TextField("", 260).styleSheet())   # zone de saisie des reglages
         self.ctl.apply_settings(dict(self.ctl.settings, board_cad_bar_color="#303030"))
-        self.assertEqual(QColor(self.ctl.ui.toolbar.look["bg"]).getRgb()[:3], (48, 48, 48))
+        self.assertEqual(QColor(self.ctl.ui.command_bar.look["bg"]).getRgb()[:3], (48, 48, 48))
 
-    def test_toolbar_ink_follows_a_light_bar(self):
+    def test_command_bar_ink_follows_a_light_bar(self):
         from fm_board import ui as board_ui
         from settings_menu import contrast_ratio
         look = board_ui.toolbar_look({"board_toolbar_bg_color": "#ffffff", "board_toolbar_text_font_color": "#d6d9dc"})
         self.pane.toolbar_style = look
         self.ctl.apply_settings(dict(self.ctl.settings, board_cad_bar_color="#ffffff"))
         self.ctl.ui.set_look(look)
-        shown = self.ctl.ui.toolbar.look
+        shown = self.ctl.ui.command_bar.look
         self.assertGreaterEqual(contrast_ratio(shown["text"], shown["bg"]), 4.5)
-        button = self.ctl.ui.buttons["line"] if "line" in self.ctl.ui.buttons else next(iter(self.ctl.ui.buttons.values()))
-        self.assertGreaterEqual(contrast_ratio(button.glyph_ink(False), shown["bg"]), 4.5)
+        history = self.ctl.ui.history_button
+        self.assertGreaterEqual(contrast_ratio(history.glyph_ink(False), shown["bg"]), 4.5)
 
 
 class CadDisplaySettingsTest(CadBoardCase):
@@ -1579,6 +1734,19 @@ class LinearBlendTest(CadBoardCase):
 
 
 class CadImportTest(CadBoardCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        from fm_cad import cad_import
+        cls._native = cad_import.NATIVE_BLOCKS
+        cad_import.NATIVE_BLOCKS = False        # ces tests portent sur l'import ECLATE (blocs natifs : test_cad_blocks)
+
+    @classmethod
+    def tearDownClass(cls):
+        from fm_cad import cad_import
+        cad_import.NATIVE_BLOCKS = cls._native
+        super().tearDownClass()
+
     def test_export_then_open_gives_back_lines_and_layers(self):
         from fm_cad import cad_export, cad_import
         cad = cad_model.copy_cad(self.ctl.cad_page())
@@ -1614,18 +1782,105 @@ class CadImportTest(CadBoardCase):
         doc.layers.add("MENUISERIE", color=1)
         msp.add_blockref("PORTE", (500, 500), dxfattribs={"layer": "MENUISERIE"})
         msp.add_text("cote")
-        msp.add_point((1, 1))
+        msp.add_helix(radius=1, pitch=1, turns=1)                           # (WIPEOUT : importe depuis 2026-11-05)
         path = self.dir / "courbes.dxf"
         doc.saveas(path)
         data, report = cad_import.read_drawing(path)
-        self.assertEqual(report["ignored"], {"POINT": 1})                     # le texte est importe (cad_text)
-        self.assertIn("1 point", cad_import.describe(report))
+        self.assertEqual(report["ignored"], {"HELIX": 1})                     # le texte est importe (cad_text)
+        self.assertIn("1 helix", cad_import.describe(report))
         self.assertEqual([i["text"] for i in data["items"] if i["type"] == "cad_text"], ["cote"])
         layers = {l["id"]: l["name"] for l in data["page"]["cad"]["layers"]}
         door = [i for i in data["items"] if layers[i["layer"]] == "MENUISERIE"]
         self.assertEqual([(i["p1"], i["p2"]) for i in door], [([500.0, 500.0], [510.0, 500.0])])  # bloc eclate
         circle = [i for i in data["items"] if layers[i["layer"]] == "0" and i["type"] != "cad_text"]
         self.assertEqual([(i["type"], i["center"], i["radius"]) for i in circle], [("cad_circle", [0.0, 0.0], 50.0)])
+
+    def _blocks_drawing(self):
+        ezdxf = __import__("ezdxf")
+        doc = ezdxf.new("R2018")
+        doc.header["$INSUNITS"] = 0
+        for name, color in (("ROT", 1), ("MIR", 2), ("NU", 3), ("BIS", 4)):
+            doc.layers.add(name, color=color)
+        inner = doc.blocks.new("INNER")
+        inner.add_line((0, 0), (0, 3), dxfattribs={"layer": "0", "color": 0})          # calque 0, PARBLOC
+        block = doc.blocks.new("B")
+        block.add_line((0, 0), (10, 0))
+        block.add_arc((5, 5), 2, 0, 90)
+        block.add_circle((0, 10), 1)
+        block.add_lwpolyline([(0, 0, 0.5), (4, 0, 0)], format="xyb")
+        block.add_blockref("INNER", (20, 0), dxfattribs={"color": 0})                 # PARBLOC en chaine
+        msp = doc.modelspace()
+        msp.add_blockref("B", (100, 0), dxfattribs={"layer": "ROT", "color": 5, "rotation": 90,
+                                                    "xscale": 2, "yscale": 2})
+        msp.add_blockref("B", (0, 100), dxfattribs={"layer": "MIR", "xscale": -1})
+        msp.add_blockref("B", (0, -100), dxfattribs={"layer": "NU", "xscale": 2, "yscale": 1})
+        msp.add_blockref("B", (300, 0), dxfattribs={"layer": "BIS", "rotation": 90, "xscale": 2, "yscale": 2})
+        return doc
+
+    def test_blocks_are_placed_by_their_matrix_once_converted(self):
+        """Bloc converti UNE fois puis pose par la matrice de chaque insertion (rotation, echelle uniforme, miroir :
+        arcs, cercles, polylignes gardes ; calque 0 / PARBLOC herites) ; echelle non uniforme : eclatement d'ezdxf
+        (cercle -> ellipse approchee par des lignes)."""
+        from unittest import mock
+        from fm_cad import cad_import
+        path = self.dir / "blocs.dxf"
+        self._blocks_drawing().saveas(path)
+        calls = []
+        real = cad_import._native
+        with mock.patch.object(cad_import, "_native", lambda e, s: calls.append(e.dxftype()) or real(e, s)):
+            data, report = cad_import.read_drawing(path)
+        self.assertEqual(report["ignored"], {})
+        # B converti une fois pour ROT, MIR et BIS (rien n'y depend de la finesse) ; l'insertion NU passe par
+        # l'eclatement d'ezdxf (son cercle y devient une ellipse)
+        self.assertEqual(calls.count("CIRCLE"), 1)
+        layers = {l["id"]: l["name"] for l in data["page"]["cad"]["layers"]}
+        on = lambda name: [i for i in data["items"] if layers[i["layer"]] == name]          # noqa: E731
+        rnd = lambda v: [round(x, 6) + 0.0 for x in v]                                     # noqa: E731
+        rot = on("ROT")
+        lines = sorted((rnd(i["p1"]), rnd(i["p2"])) for i in rot if i["type"] == "cad_line")
+        self.assertEqual(lines, [([100.0, 0.0], [100.0, 20.0]), ([100.0, 40.0], [94.0, 40.0])])   # B, puis INNER
+        arc = next(i for i in rot if i["type"] == "cad_arc")
+        self.assertEqual((rnd(arc["center"]), round(arc["radius"], 6), round(arc["start"], 6), round(arc["end"], 6)),
+                         ([90.0, 10.0], 4.0, 90.0, 180.0))
+        circle = next(i for i in rot if i["type"] == "cad_circle")
+        self.assertEqual((rnd(circle["center"]), circle["radius"]), ([80.0, 0.0], 2.0))
+        inner = [i for i in rot if i["type"] == "cad_line" and round(i["p1"][1]) == 40]
+        self.assertEqual([i["color"] for i in inner], [cad_import._aci_color(5)])           # PARBLOC -> couleur 5
+        mirrored = on("MIR")
+        arc = next(i for i in mirrored if i["type"] == "cad_arc")                           # miroir : un VRAI arc
+        self.assertEqual((rnd(arc["center"]), arc["radius"], round(arc["start"], 6), round(arc["end"], 6)),
+                         ([-5.0, 105.0], 2.0, 90.0, 180.0))                                 # sens trigonometrique
+        pline = next(i for i in mirrored if i["type"] == "cad_pline")
+        self.assertEqual([rnd(v) for v in pline["vertices"]], [[0.0, 100.0, -0.5], [-4.0, 100.0, 0.0]])
+        stretched = on("NU")
+        self.assertFalse([i for i in stretched if i["type"] == "cad_circle"])               # ellipse : des lignes
+        self.assertGreater(len([i for i in stretched if i["type"] == "cad_line"]), 8)
+        self.assertEqual(sorted(i["type"] for i in on("BIS")), sorted(i["type"] for i in rot))
+
+    def test_ellipse_with_parameters_past_two_pi_still_gives_lines(self):
+        """Ellipse complete ecrite 1,57 -> 7,85 (vu dans les blocs d'un DWG) : `flattening` d'ezdxf n'en donnait
+        aucun point."""
+        ezdxf = __import__("ezdxf")
+        from fm_cad import cad_import
+        doc = ezdxf.new("R2018")
+        doc.header["$INSUNITS"] = 0
+        block = doc.blocks.new("E")
+        block.add_ellipse((0, 0), major_axis=(0, 20), ratio=0.5, start_param=math.pi / 2,
+                          end_param=math.pi / 2 + 2 * math.pi)
+        doc.modelspace().add_blockref("E", (0, 0))
+        doc.modelspace().add_ellipse((100, 0), major_axis=(0, 20), ratio=0.5, start_param=math.pi / 2,
+                                     end_param=math.pi / 2 + 2 * math.pi)
+        path = self.dir / "ellipse.dxf"
+        doc.saveas(path)
+        data, _report = cad_import.read_drawing(path)
+        lines = [i for i in data["items"] if i["type"] == "cad_line"]
+        left = [i for i in lines if i["p1"][0] < 50]
+        self.assertGreater(len(left), 16)
+        self.assertGreater(len(lines) - len(left), 16)
+        for i in lines:                                                                     # points SUR l'ellipse
+            cx = 0.0 if i["p1"][0] < 50 else 100.0
+            x, y = i["p1"][0] - cx, i["p1"][1]
+            self.assertAlmostEqual((x / 10.0) ** 2 + (y / 20.0) ** 2, 1.0, places=6)
 
     def test_opened_drawing_is_never_rewritten_and_can_be_kept_as_a_board(self):
         ezdxf = __import__("ezdxf")
@@ -1647,7 +1902,7 @@ class CadImportTest(CadBoardCase):
         self.assertTrue(self.pane.save())                                       # enregistrement auto : rien n'est ecrit
         self.assertEqual(source.read_bytes(), before)
         target = self.pane.companion_path()
-        self.assertEqual(target.name, "plan_dxf.mro")                           # plan.mro existe deja (setUp)
+        self.assertEqual(target.name, "plan_dxf.brd")                           # plan.brd existe deja (setUp)
         self.assertTrue(self.pane.save_import_as_board())
         self.assertEqual(self.pane.path, target)
         self.assertEqual(len(serialization.load(target)["items"]), 2)
@@ -1664,7 +1919,7 @@ class CadImportTest(CadBoardCase):
         self.pane.open_import(cad_import.read_drawing(source)[0], source)
         with mock.patch.object(board_ui.QMessageBox, "exec", side_effect=AssertionError("question posee")):
             self.assertTrue(self.pane.confirm_leave())
-        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["plan.mro", "vue.dxf"])
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["plan.brd", "vue.dxf"])
 
 
 class PanTest(CadBoardCase):
@@ -2875,6 +3130,39 @@ class HatchTest(CadBoardCase):
         self.assertLess(hatch.distance_to((50.0, 20.2)), 0.5)                              # sur un trait du motif
         self.assertGreater(hatch.distance_to((50.0, 25.0)), 4.0)                           # entre deux traits
 
+    def test_solid_hatch_opacity_slider_in_properties(self):
+        """Proprietes > « Opacite du plein » : en direct, une etape d'annulation par geste, grise hors motif plein."""
+        from settings_widgets import _SliderField
+        self.box_of_lines()
+        self.type("H", "M", "PL")
+        self.click((50, 50))
+        self.type("")
+        hatch = self.hatches()[0]
+        before = hatch.data["hatch_alpha"]
+        self.pane.scene.clearSelection()
+        hatch.setSelected(True)
+        self.ctl.ui.show_properties()
+        self.ctl.ui._rebuild_properties()
+        rows = self.ctl.ui._prop_rows
+        self.assertIn("hatch_alpha", rows.updaters)
+        field = [f for f in self.ctl.ui.properties.findChildren(_SliderField) if f.toolTip().startswith("Opacité")][0]
+        self.assertTrue(field.isEnabled())
+        undo = self.pane.scene.undo
+        count = undo.count()
+        for value in (60, 80, 100):
+            field.setValue(value)
+        self.assertEqual(hatch.data["hatch_alpha"], 100.0)
+        self.assertAlmostEqual(hatch._fill._alpha, 1.0)                                  # dessin a jour en direct
+        self.pane.scene.commit_live()
+        self.assertEqual(undo.count(), count + 1)                                         # UN geste = UNE etape
+        undo.undo()
+        self.assertEqual(hatch.data["hatch_alpha"], before)
+        hatch.data["hatch_pattern"] = "lines"
+        hatch.sync()
+        self.ctl.ui._rebuild_properties()
+        field = [f for f in self.ctl.ui.properties.findChildren(_SliderField) if f.toolTip().startswith("Opacité")][0]
+        self.assertFalse(field.isEnabled())
+
     def test_hatch_saved_exported_and_drawn_by_the_gpu_store(self):
         self.box_of_lines()
         self.type("H")
@@ -3309,6 +3597,21 @@ class MarkersAndGripsTest(CadBoardCase):
             self.assertFalse(self.ctl.box_only(), name)
         self.type("L")
         self.assertFalse(self.ctl.box_only())                                     # dessin : le reticule entier
+        QTest.keyClick(self.pane.view, Qt.Key_Escape)
+        APP.processEvents()
+        # COPIER (demande, 2026-11-05) : le reticule SANS carre central, a la selection comme au point de base.
+        self.type("COPY")
+        for _stage in range(2):
+            self.move((60, 90))
+            self.move((50, 80))
+            self.assertFalse(self.ctl.box_only())
+            self.assertFalse(self.ctl.overlay_state()["pickbox"])
+            native, _painted = self.ctl._cursor_plan()
+            if native is not None:
+                self.assertGreater(native.pixmap().width(), round((2 * self.ctl.look["pickbox_px"] + 1)
+                                                                  * native.pixmap().devicePixelRatio()))   # bras
+            self.click((100, 0))                                                  # selection, puis point de base
+            self.type("")
 
     def test_magnet_reaches_as_far_at_a_shared_end_of_a_selected_line(self):
         self.line((0, 0), (200, 0))
@@ -4128,7 +4431,7 @@ class CrosshairTest(CadBoardCase):
         labels = [row[0] for row in rows]
         first = labels.index("Réticule en croix")
         group = [r for r in rows if r[0].startswith(("Réticule", "Longueur des bras", "Bras", "Couleur du réticule", "Couleur automatique (selon",
-                                                    "Carré central", "Aimant", "Indicateur"))]
+                                                    "Carré central", "Aimant", "Indicateur", "Négatif"))]
         self.assertGreaterEqual(len(group), 6)
         self.assertEqual(labels[first:first + len(group)], [r[0] for r in group])   # regroupes, a la suite
         for row in group:

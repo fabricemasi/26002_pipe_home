@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import copy
 import math
+import time
 import uuid
 import weakref
 
@@ -26,6 +27,9 @@ from . import look, render, session as S
 
 TITLE_H = 24.0
 ACCENT = "#2f86d6"
+FLUSH_PAUSE_MS = 250       # pause après le dernier geste avant de préparer le conteneur en arrière-plan
+FLUSH_POLL_MS = 40         # suivi du fil d'enregistrement (aucun travail tant qu'il tourne)
+FLUSH_QUIET_S = 0.4        # un trait en cours (évènements « paint » récents) n'est jamais figé
 
 
 def _scene_token(scene) -> str:
@@ -50,6 +54,9 @@ class PsItem(BoardItem):
         self._session = None
         self._listener = None
         self._paint_retry = False
+        self._flush_pause = None            # minuterie de pause (créée au premier changement)
+        self._flush_poll = None
+        self._last_paint = 0.0
         super().__init__(data)
 
     # -- session --
@@ -103,18 +110,72 @@ class PsItem(BoardItem):
 
     def added_to_scene(self, scene):
         self._session = None                 # clé liée à la scène
-        _ = self.session
+        if not self.session._asset_current():
+            self._schedule_flush()           # document neuf : son premier conteneur se prépare en arrière-plan, pas à l'enregistrement
 
     def removing_from_scene(self, scene):
         self._detach()
 
     def _detach(self):
-        if self._session is not None and self._listener in self._session.listeners:
-            self._session.listeners.remove(self._listener)
+        for timer in (self._flush_pause, self._flush_poll):
+            if timer is not None:
+                timer.stop()
+        if self._session is not None:
+            self._session.cancel_flush()
+            if self._listener in self._session.listeners:
+                self._session.listeners.remove(self._listener)
         self._listener = None
         self._session = None
 
+    # -- enregistrement du conteneur en arrière-plan (voir flush.py) --
+    def save_pending(self) -> bool:
+        """Le conteneur se prépare (pause après le geste, ou fil en cours) : l'enregistrement automatique du Board
+        l'attend un instant, pour ne rien encoder sur le fil de l'interface."""
+        if self._flush_pause is not None and self._flush_pause.isActive():
+            return True
+        session = self._session
+        return session is not None and session.flush_running()
+
+    def _schedule_flush(self):
+        from PySide6.QtCore import QTimer
+        if self._flush_pause is None:
+            self._flush_pause = QTimer()
+            self._flush_pause.setSingleShot(True)
+            self._flush_pause.timeout.connect(self._flush_now)
+            self._flush_poll = QTimer()
+            self._flush_poll.setInterval(FLUSH_POLL_MS)
+            self._flush_poll.timeout.connect(self._flush_poll_tick)
+        self._flush_pause.start(FLUSH_PAUSE_MS)
+
+    def _flush_now(self):
+        session, path = self._session, self._board_path()
+        if session is None or path is None:
+            return
+        if time.monotonic() - self._last_paint < FLUSH_QUIET_S:
+            self._flush_pause.start(FLUSH_PAUSE_MS)                 # trait en cours : on ne fige pas un dessin à moitié
+            return
+        if session.flush_running():
+            self._flush_poll.start()
+            return
+        from fm_board import serialization
+        if session.flush_async(lambda payload, suffix: serialization.import_image_bytes(path, payload, suffix)):
+            self._flush_poll.start()
+
+    def _flush_poll_tick(self):
+        session = self._session
+        if session is None or session.collect_flush():
+            if session is None:
+                self._flush_poll.stop()
+            return
+        self._flush_poll.stop()
+        if self._board_path() is not None and not session._asset_current():
+            self._flush_pause.start(FLUSH_PAUSE_MS)                 # le document a encore changé pendant le travail
+
     def _document_changed(self, kind):
+        if kind == "paint":
+            self._last_paint = time.monotonic()
+        elif kind in ("edit", "structure", "committed"):
+            self._schedule_flush()
         try:
             scene = self.scene()
             if not getattr(self._session, "standard_open", False) or kind == "reload":

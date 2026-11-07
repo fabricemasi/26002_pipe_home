@@ -208,6 +208,18 @@ class OpeningWindowTest(_Tables):
     def test_opening_a_settings_window_keeps_the_session_templates(self):
         """Bug signale : la fenetre de reglages qui s'ouvre relisait `table_dims` du fichier et effacait les
         gabarits poses dans la session (fm_theme puis Parametres generaux de fm_browser)."""
+        # Presets fm_theme (copies de _isolate) SANS gabarits : ceux d'un preset l'emportent (voulu), ici on teste
+        # le repli sur les gabarits de la session.
+        from fm_theme import presets as tp
+        for path in tp.list_presets().values():
+            preset = tp.load_preset(path)
+            if (preset.get("general") or {}).pop("row_templates", None) is not None:
+                tp.save_preset(preset)
+        import json
+        import settings_store                                            # copie isolee du fichier de reglages
+        raw = json.loads(settings_store._PER_USER_PATH.read_text(encoding="utf-8"))
+        if raw.pop("row_templates", None) is not None:
+            settings_store._PER_USER_PATH.write_text(json.dumps(raw), encoding="utf-8")
         _TABLE_DIMS[cells.ROW_TEMPLATES_KEY] = {"contenu:_SliderField": {"align": ["left,center"], "height": 61}}
         win = v2.SettingsWindowV2(module="theme")
         self.frames.append(win)

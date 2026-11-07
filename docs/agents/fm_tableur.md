@@ -234,3 +234,7 @@ englobant (une région `QRegion` pour la sélection) ; texte : `QStaticText` + p
 - 2026-10-30 — FAIT : onglet « Tableur » de Réglages : Board (police et calcul des nouveaux classeurs).
 - Prochaine action : vérifier l'ouverture des fichiers exportés dans
   Microsoft Excel (non disponible ici).
+
+- BARRE FLOTTANTE (2026-11-03) : « Classeur » (Nouveau, Importer, Mode Standard) est une barre de fm_theme (`BoardBars(pane, "tableur", …)`, voir docs/agents/fm_board.md).
+
+- MODE STANDARD AU-DESSUS DE TOUT (bug du 2026-11-03 : le décor du board restait par-dessus) : `StandardPane` se remonte quand un enfant du board est créé après son ouverture (`ChildAdded` -> `_stay_on_top`), et `BoardPane._place_chrome` le remonte après avoir remonté barres et panneaux. Test dans `test_tableur_board.py` (mode Standard).

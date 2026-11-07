@@ -1,0 +1,661 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Barres d'outils flottantes</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:#58a6ff}a:hover{color:#79c0ff}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; display: flex; flex-direction: column; background: #0d1117; color: #e6edf3; font-family: Inter, system-ui, -apple-system, Segoe UI, sans-serif; user-select: none; overflow: hidden">
+
+  <div style="height: 36px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 0 12px; background: #0d1117; border-bottom: 1px solid #21262d; font-size: 12px; font-weight: 600">
+    <span style="padding: 4px 14px; background: #161b22; border-radius: 4px">NOTES</span>
+    <span style="color: #6e7681">/</span>
+    <span style="padding: 4px 14px; background: #161b22; border-radius: 4px">Fichier TEST.mro</span>
+  </div>
+
+  <div ref="{{wsRef}}" style="position: relative; flex: 1; overflow: hidden; background-color: #22272e; background-image: radial-gradient(#2d333b 1px, transparent 1px); background-size: 24px 24px; width: 1281px; height: 736px">
+
+    <sc-if value="{{snapLine}}" hint-placeholder-val="{{false}}">
+      <div style="position: absolute; {{snapLine}} background: {{accent}}; box-shadow: 0 0 14px {{accent}}; pointer-events: none; z-index: 40"></div>
+    </sc-if>
+
+    <sc-for list="{{bars}}" as="bar" hint-placeholder-count="4">
+      <div data-bar-id="{{bar.id}}" data-orient="{{bar.orient}}" style="position: absolute; {{bar.pos}} display: flex; flex-direction: {{bar.dir}}; background: #161b22; border: 1px solid {{bar.border}}; border-radius: {{bar.radius}}; box-shadow: {{bar.shadow}}; z-index: {{bar.z}}; opacity: {{bar.opacity}}">
+        <sc-if value="{{bar.editing}}" hint-placeholder-val="{{false}}">
+          <div style="padding: 6px 6px 0">
+            <label style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)" for="title-input">Titre de la barre</label>
+            <input id="title-input" ref="{{focusRef}}" value="{{draft}}" onChange="{{onDraft}}" onKeyDown="{{onDraftKey}}" onBlur="{{commitTitle}}" style="width: 110px; box-sizing: border-box; font: 600 11px Inter, system-ui, sans-serif; letter-spacing: 0.06em; text-transform: uppercase; color: #e6edf3; background: #0d1117; border: 1px solid {{accent}}; border-radius: 4px; padding: 3px 6px; outline: none">
+          </div>
+        </sc-if>
+        <sc-if value="{{bar.notEditing}}" hint-placeholder-val="{{true}}">
+          <button type="button" title="Glisser pour déplacer · Ctrl+clic pour renommer · Double-clic pour pivoter" onPointerDown="{{bar.down}}" onClick="{{bar.titleClick}}" onDoubleClick="{{bar.dbl}}" style="display: flex; align-items: center; gap: 4px; background: none; border: 0; margin: 0; cursor: grab; font: 600 10px Inter, system-ui, sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: #8b949e; white-space: nowrap; touch-action: none; {{bar.titleStyle}}">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#6e7681" stroke-width="3.2" stroke-linecap="round" aria-hidden="true"><path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01"></path></svg>
+            <span>{{bar.title}}</span>
+          </button>
+        </sc-if>
+        <div style="display: flex; gap: 4px; padding: 6px; flex-direction: {{bar.laneDir}}">
+          <sc-for list="{{bar.lanes}}" as="lane" hint-placeholder-count="1">
+            <div style="display: flex; gap: 4px; flex-direction: {{bar.itemDir}}; align-items: flex-start">
+              <sc-for list="{{lane.items}}" as="it" hint-placeholder-count="3">
+
+                <sc-if value="{{it.slot}}" hint-placeholder-val="{{false}}">
+                  <div style="width: {{it.w}}px; height: 34px; flex-shrink: 0; box-sizing: border-box; border: 1.5px dashed {{accent}}; border-radius: 6px; background: rgba(47, 129, 247, 0.08)"></div>
+                </sc-if>
+
+                <sc-if value="{{it.isIcon}}" hint-placeholder-val="{{true}}">
+                  <button type="button" data-item-id="{{it.id}}" aria-label="{{it.label}}" title="{{it.label}}" onPointerDown="{{it.down}}" style="width: 34px; height: 34px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; padding: 0; margin: 0; cursor: pointer; border-radius: 6px; border: 1px solid {{it.border}}; background: {{it.bg}}; touch-action: none">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="{{it.color}}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{it.d}}"></path></svg>
+                  </button>
+                </sc-if>
+
+                <sc-if value="{{it.isSlider}}" hint-placeholder-val="{{false}}">
+                  <div data-item-id="{{it.id}}" style="position: relative; width: {{it.w}}px; height: 34px; box-sizing: border-box; flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 0; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; font-size: 11px; color: #8b949e">
+                    <button type="button" aria-label="Déplacer {{it.label}}" title="Glisser pour déplacer" onPointerDown="{{it.down}}" style="align-self: stretch; width: 16px; display: flex; align-items: center; justify-content: center; padding: 0; margin: 0; background: none; border: 0; cursor: grab; touch-action: none">
+                      <svg width="10" height="14" viewBox="0 0 24 24" fill="none" stroke="#6e7681" stroke-width="3.6" stroke-linecap="round" aria-hidden="true"><path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01"></path></svg>
+                    </button>
+                    <label for="ctl-{{it.id}}" style="white-space: nowrap">{{it.label}}</label>
+                    <input id="ctl-{{it.id}}" type="range" min="{{it.min}}" max="{{it.max}}" step="{{it.step}}" value="{{it.value}}" onChange="{{it.change}}" style="flex: 1; min-width: 40px; width: 0; margin: 0; accent-color: {{accent}}">
+                    <span style="min-width: 36px; text-align: right; color: #e6edf3; font-variant-numeric: tabular-nums">{{it.display}}</span>
+                    <button type="button" aria-label="Largeur de {{it.label}}" title="Glisser pour redimensionner" onPointerDown="{{it.widthDown}}" style="position: absolute; top: 0; right: -5px; width: 9px; height: 100%; display: flex; align-items: center; justify-content: center; padding: 0; margin: 0; background: none; border: 0; cursor: ew-resize; touch-action: none; z-index: 2">
+                      <span style="display: block; width: 2px; height: 14px; border-radius: 1px; background: #484f58"></span>
+                    </button>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{it.isInput}}" hint-placeholder-val="{{false}}">
+                  <div data-item-id="{{it.id}}" style="position: relative; width: {{it.w}}px; height: 34px; box-sizing: border-box; flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 0 4px 0 0; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; font-size: 11px; color: #8b949e">
+                    <button type="button" aria-label="Déplacer {{it.label}}" title="Glisser pour déplacer" onPointerDown="{{it.down}}" style="align-self: stretch; width: 16px; display: flex; align-items: center; justify-content: center; padding: 0; margin: 0; background: none; border: 0; cursor: grab; touch-action: none">
+                      <svg width="10" height="14" viewBox="0 0 24 24" fill="none" stroke="#6e7681" stroke-width="3.6" stroke-linecap="round" aria-hidden="true"><path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01"></path></svg>
+                    </button>
+                    <label for="ctl-{{it.id}}" style="white-space: nowrap">{{it.label}}</label>
+                    <input id="ctl-{{it.id}}" type="text" value="{{it.value}}" placeholder="{{it.placeholder}}" onChange="{{it.change}}" onKeyDown="{{it.stopKey}}" style="flex: 1; min-width: 40px; width: 0; height: 24px; box-sizing: border-box; padding: 0 6px; font: 12px Inter, system-ui, sans-serif; color: #e6edf3; background: #161b22; border: 1px solid #30363d; border-radius: 4px; outline-color: {{accent}}; user-select: text">
+                    <button type="button" aria-label="Largeur de {{it.label}}" title="Glisser pour redimensionner" onPointerDown="{{it.widthDown}}" style="position: absolute; top: 0; right: -5px; width: 9px; height: 100%; display: flex; align-items: center; justify-content: center; padding: 0; margin: 0; background: none; border: 0; cursor: ew-resize; touch-action: none; z-index: 2">
+                      <span style="display: block; width: 2px; height: 14px; border-radius: 1px; background: #484f58"></span>
+                    </button>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{it.isSelect}}" hint-placeholder-val="{{false}}">
+                  <div data-item-id="{{it.id}}" style="position: relative; width: {{it.w}}px; height: 34px; box-sizing: border-box; flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 0 4px 0 0; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; font-size: 11px; color: #8b949e">
+                    <button type="button" aria-label="Déplacer {{it.label}}" title="Glisser pour déplacer" onPointerDown="{{it.down}}" style="align-self: stretch; width: 16px; display: flex; align-items: center; justify-content: center; padding: 0; margin: 0; background: none; border: 0; cursor: grab; touch-action: none">
+                      <svg width="10" height="14" viewBox="0 0 24 24" fill="none" stroke="#6e7681" stroke-width="3.6" stroke-linecap="round" aria-hidden="true"><path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01"></path></svg>
+                    </button>
+                    <label for="ctl-{{it.id}}" style="white-space: nowrap">{{it.label}}</label>
+                    <select id="ctl-{{it.id}}" value="{{it.value}}" onChange="{{it.change}}" style="flex: 1; min-width: 50px; width: 0; height: 24px; padding: 0 4px; font: 12px Inter, system-ui, sans-serif; color: #e6edf3; background: #161b22; border: 1px solid #30363d; border-radius: 4px; outline-color: {{accent}}">
+                      <sc-for list="{{it.options}}" as="op" hint-placeholder-count="3">
+                        <option value="{{op}}">{{op}}</option>
+                      </sc-for>
+                    </select>
+                    <button type="button" aria-label="Largeur de {{it.label}}" title="Glisser pour redimensionner" onPointerDown="{{it.widthDown}}" style="position: absolute; top: 0; right: -5px; width: 9px; height: 100%; display: flex; align-items: center; justify-content: center; padding: 0; margin: 0; background: none; border: 0; cursor: ew-resize; touch-action: none; z-index: 2">
+                      <span style="display: block; width: 2px; height: 14px; border-radius: 1px; background: #484f58"></span>
+                    </button>
+                  </div>
+                </sc-if>
+
+              </sc-for>
+            </div>
+          </sc-for>
+        </div>
+        <button type="button" aria-label="Nombre d'étages : glisser pour changer" title="Glisser pour ajouter ou retirer des étages" onPointerDown="{{bar.rowsDown}}" style="display: flex; align-items: center; justify-content: center; padding: 0; margin: 0; background: none; border: 0; touch-action: none; {{bar.handleStyle}}">
+          <span style="display: block; background: #484f58; border-radius: 2px; {{bar.handleMark}}"></span>
+        </button>
+      </div>
+    </sc-for>
+
+    <sc-if value="{{ghost}}" hint-placeholder-val="{{false}}">
+      <div style="position: absolute; {{ghost.pos}} display: flex; align-items: center; gap: 8px; pointer-events: none; z-index: 60">
+        <sc-if value="{{ghost.isIcon}}" hint-placeholder-val="{{true}}">
+          <div style="width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border-radius: 6px; background: #161b22; border: 1px solid {{accent}}; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5)">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="{{ghost.color}}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ghost.d}}"></path></svg>
+          </div>
+        </sc-if>
+        <sc-if value="{{ghost.isControl}}" hint-placeholder-val="{{false}}">
+          <div style="height: 34px; box-sizing: border-box; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-radius: 6px; background: #161b22; border: 1px solid {{accent}}; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); font-size: 11px; color: #e6edf3; white-space: nowrap">
+            <span style="color: #8b949e">{{ghost.kindLabel}}</span>
+            <span>{{ghost.label}}</span>
+          </div>
+        </sc-if>
+        <sc-if value="{{ghost.newBar}}" hint-placeholder-val="{{false}}">
+          <span style="font-size: 11px; font-weight: 600; color: #e6edf3; background: #161b22; border: 1px dashed {{accent}}; border-radius: 4px; padding: 4px 8px">+ Nouvelle barre</span>
+        </sc-if>
+      </div>
+    </sc-if>
+  </div>
+
+  <div style="height: 26px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; background: #0d1117; border-top: 1px solid #21262d; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: #8b949e">
+    <span>F:\PIPELINE\NOTES\Fichier TEST.mro</span>
+    <span style="color: #c9d1d9">{{status}}</span>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#2f81f7","options":["#2f81f7","#f0883e","#3fb950","#d55fd0"]},"snapDistance":{"editor":"range","default":24,"min":8,"max":64,"step":4,"unit":"px"},"radius":{"editor":"range","default":8,"min":0,"max":16,"step":1,"unit":"px"},"$preview":{"width":1280,"height":800}}'>
+var ICONS = {
+  pointer: { label: 'Sélection', color: '#e6edf3', d: 'M5 3l14 7-6 2-2 6z' },
+  hand: { label: 'Main', color: '#e6edf3', d: 'M8 13V5a1.5 1.5 0 0 1 3 0v6M11 11V4a1.5 1.5 0 0 1 3 0v7M14 11V5.5a1.5 1.5 0 0 1 3 0V14a6 6 0 0 1-6 6h-1a5 5 0 0 1-4-2l-3-4a1.5 1.5 0 0 1 2.3-1.9L8 14' },
+  text: { label: 'Texte', color: '#e6edf3', d: 'M5 6V4h14v2M12 4v16M9 20h6' },
+  note: { label: 'Note', color: '#f5c518', d: 'M4 4h16v10l-6 6H4zM14 20v-6h6' },
+  shape: { label: 'Dessin', color: '#f0533f', d: 'M4 20V4l16 16zM8 16h3v-3' },
+  image: { label: 'Média', color: '#d55fd0', d: 'M4 4h16v16H4zM4 16l5-5 4 4 3-3 4 4M15 8.5h.01' },
+  table: { label: 'Tableau', color: '#3fb950', d: 'M4 5h16v14H4zM4 10h16M4 15h16M10 5v14' },
+  pen: { label: 'Plume', color: '#f0883e', d: 'M5 19l3-9 8-6 4 4-6 8-9 3zM5 19l6-6M14 6l4 4' },
+  picture: { label: 'Image', color: '#58a6ff', d: 'M3 6h18v12H3zM3 15l5-4 5 4 3-2 5 4M16 9h.01' },
+  zoomIn: { label: 'Zoom +', color: '#e6edf3', d: 'M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14zM20 20l-4-4M11 8v6M8 11h6' },
+  zoomOut: { label: 'Zoom −', color: '#e6edf3', d: 'M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14zM20 20l-4-4M8 11h6' },
+  fit: { label: 'Cadrer', color: '#e6edf3', d: 'M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5' },
+  folder: { label: 'Dossier', color: '#e6edf3', d: 'M3 6h6l2 2h10v11H3z' },
+  download: { label: 'Exporter', color: '#e6edf3', d: 'M12 4v11M7 10l5 5 5-5M5 20h14' },
+  link: { label: 'Lien', color: '#e6edf3', d: 'M10 14a4 4 0 0 0 6 0l3-3a4 4 0 0 0-6-6l-1 1M14 10a4 4 0 0 0-6 0l-3 3a4 4 0 0 0 6 6l1-1' }
+};
+var CONTROLS = {
+  opacity: { kind: 'slider', label: 'Opacité', min: 0, max: 100, step: 1, unit: '%', def: 80, w: 220 },
+  size: { kind: 'slider', label: 'Taille', min: 1, max: 64, step: 1, unit: 'px', def: 12, w: 214 },
+  layer: { kind: 'input', label: 'Nom', placeholder: 'Nom du calque', def: 'Calque 1', w: 180 },
+  search: { kind: 'input', label: 'Chercher', placeholder: 'Rechercher…', def: '', w: 196 },
+  blend: { kind: 'select', label: 'Fusion', options: ['Normal', 'Multiplier', 'Écran', 'Incrustation', 'Addition'], def: 'Normal', w: 170 },
+  font: { kind: 'select', label: 'Police', options: ['Inter', 'Roboto', 'JetBrains Mono', 'Georgia'], def: 'Inter', w: 170 }
+};
+var KIND_FR = { slider: 'Slider', input: 'Saisie', select: 'Menu' };
+function itemOf(id) {
+  if (ICONS[id]) return Object.assign({ kind: 'icon', w: 34 }, ICONS[id]);
+  return CONTROLS[id];
+}
+var EDGE_FR ={ top: 'en haut', bottom: 'en bas', left: 'à gauche', right: 'à droite' };
+var HINT = 'Titre : glisser / Ctrl+clic renommer / double-clic pivoter · Poignée : étages · Élément hors barre : nouvelle barre';
+var CELL = 38;
+
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function snapTo(v, cands, t) {
+  var best = v, bd = t;
+  for (var i = 0; i < cands.length; i++) { var d = Math.abs(cands[i] - v); if (d < bd) { bd = d; best = cands[i]; } }
+  return best;
+}
+
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {
+      bars: [
+        { id: 'b1', title: 'Outils', icons: ['pointer', 'hand', 'text'], rows: 1, dock: 'top', x: 0, y: 0, orient: 'h' },
+        { id: 'b2', title: 'Créer', icons: ['note', 'shape', 'image', 'table', 'pen', 'picture'], rows: 2, dock: 'top', x: 124, y: 0, orient: 'h' },
+        { id: 'b3', title: 'Vue', icons: ['zoomIn', 'zoomOut', 'fit'], rows: 1, dock: 'left', x: 0, y: 150, orient: 'v' },
+        { id: 'b4', title: 'Fichier', icons: ['folder', 'download', 'link'], rows: 1, dock: null, x: 760, y: 420, orient: 'h' },
+        { id: 'b5', title: 'Propriétés', icons: ['opacity', 'size', 'blend'], rows: 3, dock: null, x: 420, y: 220, orient: 'h' },
+        { id: 'b6', title: 'Calque', icons: ['layer', 'font', 'search'], rows: 1, dock: 'bottom', x: 0, y: 0, orient: 'h' }
+      ],
+      values: { opacity: 80, size: 12, layer: 'Calque 1', search: '', blend: 'Normal', font: 'Inter' },
+      widths: {},
+      nextId: 7,
+      active: 'pointer',
+      drag: null,
+      snapLine: null,
+      iconDrag: null,
+      editing: null,
+      draft: '',
+      touch: {},
+      status: HINT
+    };
+    this.ws = null;
+    this.drag = null;
+    this.pending = null;
+    this.resize = null;
+    this.wresize = null;
+    this.touchKey = '';
+    this.wsRef = (el) => { this.ws = el; };
+    this.focusRef = (el) => { if (el && !el.dataset.focused) { el.dataset.focused = '1'; el.focus(); el.select(); } };
+    this.onMove = this.onMove.bind(this);
+    this.onUp = this.onUp.bind(this);
+  }
+
+  componentDidMount() {
+    window.addEventListener('pointermove', this.onMove);
+    window.addEventListener('pointerup', this.onUp);
+    this.measureTouch();
+    this.t1 = setTimeout(() => this.measureTouch(), 300);
+  }
+  componentDidUpdate() { this.measureTouch(); }
+  componentWillUnmount() {
+    clearTimeout(this.t1);
+    window.removeEventListener('pointermove', this.onMove);
+    window.removeEventListener('pointerup', this.onUp);
+  }
+
+  geom() {
+    var r = this.ws.getBoundingClientRect();
+    var W = this.ws.offsetWidth, H = this.ws.offsetHeight;
+    return { r: r, s: (r.width / W) || 1, W: W, H: H };
+  }
+  local(g, cx, cy) { return { x: (cx - g.r.left) / g.s, y: (cy - g.r.top) / g.s }; }
+  rectOf(g, el) {
+    var q = el.getBoundingClientRect();
+    return { x: (q.left - g.r.left) / g.s, y: (q.top - g.r.top) / g.s, w: q.width / g.s, h: q.height / g.s };
+  }
+  orientOf(b) { return b.dock ? ((b.dock === 'top' || b.dock === 'bottom') ? 'h' : 'v') : b.orient; }
+  dockOrient(edge) { return (edge === 'top' || edge === 'bottom') ? 'h' : 'v'; }
+  snapDist() { return this.props.snapDistance ?? 24; }
+
+  /* ---------- côtés en contact (bord de fenêtre ou autre barre) ---------- */
+  measureTouch() {
+    if (!this.ws) return;
+    var g = this.geom(), e = 1.5;
+    var els = Array.prototype.slice.call(this.ws.querySelectorAll('[data-bar-id]'));
+    var rs = els.map((el) => { var r = this.rectOf(g, el); r.id = el.getAttribute('data-bar-id'); return r; });
+    var touch = {};
+    rs.forEach((r) => {
+      var E = { l: r.x <= e, t: r.y <= e, r: r.x + r.w >= g.W - e, b: r.y + r.h >= g.H - e };
+      // coin carré si un côté du coin est plaqué contre un bord, ou si une barre voisine couvre ce coin
+      var sq = { tl: E.t || E.l, tr: E.t || E.r, br: E.b || E.r, bl: E.b || E.l, nl: false, nt: false, nr: false, nb: false };
+      rs.forEach((o) => {
+        if (o === r) return;
+        var vOver = r.y < o.y + o.h - 2 && r.y + r.h > o.y + 2;
+        var hOver = r.x < o.x + o.w - 2 && r.x + r.w > o.x + 2;
+        // côté partagé : la bordure du côté le plus court disparaît (égalité : celle de droite / du dessous)
+        if (vOver && Math.abs(r.x + r.w - o.x) <= e) {
+          if (r.h < o.h - 0.5) sq.nr = true;
+          if (o.y <= r.y + e) sq.tr = true;
+          if (o.y + o.h >= r.y + r.h - e) sq.br = true;
+        }
+        if (vOver && Math.abs(o.x + o.w - r.x) <= e) {
+          if (r.h <= o.h + 0.5) sq.nl = true;
+          if (o.y <= r.y + e) sq.tl = true;
+          if (o.y + o.h >= r.y + r.h - e) sq.bl = true;
+        }
+        if (hOver && Math.abs(r.y + r.h - o.y) <= e) {
+          if (r.w < o.w - 0.5) sq.nb = true;
+          if (o.x <= r.x + e) sq.bl = true;
+          if (o.x + o.w >= r.x + r.w - e) sq.br = true;
+        }
+        if (hOver && Math.abs(o.y + o.h - r.y) <= e) {
+          if (r.w <= o.w + 0.5) sq.nt = true;
+          if (o.x <= r.x + e) sq.tl = true;
+          if (o.x + o.w >= r.x + r.w - e) sq.tr = true;
+        }
+      });
+      touch[r.id] = sq;
+    });
+    var key = JSON.stringify(touch);
+    if (key !== this.touchKey) { this.touchKey = key; this.setState({ touch: touch }); }
+  }
+
+  /* ---------- barre : déplacement ---------- */
+  onBarDown(id, e) {
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || !this.ws) return;
+    e.preventDefault();
+    var g = this.geom();
+    var el = e.currentTarget.closest('[data-bar-id]');
+    var r = this.rectOf(g, el);
+    var p = this.local(g, e.clientX, e.clientY);
+    var bars = this.state.bars;
+    var others = Array.prototype.slice.call(this.ws.querySelectorAll('[data-bar-id]'))
+      .filter((o) => o.getAttribute('data-bar-id') !== id)
+      .map((o) => {
+        var b = bars.find((x) => x.id === o.getAttribute('data-bar-id'));
+        var q = this.rectOf(g, o); q.dock = b ? b.dock : null; return q;
+      });
+    var bar = bars.find((b) => b.id === id);
+    var orient = this.orientOf(bar);
+    this.drag = { id: id, offX: p.x - r.x, offY: p.y - r.y, w: r.w, h: r.h, W: g.W, H: g.H, others: others, orient: orient, snap: null };
+    var snap = this.computeSnap(r.x, r.y);
+    this.drag.snap = snap;
+    this.setState({ drag: { id: id, dock: snap.dock, along: snap.along, x: snap.x, y: snap.y }, snapLine: snap.line });
+  }
+
+  sizeFor(orient) {
+    var d = this.drag;
+    return orient === d.orient ? { w: d.w, h: d.h } : { w: d.h, h: d.w };
+  }
+
+  computeSnap(x, y) {
+    var d = this.drag, T = this.snapDist(), w = d.w, h = d.h;
+    x = clamp(x, 0, Math.max(0, d.W - w));
+    y = clamp(y, 0, Math.max(0, d.H - h));
+    var dist = { top: y, left: x, right: d.W - (x + w), bottom: d.H - (y + h) };
+    var edge = null, best = T;
+    Object.keys(dist).forEach((k) => { if (dist[k] < best) { best = dist[k]; edge = k; } });
+    if (edge) {
+      var horiz = edge === 'top' || edge === 'bottom';
+      var sz = this.sizeFor(this.dockOrient(edge));
+      var len = horiz ? sz.w : sz.h, max = Math.max(0, (horiz ? d.W : d.H) - len);
+      var cands = [0, max];
+      // toute barre présente dans la bande de ce bord (clipsée ici, sur un bord voisin, ou flottante)
+      d.others.forEach((o) => {
+        var inBand = edge === 'top' ? o.y < sz.h
+          : edge === 'bottom' ? o.y + o.h > d.H - sz.h
+          : edge === 'left' ? o.x < sz.w
+          : o.x + o.w > d.W - sz.w;
+        if (!inBand) return;
+        if (horiz) cands.push(o.x + o.w, o.x - len); else cands.push(o.y + o.h, o.y - len);
+      });
+      var along = clamp(snapTo(horiz ? x : y, cands, T), 0, max);
+      var line = {
+        top: 'left: 0; top: 0; width: 100%; height: 3px;',
+        bottom: 'left: 0; bottom: 0; width: 100%; height: 3px;',
+        left: 'left: 0; top: 0; width: 3px; height: 100%;',
+        right: 'right: 0; top: 0; width: 3px; height: 100%;'
+      }[edge];
+      return { dock: edge, along: along, x: x, y: y, line: line };
+    }
+    var xs = [], ys = [];
+    d.others.forEach((o) => {
+      var vOver = y < o.y + o.h && y + h > o.y;
+      var hOver = x < o.x + o.w && x + w > o.x;
+      var hDock = o.dock === 'top' || o.dock === 'bottom';
+      var vDock = o.dock === 'left' || o.dock === 'right';
+      // barre clipsée : seuls ses deux côtés le long du bord sont aimantables
+      // (pas de face intérieure, pas d'alignement perpendiculaire au bord)
+      if (vOver && !vDock) xs.push(o.x + o.w, o.x - w);
+      if (hOver && !hDock) ys.push(o.y + o.h, o.y - h);
+      if (!vDock) xs.push(o.x, o.x + o.w - w);
+      if (!hDock) ys.push(o.y, o.y + o.h - h);
+    });
+    var sx = clamp(snapTo(x, xs, T), 0, d.W - w), sy = clamp(snapTo(y, ys, T), 0, d.H - h);
+    // contact : avec une barre clipsée → la barre se clipse sur le même bord ; sinon trait de contact
+    var cl = null, dockTo = null;
+    d.others.forEach((o) => {
+      if (cl || dockTo) return;
+      var y0 = Math.max(sy, o.y), y1 = Math.min(sy + h, o.y + o.h);
+      var x0 = Math.max(sx, o.x), x1 = Math.min(sx + w, o.x + o.w);
+      var onRight = Math.abs(sx - (o.x + o.w)) < 0.5, onLeft = Math.abs(sx + w - o.x) < 0.5;
+      var below = Math.abs(sy - (o.y + o.h)) < 0.5, above = Math.abs(sy + h - o.y) < 0.5;
+      if (y1 - y0 > 2 && (onRight || onLeft)) {
+        if (o.dock === 'top' || o.dock === 'bottom') {
+          var szh = this.sizeFor('h');
+          dockTo = { edge: o.dock, along: onRight ? o.x + o.w : o.x - szh.w };
+          return;
+        }
+        var lx = onRight ? sx : sx + w;
+        cl = 'left: ' + (lx - 1.5) + 'px; top: ' + y0 + 'px; width: 3px; height: ' + (y1 - y0) + 'px;';
+      } else if (x1 - x0 > 2 && (below || above)) {
+        if (o.dock === 'left' || o.dock === 'right') {
+          var szv = this.sizeFor('v');
+          dockTo = { edge: o.dock, along: below ? o.y + o.h : o.y - szv.h };
+          return;
+        }
+        var ly = below ? sy : sy + h;
+        cl = 'left: ' + x0 + 'px; top: ' + (ly - 1.5) + 'px; width: ' + (x1 - x0) + 'px; height: 3px;';
+      }
+    });
+    if (dockTo) {
+      var dl = {
+        top: 'left: 0; top: 0; width: 100%; height: 3px;',
+        bottom: 'left: 0; bottom: 0; width: 100%; height: 3px;',
+        left: 'left: 0; top: 0; width: 3px; height: 100%;',
+        right: 'right: 0; top: 0; width: 3px; height: 100%;'
+      }[dockTo.edge];
+      return { dock: dockTo.edge, along: Math.max(0, dockTo.along), x: sx, y: sy, line: dl };
+    }
+    return { dock: null, x: sx, y: sy, line: cl };
+  }
+
+  /* ---------- étages ---------- */
+  onRowsDown(id, e) {
+    if (e.button !== 0 || !this.ws) return;
+    e.preventDefault(); e.stopPropagation();
+    var b = this.state.bars.find((x) => x.id === id);
+    var orient = this.orientOf(b);
+    var sign = (b.dock === 'bottom' || b.dock === 'right') ? -1 : 1;
+    this.resize = { id: id, start: b.rows || 1, axis: orient === 'h' ? 'y' : 'x', sign: sign, x0: e.clientX, y0: e.clientY, max: Math.max(1, b.icons.length) };
+  }
+
+  /* ---------- icône : déplacement ---------- */
+  onIconDown(barId, iconId, e) {
+    if (e.button !== 0 || !this.ws) return;
+    e.preventDefault();
+    this.pending = { barId: barId, iconId: iconId, sx: e.clientX, sy: e.clientY, started: false };
+  }
+
+  dropTarget(cx, cy) {
+    var el = document.elementFromPoint(cx, cy);
+    var bar = el && el.closest ? el.closest('[data-bar-id]') : null;
+    if (!bar || !this.ws.contains(bar)) return null;
+    var v = bar.getAttribute('data-orient') === 'v';
+    var idx = 0;
+    bar.querySelectorAll('[data-item-id]').forEach((ic) => {
+      var r = ic.getBoundingClientRect();
+      var after = v
+        ? (cx > r.right + 2 || (cx >= r.left - 2 && cy > r.top + r.height / 2))
+        : (cy > r.bottom + 2 || (cy >= r.top - 2 && cx > r.left + r.width / 2));
+      if (after) idx++;
+    });
+    return { barId: bar.getAttribute('data-bar-id'), index: idx };
+  }
+
+  /* ---------- pointeur global ---------- */
+  onMove(e) {
+    if (this.drag) {
+      var g = this.geom();
+      var p = this.local(g, e.clientX, e.clientY);
+      var snap = this.computeSnap(p.x - this.drag.offX, p.y - this.drag.offY);
+      this.drag.snap = snap;
+      this.setState({ drag: { id: this.drag.id, dock: snap.dock, along: snap.along, x: snap.x, y: snap.y }, snapLine: snap.line });
+      return;
+    }
+    if (this.wresize) {
+      var wr = this.wresize, gw = this.geom();
+      var nw = Math.round(clamp(wr.w0 + (e.clientX - wr.x0) / gw.s, wr.min, 520));
+      if ((this.state.widths[wr.id] ?? wr.w0) !== nw) {
+        var ws = Object.assign({}, this.state.widths); ws[wr.id] = nw;
+        this.setState({ widths: ws, status: wr.label + ' : largeur ' + nw + ' px' });
+      }
+      return;
+    }
+    if (this.resize) {
+      var rz = this.resize, g3 = this.geom();
+      var delta = (rz.axis === 'y' ? e.clientY - rz.y0 : e.clientX - rz.x0) / g3.s * rz.sign;
+      var rows = clamp(rz.start + Math.round(delta / CELL), 1, rz.max);
+      var cur = this.state.bars.find((x) => x.id === rz.id);
+      if (cur && cur.rows !== rows) {
+        this.setState({ bars: this.state.bars.map((x) => x.id === rz.id ? Object.assign({}, x, { rows: rows }) : x), status: '« ' + cur.title + ' » : ' + rows + ' étage' + (rows > 1 ? 's' : '') });
+      }
+      return;
+    }
+    var pd = this.pending;
+    if (pd) {
+      if (!pd.started && Math.hypot(e.clientX - pd.sx, e.clientY - pd.sy) < 4) return;
+      pd.started = true;
+      var g2 = this.geom();
+      var q = this.local(g2, e.clientX, e.clientY);
+      this.setState({ iconDrag: { iconId: pd.iconId, fromBar: pd.barId, x: q.x, y: q.y, target: this.dropTarget(e.clientX, e.clientY) } });
+    }
+  }
+
+  onUp(e) {
+    if (this.wresize) { this.wresize = null; return; }
+    if (this.resize) { this.resize = null; return; }
+    if (this.drag) {
+      var d = this.drag, snap = d.snap;
+      this.drag = null;
+      var bars = this.state.bars.slice();
+      var i = bars.findIndex((b) => b.id === d.id);
+      var b = Object.assign({}, bars[i]);
+      if (snap) {
+        if (snap.dock) {
+          b.dock = snap.dock;
+          b.orient = this.dockOrient(snap.dock);
+          if (snap.dock === 'top' || snap.dock === 'bottom') { b.x = snap.along; b.y = 0; } else { b.y = snap.along; b.x = 0; }
+        } else {
+          b.dock = null; b.orient = d.orient; b.x = snap.x; b.y = snap.y;
+        }
+      }
+      bars.splice(i, 1); bars.push(b);
+      var msg = snap ? (b.dock ? '« ' + b.title + ' » clipsée ' + EDGE_FR[b.dock] : '« ' + b.title + ' » flottante') : this.state.status;
+      this.setState({ bars: bars, drag: null, snapLine: null, status: msg });
+      return;
+    }
+    var pd = this.pending;
+    if (pd) {
+      this.pending = null;
+      if (!pd.started) {
+        if (ICONS[pd.iconId]) this.setState({ active: pd.iconId, status: 'Outil : ' + ICONS[pd.iconId].label });
+        return;
+      }
+      var g = this.geom();
+      var p = this.local(g, e.clientX, e.clientY);
+      var target = this.dropTarget(e.clientX, e.clientY);
+      var nextId = this.state.nextId;
+      var bars2 = this.state.bars.map((x) => Object.assign({}, x, { icons: x.icons.filter((ic) => !(x.id === pd.barId && ic === pd.iconId)) }));
+      var status;
+      if (target) {
+        var t = bars2.find((x) => x.id === target.barId);
+        t.icons.splice(Math.min(target.index, t.icons.length), 0, pd.iconId);
+        status = itemOf(pd.iconId).label + ' → « ' + t.title + ' »';
+      } else {
+        var nb = { id: 'b' + nextId, title: 'Barre ' + nextId, icons: [pd.iconId], rows: 1, dock: null, orient: 'h',
+          x: clamp(p.x - 24, 0, g.W - 60), y: clamp(p.y - 20, 0, g.H - 64) };
+        nextId++;
+        bars2.push(nb);
+        status = 'Nouvelle barre « ' + nb.title + ' » — Ctrl+clic sur son titre pour la renommer';
+      }
+      var removed = bars2.filter((x) => x.icons.length === 0);
+      bars2 = bars2.filter((x) => x.icons.length > 0).map((x) => Object.assign({}, x, { rows: Math.min(x.rows || 1, x.icons.length) }));
+      if (removed.length) status += ' · « ' + removed[0].title + ' » vide, supprimée';
+      this.setState({ bars: bars2, iconDrag: null, nextId: nextId, status: status });
+    }
+  }
+
+  /* ---------- titre ---------- */
+  onTitleClick(id, e) {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    var b = this.state.bars.find((x) => x.id === id);
+    this.setState({ editing: id, draft: b.title });
+  }
+  toggleOrient(id) {
+    var bars = this.state.bars.map((b) => (b.id === id && !b.dock) ? Object.assign({}, b, { orient: b.orient === 'h' ? 'v' : 'h' }) : b);
+    this.setState({ bars: bars });
+  }
+  commitTitle() {
+    if (!this.state.editing) return;
+    var id = this.state.editing, v = this.state.draft.trim();
+    var bars = this.state.bars.map((b) => (b.id === id && v) ? Object.assign({}, b, { title: v }) : b);
+    this.setState({ bars: bars, editing: null, status: v ? 'Barre renommée « ' + v + ' »' : this.state.status });
+  }
+
+  renderVals() {
+    var s = this.state;
+    var accent = this.props.accent ?? '#2f81f7';
+    var R = this.props.radius ?? 8;
+    var idr = s.iconDrag;
+    var bars = s.bars.map((b, i) => {
+      var dragging = s.drag && s.drag.id === b.id;
+      var dock = dragging ? s.drag.dock : b.dock;
+      var orient = dock ? this.dockOrient(dock) : (dragging && this.drag ? this.drag.orient : b.orient);
+      var x = dragging ? (dock ? s.drag.along : s.drag.x) : b.x;
+      var y = dragging ? (dock ? s.drag.along : s.drag.y) : b.y;
+      var pos;
+      if (dock === 'top') pos = 'left: ' + x + 'px; top: 0;';
+      else if (dock === 'bottom') pos = 'left: ' + x + 'px; bottom: 0;';
+      else if (dock === 'left') pos = 'left: 0; top: ' + y + 'px;';
+      else if (dock === 'right') pos = 'right: 0; top: ' + y + 'px;';
+      else pos = 'left: ' + x + 'px; top: ' + y + 'px;';
+
+      var t = s.touch[b.id] || {};
+      var c = (q) => q ? 0 : R;
+      var radius = c(t.tl) + 'px ' + c(t.tr) + 'px ' + c(t.br) + 'px ' + c(t.bl) + 'px';
+
+      var items = b.icons
+        .filter((ic) => !(idr && ic === idr.iconId && b.id === idr.fromBar))
+        .map((ic) => {
+          var d = itemOf(ic);
+          var base = { slot: false, id: ic, label: d.label, isIcon: d.kind === 'icon', isSlider: d.kind === 'slider',
+            isInput: d.kind === 'input', isSelect: d.kind === 'select', down: (e) => this.onIconDown(b.id, ic, e) };
+          if (d.kind === 'icon') {
+            var on = s.active === ic;
+            return Object.assign(base, { d: d.d, color: d.color,
+              bg: on ? accent + '33' : 'transparent', border: on ? accent : 'transparent' });
+          }
+          var val = s.values[ic];
+          return Object.assign(base, {
+            value: val, min: d.min, max: d.max, step: d.step, options: d.options, placeholder: d.placeholder || '',
+            display: d.kind === 'slider' ? val + ' ' + d.unit : '',
+            change: (e) => {
+              var nv = d.kind === 'slider' ? Number(e.target.value) : e.target.value;
+              var vals = Object.assign({}, this.state.values); vals[ic] = nv;
+              this.setState({ values: vals, status: d.label + ' : ' + nv + (d.unit ? ' ' + d.unit : '') });
+            },
+            stopKey: (e) => e.stopPropagation(),
+            w: s.widths[ic] ?? d.w,
+            widthDown: (e) => {
+              if (e.button !== 0 || !this.ws) return;
+              e.preventDefault(); e.stopPropagation();
+              this.wresize = { id: ic, label: d.label, x0: e.clientX, w0: s.widths[ic] ?? d.w, min: d.minW || 120 };
+            }
+          });
+        });
+      var isTarget = idr && idr.target && idr.target.barId === b.id;
+      if (isTarget) items.splice(Math.min(idr.target.index, items.length), 0, { slot: true, w: s.widths[idr.iconId] ?? itemOf(idr.iconId).w });
+
+      // étages : répartition en lignes (barre horizontale) ou en colonnes (barre verticale)
+      var rows = Math.max(1, Math.min(b.rows || 1, Math.max(1, items.length)));
+      var per = Math.max(1, Math.ceil(items.length / rows));
+      var lanes = [];
+      for (var k = 0; k < items.length; k += per) lanes.push({ items: items.slice(k, k + per) });
+      if (!lanes.length) lanes.push({ items: [] });
+
+      var handleFirst = dock === 'bottom' || dock === 'right';
+      var handleStyle = (orient === 'h'
+        ? 'height: 8px; align-self: stretch; cursor: ns-resize;'
+        : 'width: 8px; align-self: stretch; cursor: ew-resize;') + (handleFirst ? ' order: -1;' : '');
+      var handleMark = orient === 'h' ? 'width: 18px; height: 2px;' : 'width: 2px; height: 18px;';
+
+      var editing = s.editing === b.id;
+      return {
+        id: b.id, title: b.title, orient: orient, pos: pos, radius: radius, lanes: lanes,
+        laneDir: orient === 'h' ? 'column' : 'row',
+        itemDir: orient === 'h' ? 'row' : 'column',
+        handleStyle: handleStyle, handleMark: handleMark,
+        dir: orient === 'h' ? 'column' : 'row',
+        titleStyle: orient === 'h'
+          ? 'padding: 6px 8px 0 6px; writing-mode: horizontal-tb;'
+          : 'padding: 8px 0 6px 6px; writing-mode: vertical-rl; transform: rotate(180deg);',
+        border: (function () {
+          var col = isTarget ? accent : (dragging ? '#484f58' : '#30363d');
+          // côté partagé avec une autre barre : une seule bordure de 1 px (celle de la voisine)
+          var tc = (f) => f ? 'transparent' : col;
+          return col + '; border-color: ' + tc(t.nt) + ' ' + tc(t.nr) + ' ' + tc(t.nb) + ' ' + tc(t.nl);
+        })(),
+        shadow: dragging ? '0 12px 32px rgba(0,0,0,0.55)' : (dock ? 'none' : '0 6px 18px rgba(0,0,0,0.35)'),
+        opacity: dragging ? 0.94 : 1,
+        z: dragging ? 30 : 10 + i,
+        editing: editing, notEditing: !editing,
+        down: (e) => this.onBarDown(b.id, e),
+        rowsDown: (e) => this.onRowsDown(b.id, e),
+        titleClick: (e) => this.onTitleClick(b.id, e),
+        dbl: () => this.toggleOrient(b.id)
+      };
+    });
+    var ghost = null;
+    if (idr) {
+      var gi = itemOf(idr.iconId);
+      ghost = { pos: 'left: ' + (idr.x - 17) + 'px; top: ' + (idr.y - 17) + 'px;', d: gi.d || '', color: gi.color || '#e6edf3',
+        isIcon: gi.kind === 'icon', isControl: gi.kind !== 'icon', label: gi.label, kindLabel: KIND_FR[gi.kind] || '',
+        newBar: !idr.target };
+    }
+    return {
+      accent: accent,
+      bars: bars,
+      ghost: ghost,
+      snapLine: s.snapLine,
+      status: s.status,
+      draft: s.draft,
+      wsRef: this.wsRef,
+      focusRef: this.focusRef,
+      onDraft: (e) => this.setState({ draft: e.target.value }),
+      onDraftKey: (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') this.commitTitle();
+        else if (e.key === 'Escape') this.setState({ editing: null });
+      },
+      commitTitle: () => this.commitTitle()
+    };
+  }
+}
+</script>
+</body>
+</html>

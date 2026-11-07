@@ -63,6 +63,9 @@ def _cad_groups() -> dict:
         Spec("board_cad_crosshair_auto_color", "Couleur automatique (selon le fond du canvas)", "bool", True),
         Spec("board_cad_crosshair_color", "Couleur du réticule", "color_app", "#1a1a1a",
              {"title": "Réticule", "active_when": ("board_cad_crosshair_auto_color", False)}),
+        Spec("board_cad_crosshair_negative", "Négatif sur les zones de la couleur du réticule", "bool", True),
+        Spec("board_cad_crosshair_negative_tol", "Négatif : écart de couleur toléré", "slider", 48,
+             {"min": 4, "max": 160, "active_when": ("board_cad_crosshair_negative", True)}),
         Spec("board_cad_pickbox", "Carré central : demi-côté (pixels d'écran, = boîte de sélection)", "slider", 5,
              {"min": 1, "max": 20}),
         Spec("board_cad_magnet", "Aimant : le réticule saute sur le point accroché (objets)", "bool", True),
@@ -114,8 +117,8 @@ def _cad_groups() -> dict:
              {"min": 1, "max": 20}),
         Spec("board_cad_ghost_color", "Couleur des fantômes (déplacer, copier)", "color_app", "#5f6b78",
              {"title": "Fantômes"}),
-        Spec("board_cad_bar_color", "Fond des barres du CAD (outils et commande)", "color_app", "#0a0a0a",
-             {"title": "Barres du CAD"}),
+        Spec("board_cad_bar_color", "Fond de la barre de commande du CAD", "color_app", "#0a0a0a",
+             {"title": "Barre de commande du CAD"}),
         Spec("board_cad_precision", "Décimales affichées", "slider", 4, {"min": 0, "max": 8, "unit": ""}),
     ]
     dims = [
@@ -132,6 +135,8 @@ def _cad_groups() -> dict:
         Spec("board_cad_dim_arrow_kind", "Forme des flèches", "choice", "triangle",
              {"choices": (("triangle", "Triangle"), ("open", "Ouverte"), ("tick", "Trait oblique")), "width": 170}),
         Spec("board_cad_dim_decimals", "Décimales (zéros de fin retirés)", "slider", 2, {"min": 0, "max": 8, "unit": ""}),
+        Spec("board_cad_dim_baseline", "Écart des cotations de ligne de base (DBA)", "slider", 375,
+             {"min": 1, "max": 100000, "scale": 100, "unit": "", "box": 84}),
     ]
     hatches = [
         Spec("board_cad_hatch_pattern", "Motif par défaut", "choice", "lines",
@@ -141,6 +146,15 @@ def _cad_groups() -> dict:
         Spec("board_cad_hatch_spacing", "Espacement des traits", "slider", 300,
              {"min": 1, "max": 1000000, "scale": 100, "unit": "", "box": 84}),
         Spec("board_cad_hatch_alpha", "Opacité du remplissage plein", "slider", 35, {"min": 0, "max": 100, "unit": "%"}),
+    ]
+    points = [
+        Spec("board_cad_point_mode", "Figure des points (PDMODE d'AutoCAD)", "choice", 34,
+             {"choices": ((0, "Point"), (1, "Rien (invisible)"), (2, "Croix +"), (3, "Croix ×"), (4, "Trait"),
+                          (32, "Cercle"), (34, "Cercle et croix +"), (35, "Cercle et croix ×"), (64, "Carré"),
+                          (66, "Carré et croix +"), (67, "Carré et croix ×"), (98, "Cercle, carré et croix +")),
+              "width": 220}),
+        Spec("board_cad_point_size", "Taille des points", "slider", 300,
+             {"min": 1, "max": 1000000, "scale": 100, "unit": "", "box": 84}),
     ]
     justify = tuple((code, f"{code} — {label}") for code, label in (
         ("L", "Gauche (ligne de base)"), ("C", "Centre (ligne de base)"), ("R", "Droite (ligne de base)"),
@@ -175,7 +189,7 @@ def _cad_groups() -> dict:
             "CAD : Suivi et saisie": tracking, "CAD : Grille": grid, "CAD : Réticule": crosshair,
             "CAD : Sélection et poignées": selection, "CAD : Fenêtre de sélection": window_frame,
             "CAD : Capture": crossing_frame, "CAD : Ajuster": trim, "CAD : Affichage": display, "CAD : Cotations": dims, "CAD : Hachures": hatches,
-            "CAD : Textes": texts,
+            "CAD : Textes": texts, "CAD : Points": points,
             "CAD : Raccourcis clavier": shortcuts,
             "CAD : Icônes": icons}
 
@@ -203,6 +217,7 @@ CAD_TREE = (
     Node("Cotations", "CAD : Cotations"),
     Node("Hachures", "CAD : Hachures"),
     Node("Textes", "CAD : Textes"),
+    Node("Points", "CAD : Points"),
     Node("Raccourcis clavier", "CAD : Raccourcis clavier"),
     Node("Icônes", "CAD : Icônes"),
 )

@@ -182,6 +182,46 @@ CATALOG["Vidéo : Moodboard"] = [
     _v_color("video_moodboard_bg_color", "Couleur de fond du moodboard"),
     _v_slider("video_moodboard_proxy_width", "Largeur des images proxy", 128, 7680, "px"),
 ]
+# Analyse colorimétrique (fm_video/analysis_ui.py, maquette « Analyse — Image 4207 », 2026-10-31) : chaque valeur
+# visuelle de la maquette, défauts = fm_video/analysis_look.py.
+_ANALYSIS_COLOR_LABELS = {
+    "bg_color": "Fond de la page", "panel_color": "Fond des panneaux (barre du haut, palette, inspecteur)",
+    "footer_color": "Fond de la barre d'état", "line_color": "Filets entre les zones",
+    "control_border": "Contour des boutons", "well_color": "Fond des sélecteurs et des champs",
+    "active_color": "Segment choisi", "card_color": "Cartes de luminance", "scope_bg": "Fond des scopes",
+    "text_color": "Texte", "strong_color": "Texte fort (titre, HEX)", "label_color": "Titres des sections, boutons",
+    "muted_color": "Légendes", "axis_color": "Graduations des scopes", "accent_color": "Accent (export, moyenne, cases)",
+    "accent_ink": "Texte sur l'accent", "chip_on_bg": "Pastille de canal allumée : fond",
+    "chip_on_border": "Pastille de canal allumée : contour", "chip_off_dot": "Pastille de canal éteinte : point",
+    "hist_r": "Histogramme : rouge", "hist_g": "Histogramme : vert", "hist_b": "Histogramme : bleu",
+    "hist_y": "Histogramme : luminance", "wave_color": "Waveform", "skin_color": "Vectorscope : ligne des teintes chair",
+    "viewer_bg_1": "Fond du viewer n° 1", "viewer_bg_2": "Fond du viewer n° 2", "viewer_bg_3": "Fond du viewer n° 3",
+    "accent_light": "Matching : accent clair (référence à choisir, « Après »)",
+    "disabled_bg": "Matching : export indisponible, fond", "disabled_fg": "Matching : export indisponible, texte",
+    "arrow_color": "Matching : flèche source -> référence", "todo_ring": "Matching : étape à venir",
+    "swatch_frame": "Filet des pastilles", "toggle_on_border": "« Localiser sur l'image » allumé : contour",
+}
+_ANALYSIS_SIZE_LABELS = {
+    "font_size": "Taille du texte", "inspector_width": "Largeur de l'inspecteur", "section_padding": "Padding des sections",
+    "radius": "Border radius (boutons, champs, cartes)", "button_height": "Hauteur des boutons de la barre du haut",
+    "swatch_height": "Hauteur des pastilles", "bars_height": "Hauteur des barres de couverture",
+    "swatch_gap": "Espace entre les barres de couverture", "coverage_height": "Hauteur de la barre de couverture",
+    "tone_height": "Hauteur de la barre tonale", "image_max_height": "Hauteur maximale de l'image",
+    "hist_height": "Hauteur de l'histogramme", "wave_height": "Hauteur du waveform", "vec_size": "Côté du vectorscope",
+    "match_image_max_height": "Matching : hauteur maximale de l'image", "thumb_width": "Matching : largeur des vignettes",
+}
+from fm_video.analysis_look import COLORS as _A_COLORS, SIZES as _A_SIZES  # noqa: E402
+CATALOG["Vidéo : Analyse colorimétrique"] = [
+    _v_choice("video_analysis_order", "Ordre de la palette",
+              (("L", "Clarté"), ("cov", "Couverture"), ("h", "Teinte"), ("C", "Chroma"))),
+    Spec("video_analysis_font_family", "Police", "font_select", "", {"auto_label": "Inter (maquette)"}),
+    Spec("video_analysis_mono_family", "Police des valeurs", "font_select", "",
+         {"auto_label": "JetBrains Mono (maquette)"}),
+    *(_v_slider("video_analysis_" + key, _ANALYSIS_SIZE_LABELS[key], low, high, reset=default)
+      for key, default, low, high in _A_SIZES),
+    _v_slider("video_analysis_vec_zoom", "Zoom du vectorscope (dixièmes : 16 = ×1,6)", 5, 40, "", reset=16),
+    *(_v_color("video_analysis_" + key, _ANALYSIS_COLOR_LABELS[key]) for key, _default in _A_COLORS),
+]
 CATALOG["Vidéo : Aide pédagogique"] = [
     _v_bool("video_help_enabled", "Aide détaillée Ctrl + Shift"),
     _v_slider("video_help_delay", "Délai d’apparition", 0, 2000, "ms"),
@@ -276,7 +316,8 @@ VIDEO_TREE = (
     Node("Informations en surimpression", "Vidéo : Informations"),
     Node("Lecture", "Vidéo : Lecture"),
     Node("Timeline", "Vidéo : Timeline"),
-    Node("Moodboard", "Vidéo : Moodboard",children=(Node("Infos dans images","Vidéo : Infos dans images"),)),
+    Node("Moodboard", "Vidéo : Moodboard",children=(Node("Infos dans images","Vidéo : Infos dans images"),
+                                                    Node("Analyse colorimétrique", "Vidéo : Analyse colorimétrique"))),
     Node("Aide pédagogique", "Vidéo : Aide pédagogique"),
     Node("Couleur (OCIO, EXR / TIFF, vidéo)", "Vidéo : Couleur"),
     Node("LUT", "Vidéo : LUT"),

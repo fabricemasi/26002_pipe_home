@@ -95,3 +95,11 @@ Validation : 6 tests d'aide passent (survol avec touches déjà maintenues, acti
 - Sonde cProfile, SettingsWindowV2(eager=True), 32 077 widgets : 100 changements de fond en 3,72 ms (temps UI, hors peinture écran).
 - Compilation Python des modules modifiés réussie.
 - Le contrôle global `git diff --check` relève des espaces de fin de ligne et CRLF dans de nombreux changements préexistants ; ces fichiers n'ont pas été reformattés.
+
+## Cinquième étape — interface de la maquette « Analyse — Image 4207 » (2026-10-31)
+
+Vue refaite d’après la maquette HTML de l’utilisateur : `analysis_ui.py` (assemblage), `analysis_widgets.py` (widgets peints), `analysis_look.py` (habillage réglable, défauts = maquette) ; `analysis.py` ne garde que le moteur. Matching / LUT devient un onglet de la vue. Détail, mesures et écarts : `docs/agents/fm_video.md`, « ANALYSE COLORIMÉTRIQUE ».
+
+Onglet Matching / LUT refait d’après la seconde maquette (`matching_view.py`, `matching_widgets.py`) ; la fenêtre `MatchingDialog` n’est plus ouverte par la vue. Détail : `docs/agents/fm_video.md`, « MATCHING / LUT ».
+
+Colonne image refaite d’après la 2e version de la maquette d’analyse : nuances par couleur, « Localiser sur l’image », « Palette seule », barres de couverture (`analysis_palette.py`, `analysis_isolate.py`). Détail : `docs/agents/fm_video.md`, « LOCALISER SUR L'IMAGE ».

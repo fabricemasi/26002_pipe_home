@@ -141,6 +141,12 @@ class MdModuleMixin:
         self._close_video()
         if not self._leave_font():
             return False
+        leave_pdf = getattr(self, "_leave_pdf", None)          # éditeur PDF ouvert : fermé d'abord (fm_pdf)
+        if leave_pdf is not None and not leave_pdf():
+            return False
+        leave_agenda = getattr(self, "_leave_agenda", None)    # agenda ouvert : rangé d'abord (fm_agenda)
+        if leave_agenda is not None:
+            leave_agenda()
         try:
             pane = self._md_pane()
         except ImportError:
@@ -149,7 +155,7 @@ class MdModuleMixin:
         if reason is not None:
             self.path_label.setText(reason)
             return False
-        pane.attach(self.scroll.viewport())
+        pane.attach(self.scroll.viewport(), getattr(self, "_module_side_left", 0))
         pane.open(Path(path))
         if not getattr(self, "_md_open", False):
             self._md_open = True

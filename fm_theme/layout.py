@@ -35,7 +35,7 @@ from fm_theme.tokens import (
 from fm_theme.widgets import (
     Menu, DRAG_GHOST_OPACITY, _DualFontSelectField, _selection_color, _SliderField, _Toggle,
     _apply_stylesheet_cached, _qfont, _inner_h_edge, _paint_bordered_rect, _app_dpr, _hidpi_pixmap,
-    _paint_inner_vlines, _TableRow, _restyle_table_row, _table_frame, _hide_width_badges, _width_badges,
+    _paint_inner_vlines, _TableFrame, _TableRow, _restyle_table_row, _table_frame, _hide_width_badges, _width_badges,
     add_context_extras,
 )
 
@@ -296,6 +296,13 @@ class _BodyMixin:
     contenu (tableaux...) est decale pour commencer sous le texte du titre."""
 
     def _init_body(self, offset: int):
+        # Hauteur = TOUJOURS celle du contenu (bug signale 2026-10-30, « les espaces entre les elements des
+        # settings deviennent fous ») : les planchers explicites (setMinimumHeight(sizeHint()) au dernier
+        # depli, voir set_collapsed/refresh_*) restaient PERIMES des que le contenu rapetissait sans repli
+        # (tableau plus bas, toggle plus petit...) ; le surplus devenait des vides sous les titres. « Fixed » :
+        # le parent donne exactement sizeHint() et le compte comme minimum (jamais ecrase non plus). Les
+        # planchers ne sont plus poses (_fit_height).
+        self.setSizePolicy(self.sizePolicy().horizontalPolicy(), QSizePolicy.Fixed)
         self._body_layout.setContentsMargins(0, 0, 0, 0)
         self._body_rows: list[QHBoxLayout] = []
         self._body_offset = offset
@@ -328,6 +335,17 @@ class _BodyMixin:
         row.addWidget(widget, 0, Qt.AlignLeft)
         self._body_rows.append(row)
         self._body_layout.addLayout(row)
+
+    def _fit_height(self):
+        """Ancien « plancher = sizeHint() » : la politique Fixed (voir _init_body) suit deja le contenu ;
+        un plancher explicite ne ferait que rester perime. Relache, et le parent recalcule. Mise a la hauteur
+        TOUT DE SUITE (ce que faisait setMinimumHeight) : une fenetre pas encore affichee (pre-construction) n'a
+        pas de passe de layout, son contenu restait sinon tasse dans l'ancienne hauteur."""
+        self.setMinimumHeight(0)
+        height = self.sizeHint().height()
+        if self.height() != height:
+            self.resize(self.width(), height)
+        self.updateGeometry()
 
     def set_body_offset(self, offset: int):
         self._body_offset = offset
@@ -611,8 +629,7 @@ class _Section(_BodyMixin, QWidget):
         # updateGeometry()/invalidate() ne suffit pas a corriger ca).
         # Relachee (0) repliee : la section retrouve alors sa taille
         # naturelle, tres compacte (juste le bandeau titre).
-        self.setMinimumHeight(self.sizeHint().height() if not collapsed else 0)
-        self.updateGeometry()
+        self._fit_height()
         self.collapsedChanged.emit(collapsed)
         QTimer.singleShot(0, self._remeasure)
 
@@ -646,8 +663,7 @@ class _Section(_BodyMixin, QWidget):
         # > Cadre/Coche...) peut se replier/deplier PLUSIEURS niveaux plus
         # bas — voir sa remarque, meme raison.
         _activate_layout_tree(self)
-        self.setMinimumHeight(self.sizeHint().height())
-        self.updateGeometry()
+        self._fit_height()
 
     def _refresh_chevron(self):
         # Chevron bas = deplie, chevron droit = replie — meme convention que
@@ -783,8 +799,7 @@ class _SubSection(_BodyMixin, QWidget):
         l'ecrasement du tableau ... que tu le prennes systematiquement en
         compte pour tous les tableaux"."""
         _activate_layout_tree(self)
-        self.setMinimumHeight(self.sizeHint().height() if not self._collapsed else 0)
-        self.updateGeometry()
+        self._fit_height()
 
     def is_collapsed(self) -> bool:
         return self._collapsed
@@ -801,13 +816,7 @@ def _reflow_ancestors(widget: QWidget):
     des ecarts incoherents. Planchers d'abord leves, layouts recalcules une
     fois depuis le plus externe, puis replaces du plus interne au plus
     externe."""
-    chain = []
-    parent = widget.parentWidget()
-    while parent is not None:
-        if isinstance(parent, (_Section, _SubSection)):
-            chain.append(parent)
-        parent = parent.parentWidget()
-    _reflow_chain(chain)
+    _reflow_chain([parent for parent in _ancestors(widget) if isinstance(parent, (_Section, _SubSection))])
 
 def _reflow_all(root: QWidget):
     """Meme recalcul que _reflow_ancestors pour tous les titres sous `root`
@@ -824,14 +833,19 @@ def _reflow_chain(chain: list):
                 isinstance(p, (_Section, _SubSection)) for p in _ancestors(item)):
             _activate_layout_tree(item)
     for item in open_items:
-        item.setMinimumHeight(item.sizeHint().height())
-        item.updateGeometry()
+        item._fit_height()
+
+def logical_parent(widget: QWidget):
+    """Parent d'un widget dans l'arbre des titres : `_logical_parent` quand le corps d'une section a été sorti
+    de son titre (volet de l'éditeur fm_theme, `theme_side_detail`), sinon son parent Qt."""
+    return getattr(widget, "_logical_parent", None) or widget.parentWidget()
+
 
 def _ancestors(widget: QWidget):
-    parent = widget.parentWidget()
+    parent = logical_parent(widget)
     while parent is not None:
         yield parent
-        parent = parent.parentWidget()
+        parent = logical_parent(parent)
 
 def _make_accordion(items: list):
     """Regroupe plusieurs _Section/_SubSection SOEURS en accordeon : en
@@ -1306,6 +1320,31 @@ class _ResizableTableHeader(QWidget):
             self._refresh_cell_style(i)
         self._release_stretch(self._equal_group())
         self.selectionChanged.emit()
+        # Une seule selection a la fois dans l'appli (sans Maj), clic ailleurs = tout deselectionner.
+        from fm_theme import table_selection
+        table_selection.changed(self, exclusive=not shift)
+
+    # -- proprietaire de selection (fm_theme.table_selection) --
+    def has_selection(self) -> bool:
+        return bool(self._selected)
+
+    def clear_selection(self):
+        if not self._selected:
+            return
+        self._selected = set()
+        for i in range(len(self._cells)):
+            self._refresh_cell_style(i)
+        self.selectionChanged.emit()
+
+    def owns_press(self, global_pos) -> bool:
+        """Clic traite par l'entete : ses titres, ou une bordure de colonne tiree depuis n'importe quelle ligne
+        du tableau (le groupe selectionne garde sa largeur commune)."""
+        local = self.mapFromGlobal(global_pos)
+        if self.rect().contains(local):
+            return True
+        frame = self.parentWidget()
+        inside = frame is not None and frame.rect().contains(frame.mapFromGlobal(global_pos))
+        return inside and self._boundary_at(local.x()) is not None
 
     def _equal_group(self) -> list[int]:
         """Colonnes selectionnees (au moins 2) : elles gardent TOUTES exactement la meme largeur."""
@@ -1731,12 +1770,15 @@ def _wire_resizable_columns(head: _ResizableTableHeader, column_cells: dict[int,
         row.layout().addStretch(0)
     head.selectionChanged.connect(lambda: [r.update() for r in rows])
 
-def _table_row(bg: str, first: bool) -> tuple[QWidget, QHBoxLayout]:
+def _table_row(bg: str, first: bool, parent: QWidget | None = None) -> tuple[QWidget, QHBoxLayout]:
     """`first` : la toute premiere ligne de donnees colle directement sous
     l'entete (qui a deja son propre filet du bas) — seules les lignes
     SUIVANTES ont besoin de leur propre filet du haut ; aucune ligne ne
-    dessine plus ses propres cotes gauche/droite (voir _table_frame)."""
-    row = _TableRow()
+    dessine plus ses propres cotes gauche/droite (voir _table_frame).
+    `parent` : le cadre qui recevra la ligne. Une ligne creee VIDE sous son parent evite de rattacher plus
+    tard un sous-arbre plein : ses feuilles de style refont le style de tous ses descendants a chaque
+    rattachement (voir `docs/agents/pieges-generaux.md`, « Monter un tableau de reglages »)."""
+    row = _TableRow(parent)
     row.setObjectName("TableRow")
     row.setAttribute(Qt.WA_StyledBackground, True)
     # 36 : plancher de secours pour un contenu tres court (une seule ligne
@@ -1777,6 +1819,17 @@ def _lock_min_height(row: QWidget):
     _ColorGrid) — voir la remarque de l'utilisateur, capture annotee a
     l'appui pour les deux.
     """
+    if isinstance(row, _TableFrame):
+        # Cadre de tableau : TOUJOURS la hauteur de ses lignes (bug signale 2026-10-30, « les hauteurs de lignes
+        # deviennent folles ») : en « Minimum », un cadre plus haut que son contenu (plancher reste d'un etat plus
+        # haut — `max` ci-dessous ne redescend jamais —, ou place en trop donnee par une section parente) etait
+        # rempli par Qt de VIDES repartis entre ses lignes, toutes de hauteur fixe. « Fixed » sans plancher : la
+        # hauteur suit le contenu, et une politique Fixed compte deja sa taille comme minimum pour les parents
+        # (la raison de ce plancher, voir ci-dessus).
+        row.setMinimumHeight(0)
+        row.setSizePolicy(row.sizePolicy().horizontalPolicy(), QSizePolicy.Fixed)
+        row.updateGeometry()
+        return
     row.setSizePolicy(row.sizePolicy().horizontalPolicy(), QSizePolicy.Minimum)
     row.setMinimumHeight(max(row.minimumHeight(), row.sizeHint().height()))
 

@@ -18,12 +18,12 @@ DESIGN_DEFAULTS: dict[str, Any] = {
     "board_design_body_size": 32,
     "board_design_shape_fill": "#8b3dff",
     # Sélection et repères (dessin temporaire, pixels d'ÉCRAN) : couleur de sélection du module (cadres, poignées
-    # de rotation exclues, page courante, miniatures), taille des poignées, repères et marges de la page, guides
-    # d'alignement du magnétisme (#AARRGGBB : l'opacité compte), titres des pages, règles à l'ouverture.
+    # de rotation exclues, page courante, miniatures), taille des poignées, repères et marges de la page
+    # (#AARRGGBB : l'opacité compte), titres des pages, règles à l'ouverture. Guides d'alignement du magnétisme :
+    # Réglages > Module MRO > Magnétisme (fm_board/snap_guides.py).
     "board_design_accent": "#8b3dff",
     "board_design_handle_size": 9,
     "board_design_guide_color": "#c800beff",
-    "board_design_snap_color": "#ff2fd0",
     "board_design_page_titles": True,
     "board_design_rulers": False,
     # Flèches du clavier : déplacement de la sélection (unités du board), Maj tenu.

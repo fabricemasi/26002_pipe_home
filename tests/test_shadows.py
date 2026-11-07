@@ -115,7 +115,7 @@ class EngineTest(unittest.TestCase):
 class RowsTest(unittest.TestCase):
     def test_rows_in_image_sections_and_tables(self):
         import settings_window_v2 as v2
-        expected = {"G Apercu": "item_image_shadow_enabled", "Image": "item_image_shadow_enabled",
+        expected = {"G Apercu": "item_image_shadow_enabled",
                     "Focus : Image": "preview_shadow_enabled", "Tableaux": "table_shadow_enabled",
                     "Visionneuse : Tableau": "viewer_film_table_shadow_enabled",
                     "Visionneuse : Cellule image": "viewer_film_image_shadow_enabled",

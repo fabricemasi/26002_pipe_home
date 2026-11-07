@@ -7,8 +7,10 @@ autour du point cliqué. Une étape par geste ; la transformation devient la « 
 Ctrl+D). Géométrie, pas un déplacement d'élément : sans Ctrl (règle de l'appli).
 
 Repères commentés (Ctrl+U, actifs par défaut) : pendant Ctrl + glisser, les bords et centres de la sélection
-s'aimantent à ceux des objets VISIBLES à l'écran et des plans de travail, à 6 px d'écran près ; lignes magenta
-montrées par l'overlay. Candidats calculés une fois au début du geste, recherche par dichotomie (`bisect`)."""
+s'aimantent à ceux des objets VISIBLES à l'écran et des plans de travail, à 6 px d'écran près ; lignes montrées par
+l'overlay, chacune avec sa SORTE (`fm_board.snap_guides` : plan de travail = « bords des documents », objet =
+« objets internes » ; Réglages > Module MRO > Magnétisme). Candidats calculés une fois au début du geste,
+recherche par dichotomie (`bisect`)."""
 from __future__ import annotations
 
 import math
@@ -16,6 +18,8 @@ from bisect import bisect_left
 
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
 from PySide6.QtWidgets import QInputDialog
+
+from fm_board.snap_guides import DOCUMENTS, INNER, GuideLine
 
 from . import bezier as bz
 from .tools import Tool, TransformGesture
@@ -35,6 +39,7 @@ class Snapper:
         self.ys: list[tuple[float, int]] = []
         self._xv: list[float] = []
         self._yv: list[float] = []
+        self.objects = 0                                                # boîtes d'objets ; les suivantes : plans de travail
         if not ctl.smart_guides:
             return
         from .items import IllPathItem
@@ -42,6 +47,7 @@ class Snapper:
         visible = ctl.view.mapToScene(ctl.view.viewport().rect()).boundingRect()
         rects = [i.geometry_rect() for i in ctl.scene.items(visible, Qt.IntersectsItemBoundingRect)
                  if isinstance(i, IllPathItem) and i not in skip and i.isVisible()]     # index : visibles seulement
+        self.objects = len(rects)
         rects += [b.scene_rect() for b in ctl.artboards() if b.isVisible() and b.scene_rect().intersects(visible)]
         boxes = self.boxes
         xs, ys = self.xs, self.ys
@@ -80,21 +86,26 @@ class Snapper:
         moved = rect.translated(dx, dy).getCoords()
         lines = []
         if bx:
-            x, (_l, top, _r, bottom) = self._closest(self.xs, self._xv, bx[1], moved, vertical=True)
-            lines.append(QLineF(x, min(moved[1], top), x, max(moved[3], bottom)))
+            x, (_l, top, _r, bottom), kind = self._closest(self.xs, self._xv, bx[1], moved, vertical=True)
+            lines.append(GuideLine(x, min(moved[1], top), x, max(moved[3], bottom), kind=kind))
         if by:
-            y, (left, _t, right, _b) = self._closest(self.ys, self._yv, by[1], moved, vertical=False)
-            lines.append(QLineF(min(moved[0], left), y, max(moved[2], right), y))
+            y, (left, _t, right, _b), kind = self._closest(self.ys, self._yv, by[1], moved, vertical=False)
+            lines.append(GuideLine(min(moved[0], left), y, max(moved[2], right), y, kind=kind))
         return dx, dy, lines
 
     def _closest(self, entries, values, j, moved, vertical: bool):
         """Parmi les objets alignés sur la même valeur, le plus PROCHE : ligne courte (une ligne vers un objet
-        lointain d'une grille faisait repeindre une longue bande à chaque mouvement : +8 ms)."""
+        lointain d'une grille faisait repeindre une longue bande à chaque mouvement : +8 ms). Rend aussi la sorte du
+        guide : « bords des documents » si un plan de travail est aligné sur cette valeur (il l'emporte), sinon
+        « objets internes »."""
         value = values[j]
         lo = bisect_left(values, value - 1e-6)
         best, best_d = self.boxes[entries[j][1]], float("inf")
+        kind = INNER
         k = lo
         while k < len(values) and values[k] <= value + 1e-6 and k < lo + 400:
+            if entries[k][1] >= self.objects:
+                kind = DOCUMENTS
             box = self.boxes[entries[k][1]]
             if vertical:
                 d = max(box[1] - moved[3], moved[1] - box[3], 0.0)
@@ -103,7 +114,7 @@ class Snapper:
             if d < best_d:
                 best, best_d = box, d
             k += 1
-        return value, best
+        return value, best, kind
 
     def snap_point(self, p: QPointF) -> tuple[QPointF, list[QLineF]]:
         dx, dy, lines = self.snap_rect(QRectF(p, p))

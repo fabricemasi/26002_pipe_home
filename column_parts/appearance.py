@@ -34,6 +34,12 @@ class ColumnAppearanceMixin:
         if do_layout:
             self.list.doItemsLayout()
             self.sync_bottom_gap()
+        else:
+            # Repeindre quand meme (bug signale 2026-10-30 : Colonnes > Texte > Police ne suivait pas en direct) :
+            # la police / couleur du delegue vient de changer (refresh_fonts), mais sans doItemsLayout() rien ne
+            # redessinait les lignes ; seules celles survolees / cliquees prenaient la nouvelle police.
+            self.list.viewport().update()
+
     def refresh_colors(self):
         """Reapplique les couleurs (voir C, mutable via app_style.set_color)
         aux qss fixes une fois pour toutes a la construction — necessaire

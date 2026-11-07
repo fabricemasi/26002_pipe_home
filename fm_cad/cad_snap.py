@@ -28,7 +28,7 @@ les entites ACQUISES (voir `note_hover`)."""
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import math
 
@@ -49,6 +49,9 @@ PRIORITY = {"end": 0, "mid": 0, "cen": 0, "gcen": 0, "qua": 0, "int": 0, "extint
 DEFAULT_MODES = {"end", "mid", "int", "ext", "cen"}
 ACQUIRE_S = 0.35                    # pause sur un point pour l'acquerir (suivi, extension)
 MAX_ACQUIRED = 7                    # comme AutoCAD
+MAX_PAIRWISE = 40                   # traits les plus proches croises deux a deux (intersections : cout au carre)
+MAX_NEAR = 300                      # entites les plus proches lues par mouvement de souris (plan vu de loin)
+MAX_NEAR_APPARENT = 120             # idem pour l'intersection apparente (rayon 4 fois plus grand)
 POLAR_ANGLES = (15.0, 30.0, 45.0, 90.0)
 
 
@@ -127,6 +130,9 @@ class SnapEngine:
 
     def __init__(self, source=None):
         self.source = source or (lambda rect: [])
+        # `source_near(rect, around=, limit=)` facultatif : seulement les `limit` entites les plus proches de `around`
+        # (le controleur : `CadController._source`) ; sans lui, toutes celles de `source`.
+        self.source_near = None
         self.settings = SnapSettings()
         self.acquired: list[Acquired] = []
         self.parallel: list[tuple] = []             # segments acquis pour l'accrochage Parallele
@@ -175,10 +181,19 @@ class SnapEngine:
 
     # -- resolution --
     def resolve(self, cursor, scale: float, base=None, override: str | None = None, cycle: int = 0,
-                lock_angle: float | None = None, lock_distance: float | None = None) -> Resolution:
+                lock_angle: float | None = None, lock_distance: float | None = None,
+                ortho_toggle: bool = False) -> Resolution:
         """Point valide pour la position `cursor` (document). `scale` = pixels d'ecran par unite ; `base` =
         point de reference de l'invite (dernier point) ; `override` = accrochage ponctuel (« none » = aucun) ;
-        `cycle` = rang du candidat choisi par Tab."""
+        `cycle` = rang du candidat choisi par Tab ; `ortho_toggle` = Maj enfoncee : ORTHO inverse le temps du
+        geste (comme AutoCAD : contraint si ORTHO est coupe, libre s'il est actif)."""
+        if ortho_toggle and base is not None:
+            saved = self.settings
+            self.settings = replace(saved, ortho=not saved.ortho)
+            try:
+                return self.resolve(cursor, scale, base, override, cycle, lock_angle, lock_distance)
+            finally:
+                self.settings = saved
         s = self.settings
         scale = max(scale, 1e-12)
         aperture = s.aperture_px / scale
@@ -215,10 +230,16 @@ class SnapEngine:
         return Resolution(point, kind)
 
     # -- accrochages aux objets --
-    def _near(self, cursor, radius):
+    def _near(self, cursor, radius, limit: int | None = MAX_NEAR):
+        """(entite, primitive) des entites a portee ; au plus les `limit` les plus proches du curseur (plan vu de loin :
+        quelques pixels = des dizaines de milliers d'entites, lues a chaque mouvement de souris)."""
         rect = (cursor[0] - radius, cursor[1] - radius, cursor[0] + radius, cursor[1] + radius)
         out = []
-        for entity in self.source(rect):
+        if limit is not None and self.source_near is not None:
+            entities = self.source_near(rect, around=(cursor[0], cursor[1]), limit=limit)
+        else:
+            entities = self.source(rect)
+        for entity in entities:
             for prim in entity.snap_primitives():
                 out.append((entity, prim))
         return out
@@ -239,6 +260,7 @@ class SnapEngine:
                                        guides or []))
 
         segments = [(e, (p[1], p[2])) for e, p in near if p[0] == "segment"]
+        crossing = []                               # (distance a l'ecran, segment) des traits qui passent a portee
         for entity, (a, b) in segments:
             if "end" in modes:
                 add("end", a, entity, (a, b))
@@ -247,6 +269,7 @@ class SnapEngine:
                 add("mid", geo.midpoint(a, b), entity, (a, b))
             on_seg = geo.distance_point_segment(cursor, a, b) * scale
             if on_seg <= self.settings.aperture_px:
+                crossing.append((on_seg, entity, (a, b)))
                 if "nea" in modes:
                     q, _t = geo.project_segment(cursor, a, b)
                     add("nea", q, entity, (a, b))
@@ -260,24 +283,29 @@ class SnapEngine:
         arcs = [(e, p) for e, p in near if p[0] == "arc"]
         for entity, arc in arcs:
             self._arc_candidates(cursor, scale, base, modes, entity, arc, add)
-        if "int" in modes and arcs:
-            prims = [(e, ("segment", a, b)) for e, (a, b) in segments] + arcs
-            for i in range(len(prims)):
-                ea, pa = prims[i]
-                for j in range(i + 1, len(prims)):
-                    eb, pb = prims[j]
+        if "int" in modes:
+            # Intersection sous le curseur = point des DEUX traits : seuls ceux qui passent a portee comptent (exact),
+            # et au plus les MAX_PAIRWISE plus proches. Avant : toutes les paires de l'emprise de detection — un plan
+            # vu de loin (81 000 entites, quelques pixels = des metres) : ~12 millions de paires, ~50 s par
+            # mouvement de souris pendant une commande.
+            close_arcs = []
+            for entity, arc in arcs:
+                on_px = cad_shapes.closest_on_prim(arc, cursor)[1] * scale
+                if on_px <= self.settings.aperture_px:
+                    close_arcs.append((on_px, entity, arc))
+            close = sorted([(d, e, ("segment", a, b)) for d, e, (a, b) in crossing] + close_arcs,
+                           key=lambda c: c[0])[:MAX_PAIRWISE]
+            for i in range(len(close)):
+                _da, ea, pa = close[i]
+                for j in range(i + 1, len(close)):
+                    _db, eb, pb = close[j]
                     if pa[0] == "segment" and pb[0] == "segment":
-                        continue                            # deja vu ci-dessous
+                        point = geo.segment_intersection(pa[1], pa[2], pb[1], pb[2])
+                        if point is not None:
+                            add("int", point, ea, (pa[1], pa[2]))
+                        continue
                     for point in cad_shapes.prim_intersections(pa, pb):
                         add("int", point, ea, None)
-        if "int" in modes and len(segments) > 1:
-            for i in range(len(segments)):
-                ea, (a, b) = segments[i]
-                for j in range(i + 1, len(segments)):
-                    eb, (c, d) = segments[j]
-                    point = geo.segment_intersection(a, b, c, d)
-                    if point is not None:
-                        add("int", point, ea, (a, b))
         if "ext" in modes:
             self._extension_candidates(cursor, scale, segments, add)
         if "appint" in modes:
@@ -383,7 +411,16 @@ class SnapEngine:
 
     def _apparent_candidates(self, cursor, scale, add):
         radius = 4 * self.settings.aperture_px / scale
-        lines = [(e, (p[1], p[2])) for e, p in self._near(cursor, radius) if p[0] == "segment"]
+        # Traits qui passent a moins de `radius` du curseur (pas seulement leur emprise), au plus les MAX_PAIRWISE plus
+        # proches (paires : cout au carre), puis les traits ACQUIS.
+        near = []
+        for e, p in self._near(cursor, radius, MAX_NEAR_APPARENT):
+            if p[0] == "segment":
+                d = geo.distance_point_segment(cursor, p[1], p[2])
+                if d <= radius:
+                    near.append((d, e, (p[1], p[2])))
+        near.sort(key=lambda c: c[0])
+        lines = [(e, seg) for _d, e, seg in near[:MAX_PAIRWISE]]
         lines += [(item.entity, item.segment) for item in self.acquired if item.segment is not None]
         seen = set()
         for i in range(len(lines)):

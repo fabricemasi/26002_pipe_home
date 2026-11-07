@@ -3,9 +3,11 @@ l'aspect dans le preset fm_theme et le reste dans les réglages de l'appli, gest
 alias retrouvé, dupliquer, nouveau, supprimer). Presets et réglages : copies temporaires (_isolate)."""
 import _isolate  # noqa: F401
 import os
+import time
 import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtCore import QPoint  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 import settings_store  # noqa: E402
@@ -29,16 +31,20 @@ class TreeTest(unittest.TestCase):
         self.assertEqual(titles[0], "Général")
         self.assertIn("Couleurs", titles)
         self.assertIn("Toggles", titles)
-        for app_only in ("Colonnes", "Barre de navigation", "LUT", "Application", "ICONES"):
+        for app_only in ("Colonnes", "LUT", "Application", "ICONES"):
             self.assertNotIn(app_only, titles)
-        self.assertEqual([s.key for s in v2.CATALOG["Thème : Général"]], ["ui_scale", "window_radius"])
+        # Barres de la fenetre : aspect general (2026-11-05).
+        self.assertIn("Barre de navigation", titles)
+        self.assertIn("Barre d'état", titles)
+        self.assertEqual([s.key for s in v2.CATALOG["Thème : Général"]],
+                         ["ui_scale", "window_radius", "window_border_enabled"])
 
     def test_general_window_no_longer_holds_the_aspect(self):
         """Étape 6 : fm_browser garde le fonctionnement et son aspect propre ; l'aspect générique est dans Thème."""
         titles = [n.title for n in v2.tab_tree("General")]
         for title in v2.THEME_SECTIONS:
             self.assertNotIn(title, titles)
-        for kept in ("Colonnes", "Barre de navigation", "Application", "ICONES"):
+        for kept in ("Colonnes", "Application", "ICONES"):
             self.assertIn(kept, titles)
         self.assertNotIn("ui_scale", [s.key for s in v2.CATALOG["Application"]])
 
@@ -126,9 +132,116 @@ class PreviewTest(WindowTestCase):
         from fm_theme.widgets import _Toggle
         self.editor.preview.show_section("Toggles")
         window = self.editor.window
-        merged = dict(window.settings, toggle1_outer_width=57)
-        window._apply_look(merged, {"toggle1_outer_width": 57})
+        merged = dict(window.settings, toggle1_off_bg_width=57, toggle1_on_bg_width=57)
+        window._apply_look(merged, {"toggle1_off_bg_width": 57, "toggle1_on_bg_width": 57})
         self.assertIn(57, {t._outer_w for t in self.editor.preview.findChildren(_Toggle)})   # toggles de style 1
+
+
+class SideDetailTest(WindowTestCase):
+    """Titres fixes à gauche, paramètres de la section ouverte dans un volet à droite, sous son titre
+    (demande de l'utilisateur, 2026-11-02) : ouvrir un titre ne pousse jamais les autres."""
+
+    def setUp(self):
+        self.name = fresh_preset("Volet")
+        self.editor = theme_editor.ThemeEditor(self.name)
+        self.window = self.editor.window
+        self.window.resize(1500, 940)
+        end = time.monotonic() + 5
+        while self.editor.detail is None and time.monotonic() < end:       # _follow_sections : minuterie
+            QApplication.processEvents()
+        self.assertIsNotNone(self.editor.detail)
+        settled = time.monotonic() + 0.3                                   # mise en page de la fenêtre agrandie
+        while time.monotonic() < settled:
+            QApplication.processEvents()
+
+    def tearDown(self):
+        self.window.hide()
+        tp.delete_preset(self.name)
+
+    def nodes(self):
+        return [n for n in self.window.stack.findChildren(v2._LazyNode) if n.level == 1]
+
+    def node(self, title):
+        return next(n for n in self.nodes() if n.node.title == title)
+
+    def tops(self):
+        return {n.node.title: n.mapTo(self.window, QPoint(0, 0)).y() for n in self.nodes()}
+
+    def test_titles_stay_in_place_and_the_parameters_open_beside_them(self):
+        before = self.tops()
+        section = self.node("Tableaux")
+        section._head.head.clicked.emit()
+        QApplication.processEvents()
+        self.assertEqual(self.tops(), before)                              # aucun titre ne bouge
+        pane, head = self.editor.detail.pane, section._head
+        self.assertTrue(pane.isVisible() and head._body.isVisible())
+        self.assertTrue(pane.isAncestorOf(head._body))                     # le corps est dans le volet
+        self.assertEqual(pane.mapTo(self.window, QPoint(0, 0)).y(),        # juste sous le titre ouvert
+                         head.mapTo(self.window, QPoint(0, head.height())).y())
+        for node in self.nodes():                                          # à droite de tous les titres
+            label = node._head._name_label
+            self.assertGreaterEqual(pane.mapTo(self.window, QPoint(0, 0)).x(),
+                                    label.mapTo(self.window, QPoint(label.width(), 0)).x())
+
+    def test_accordion_and_close_follow_the_pane(self):
+        tables, toggles = self.node("Tableaux"), self.node("Toggles")
+        tables._head.head.clicked.emit()
+        toggles._head.head.clicked.emit()                                  # accordéon : Tableaux se replie
+        QApplication.processEvents()
+        self.assertFalse(tables._head._body.isVisible())
+        self.assertTrue(toggles._head._body.isVisible())
+        toggles._head.head.clicked.emit()
+        QApplication.processEvents()
+        self.assertFalse(self.editor.detail.pane.isVisible())
+
+    def test_opening_a_section_shows_its_subsections_folded(self):
+        """Ouvrir une section montre ses sous-sections REPLIÉES : un tableau ne se monte qu'en dépliant la sienne
+        (demande de l'utilisateur, 2026-11-03)."""
+        section = self.node("TITRES")
+        section._head.head.clicked.emit()
+        for _ in range(20):
+            QApplication.processEvents()
+            time.sleep(0.01)
+        children = section._head._body.findChildren(v2._LazyNode)
+        self.assertTrue(children)
+        self.assertTrue(all(n.is_collapsed() for n in children))
+
+    def test_children_keep_their_title_path(self):
+        """Une sous-section du volet retrouve toujours sa section (clé d'ordre des titres, parent des boîtes)."""
+        section = self.node("TITRES")
+        section.set_collapsed(False)
+        child = next(n for n in section._head._body.findChildren(v2._LazyNode))
+        self.assertIsNot(child.parentWidget(), section)
+        self.assertEqual(child._stack_key(), f"{child._values.name}|TITRES/{child.node.title}")
+        self.assertIs(child._head._parent_title(), section._head)
+
+
+class TableParentTest(unittest.TestCase):
+    """Un tableau naît SOUS son parent, lignes et cellules créées vides sous le leur : rattacher plus tard un
+    sous-arbre plein à un parent qui porte une feuille de style en refait le style, niveau par niveau (~30 %
+    du temps de montage d'une sous-section des réglages : `docs/agents/pieges-generaux.md`)."""
+
+    def test_cells_table_is_born_under_its_parent(self):
+        from PySide6.QtWidgets import QLabel, QWidget
+        from fm_theme import cells as tcells
+        holder = QWidget()
+        frame, _head, cells = tcells.build_cells_table([("A", 100), ("B", 0)], [[QLabel("x"), QLabel("y")]],
+                                                       parent=holder)
+        self.assertIs(frame.parentWidget(), holder)
+        cell = cells[0][0]
+        row = cell.parentWidget()
+        self.assertIs(row.parentWidget(), frame)
+        self.assertIs(cell.content().parentWidget(), cell)
+        self.assertIsNone(tcells.build_cells_table([("A", 100)], [[QLabel("x")]])[0].parentWidget())  # comme avant
+
+    def test_group_is_built_under_the_body_that_will_hold_it(self):
+        from PySide6.QtWidgets import QWidget
+        settings = {**settings_store.DEFAULT_SETTINGS}
+        values = v2.ScopeValues(settings, "General", None)
+        for group in ("Couleurs", "toggle1 : OFF"):           # un tableau, puis deux
+            holder = QWidget()
+            built = v2.build_group(group, values, {}, {}, {}, [], parent=holder)
+            self.assertIs(built.parentWidget(), holder, group)
 
 
 class EditorVariantTest(WindowTestCase):
@@ -193,7 +306,8 @@ class AppVariantTest(unittest.TestCase):
         from main_window.settings_link import SettingsLinkMixin
         import ui_state
         applied = []
-        host = type("Host", (), {"_apply_settings": lambda _s, s, keys=None: applied.append(set(keys))})()
+        host = type("Host", (), {"_apply_settings": lambda _s, s, keys=None: applied.append(set(keys)),
+                                 "_theme_to_settings_windows": lambda _s, values: None})()
         ui_state.APPLIED_SETTINGS = settings_store.load_settings()                  # utilise « standard »
         SettingsLinkMixin._on_theme_live(host, self.name, {"button_radius": 30, "window_radius": 4},
                                          {"bouton": self.compact})

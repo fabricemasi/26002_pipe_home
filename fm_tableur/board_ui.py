@@ -8,11 +8,26 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QPointF
-from PySide6.QtWidgets import QFileDialog, QMessageBox
+from PySide6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
 from fm_board import model
-from fm_board.ui import _bar, _TextButton
+from fm_board.bars import BoardBars
+from fm_theme.palette import PaletteTextButton
 from . import board_model as bm
+
+BUTTONS = [("new", "Nouveau classeur", "Poser un classeur vide au centre de la vue", 5),
+           ("import", "Importer…", "Classeur Excel (.xlsx, .xlsm) ou CSV : un nouvel élément", 3),
+           ("standard", "Mode Standard", "Ouvrir le classeur choisi en plein cadre", 4)]
+
+
+def default_state() -> dict:
+    """Barre flottante du Tableur par défaut (demande de l'utilisateur, 2026-11-03) : « Classeur » clipsée en haut."""
+    items, col = {}, 0
+    for key, _t, _tip, cells in BUTTONS:
+        items[key] = [col, 0, cells]
+        col += cells
+    return {"next": 2, "bars": [{"id": "b1", "title": "Classeur", "dock": "top", "orient": "h", "along": 260, "x": 0,
+                                 "y": 0, "cols": col, "rows": 1, "items": items}]}
 
 
 class TableurController(QObject):
@@ -21,14 +36,23 @@ class TableurController(QObject):
         self.pane = pane
         self.active = False
         self.ui = self
-        self.bar, row = _bar(pane, False)
-        for text, tip, slot in (("Nouveau classeur", "Poser un classeur vide au centre de la vue", self.new_sheet),
-                                ("Importer…", "Classeur Excel (.xlsx, .xlsm) ou CSV : un nouvel élément", self.import_file),
-                                ("Mode Standard", "Ouvrir le classeur choisi en plein cadre", self.open_standard)):
-            button = _TextButton(text, tip, self.bar)
-            button.clicked.connect(lambda _c=False, s=slot: s())
-            row.addWidget(button)
-        self.bar.hide()
+        # Barre FLOTTANTE (fm_theme/bar_manager.py, fm_board/bars.py) : disposition retenue (`board_bars["tableur"]`).
+        self.bars = BoardBars(pane, "tableur", default_state())
+        slots = {"new": self.new_sheet, "import": self.import_file, "standard": self.open_standard}
+        for key, text, tip, cells in BUTTONS:
+            button = PaletteTextButton(key, text, tip, cells=cells)
+            button.clicked.connect(lambda _c=False, s=slots[key]: s())
+            self.bars.register(key, button)
+        self.bars.restore()
+        self.bars.set_visible(False)
+        self._no_bar = QWidget(pane)
+        self._no_bar.hide()
+
+    @property
+    def bar(self):
+        """La barre « Classeur » (un widget caché si l'utilisateur l'a vidée)."""
+        bar = self.bars.manager.bar_of("new") or self.bars.bar("b1")
+        return bar if bar is not None else self._no_bar
 
     def apply_settings(self, settings: dict):
         """Réglages `tableur_*` changés : classeurs ouverts (édition sur place, mode Standard) mis à jour."""
@@ -44,21 +68,18 @@ class TableurController(QObject):
 
     def activate(self):
         self.active = True
-        self.bar.show()
+        self.bars.set_visible(True)
         self.place()
+        self.bars.raise_all()
 
     def deactivate(self):
         self.active = False
-        self.bar.hide()
+        self.bars.set_visible(False)
 
     def place(self):
         if not self.active:
             return
-        self.bar.layout().activate()
-        self.bar.resize(self.bar.sizeHint())
-        area = self.pane.title_area()
-        self.bar.move(area.right() + 12, area.top() + (area.height() - self.bar.height()) // 2)
-        self.bar.raise_()
+        self.bars.set_area(self.pane.left_edge())
 
     # -- commandes --
     def _center(self) -> QPointF:

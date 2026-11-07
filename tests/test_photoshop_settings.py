@@ -64,6 +64,13 @@ class PhotoshopSettingsTest(PsCase):
                                                "board_ps_zoom_pct": 30, "board_ps_max_zoom_pct": 800,
                                                "board_ps_history_mb": 64, "board_ps_cursor_outline": False}))
 
+    def test_new_document_clipboard_paste_setting(self):
+        self.assertIs(look.LOOK["new_paste_clipboard"], True)                       # défaut : l'image du presse-papiers est collée
+        self.apply(board_ps_new_paste_clipboard=False)
+        self.assertIs(look.LOOK["new_paste_clipboard"], False)
+        self.apply(board_ps_new_paste_clipboard=True)
+        self.assertIs(look.LOOK["new_paste_clipboard"], True)
+
     def test_invalid_values_fall_back_to_defaults(self):
         self.apply(board_ps_checker_a="rouge", board_ps_checker_size="x", board_ps_zoom_pct=-5,
                    board_ps_max_zoom_pct=10 ** 9, board_ps_history_mb=0)

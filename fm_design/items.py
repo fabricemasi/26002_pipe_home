@@ -159,11 +159,11 @@ class DesignItem(BoardItem):
         # Gardée : Qt la demande ~3 fois par élément et par image (index, peinture) ; la calculer en Python à
         # chaque fois coûtait ~10 ms par image avec 300 éléments. Refaite au changement de géométrie ou de zoom.
         scene = self.scene()
-        key = getattr(scene, "zoom", None) if scene is not None else None     # (sans _zoom : appelée ~800 fois
+        key = getattr(scene, "pad_zoom", None) if scene is not None else None     # (sans _zoom : appelée ~800 fois
         kept = getattr(self, "_bounds", None)                                  # par peinture à 1 000 éléments)
         if kept is not None and kept[0] == key:
             return kept[1]
-        m = 2.0 / self._zoom()
+        m = 2.0 / self._pad_zoom()     # par paliers : voir BoardScene.set_zoom (sinon plantage a l'effacement)
         rect = self.paint_margin().united(self.content_rect()).adjusted(-m, -m, m, m)
         self._bounds = (key, rect)
         return rect
@@ -348,6 +348,10 @@ class DesignElement(DesignItem):
     def page_item(self) -> DesignPageItem | None:
         parent = self.parentItem()
         return parent if isinstance(parent, DesignPageItem) else None
+
+    def snap_inner(self) -> bool:
+        """Magnétisme du board (`fm_board.snap_guides`) : posé sur une page = objet INTERNE à un document."""
+        return isinstance(self.parentItem(), DesignPageItem)
 
     def outline(self) -> QPainterPath:
         path = QPainterPath()
