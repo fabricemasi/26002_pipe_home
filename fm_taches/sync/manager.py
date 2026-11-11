@@ -26,6 +26,21 @@ from ..store.repository import Repository, now_ts
 log = logging.getLogger("fm_taches.sync")
 
 
+def friendly_error(text: str) -> str:
+    """Erreur de Google en clair (la plus fréquente à la première connexion : l'API non activée)."""
+    low = text.lower()
+    if "tasks api has not been used" in low or ("tasks.googleapis.com" in low and "disabled" in low):
+        project = ""
+        if "project " in low:
+            project = text.split("project ", 1)[1].split()[0].rstrip(".")
+        return ("API Google Tasks non activée dans le projet Google Cloud" + (f" {project}" if project else "")
+                + " : console Google Cloud > API et services > Bibliothèque > Google Tasks API > Activer, "
+                  "attendre quelques minutes, puis Synchroniser.")
+    if "insufficient" in low and "scope" in low:
+        return "Droits insuffisants : reconnecter Google Tasks (Réglages : Tâches > Synchronisation)."
+    return text
+
+
 class _Bridge(QObject):
     delivered = Signal(object)
 
@@ -183,6 +198,10 @@ class TasksSyncManager(QObject):
                     results.append(SyncEngine(repo, self.provider_factory(account), account, self.clock).run())
                 except AuthError as exc:
                     results.append(("auth_error", account["id"], str(exc)))
+                except TransientError:
+                    raise                                 # hors ligne : rien n'est perdu, nouvel essai plus tard
+                except SyncError as exc:                  # refus de Google (API non activée, droits…) : gardé
+                    results.append(("error", account["id"], str(exc)))
             return ("sync", results)
         self._submit(job, "Synchronisation…", on_done)
 
@@ -249,7 +268,10 @@ class TasksSyncManager(QObject):
         if isinstance(result, Exception):
             offline = isinstance(result, TransientError)
             self.state.update(error=str(result), offline=offline,
-                              message="Hors ligne : nouvel essai plus tard" if offline else f"Erreur : {result}")
+                              message="Hors ligne : nouvel essai plus tard" if offline else
+                              f"Erreur : {friendly_error(str(result))}")
+            if not offline:
+                self.service.message.emit("erreur", "Google Tasks : " + friendly_error(str(result)))
             return
         kind = result[0]
         if kind == "account":
@@ -266,11 +288,15 @@ class TasksSyncManager(QObject):
         again = False
         summaries, offline = [], ""
         for res in result[1]:
-            if isinstance(res, tuple):                    # jeton refusé : compte à reconnecter
-                acc = self.service.account(res[1])
+            if isinstance(res, tuple):                    # jeton refusé, ou refus de Google : gardé sur le compte
+                kind, acc_id, error = res
+                text = friendly_error(error)
+                acc = self.service.account(acc_id)
                 if acc is not None:
-                    self.service.save_account(dict(acc, status="auth_error", last_error=res[2][:500]))
-                summaries.append("compte à reconnecter")
+                    status = "auth_error" if kind == "auth_error" else acc.get("status", "connected")
+                    self.service.save_account(dict(acc, status=status, last_error=text[:500]))
+                summaries.append("compte à reconnecter" if kind == "auth_error" else "erreur")
+                self.service.message.emit("erreur", "Google Tasks : " + text)
                 continue
             info = merge.apply(self.service, res, policy, self.clock)
             again = again or bool(info.get("skipped"))

@@ -153,6 +153,11 @@ rappel non garanti dans Raccourcis). La source `apple` du modèle reste prévue 
   **Déconnexion** : listes gardées en local (ou retirées, au choix).
 - **Liste locale -> Google** : menu de la liste > « Envoyer vers Google Tasks » (`publish_list` ; les niveaux de
   sous-tâches au-delà du premier sont remontés, après confirmation). Repère « G » des listes Google dans le panneau.
+- **Refus de Google** (API non activée, droits…) : gardé sur le compte (`last_error`, montré sous le compte dans
+  Réglages : Tâches > Synchronisation) et dans la barre d'état (`service.message`), en clair
+  (`manager.friendly_error`) ; effacé au passage réussi. Vécu par l'utilisateur le 2026-11-11 : compte connecté,
+  aucune liste, car « Google Tasks API » n'était pas activée dans le projet Google Cloud (seule l'API Agenda
+  l'était) : le passage échouait sans trace durable.
 - **Hors ligne en route** : ce qui est déjà envoyé est rapporté (sinon doublon), le reste attend dans `sync_outbox` ;
   un échec non réseau repousse l'entrée (30 s -> 1 h).
 - Non fait : annuler une suppression de LISTE synchronisée ne la recrée pas chez Google ; une tâche déplacée vers

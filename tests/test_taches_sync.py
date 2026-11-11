@@ -169,6 +169,26 @@ class PushTest(SyncCase):
         self.assertEqual(self.s.outbox_count(), 0)
 
 
+class ErrorsTest(SyncCase):
+    def test_google_refusal_is_kept_on_the_account_and_shown(self):
+        self.fake.forbidden = ("Google Tasks API has not been used in project 1598 before or it is disabled. "
+                               "Enable it by visiting https://console.developers.google.com/apis/api/"
+                               "tasks.googleapis.com/overview?project=1598 then retry.")
+        shown = []
+        self.s.message.connect(lambda level, text: shown.append((level, text)))
+        self.sync()
+        acc = self.s.account("acc1")
+        self.assertIn("API Google Tasks non activée dans le projet Google Cloud 1598", acc["last_error"])
+        self.assertEqual(acc["status"], "connected")
+        self.assertTrue(any(level == "erreur" and "non activée" in text for level, text in shown))
+        self.assertIn("non activée", self.m.status_text())                # sous le compte, dans les réglages
+        self.fake.forbidden = ""
+        self.fake.remote_list("Mes tâches Google")
+        self.sync()
+        self.assertEqual(self.s.account("acc1")["last_error"], "")          # effacée au passage réussi
+        self.assertTrue(self.glist().synced)
+
+
 class ListsTest(SyncCase):
     def test_local_list_published_with_nested_tasks(self):
         lst = self.s.create_list("Studio")

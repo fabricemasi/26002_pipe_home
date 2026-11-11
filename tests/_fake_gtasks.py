@@ -26,6 +26,7 @@ class FakeGoogleTasks:
         self.counter = 0
         self.page_size = page_size
         self.offline = False
+        self.forbidden = ""              # message d'un refus 403 (API non activée…)
         self.calls: list = []
 
     def clock(self) -> float:
@@ -119,6 +120,10 @@ class FakeGoogleTasks:
         q = {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
         data = json.loads(body.decode("utf-8")) if body else {}
         self.calls.append((method, "/".join(path), q))
+        if self.forbidden:
+            payload = {"error": {"code": 403, "message": self.forbidden,
+                                 "errors": [{"reason": "accessNotConfigured"}]}}
+            return 403, {}, json.dumps(payload).encode("utf-8")
         try:
             status, payload = self._route(method, path, q, data)
         except KeyError:
