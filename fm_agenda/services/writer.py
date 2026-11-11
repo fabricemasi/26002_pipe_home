@@ -37,11 +37,13 @@ class _Bridge(QObject):
 
 
 class DbWriter:
-    def __init__(self, conn: sqlite3.Connection, hints: RangeHints):
-        self.repo = Repository(conn, hints)
+    def __init__(self, conn: sqlite3.Connection, hints: RangeHints | None = None, repo=None,
+                 name: str = "fm_agenda-ecriture"):
+        """`repo` : dépôt d'une autre base (fm_taches) ; défaut = dépôt de l'agenda sur `conn`."""
+        self.repo = repo if repo is not None else Repository(conn, hints)
         self._queue: queue.Queue = queue.Queue()
         self._bridge = _Bridge()
-        self._thread = threading.Thread(target=self._loop, name="fm_agenda-ecriture", daemon=True)
+        self._thread = threading.Thread(target=self._loop, name=name, daemon=True)
         self._stopped = False
         self._thread.start()
 

@@ -19,10 +19,17 @@ class ChromeMixin:
 
     @staticmethod
     def _nav_input_height() -> int:
-        """Hauteur des champs de la barre de navigation : Reglages > Zone de saisie > Hauteur (0 = 20 px), sans
-        depasser la rangee des boutons."""
-        from settings_store import input_height
-        return min(scaled(TITLEBAR_HEIGHT), scaled(input_height() or 20))
+        """Hauteur du champ racine et du menu des presets de la barre de navigation : celle du cadre des icones
+        (fm_browser > Barre de navigation > Taille des icones, demande de l'utilisateur 2026-11-07), et non plus
+        Reglages > Zone de saisie > Hauteur."""
+        from main_window.title_bar import nav_tool_metrics
+        from settings_store import navbar_effective
+        settings = navbar_effective(ui_state.APPLIED_SETTINGS or {})      # hauteur : override de fm_browser
+        try:                                     # 1re ligne de la barre : fm_theme > Barre de navigation > Hauteur
+            row = max(scaled(16, 0), scaled(int(settings.get("navbar_height", TITLEBAR_HEIGHT)), 0))
+        except (TypeError, ValueError):
+            row = scaled(TITLEBAR_HEIGHT, 0)
+        return nav_tool_metrics(settings, row)[0]
 
     def _sync_collapse_button(self):
         """Icone / infobulle / disponibilite du bouton de repli des colonnes de la barre : replie ou deplie
@@ -43,11 +50,14 @@ class ChromeMixin:
 
     @staticmethod
     def _set_button_usable(button, usable: bool):
-        if button.isEnabled() == usable and (button.graphicsEffect() is None) == usable:
+        # Bouton a couleur desactivee propre (icones de la barre, Icones > Couleur des icones) : son icone change de
+        # couleur, plus de voile d'opacite.
+        dim = not usable and not getattr(button, "_disabled_color", None)
+        if button.isEnabled() == usable and (button.graphicsEffect() is not None) == dim:
             return
         button.setEnabled(usable)
         button.setGraphicsEffect(None)
-        if not usable:
+        if dim:
             effect = QGraphicsOpacityEffect(button)
             effect.setOpacity(0.35)
             button.setGraphicsEffect(effect)
@@ -107,6 +117,11 @@ class ChromeMixin:
             on_agenda = self._agenda_open() if hasattr(self, "_agenda_open") else False
             self._set_button_usable(btn_agenda, True)
             btn_agenda.set_alert(self._mode_on_color() if on_agenda else None)
+        btn_taches = getattr(self, "btn_taches", None)                 # tâches (fm_taches) : toujours actif
+        if btn_taches is not None:
+            on_taches = self._taches_open() if hasattr(self, "_taches_open") else False
+            self._set_button_usable(btn_taches, True)
+            btn_taches.set_alert(self._mode_on_color() if on_taches else None)
 
     @staticmethod
     def _mode_on_color() -> str:
@@ -122,7 +137,8 @@ class ChromeMixin:
         host = self.scroll.widget()
         if (host is None or self._project_columns_hidden or getattr(self, "_md_open", False)
                 or getattr(self, "_board", None) is not None or getattr(self, "_font", None) is not None
-                or (hasattr(self, "_agenda_open") and self._agenda_open())):
+                or (hasattr(self, "_agenda_open") and self._agenda_open())
+                or (hasattr(self, "_taches_open") and self._taches_open())):
             return
         hidden = not host.isHidden()
         host.setVisible(not hidden)
@@ -145,6 +161,9 @@ class ChromeMixin:
         leave_agenda = getattr(self, "_leave_agenda", None)        # agenda ouvert : rangé d'abord (fm_agenda)
         if leave_agenda is not None:
             leave_agenda()
+        leave_taches = getattr(self, "_leave_taches", None)        # tâches ouvertes : rangées d'abord (fm_taches)
+        if leave_taches is not None:
+            leave_taches()
         from column import opens_in_viewer
         column, path = self._selected_path()
         if path is None:
@@ -176,18 +195,54 @@ class ChromeMixin:
         self.root_field.setFixedWidth(scaled(190))
         self.preset_picker.select.setFixedHeight(self._nav_input_height())
 
-    def _refresh_theme_button(self):
+    # Bouton de la barre -> sa cle de la colonne Couleur (fm_browser > Barre de navigation > Icones).
+    _NAV_ICON_COLORS = (("btn_theme", "theme"), ("btn_viewer", "viewer"), ("btn_text_editor", "text_editor"),
+                        ("btn_board", "board"), ("btn_video", "video"), ("btn_font", "font"), ("btn_pdf", "pdf"),
+                        ("btn_agenda", "agenda"), ("btn_taches", "taches"))
+
+    def _refresh_navbar_icons(self):
+        """Icones de la barre : couleur de base et couleur desactivee (fm_browser > ICONES > Couleur des icones) ;
+        chaque bouton de la colonne Couleur (fm_browser > Barre de navigation > Icones), s'il est actif, sa couleur
+        en mode de fusion (produit) (demande de l'utilisateur, 2026-11-08 ; jamais les couleurs des modules du
+        board)."""
+        if not hasattr(self, "btn_browse"):
+            return
+        settings = ui_state.APPLIED_SETTINGS or {}
+        base = resolve_color_ref(settings.get("navtool_icon_base_color"), role_color("buttons", "#c4cacf"))
+        disabled = resolve_color_ref(settings.get("navtool_icon_disabled_color"), "#59c4cacf")
         theme = getattr(self, "btn_theme", None)
-        if theme is not None:                    # engrenage fm_theme : sa couleur (fm_theme > Barre de navigation)
-            color = (ui_state.APPLIED_SETTINGS or {}).get("navbar_theme_button_color") or "#f28c28"
-            theme.set_colors(color, QColor(color).lighter(130).name())
+        for btn in (self.btn_browse, self.btn_presets, self.btn_settings, self.btn_style, self.btn_collapse,
+                    self.btn_columns, self.btn_viewer, self.btn_text_editor, self.btn_board, self.btn_video,
+                    self.btn_font, getattr(self, "btn_pdf", None), getattr(self, "btn_agenda", None),
+                    getattr(self, "btn_taches", None), theme):
+            if btn is None:
+                continue
+            btn.set_colors(base, C["text"])
+            btn.set_disabled_color(disabled)
+            if btn.graphicsEffect() is not None and not btn.isEnabled():
+                btn.setGraphicsEffect(None)                     # ancien voile d'opacite : la couleur le remplace
+        from settings_store import DEFAULT_SETTINGS
+        try:
+            tone = int(settings.get("navtool_icon_tone_value", DEFAULT_SETTINGS["navtool_icon_tone_value"]))
+        except (TypeError, ValueError):
+            tone = DEFAULT_SETTINGS["navtool_icon_tone_value"]
+        for name, suffix in self._NAV_ICON_COLORS:
+            btn = getattr(self, name, None)
+            if btn is not None:
+                key = f"navtool_icon_color_{suffix}"
+                default = DEFAULT_SETTINGS.get(key, "#ffffff")
+                btn.set_icon_tone_value(tone)       # fond de l'icone coloree, module ouvert (2026-11-08)
+                btn.set_icon_blend(resolve_color_ref(settings.get(key) or default, default))
 
     def refresh_navbar(self):
         """Barre de navigation seule (fm_theme > Barre de navigation : hauteur, bordure, titre, bouton fm_theme) :
         chemin rapide des apercus en direct, sans toucher aux colonnes."""
         self.titlebar.refresh_sizes()
         self.titlebar.refresh_look()
-        self._refresh_theme_button()
+        self.titlebar.restyle_module_groups()      # cadre des modules : habillage, taille des boutons = icones
+        self._refresh_navbar_icons()
+        self.root_field.setFixedHeight(self._nav_input_height())      # jamais plus haut que la 1re ligne
+        self.preset_picker.select.setFixedHeight(self._nav_input_height())
 
     def refresh_status_bar(self):
         """Barre d'etat : fm_theme > Barre d'etat (hauteur, fond, bordure, marges, textes), `fm_theme.status_bar`."""
@@ -201,11 +256,7 @@ class ChromeMixin:
         colonnes ne sont pas recrees par reload()."""
         self.titlebar.refresh_look()
         self.root_field.setFont(role_font("info", 11, 400))
-        for btn in (self.btn_browse, self.btn_presets, self.btn_settings, self.btn_style, self.btn_collapse, self.btn_columns,
-                    self.btn_viewer, self.btn_text_editor, self.btn_board, self.btn_video, self.btn_font,
-                    getattr(self, "btn_pdf", self.btn_font), getattr(self, "btn_agenda", self.btn_font)):
-            btn.set_colors(role_color("buttons", "#c4cacf"), C["text"])
-        self._refresh_theme_button()
+        self._refresh_navbar_icons()
         self.refresh_status_bar()
         for column in self.columns:
             column.refresh_header()

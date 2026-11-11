@@ -11,8 +11,9 @@ from __future__ import annotations
 import json
 
 import shiboken6
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtCore import QEvent, Qt, QTimer
+from PySide6.QtGui import QColor, QPainter
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 import fm_theme.presets as tp
 from fm_theme.preview import WIDTH as PREVIEW_WIDTH, PreviewPanel
@@ -20,12 +21,16 @@ import settings_window_v2 as v2
 from settings_cells import _TextField
 import settings_store
 from settings_store import M, _load_window_geometry, _save_window_geometry, load_settings, save_settings, theme_in_use
+from fm_theme.theme import _set_text_role
+from fm_theme.tokens import _resolve_color_value, toggle_style_list
+from fm_theme.widgets import _Toggle
 from settings_widgets import _Btn, _SelectField
 from theme_side_detail import SideDetail, page_scroller
 
 LAST_PRESET_KEY = "fm_theme:preset"       # preset ouvert la derniere fois (etat des fenetres de reglages)
 PREVIEW_WIDTH_KEY = "fm_theme:preview_width"   # largeur de l'apercu (tiree a la souris), meme fichier
 DELETE_CONFIRM_MS = 3000
+SELECTION_PAD = 8                          # px entre le cadre de sélection d'une variante et son contenu
 
 
 class ThemeStore:
@@ -165,97 +170,361 @@ class PresetBar(QWidget):
 # Section de l'editeur -> type d'element a variantes (fm_theme.presets.TYPE_PREFIXES). Toggles : leurs styles.
 SECTION_TYPES = {"TITRES": "titres", "Sliders": "slider", "Zone de saisie": "champ", "Bouton": "bouton",
                  "Tableaux": "tableau", "Tabs": "onglets", "Menu contextuel": "menu",
-                 "Fenêtres additionnelles": "fenetre", "Palette": "palette"}
+                 "Fenêtres additionnelles": "fenetre", "Barres d'outils": "palette", "Toggles": "toggle",
+                 "Barre de navigation": "navigation", "Barre d'état": "etat"}
+# Aperçus refaits par `set_values` (images, barres peintes) : la variante éditée suit le geste par eux ; les autres
+# types sont restylés en direct par la fenêtre (registres des briques).
+SHOT_TYPES = ("menu", "fenetre", "navigation", "etat")
 
 
-class VariantBar(QWidget):
-    """Variantes du type de la section ouverte (au-dessus de l'apercu) : variante editee, « par defaut » (celle
-    que recoivent les applis), nom, Nouvelle (copie de l'editee), Renommer (l'ancien nom reste en alias),
-    Definir par defaut, Supprimer (deux clics, jamais la derniere)."""
+def _seed_globals(type_name: str, values: dict) -> None:
+    """Pose l'habillage GLOBAL des briques d'un type d'après `values`, SANS restyler les éléments déjà construits :
+    sert à dessiner une variante non éditée (puis à remettre l'habillage courant)."""
+    from fm_theme import tokens
+    if type_name == "slider":
+        tokens._sync_slider_style(values)
+    elif type_name == "titres":
+        tokens._sync_title_level_style(values)
+    elif type_name == "champ":
+        tokens.set_input_look(values)
+    elif type_name == "onglets":
+        from fm_theme.layout import set_tab_look
+        set_tab_look(values)
+    elif type_name == "tableau":
+        v2.seed_table_globals(values)
+    elif type_name == "palette":
+        from fm_theme.palette import set_look
+        set_look(values)
+    elif type_name == "fenetre":
+        from fm_theme import window as fw
+        opened = list(fw._EXTRA_WINDOWS)             # les fenêtres ouvertes gardent leur habillage
+        fw._EXTRA_WINDOWS.clear()
+        try:
+            fw.seed_extra_window_look(values)
+        finally:
+            fw._EXTRA_WINDOWS[:] = opened
 
-    def __init__(self, editor: "ThemeEditor", type_name: str):
+
+def _line(vertical: bool = False, color: str | None = None) -> QFrame:
+    """Filet de séparation du volet des variantes (couleur des bordures de panneau, ou `color`)."""
+    line = QFrame()
+    if vertical:
+        line.setFixedWidth(1)
+    else:
+        line.setFixedHeight(1)
+    line.setStyleSheet(f"background: {color or M['panel_border']}; border: none;")
+    return line
+
+
+def _button_states(values: dict) -> tuple[QWidget, list]:
+    """Aperçus d'une variante du bouton : État standard | État survol | État focus, séparés par un filet ; chaque bouton
+    est FIGÉ dans son état (`button_state_css`), sans réaction à la souris."""
+    from fm_theme.style import BUTTON_STATES, button_state_css
+    holder = QWidget()
+    holder.setObjectName("variantStates")
+    row = QHBoxLayout(holder)
+    row.setContentsMargins(0, 4, 0, 4)
+    row.setSpacing(10)
+    buttons = []
+    for index, (state, caption) in enumerate(BUTTON_STATES):
+        if index:
+            row.addWidget(_line(vertical=True))
+        column = QVBoxLayout()
+        column.setSpacing(8)
+        label = _set_text_role(QLabel(caption), "inline_label")
+        label.setWordWrap(True)
+        label.setAlignment(Qt.AlignHCenter)
+        column.addWidget(label)
+        button = QPushButton("Bouton")
+        button.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        button.setFocusPolicy(Qt.NoFocus)
+        button.setFixedHeight(26)
+        button.setStyleSheet(button_state_css(values, state))
+        button._state = state
+        buttons.append(button)
+        column.addWidget(button, 0, Qt.AlignHCenter)
+        row.addLayout(column, 1)
+    return holder, buttons
+
+
+class _VariantBlock(QWidget):
+    """Une variante : filet, nom (zone de saisie : renommer à la validation), « − » (supprimer, deux clics), interrupteur
+    « par défaut » à droite ; dessous ses aperçus (bouton : ses trois états). Un clic dessus l'ÉDITE (ses valeurs dans
+    les champs) ; clic droit : l'utiliser dans fm_browser."""
+
+    def __init__(self, panel: "VariantList", name: str, *, edited: bool, default: bool, used: bool, alone: bool,
+                 values: dict, label: str | None = None):
         super().__init__()
-        self._editor, self._type = editor, type_name
+        self.panel, self.name, self.edited = panel, name, edited
+        self.label = label or name
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)         # jamais étirée en hauteur
+        # Le fond du cadre de sélection passe SOUS les aperçus et les libellés : la feuille de l'appli peint sinon
+        # « QWidget { background: window } » sur eux (demande de l'utilisateur, 2026-11-10).
+        self.setStyleSheet("QWidget#variantStates, QLabel { background: transparent; }")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
-        preset = tp.load_preset(tp.find_preset(editor.name))
-        names = tp.variant_names(preset, type_name)
-        entry = preset["types"][type_name]
-        self.current = editor.store.editing.get(type_name) or tp.default_variant(entry)
-        is_default = self.current == tp.default_variant(entry)
+        pad = SELECTION_PAD + int(panel.selection.get("variant_sel_border_thickness") or 0)
+        layout.setContentsMargins(pad, pad, pad, pad)
+        layout.setSpacing(8)
         top = QHBoxLayout()
         top.setSpacing(6)
-        self.select = _SelectField(names, self.current, width=150)
-        self.select.changed.connect(lambda v: editor.edit_variant(type_name, v))
-        top.addWidget(self.select)
-        # fm_browser utilise-t-il cette variante (sa surcharge, ou la defaut) ? Seulement si c'est son theme.
-        app = load_settings()
-        self.app_uses = (theme_in_use(app) == editor.name
-                         and settings_store.app_variant(app, type_name) == self.current)
-        self.app_linked = theme_in_use(app) == editor.name
-        tags = (["par défaut"] if is_default else []) + (["utilisée par fm_browser"] if self.app_uses else [])
-        mark = QLabel(" · ".join(tags))
-        mark.setStyleSheet(f"color: {M['label_dim']}; background: transparent;")
-        top.addWidget(mark)
+        self.name_field = _TextField(self.label, width=150)
+        self.name_field.editingFinished.connect(self._rename)
+        self.name_field.installEventFilter(self)
+        top.addWidget(self.name_field)
+        self.delete = _btn("−")
+        self.delete.setToolTip("Supprimer cette variante (deux clics)")
+        self.delete.setEnabled(not alone)                                       # jamais la dernière
+        self.delete.clicked.connect(self._delete)
+        top.addWidget(self.delete)
         top.addStretch(1)
+        if used:
+            top.addWidget(_set_text_role(QLabel("fm_browser"), "note"))
+        top.addWidget(_set_text_role(QLabel("par défaut"), "note"))
+        self.default = _Toggle(default)
+        self.default.setToolTip("Variante par défaut (celle que reçoivent les applis)")
+        self.default.toggled.connect(self._default_toggled)
+        top.addWidget(self.default)
         layout.addLayout(top)
-        self.name_field = _TextField(self.current, width=150)
-        layout.addWidget(self.name_field)
-        rows = ((("Nouvelle", self._add), ("Renommer", self._rename)),
-                (("Par défaut", self._set_default), ("Supprimer", self._delete)),
-                (("Utiliser dans fm_browser", self._use_in_app),))
-        for row in rows:
-            line = QHBoxLayout()
-            line.setSpacing(6)
-            for text, slot in row:
-                button = _btn(text)
-                button.clicked.connect(slot)
-                line.addWidget(button)
-                if text == "Supprimer":
-                    self.delete = button
-                    button.setEnabled(len(names) > 1)
-                if text == "Par défaut":
-                    button.setEnabled(not is_default)
-                if text == "Utiliser dans fm_browser":       # seulement le theme de fm_browser, pas deja utilisee
-                    button.setEnabled(self.app_linked and not self.app_uses)
-            line.addStretch(1)
-            layout.addLayout(line)
+        self.buttons = []
+        self.preview = None
+        if panel.type_name == "bouton":
+            states, self.buttons = _button_states(values)
+            layout.addWidget(states)
+        else:                                      # chaque variante, son aperçu sous son nom (2026-11-11)
+            self.preview = panel.preview_for(name, values, edited)
+            if self.preview is not None:
+                layout.addWidget(self.preview)
         self._armed = QTimer(self, singleShot=True, interval=DELETE_CONFIRM_MS)
-        self._armed.timeout.connect(lambda: self.delete.setText("Supprimer"))
+        self._armed.timeout.connect(lambda: self.delete.setText("−"))
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._menu)
 
-    def _add(self):
-        self._editor.save_pending()
-        new = tp.add_variant(self._editor.name, self._type, self.name_field.text()
-                             if self.name_field.text() != self.current else f"{self.current} copie", self.current)
-        self._editor.edit_variant(self._type, new, save=False)
+    def paintEvent(self, event):
+        """La variante ÉDITÉE : cadre de sélection (Thème > Général > Variantes : bordure, border radius, fond)."""
+        if not self.edited:
+            return
+        from settings_widgets import _paint_bordered_rect, _radius_any
+        look = self.panel.selection
+        colors = {s: _resolve_color_value(c, look.get("colors") or {})
+                  for s, c in (look.get("variant_sel_border") or {}).items()}
+        fill = _resolve_color_value(look.get("variant_sel_bg_color") or "#00000000", look.get("colors") or {})
+        radius = look.get("variant_sel_corner_radius") or 0
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, _radius_any(radius))
+        _paint_bordered_rect(painter, self.rect(), radius, look.get("variant_sel_border_enabled", True),
+                             int(look.get("variant_sel_border_thickness") or 0), colors,
+                             fill if QColor(fill).alpha() else None)
+        painter.end()
+
+    def set_values(self, values: dict) -> None:
+        from fm_theme.style import button_state_css
+        for button in self.buttons:
+            button.setStyleSheet(button_state_css(values, button._state))
+
+    def eventFilter(self, obj, event):
+        if obj is self.name_field and event.type() == QEvent.FocusIn:
+            QTimer.singleShot(0, self._edit)        # saisir son nom : c'est elle qu'on règle
+        return False
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._edit()
+        super().mousePressEvent(event)
+
+    def _edit(self):
+        self.panel.edit(self.name)
 
     def _rename(self):
-        new = tp.rename_variant(self._editor.name, self._type, self.current, self.name_field.text())
-        self._editor.edit_variant(self._type, new, save=False)
-
-    def _use_in_app(self):
-        """fm_browser utilise cette variante pour ce type (`theme_default_variants`) ; le preset ne change pas."""
-        self._editor.save_pending()
-        settings = settings_store.set_app_variant(self._type, self.current)
-        for listener in self._editor.app_listeners:
-            listener(settings)
-        self._editor.edit_variant(self._type, self.current, save=False)
-
-    def _set_default(self):
-        self._editor.save_pending()
-        tp.set_default_variant(self._editor.name, self._type, self.current)
-        self._editor.edit_variant(self._type, self.current, save=False)
+        text = self.name_field.text().strip()
+        if text and text != self.label:
+            self.panel.rename(self.name, text)
+        else:
+            self.name_field.setText(self.label)
 
     def _delete(self):
         if not self._armed.isActive():
-            self.delete.setText("Confirmer la suppression")
+            self.delete.setText("Supprimer ?")
             self._armed.start()
             return
         self._armed.stop()
-        tp.delete_variant(self._editor.name, self._type, self.current)
+        self.panel.delete(self.name)
+
+    def _default_toggled(self, on: bool):
+        if on:
+            self.panel.set_default(self.name)
+        else:                                      # on ne « décoche » pas la défaut : on en choisit une autre
+            QTimer.singleShot(0, lambda: self.default.setChecked(True))
+
+    def _menu(self, pos):
+        from fm_theme.menu import Menu
+        menu = Menu(self)
+        action = menu.addAction("Utiliser dans fm_browser")
+        action.setEnabled(self.panel.app_linked and self.name != self.panel.app_variant)
+        action.triggered.connect(lambda: self.panel.use_in_app(self.name))
+        menu.exec(self.mapToGlobal(pos))
+
+
+class VariantList(QWidget):
+    """Volet des variantes du type de la section ouverte (croquis de l'utilisateur, 2026-11-10) : une ligne par
+    variante (`_VariantBlock`) ; le « + » de l'en-tête du volet (`add_button`) en crée une, copie de l'éditée."""
+
+    def __init__(self, editor: "ThemeEditor", type_name: str):
+        super().__init__()
+        self._editor, self.type_name = editor, type_name
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)         # collée sous le titre, sans trou
+        settings = editor.window.current_values() if editor.window is not None else load_settings()
+        self.settings = settings
+        self.selection = {k: v for k, v in settings.items() if k.startswith("variant_sel_")}
+        self.selection["colors"] = settings.get("colors") or {}
+        pad = SELECTION_PAD + int(self.selection.get("variant_sel_border_thickness") or 0)
+        self.preview_width = max(140, editor.preview._w - 32 - 2 * pad)
+        labels = {}
+        if type_name == "toggle":                    # styles de toggles : les réglages de la fenêtre (toggle<N>_*)
+            preset = None
+            styles = toggle_style_list(settings)
+            names = [s["key"] for s in styles]
+            labels = {s["key"]: s["name"] for s in styles}
+            default = settings.get("toggle_style") if settings.get("toggle_style") in names else names[0]
+        else:
+            preset = tp.load_preset(tp.find_preset(editor.name))
+            names = tp.variant_names(preset, type_name)
+            default = tp.default_variant(preset["types"][type_name])
+        self.current = editor.store.editing.get(type_name) or default
+        if self.current not in names:
+            self.current = default
+        # fm_browser utilise-t-il cette variante (sa surcharge, ou la défaut) ? Seulement si c'est son thème.
+        app = load_settings()
+        self.app_linked = type_name != "toggle" and theme_in_use(app) == editor.name
+        self.app_variant = settings_store.app_variant(app, type_name) if self.app_linked else None
+        self.blocks = {}
+        for index, name in enumerate(names):
+            if index:
+                layout.addWidget(_line())
+            values = self._values(preset, name) if preset is not None else {}
+            block = _VariantBlock(self, name, edited=name == self.current, default=name == default,
+                                  used=name == self.app_variant, alone=len(names) < 2, values=values,
+                                  label=labels.get(name))
+            self.blocks[name] = block
+            layout.addWidget(block)
+        self.add_button = _btn("+")
+        self.add_button.setToolTip("Nouvelle variante (copie de celle qui est éditée)")
+        self.add_button.clicked.connect(self.add)
+
+    def _values(self, preset: dict, name: str, live: dict | None = None) -> dict:
+        """Valeurs d'une variante ; l'éditée : celles des champs (`live` : l'aperçu en direct ; sinon les champs lus),
+        modifications non enregistrées comprises."""
+        if name == self.current and self._editor.window is not None:
+            prefix = tp.TYPE_PREFIXES[self.type_name]
+            source = live if live is not None else self._editor.window.current_values()
+            return {k: v for k, v in source.items() if k.startswith(prefix)}
+        return tp.type_flat(preset, self.type_name, name)
+
+    def preview_for(self, name: str, values: dict, edited: bool) -> QWidget | None:
+        """Aperçu d'une variante sous son nom : toggles vivants (chaque style les siens) ; l'éditée : l'élément VIVANT
+        (restylé en direct) ; les autres : une IMAGE dessinée avec leurs valeurs (habillage global posé le temps du
+        dessin, puis remis : rien d'autre n'est restylé)."""
+        from fm_theme.preview import element, grab_offscreen
+        if self.type_name == "toggle":
+            holder = QWidget()
+            row = QHBoxLayout(holder)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(10)
+            for on in (True, False):
+                toggle = _Toggle(on, style_override=name)
+                toggle.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+                row.addWidget(toggle)
+            row.addStretch(1)
+            return holder
+        merged = {**self.settings, **values}
+        if edited:
+            return element(self.type_name, merged, self.preview_width)
+        _seed_globals(self.type_name, merged)
+        try:
+            widget = element(self.type_name, merged, self.preview_width)
+            if widget is None:
+                return None
+            pixmap = widget.pixmap() if isinstance(widget, QLabel) else grab_offscreen(widget, self.preview_width)
+            widget.deleteLater()
+        finally:
+            _seed_globals(self.type_name, self.settings)
+        image = QLabel()
+        image.setPixmap(pixmap)
+        image.setAttribute(Qt.WA_TransparentForMouseEvents, True)      # un clic : éditer la variante
+        return image
+
+    def refresh_selection(self, live: dict) -> None:
+        """Cadre de sélection réglé (Thème > Général > Variantes) : repeint en direct."""
+        self.selection = {k: v for k, v in live.items() if k.startswith("variant_sel_")}
+        self.selection["colors"] = live.get("colors") or {}
+        block = self.blocks.get(self.current)
+        if block is not None:
+            block.update()
+
+    def refresh_values(self, live: dict) -> None:
+        """Aperçu en direct (`live` : toutes les valeurs) : les aperçus de la variante éditée suivent, rien d'autre."""
+        block = self.blocks.get(self.current)
+        if block is not None and block.buttons:
+            block.set_values(self._values({}, self.current, live))
+        elif block is not None and self.type_name in SHOT_TYPES and block.preview is not None:
+            block.preview.set_values(live)
+
+    def edit(self, name: str):
+        if name != self.current:
+            self._editor.edit_variant(self.type_name, name)
+
+    def add(self):
+        self._editor.save_pending()
+        if self.type_name == "toggle":
+            label = self.blocks[self.current].label
+            new = self._editor.window.add_toggle_style(f"{label} copie", source=self.current)
+        else:
+            new = tp.add_variant(self._editor.name, self.type_name, f"{self.current} copie", self.current)
+        self._editor.edit_variant(self.type_name, new, save=False)
+
+    def rename(self, old: str, new: str):
+        self._editor.save_pending()
+        if self.type_name == "toggle":
+            self._editor.window.rename_toggle_style(old, new)
+            self._editor._refresh_variant_bar()
+            return
+        new = tp.rename_variant(self._editor.name, self.type_name, old, new)
+        if old == self.current:
+            self._editor.edit_variant(self.type_name, new, save=False)
+        else:
+            self._editor._refresh_variant_bar()
+
+    def set_default(self, name: str):
+        self._editor.save_pending()
+        if self.type_name == "toggle":
+            window = self._editor.window
+            window._write_now({"toggle_style": name})
+            for picker in window.findChildren(v2._ToggleStylePicker):
+                picker.setValue(name)
+        else:
+            tp.set_default_variant(self._editor.name, self.type_name, name)
+        self._editor._refresh_variant_bar()
+
+    def delete(self, name: str):
+        if self.type_name == "toggle":
+            self._editor.window.delete_toggle_style(name)
+            target = self.current if name != self.current else self._editor.window.settings.get("toggle_style")
+            self._editor.edit_variant("toggle", target, save=False)
+            return
+        tp.delete_variant(self._editor.name, self.type_name, name)
         preset = tp.load_preset(tp.find_preset(self._editor.name))
-        self._editor.edit_variant(self._type, tp.default_variant(preset["types"][self._type]), save=False)
+        target = self.current if name != self.current else tp.default_variant(preset["types"][self.type_name])
+        self._editor.edit_variant(self.type_name, target, save=False)
+
+    def use_in_app(self, name: str):
+        """fm_browser utilise cette variante pour ce type (`theme_default_variants`) ; le preset ne change pas."""
+        self._editor.save_pending()
+        settings = settings_store.set_app_variant(self.type_name, name)
+        for listener in self._editor.app_listeners:
+            listener(settings)
+        self._editor.edit_variant(self.type_name, name, save=False)
 
 
 class ThemeEditor:
@@ -292,7 +561,8 @@ class ThemeEditor:
             old.deleteLater()
 
     def _add_preview(self, window) -> PreviewPanel:
-        """Aperçu à DROITE des sections (demande de l'utilisateur, 2026-11-02 ; il était à gauche avant) : la pile des pages reste à gauche."""
+        """Volet d'aperçu et des variantes à GAUCHE des sections (demande de l'utilisateur, 2026-11-10 ; à droite depuis
+        le 2026-11-02) : la pile des pages est à sa droite."""
         stack = window.stack
         root = stack.parentWidget().layout()
         index = root.indexOf(stack)
@@ -307,8 +577,8 @@ class ThemeEditor:
             width = PREVIEW_WIDTH
         preview = PreviewPanel(lambda: window.settings, width=width)
         preview.widthChanged.connect(lambda w: _save_window_geometry(str(w), PREVIEW_WIDTH_KEY))
-        row.addWidget(stack, 1)
         row.addWidget(preview)
+        row.addWidget(stack, 1)
         root.insertWidget(index, holder, 1)
         if window.width() < 760 + preview.width():
             window.resize(760 + preview.width(), window.height())
@@ -326,7 +596,8 @@ class ThemeEditor:
             return
         scroller = page_scroller(nodes[0])
         if scroller is not None:             # titres fixes à gauche, paramètres de la section ouverte à droite
-            self.detail = SideDetail(scroller, nodes)
+            # Posé par la page elle-même (toutes les fenêtres de réglages, settings_window_v2._build_page).
+            self.detail = getattr(scroller.parentWidget(), "_side_detail", None) or SideDetail(scroller, nodes)
         for node in nodes:
             node._head.collapsedChanged.connect(lambda collapsed, n=node: self._section_toggled(n, collapsed))
         opened = [n for n in nodes if not n.is_collapsed()]
@@ -343,15 +614,47 @@ class ThemeEditor:
         self._refresh_variant_bar()
 
     def _refresh_variant_bar(self):
-        """Barre des variantes du type de la section affichee dans l'apercu (aucune pour les autres)."""
+        """Liste des variantes du type de la section affichee dans le volet (aucune pour les autres) ; son « + » dans
+        l'en-tete du volet ; pour le bouton, elle tient lieu d'apercu (chaque variante montre ses trois etats)."""
         type_name = SECTION_TYPES.get(self.preview.section())
-        self.preview.set_tools(VariantBar(self, type_name) if type_name else None)
+        variants = VariantList(self, type_name) if type_name else None
+        self.preview.set_header_tool(variants.add_button if variants is not None else None)
+        self.preview.set_tools(variants, replace=variants is not None)    # chaque variante montre son aperçu
+        key = variants.current if type_name == "toggle" else None
+        self._show_toggle_style(key)
+        # La section se construit à sa 1re ouverture (après ce signal) : le filtre repasse une fois construite.
+        QTimer.singleShot(0, lambda: self.window is not None and shiboken6.isValid(self.window)
+                          and self._show_toggle_style(key))
+
+    def _show_toggle_style(self, key: str | None = None):
+        """Toggles comme les autres types (demande de l'utilisateur, 2026-11-11) : la section ne montre que le style
+        ÉDITÉ (choisi dans le volet des variantes) ; le choix du style par cartes n'y est plus (le volet le fait)."""
+        window = self.window
+        if window is None:
+            return
+        if key is None:
+            styles = [s["key"] for s in toggle_style_list(window.settings)]
+            key = self.store.editing.get("toggle")
+            if key not in styles:
+                key = window.settings.get("toggle_style") if window.settings.get("toggle_style") in styles else \
+                    (styles[0] if styles else None)
+        for node in window.findChildren(v2._LazyNode):
+            if node.node.toggle_key:
+                node.setVisible(node.node.toggle_key == key)
+        for picker in window.findChildren(v2._ToggleStylePicker):
+            frame = picker
+            while frame is not None and not isinstance(frame, v2._TableFrame):
+                frame = frame.parentWidget()
+            (frame or picker).setVisible(False)
 
     def edit_variant(self, type_name: str, variant: str, save: bool = True):
         """Edite une autre variante du type : ses valeurs passent dans les champs, l'apercu la montre."""
         if save:
             self.save_pending()
         self.store.editing[type_name] = variant
+        if type_name == "toggle":                    # ses clés (toggle<N>_*) sont déjà dans les champs
+            self._refresh_variant_bar()
+            return
         window = self.window
         values = {k: v for k, v in self.store.load().items() if tp.theme_key(k)
                   and tp.theme_key(k)[0] == type_name}
@@ -365,6 +668,15 @@ class ThemeEditor:
         keys = getattr(self.window, "live_changed_keys", None) or ()
         if any(k == "colors" or k.startswith("font_") or k == "ui_scale" for k in keys):
             self.preview.show_section(self.preview._section, force=True)
+            self._refresh_variant_bar()
+            return
+        variants = self.preview.tools()
+        if isinstance(variants, VariantList):        # aperçus de la variante éditée : en direct
+            prefix = tp.TYPE_PREFIXES[variants.type_name]
+            if any(k.startswith(prefix) for k in keys):
+                variants.refresh_values(_settings)
+            if any(k.startswith("variant_sel_") for k in keys):
+                variants.refresh_selection(_settings)
 
     def save_pending(self):
         """Modifications non enregistrees du preset ouvert : enregistrees avant d'en changer."""

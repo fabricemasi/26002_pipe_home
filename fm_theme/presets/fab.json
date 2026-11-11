@@ -760,7 +760,7 @@
     "standard": {
      "frame": true,
      "radius": 3,
-     "bg_color": "@navbar",
+     "bg_color": "@saisie",
      "border_enabled": {
       "left": true,
       "top": true,
@@ -842,6 +842,57 @@
      "shadow_enabled_linked": true,
      "border_enabled_linked": false,
      "corner_radius_linked": true
+    },
+    "toolbar": {
+     "frame": true,
+     "radius": 6,
+     "bg_color": "#00000000",
+     "border_enabled": {
+      "top": false,
+      "right": false,
+      "bottom": false,
+      "left": false
+     },
+     "border": {
+      "top": "#2a2e32",
+      "right": "#2a2e32",
+      "bottom": "#2a2e32",
+      "left": "#2a2e32"
+     },
+     "border_thickness": 1,
+     "corner_radius": {
+      "top_left": 6,
+      "top_right": 6,
+      "bottom_right": 6,
+      "bottom_left": 6
+     },
+     "font_family": "",
+     "font_size": 11,
+     "font_bold": false,
+     "font_italic": false,
+     "font_color": "#d6d9dc",
+     "font_smoothing_enabled": false,
+     "font_smoothing": "current",
+     "shadow_enabled": {
+      "top": false,
+      "right": false,
+      "bottom": false,
+      "left": false
+     },
+     "shadow": {
+      "top": "#8c000000",
+      "right": "#8c000000",
+      "bottom": "#8c000000",
+      "left": "#8c000000"
+     },
+     "shadow_size": 10,
+     "shadow_enabled_linked": true,
+     "border_enabled_linked": true,
+     "corner_radius_linked": true,
+     "hover_color": "#2f353b",
+     "active_color": "#333f6f9f",
+     "active_border_color": "#3f6f9f",
+     "active_border_thickness": 1
     }
    }
   },

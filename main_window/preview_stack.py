@@ -21,6 +21,16 @@ import shiboken6
 class PreviewStackMixin:
     """Méthodes de PipelineBrowser : colonne active, chaîne de colonnes, pile d'aperçus (colonnes IN / OVER / OUT / LOGICIELS)."""
 
+    @staticmethod
+    def _refresh_stacked_frames(columns) -> None:
+        """Cadre des colonnes d'une pile, une fois rangées : construites AVANT leur insertion, elles ne
+        savaient pas encore laquelle touche le haut / le bas de la zone (bordure masquée, voir
+        capture_widgets._column_edge_sides). Quelques colonnes, seulement à la construction de la pile."""
+        for column in columns:
+            if shiboken6.isValid(column):
+                column.refresh_header()
+                column.refresh_colors()
+
     def update_active_column(self):
         last_selected = -1
         for i, column in enumerate(self.columns):
@@ -386,6 +396,7 @@ class PreviewStackMixin:
                 self.image_preview_columns.append(column)
             self._preview_stack_wrapper = wrapper
             self.columns_layout.insertWidget(anchor + 1, wrapper)
+            self._refresh_stacked_frames(self.image_preview_columns)
         else:
             group_anchor_offset = 1
 
@@ -564,6 +575,7 @@ class PreviewStackMixin:
 
         self._group_stack_wrapper = group_wrapper
         self.columns_layout.insertWidget(anchor + group_anchor_offset, group_wrapper)
+        self._refresh_stacked_frames(self.group_columns)
 
         bar = self.scroll.horizontalScrollBar()
         bar.setValue(bar.maximum())

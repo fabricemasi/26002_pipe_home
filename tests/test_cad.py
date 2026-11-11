@@ -742,6 +742,59 @@ class PhotoshopExportTest(CadBoardCase):
         self.assertEqual(cad_commands.lookup("PDFOUT").name, "SVGOUT")
 
 
+class SelectionExportTest(CadBoardCase):
+    """Clic droit > Exporter (cad_commands_export) : la SELECTION seule, zone d'export, taille 512 x proportionnelle,
+    image cadree exactement sur la zone (2026-11-08)."""
+
+    def test_png_of_the_selection_exactly_on_the_zone(self):
+        from PySide6.QtGui import QImage
+        from fm_cad import cad_photoshop
+        a = self.line((0, 0), (200, 100))
+        self.line((150, 10), (190, 10))                                            # dans la zone, NON selectionnee
+        self.ctl.scene.clearSelection()
+        a.setSelected(True)
+        target = self.dir / "sel.png"
+        with mock.patch.object(cad_photoshop, "_ask_path", lambda *_a: target):
+            self.ctl.run("EXPPNG")
+            for _ in range(3):                                                      # emprise, 512, proportionnelle
+                self.ctl.submit("")
+        image = QImage(str(target))
+        self.assertEqual((image.width(), image.height()), (512, 256))
+        self.assertGreater(max(image.pixelColor(256 + dx, 128 + dy).alpha() for dx in (-2, -1, 0, 1, 2)
+                               for dy in (-2, -1, 0, 1, 2)), 150)                    # milieu de la diagonale
+        self.assertEqual(image.pixelColor(435, 230).alpha(), 0)                    # ligne non selectionnee absente
+        self.assertEqual(image.pixelColor(3, 3).alpha(), 0)                        # fond transparent, pas de cadre
+        self.assertIsNone(self.ctl.command)
+
+    def test_sizes_vector_outputs_and_nothing_without_selection(self):
+        from fm_cad import cad_photoshop
+        from fm_cad.cad_commands_export import default_height, parse_pixels
+        self.assertEqual(default_height([0, 0, 200, 50], 512), 128)
+        self.assertEqual(parse_pixels("800px"), 800)
+        self.assertIsNone(parse_pixels("abc"))
+        a = self.line((0, 0), (200, 100))
+        self.ctl.scene.clearSelection()
+        opened = []
+        with mock.patch.object(cad_photoshop, "open_in_photoshop", lambda p: opened.append(Path(p)) or True):
+            self.ctl.run("EXPPSVECT")                                               # rien de selectionne
+            self.assertIsNone(self.ctl.command)
+            self.assertEqual(opened, [])
+            a.setSelected(True)
+            self.ctl.run("EXPPSVECT")
+            for text in ("", "300", ""):
+                self.ctl.submit(text)
+        self.assertEqual(opened[0].read_bytes()[:4], b"%PDF")
+        svg = self.dir / "z.svg"
+        with mock.patch.object(cad_photoshop, "_ask_path", lambda *_a: svg):
+            self.ctl.run("EXPSVG")
+            for text in ("", "", "100"):
+                self.ctl.submit(text)
+        content = svg.read_text(encoding="utf-8")
+        self.assertIn('width="512px" height="100px"', content)
+        self.assertIn('viewBox="0 0 512 100"', content)
+        opened[0].unlink()
+
+
 class SelectionAndEditingTest(CadBoardCase):
     def test_pick_thin_line_with_screen_tolerance(self):
         line = self.line((0, 0), (200, 0))

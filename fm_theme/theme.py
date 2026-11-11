@@ -235,6 +235,8 @@ def _restyle_input(widget) -> None:
                     base = max(base, widget.height())
             widget._default_height = base
         widget.setRadius(_RADII["input"])                 # rejoue aussi son habillage
+        if getattr(widget, "_keep_height", False):        # hauteur posee par son proprietaire (menu des presets
+            return                                        # de la barre de navigation : celle des icones)
         height = store.input_height() or base
         box = getattr(widget, "box", None)                # curseur : jamais plus bas que sa case de valeur
         if box is not None:

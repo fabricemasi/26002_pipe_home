@@ -240,7 +240,10 @@ def _default_glyph(key: str, size: int) -> QPixmap | None:
                     pb_previews.UI_ICON_SETTINGS_STYLE: "sliders", pb_previews.UI_ICON_NAVBAR_VIEWER: "viewer",
                     pb_previews.UI_ICON_NAVBAR_TEXT_EDITOR: "text_editor",
                     pb_previews.UI_ICON_NAVBAR_BOARD: "board", pb_previews.UI_ICON_NAVBAR_FONT: "font",
-                    pb_previews.UI_ICON_NAVBAR_PIN: "pin"}
+                    pb_previews.UI_ICON_NAVBAR_PIN: "pin", pb_previews.UI_ICON_NAVBAR_COLUMNS: "fade_columns",
+                    pb_previews.UI_ICON_NAVBAR_VIDEO: "video", pb_previews.UI_ICON_NAVBAR_PDF: "pdf",
+                    pb_previews.UI_ICON_NAVBAR_AGENDA: "agenda",
+                    pb_previews.UI_ICON_NAVBAR_TACHES: "taches", pb_previews.UI_ICON_NAVBAR_THEME: "gear"}
     if key in navbar_kinds:
         from preview_column import IconButton
 
@@ -260,22 +263,11 @@ def _default_glyph(key: str, size: int) -> QPixmap | None:
         paint_glyph(painter, kind, QRectF(0, 0, size, size), QColor("#c4cacf"))
         painter.end()
         return glyph
-    if key == pb_previews.UI_ICON_NAVBAR_CRUMB_SEPARATOR:   # le caractere de separation par defaut
-        glyph = QPixmap(size, size)
-        glyph.fill(Qt.transparent)
-        painter = QPainter(glyph)
-        painter.setPen(QColor("#9aa1a6"))
-        font = painter.font()
-        font.setPixelSize(int(size * 0.8))
-        painter.setFont(font)
-        painter.drawText(glyph.rect(), Qt.AlignCenter, "›")
-        painter.end()
-        return glyph
     if key == pb_previews.UI_ICON_APP_LOGO:                 # le carre neutre d'origine
         square = QPixmap(size, size)
         square.fill(Qt.transparent)
         painter = QPainter(square)
-        painter.setPen(QPen(QColor("#5f666b"), 1))
+        painter.setPen(QPen(QColor("#ff00ff"), 1))          # dessine par le code : magenta (provisoire)
         painter.drawRect(size // 2 - 5, size // 2 - 5, 9, 9)
         painter.end()
         return square
@@ -298,7 +290,7 @@ def _default_glyph(key: str, size: int) -> QPixmap | None:
     if key in (pb_previews.UI_ICON_VIEWER_STAR_ON, pb_previews.UI_ICON_VIEWER_STAR_OFF):
         focus._paint_star(painter, rect, key == pb_previews.UI_ICON_VIEWER_STAR_ON)
     elif key == pb_previews.UI_ICON_VIEWER_PLUS:
-        painter.setPen(QPen(QColor("#c4cacf"), 1.6, Qt.SolidLine, Qt.RoundCap))
+        painter.setPen(QPen(QColor("#ff00ff"), 1.6, Qt.SolidLine, Qt.RoundCap))   # magenta (provisoire)
         centre, arm = size / 2, size * 0.3
         painter.drawLine(QPointF(centre - arm, centre), QPointF(centre + arm, centre))
         painter.drawLine(QPointF(centre, centre - arm), QPointF(centre, centre + arm))
@@ -414,11 +406,12 @@ ICON_TABLE_COLUMNS = (("Aperçu", 80), ("Nom", 260), ("État", 130), ("Action", 
 def icon_table(entries: list, columns=ICON_TABLE_COLUMNS):
     """Tableau d'icones commun (reglages ICONES, Visionneuse, Barre de navigation, MRO, Module CAD, Logiciels) : de
     VRAIES colonnes — Apercu | Nom | Etat | Action — une ligne par icone. `entries` : [(nom, apercu, etat, action)] ;
-    `etat` : QLabel (ou texte), `action` : le widget des boutons. Retourne (cadre, entete)."""
+    `etat` : QLabel (ou texte), `action` : le widget des boutons. Un 5e element (widget) = cellule d'une colonne de plus
+    (`columns` la nomme : Couleur de la barre de navigation). Retourne (cadre, entete)."""
     from settings_cells import build_cells_table
 
     rows = []
-    for name, avatar, state, action in entries:
+    for name, avatar, state, action, *extra in entries:
         label = QLabel(name)
         _set_text_role(label, "value")
         if isinstance(state, str):
@@ -426,7 +419,7 @@ def icon_table(entries: list, columns=ICON_TABLE_COLUMNS):
             state = QLabel(text)
             _set_text_role(state, "value_muted")
         rows.append([(avatar, "center", "center"), (label, "left", "center"), (state, "left", "center"),
-                     (action, "left", "center")])
+                     (action, "left", "center"), *((widget, "center", "center") for widget in extra)])
     frame, head, _cells = build_cells_table([(title, width) for title, width in columns], rows)
     frame._v2_head = head
     return frame, head

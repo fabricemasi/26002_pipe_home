@@ -43,6 +43,10 @@ HOOKS: dict = {
     "project_folder": None,              # f(projet) -> dossier du projet sous la racine (« Dossier » des détails)
     "save_setting": None,                # f(clé, valeur) : réglage modifié depuis le module (thème)
     "navbar_frame": False,               # vrai : annuler / rétablir / réglages / fermer sont dans le cadre « Agenda »
+    # Tâches d'un autre module (fm_taches), posées par la fenêtre : l'agenda n'importe jamais fm_taches.
+    "tasks_due": None,                   # f(début, fin) -> [{id, title, date, time, done, color, list, notes}]
+    "toggle_task": None,                 # f(id) : cocher / décocher
+    "open_task": None,                   # f(id) : ouvrir la tâche dans son module
 }
 
 VIEWS = (("jour", "Jour", "Vue Jour (1)"), ("semaine", "Semaine", "Vue Semaine (2)"),
@@ -579,13 +583,13 @@ class AgendaPane(QWidget):
         elif view == "mois":
             first = self.cur.replace(day=1)
             grid = tu.month_grid(first, self.ctx.first_weekday)
-            occs = self.service.occurrences(grid[0][0], grid[-1][-1] + timedelta(days=1))
+            occs = self._occurrences(grid[0][0], grid[-1][-1] + timedelta(days=1))
             self.month.set_data(first, occs, self.sel_key, self.cur)
         elif view == "annee":
             self.year.set_data(self.cur.year, self.service.day_counts(self.cur.year))
         elif view == "planning":
             n = int(self.settings.get("agenda_list_days", 30) or 30)
-            occs = self.service.occurrences(self.cur, self.cur + timedelta(days=n))
+            occs = self._occurrences(self.cur, self.cur + timedelta(days=n))
             groups = group_by_day(occs, self.cur, self.cur + timedelta(days=n), today=self.ctx.today())
             self.planning.set_groups(groups, self.sel_key, f"Rien de prévu dans les {n} prochains jours.")
         self._refresh_sidebar()
@@ -619,7 +623,7 @@ class AgendaPane(QWidget):
 
     def _refresh_grid(self) -> None:
         days = self.days_shown()
-        occs = self.service.occurrences(days[0], days[-1] + timedelta(days=1))
+        occs = self._occurrences(days[0], days[-1] + timedelta(days=1))
         grid = self.day if self.view == "jour" else self.week
         grid.set_data(days, occs, "day" if self.view == "jour" else "week", self.sel_key)
         key = "day" if self.view == "jour" else "week"
@@ -645,7 +649,7 @@ class AgendaPane(QWidget):
         grid = tu.month_grid(mini, self.ctx.first_weekday)
         start, end = grid[0][0], grid[-1][-1] + timedelta(days=1)
         dots: dict[date, list[str]] = {}
-        for occ in self.service.occurrences(start, end):
+        for occ in self._occurrences(start, end):
             key = self.ctx.color_key(occ)
             for d in occ.days():
                 lst = dots.setdefault(d, [])
@@ -654,7 +658,7 @@ class AgendaPane(QWidget):
         week_first = self.days_shown()[0] if self.view in ("semaine", "travail") else None
         self.sidebar.mini.set_state(mini, self.cur, self.view, week_first, dots)
         if self.settings.get("agenda_show_upcoming", True):
-            occs = self.service.occurrences(self.cur, self.cur + timedelta(days=21))
+            occs = self._occurrences(self.cur, self.cur + timedelta(days=21))
             groups = group_by_day(occs, self.cur, self.cur + timedelta(days=21), max_groups=3, today=self.ctx.today())
             self.sidebar.upcoming.set_groups(groups, self.sel_key, "Rien de prévu dans les trois semaines.")
         else:
@@ -826,19 +830,50 @@ class AgendaPane(QWidget):
                 return occ
         return None
 
+    def _occurrences(self, start: date, end: date) -> list[Occurrence]:
+        """Occurrences du service + tâches datées du module Tâches (HOOK `tasks_due`, réglage
+        `agenda_show_tasks`), triées comme celles du service (journée d'abord, puis par heure)."""
+        occs = self.service.occurrences(start, end)
+        source = HOOKS.get("tasks_due")
+        if not callable(source) or not self.settings.get("agenda_show_tasks", True):
+            return occs
+        try:
+            tasks = source(start, end) or []
+        except Exception:                                # noqa: BLE001 - l'agenda reste utilisable sans elles
+            log.exception("tâches du module Tâches")
+            return occs
+        if not tasks:
+            return occs
+        tz = self.service.display_tz
+        extra = []
+        for t in tasks:
+            day = t["date"]
+            if t.get("time"):
+                h, m = (int(x) for x in t["time"].split(":"))
+                s = tu.localize(datetime(day.year, day.month, day.day, h, m), tz)
+                extra.append(Occurrence.external_task(t["id"], t["title"], s, s, day, False,     # durée nulle = tâche
+                                                      t["done"], t.get("color") or "gris", t.get("list", ""),
+                                                      bool(t.get("notes"))))
+            else:
+                s = tu.day_start(day, tz)
+                extra.append(Occurrence.external_task(t["id"], t["title"], s, s + timedelta(days=1), day, True,
+                                                      t["done"], t.get("color") or "gris", t.get("list", ""),
+                                                      bool(t.get("notes"))))
+        return sorted(occs + extra, key=lambda o: (o.start_date or o.start.date(), not o.all_day, o.start))
+
     def _visible_occurrences(self) -> list[Occurrence]:
         if self.search_text:
             return [r[2] for r in self.results.rows if r[1] in ("item", "bar")]
         if self.view in ("jour", "semaine", "travail"):
             days = self.days_shown()
-            return self.service.occurrences(days[0], days[-1] + timedelta(days=1))
+            return self._occurrences(days[0], days[-1] + timedelta(days=1))
         if self.view == "mois":
             first = self.cur.replace(day=1)
-            return self.service.occurrences(first, tu.add_months(first, 1))
+            return self._occurrences(first, tu.add_months(first, 1))
         if self.view == "planning":
             n = int(self.settings.get("agenda_list_days", 30) or 30)
-            return self.service.occurrences(self.cur, self.cur + timedelta(days=n))
-        return self.service.occurrences(self.cur, self.cur + timedelta(days=1))
+            return self._occurrences(self.cur, self.cur + timedelta(days=n))
+        return self._occurrences(self.cur, self.cur + timedelta(days=1))
 
     def _cycle(self, direction: int) -> None:
         occs = self._visible_occurrences()
@@ -948,6 +983,11 @@ class AgendaPane(QWidget):
         self.new_event(start, end, all_day)
 
     def edit_occurrence(self, occ: Occurrence) -> None:
+        if occ.external:
+            opener = HOOKS.get("open_task")
+            if callable(opener):
+                opener(occ.event_id[len("tache:"):])
+            return
         try:
             draft = self.service.draft_for(occ)
         except KeyError:
@@ -1011,6 +1051,9 @@ class AgendaPane(QWidget):
                                                                  occ.end_date - occ.start_date) else "Durée modifiée")
 
     def delete_occurrence(self, occ: Occurrence, confirm: bool = True) -> None:
+        if occ.external:
+            self._status("Tâche : la supprimer depuis le module Tâches")
+            return
         if occ.read_only:
             self._status("Calendrier en lecture seule")
             return
@@ -1033,11 +1076,18 @@ class AgendaPane(QWidget):
         self._status("Événement supprimé (Ctrl+Z pour annuler)")
 
     def duplicate(self, occ: Occurrence, days: int = 0) -> None:
+        if occ.external:
+            return
         eid = self.service.duplicate(occ, days)
         self.sel_key = eid
         self._status("Événement dupliqué")
 
     def _toggle_done(self, occ: Occurrence) -> None:
+        if occ.external:
+            toggle = HOOKS.get("toggle_task")
+            if callable(toggle):
+                toggle(occ.event_id[len("tache:"):])
+            return
         if occ.read_only:
             return
         self.service.set_done(occ, not occ.done)
@@ -1059,7 +1109,7 @@ class AgendaPane(QWidget):
 
     def _copy_selected(self) -> None:
         occ = self.selected_occurrence()
-        if occ is not None:
+        if occ is not None and not occ.external:
             self._clipboard = occ
             self._status(f"Copié : {occ.title or '(Sans titre)'}")
 
@@ -1115,6 +1165,12 @@ class AgendaPane(QWidget):
 
     def _context(self, occ: Occurrence | None, slot, global_pos) -> None:
         menu = kit.themed_menu(self)
+        if occ is not None and occ.external:
+            self._select(occ)
+            menu.addAction("Rouvrir la tâche" if occ.done else "Terminer la tâche", lambda: self._toggle_done(occ))
+            menu.addAction("Ouvrir dans Tâches", lambda: self.edit_occurrence(occ))
+            menu.exec(global_pos)
+            return
         if occ is not None:
             self._select(occ)
             menu.addAction("Voir" if occ.read_only else "Modifier…", lambda: self.edit_occurrence(occ))

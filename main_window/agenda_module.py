@@ -141,6 +141,10 @@ class AgendaModuleMixin:
             "project_folder": self._agenda_project_folder,
             "save_setting": self._agenda_save_setting,
             "navbar_frame": True,
+            # Tâches datées du module Tâches (main_window/tasks_module.py) : l'agenda n'importe pas fm_taches.
+            "tasks_due": getattr(self, "_taches_due_for_agenda", None),
+            "toggle_task": getattr(self, "_taches_toggle_from_agenda", None),
+            "open_task": getattr(self, "_taches_open_from_agenda", None),
         })
 
     def _agenda_save_setting(self, key, value):
@@ -205,6 +209,9 @@ class AgendaModuleMixin:
         if leave_pdf is not None and not leave_pdf():
             return False
         self._close_video()
+        leave_taches = getattr(self, "_leave_taches", None)      # tâches ouvertes : rangées d'abord (fm_taches)
+        if leave_taches is not None:
+            leave_taches()
         service = self._agenda_service_ready()
         if service is None:
             return False
@@ -360,7 +367,7 @@ class AgendaModuleMixin:
 
     def _layout_agenda_buttons(self):
         """Cadre « Agenda » de la barre : annuler, rétablir, panneau latéral, réglages, fermer."""
-        from preview_column import IconButton, style_focus_button
+        from preview_column import IconButton
         pane = getattr(self, "_agenda", None)
         group = self.titlebar.agenda_group()
         if pane is None or not pane.isVisible():
@@ -385,7 +392,7 @@ class AgendaModuleMixin:
         origin = group.content_origin()
         x, height = origin.x(), 0
         for button in buttons:
-            style_focus_button(button)
+            self.titlebar.style_group_button(button)
             kind = button._agenda_kind
             if kind == "undo":
                 self._set_button_usable(button, service.can_undo())

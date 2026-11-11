@@ -2692,6 +2692,18 @@ class CadLayer:
             if isinstance(item, CadLineItem):
                 item.setFlag(QGraphicsItem.ItemHasNoContents, not on)
 
+    def export_only(self, keep, on: bool):
+        """Export d'une PARTIE (selection : `fm_board.export._render_only`) : les lots du processeur peignent toutes
+        leurs lignes (masquer une ligne ne refait pas leurs listes) ; ils se taisent le temps de l'export et les lignes
+        gardees se peignent seules. Rien a faire en rendu GPU (`exporting`)."""
+        if self.gpu is not None or not self.batches:
+            return
+        for batch in self.batches:
+            batch.setVisible(not on)
+        for item in keep:
+            if isinstance(item, CadLineItem) and getattr(item, "_batch", None) is not None:
+                item.setFlag(QGraphicsItem.ItemHasNoContents, not on)
+
     def take_changes(self) -> list:
         changed, self.changed = list(self.changed.values()), {}
         return changed

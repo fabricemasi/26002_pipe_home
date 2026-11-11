@@ -63,3 +63,5 @@ os.environ["PIPELINE_NO_CSS_SYNC"] = "1"
 os.environ["FM_AGENDA_DIR"] = str(_TMP / "fm_agenda")
 os.environ["FM_AGENDA_TEST_CREDENTIALS"] = "1"
 os.environ["FM_AGENDA_NO_NETWORK"] = "1"
+# Tâches (fm_taches) : base SQLite dans un dossier temporaire.
+os.environ["FM_TACHES_DIR"] = str(_TMP / "fm_taches")

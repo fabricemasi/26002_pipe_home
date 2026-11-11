@@ -41,3 +41,4 @@ Mesure dans l'appli réelle (`stall_log.py`, journal des blocages : `data/stall_
 - Correctif scripté : `Path.write_text` / `open(p, "w")` convertit en CRLF sous Windows ; lire / écrire en octets ou `newline="\n"`, et garder les fins de ligne du fichier.
 - Tests Illustrator (Pathfinder) : `.venv/Scripts/python.exe` obligatoire (`pathops` absent du Python système).
 - Longue suite en fond : `run_in_background` sur la commande elle-même, jamais `( … ) &` (sous-shell tué à la fin de l'appel).
+- SIGNAL QT ET GROS DICT (2026-11-10) : un `Signal(dict)` CONVERTIT le dict (QVariantMap) à chaque émission : ~8 ms pour tous les réglages, par tick d'aperçu en direct. Pour passer un gros dict Python : `Signal(object)` (`SettingsWindowV2.settingsChanged`).

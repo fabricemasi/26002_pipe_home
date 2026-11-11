@@ -1424,6 +1424,30 @@ class PresetDoesNotClobberLiveStateTest(WindowTestCase):
         self.assertEqual(loaded["toggle3_coche_skin"], "text")
 
 
+class TabScopedDimsKeyTest(WindowTestCase):
+    """Deux onglets d'une fenetre de module (Board : « Module Board » / « Module Photoshop ») ont une section de meme
+    titre (« Navigation ») : leurs tableaux ont des cles DIFFERENTES (« <onglet>|... »), sinon ils s'ecrasaient
+    dimensions et ordre des lignes (signale, 2026-11-08). La fenetre generale garde ses cles sans onglet."""
+
+    def test_same_section_title_in_two_tabs(self):
+        win = v2.SettingsWindowV2(module="board")
+        self.addCleanup(win.close)
+        keys = []
+        for i, (label, _title) in enumerate(win.scopes):
+            win._ensure_page(i)
+            page = win.stack.widget(i)
+            for node in page.findChildren(v2._LazyNode):
+                if node.node.title == "Navigation":
+                    node._build()
+                    keys += [f.dimsKey() for f in node._head._body.findChildren(_TableFrame)]   # corps : dans le volet
+        self.assertGreaterEqual(len(keys), 2)
+        self.assertEqual(len(keys), len(set(keys)), keys)
+        self.assertTrue(all("|Navigation#" in k for k in keys), keys)
+        general = build()
+        self.addCleanup(general.close)
+        self.assertFalse([f.dimsKey() for f in general.findChildren(_TableFrame) if "|" in f.dimsKey()])
+
+
 class RowMoveTest(WindowTestCase):
     """Tableaux > « Permettre le deplacement des lignes » : Ctrl + glisser la 1re cellule d'une ligne la
     deplace ; l'ordre est enregistre (row_order) et retrouve."""

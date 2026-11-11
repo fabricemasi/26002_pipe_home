@@ -313,11 +313,12 @@ def _edit_variants(name: str, type_name: str, action, folder: Path | None = None
 
 
 def add_variant(name: str, type_name: str, new: str, source: str | None = None,
-                folder: Path | None = None) -> str:
-    """Nouvelle variante (copie de `source`, sinon de la variante par défaut). Retourne son nom (unique)."""
+                folder: Path | None = None, fields: dict | None = None) -> str:
+    """Nouvelle variante (copie de `source`, sinon de la variante par défaut ; `fields` par-dessus). Retourne son nom
+    (unique)."""
     def action(entry):
         variant = _unique_variant(entry, new)
-        entry["variantes"][variant] = variant_fields(entry, source)
+        entry["variantes"][variant] = {**variant_fields(entry, source), **(fields or {})}
         return variant
     return _edit_variants(name, type_name, action, folder)
 

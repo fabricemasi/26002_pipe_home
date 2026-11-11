@@ -129,6 +129,7 @@ from browser_core import (
 from capture_widgets import (
     _ColumnCard,
     _RoundedCornersEffect,
+    _column_hidden_sides,
     update_card_mask,
 )
 from preview_column import (
@@ -764,15 +765,14 @@ class DetailPanel(
         border_thickness = max(0, int(s.get("column_border_thickness", 1)))
         enabled = s.get("column_border_enabled") or {}
         suppress_left = self._suppress_left()
+        hidden = self._hidden_sides()
 
-        def reserve(side_enabled: bool) -> int:
-            return border_thickness if side_enabled else 0
+        def reserve(side: str) -> int:
+            return border_thickness if bool(enabled.get(side, True)) and side not in hidden else 0
 
         self._card_layout.setContentsMargins(
-            scaled(reserve(bool(enabled.get("left", True)) and not suppress_left), 0),
-            scaled(reserve(bool(enabled.get("top", True))), 0),
-            scaled(reserve(bool(enabled.get("right", True))), 0),
-            scaled(reserve(bool(enabled.get("bottom", True))), 0),
+            scaled(reserve("left"), 0), scaled(reserve("top"), 0),
+            scaled(reserve("right"), 0), scaled(reserve("bottom"), 0),
         )
         # Padding, PAR COTE (voir Column.refresh_header, MEME logique "carte
         # flottante") — cote gauche a 0 si collee a la derniere colonne
@@ -797,6 +797,10 @@ class DetailPanel(
         if column_gap() > 0:
             return False
         return column_padding_for(INSPECTOR_TITLE)["left"] <= 0
+
+    def _hidden_sides(self) -> set:
+        """Cotes sans bordure : bords de la zone des colonnes (_column_edge_sides) + gauche collee."""
+        return _column_hidden_sides(self, INSPECTOR_TITLE, self._suppress_left())
 
     def _update_card_mask(self):
         update_card_mask(self)

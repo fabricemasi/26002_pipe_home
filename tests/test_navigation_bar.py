@@ -60,19 +60,20 @@ class NavigationBarTest(unittest.TestCase):
         self.assertTrue(win.preset_picker.manage.isHidden())            # « Gerer » = l'icone de la barre
         self.assertLess(win.root_field.width(), 300)                    # beaucoup moins large qu'avant
         sizes = {(b.width(), b.height()) for b in (win.btn_browse, win.btn_presets, win.btn_settings,
-                                                   win.btn_collapse, bar.btn_min)}
+                                                   win.btn_collapse)}
         self.assertEqual(len(sizes), 1)                                 # tous les boutons de la meme taille
+        self.assertEqual(bar.btn_min.width(), bar.btn_min.height())     # reduire / agrandir / fermer : carres
         self.assertEqual(win.scroll.geometry().top(), bar.geometry().bottom() + 1)   # colonnes jusqu'a la barre
 
     def test_bar_buttons_have_their_own_settings_icons(self):
-        rows = {s.params["ui_key"] for s in v2.CATALOG["Barre de navigation : Icones"] if s.kind == "ui_icon"}
+        rows = {s.params["ui_key"] for s in v2.CATALOG["Barre de navigation : Icones (appli)"] if s.kind == "ui_icon"}
         self.assertTrue({"navbar_browse", "navbar_presets", "settings_gear"} <= rows)
         button = self.win.btn_browse
         self.assertEqual(button._kind, "browse")
         self.assertIsNone(button._custom_icon_pixmap(button.rect()))     # glyphe peint par defaut
 
     def test_icon_rows_are_split_cells_with_a_preview_cell(self):
-        spec = next(s for s in v2.CATALOG["Barre de navigation : Icones"] if s.kind == "ui_icon" and
+        spec = next(s for s in v2.CATALOG["Barre de navigation : Icones (appli)"] if s.kind == "ui_icon" and
                     s.params["ui_key"] == "navbar_browse")
         holder = v2._f_ui_icon(spec, None, {})
         from settings_cells import split_of
@@ -130,7 +131,9 @@ class NavigationBarTest(unittest.TestCase):
         bar = self.win.titlebar
         self.assertEqual(bar._crumb_names[:2], ["3d", "projA"])
         self.assertGreaterEqual(bar.crumbs.geometry().top(), bar.title_label.geometry().bottom())   # sous le titre
-        self.assertEqual(bar.crumbs.geometry().left(), app_style.scaled(10, 0))                      # colle a gauche
+        first = bar._crumb_layout.itemAt(0).widget()                  # « Espacement a gauche » (10 par defaut)
+        self.assertEqual(bar.crumbs.x() + first.x(),
+                         app_style.scaled(int(__import__("ui_state").APPLIED_SETTINGS.get("crumb_left_spacing", 10)), 0))
         self.win.prune_after(0)                                       # re-clic : les colonnes suivantes disparaissent
         settle(0.2)
         self.assertEqual(bar._crumb_names, ["3d", "projA"])           # le chemin parcouru reste (apres le focus)
@@ -236,30 +239,9 @@ class NavigationBarTest(unittest.TestCase):
         win._project_columns_hidden = False
         win._viewer_folder, win._viewer_paths, win._viewer_index = None, [], -1
 
-    def test_separator_row_dims_follow_the_separator_type(self):
-        import copy
-        group = "Barre de navigation : Cheminement"
-        settings = copy.deepcopy(settings_store.DEFAULT_SETTINGS)
-        fields: dict = {}
-        v2.build_group(group, v2.ScopeValues(settings, None), settings["colors"], fields, {}, [], [],
-                       lambda: None)
-        char_row, icon_row = fields["crumb_sep_font_family"], fields["ui_icon:navbar_crumb_separator"]
-        kind = fields["crumb_separator_kind"]
-        self.assertTrue(char_row.isEnabled())                          # type caractere : ligne icone grisee
-        self.assertFalse(icon_row.isEnabled())
-        kind._select("Icône")
-        self.assertFalse(char_row.isEnabled())                         # type icone : ligne caractere grisee
-        self.assertTrue(icon_row.isEnabled())
-        # la ligne caractere porte le caractere ET tous les champs de police
-        parts = char_row._v2_parts
-        self.assertEqual(set(parts), {"char", "family", "bold", "italic", "size", "smoothing", "color"})
-        spec = next(s for s in v2.CATALOG[group] if s.key == "crumb_sep_font_family")
-        parts["char"].setText("/")
-        self.assertEqual(v2.read_spec(spec, char_row)["crumb_separator_char"], "/")
-
-    def test_default_crumb_backgrounds_are_transparent(self):
-        for key in ("crumb_set_bg_color", "crumb_after_bg_color"):
-            self.assertEqual(settings_store.DEFAULT_SETTINGS[key], "#00000000")
+    def test_crumb_overlay_backgrounds_default_to_the_common_one(self):
+        for key in ("crumb_active_bg_color", "crumb_after_active_bg_color", "crumb_hover_bg_color"):
+            self.assertEqual(settings_store.DEFAULT_SETTINGS[key], "#00000000")     # transparent = fond commun
 
     def test_every_linked_toggle_of_the_catalog_is_saved(self):
         # « lier les 4 » (cotes, coins, padding) : sa cle `<cle>_linked` doit exister dans les reglages, sinon
@@ -271,84 +253,48 @@ class NavigationBarTest(unittest.TestCase):
         saved = settings_store.load_settings()
         self.assertIn("tabs_corner_radius_linked", saved)
 
-    def test_separator_follows_the_text_size_unless_it_has_its_own(self):
+    def test_chip_colors_and_fonts_follow_the_settings(self):
+        """Refonte du 2026-11-08 : fond commun, de l'onglet actif, d'apres l'onglet actif, du survol ; police
+        commune ou d'apres l'onglet actif ; ces lignes SEULES dans les reglages."""
         import browser_core
         base = settings_store.load_settings()
-        browser_core.apply_all_settings({**base, "crumb_font_size": 15, "crumb_sep_font_size": 0})
-        look = pb._build_crumb_look()
-        self.assertEqual(look["sep_font"].pixelSize(), 15)              # 0 = comme les textes
-        browser_core.apply_all_settings({**base, "crumb_font_size": 15, "crumb_sep_font_size": 22})
-        self.assertEqual(pb._build_crumb_look()["sep_font"].pixelSize(), 22)
-
-    def test_chip_colors_follow_the_settings(self):
-        import ui_state
-        import browser_core
-        import settings_store
-        browser_core.apply_all_settings({**settings_store.load_settings(), "crumb_set_bg_color": "#224466",
-                                         "crumb_after_bg_color": "#664422", "crumb_spacing": 9,
-                                         "crumb_padding": {"left": 6, "top": 3, "right": 6, "bottom": 3}})
-        look = pb._crumb_look()
-        self.assertEqual(look["set_bg"].name(), "#224466")
-        self.assertEqual(look["after_bg"].name(), "#664422")
-        self.assertEqual(look["spacing"], 9)
-        chip = pb._CrumbChip("abc", "set", look)
-        self.assertEqual(chip.toolTip(), "")                             # pas d'info-bulle au survol
-        bare = {**look["states"]["set"], "padding": {s: 0 for s in ("left", "top", "right", "bottom")}}
-        plain = pb._CrumbChip("abc", "set", {**look, "states": {**look["states"], "set": bare}})
-        self.assertEqual(chip.width() - plain.width(), 12)          # padding horizontal compte
-        rows = {s.key for group in ("Barre de navigation : Cheminement", "Cheminement : Set", "Cheminement : Apres set")
-                for s in v2.CATALOG[group]}
-        for key in ("crumb_spacing", "crumb_separator_kind", "crumb_set_bg_color", "crumb_after_bg_color",
-                    "crumb_border_enabled", "crumb_corner_radius", "crumb_padding", "crumb_shadow_enabled",
-                    "crumb_font_family", "crumb_hover_bg_color", "crumb_focus_border_enabled"):
-            self.assertIn(key, rows)
-
-    def test_after_set_rows_follow_the_set_table_unless_their_toggle_is_on(self):
-        import browser_core
-        import settings_store
-        base = settings_store.load_settings()
-        browser_core.apply_all_settings({**base, "crumb_padding": {"left": 4, "top": 0, "right": 4, "bottom": 0},
-                                         "crumb_after_padding": {"left": 9, "top": 0, "right": 9, "bottom": 0},
-                                         "crumb_after_ovr_padding": False, "crumb_afterfocus_ovr_padding": True,
-                                         "crumb_afterfocus_padding": {"left": 1, "top": 0, "right": 1, "bottom": 0}})
-        states = pb._crumb_look()["states"]
-        self.assertEqual(states["after"]["padding"]["left"], 4)          # toggle eteint : celui du Set
-        self.assertEqual(states["after_focus"]["padding"]["left"], 1)    # toggle allume : le sien
+        browser_core.apply_all_settings({**base, "crumb_bg_color": "#224466", "crumb_active_bg_color": "#00ff00",
+                                         "crumb_after_active_bg_color": "#664422", "crumb_hover_bg_color": "#ff00ff",
+                                         "crumb_spacing": 9, "crumb_font_size": 10,
+                                         "crumb_after_active_font_size": 20})
+        try:
+            look = pb._crumb_look()
+            self.assertEqual(look["spacing"], 9)
+            chips = {kind: pb._CrumbChip("abc", kind, look) for kind in ("set", "after", "set!", "after_focus")}
+            self.assertEqual(chips["set"]._bg.name(), "#224466")
+            self.assertEqual(chips["after"]._bg.name(), "#224466")               # plus d'etat « apres set »
+            self.assertEqual(chips["set!"]._bg.name(), "#00ff00")                # onglet actif
+            self.assertEqual(chips["after_focus"]._bg.name(), "#664422")         # apres l'onglet actif
+            self.assertGreater(chips["after_focus"].height(), chips["set"].height())   # sa police (20 px)
+            self.assertEqual(look["hover_bg"].name(), "#ff00ff")
+            self.assertEqual(chips["set"].toolTip(), "")                         # pas d'info-bulle au survol
+        finally:
+            browser_core.apply_all_settings(base)
+        keys = [s.key for s in v2.CATALOG["Barre de navigation : Cheminement"]]
+        self.assertEqual(keys, ["crumb_left_spacing", "crumb_spacing", "crumb_cut_border_active",
+                                "crumb_cut_border_others", "crumb_bg_color", "crumb_border_enabled",
+                                "crumb_corner_radius", "crumb_active_bg_color", "crumb_hover_bg_color",
+                                "crumb_after_active_bg_color", "crumb_font_family", "crumb_after_active_font_family"])
+        app = next(n for n in v2.tab_tree("General") if n.title == "Barre de navigation")
+        crumbs = next(n for n in app.children if n.title == "Cheminement")
+        self.assertEqual(crumbs.children, ())                                    # plus de Set / Apres set / focus
+        old = ("crumb_set_bg", "crumb_after_bg", "crumb_afterfocus", "crumb_focus", "crumb_padding", "crumb_margin",
+               "crumb_shadow", "crumb_hover_border", "crumb_sep", "crumb_separator", "crumb_after_ovr")
+        self.assertFalse([k for k in settings_store.DEFAULT_SETTINGS if k.startswith(old)])
+        self.assertNotIn("cheminement", v2._LINKED_TABLES)
         self.assertEqual(pb._crumb_state("after_focus"), ("after_focus", False))
         self.assertEqual(pb._crumb_state("set!"), ("set", True))
-        browser_core.apply_all_settings(base)
 
-    def test_separators_can_be_turned_off_and_their_rows_are_dimmed(self):
-        import browser_core
-        import settings_store
-        base = settings_store.load_settings()
-        browser_core.apply_all_settings({**base, "crumb_separator_enabled": False})
+    def test_no_separator_between_crumbs(self):
+        """Separateur retire (demande de l'utilisateur, 2026-11-07) : rien entre les onglets de la barre."""
         bar = self.win.titlebar
         bar.set_crumbs([("set", "a", lambda: None), ("set!", "b", lambda: None)], force=True)
-        self.assertEqual(bar.crumbs.findChildren(pb.QLabel), [])         # aucun separateur
-        browser_core.apply_all_settings(base)
-        spec = next(s for s in v2.CATALOG["Barre de navigation : Cheminement"] if s.key == "crumb_separator_kind")
-        self.assertEqual(spec.params["column"].key, "crumb_separator_enabled")     # colonne « Activer »
-        fields, toggles, resizers = {}, {}, []
-        frame = v2.build_group("Barre de navigation : Cheminement", v2.ScopeValues(dict(base), None), base["colors"],
-                               fields, toggles, resizers)
-        head_titles = [c.text().upper() for c in frame._v2_head._cells]
-        self.assertIn("ACTIVER", head_titles)
-        toggle = fields["crumb_separator_enabled"]
-        toggle = toggle if hasattr(toggle, "setChecked") else toggle.findChild(v2._Toggle)
-        toggle.setChecked(False)
-        char_row = fields["crumb_sep_font_family"]
-        self.assertFalse(char_row.isEnabled())                           # ligne du caractere grisee
-        frame.deleteLater()
-
-    def test_state_tables_are_linked_copies(self):
-        groups = ("Cheminement : Set", "Cheminement : Apres set", "Cheminement : Apres focus")
-        labels = [[s.label for s in v2.CATALOG[g]] for g in groups]
-        self.assertEqual(labels[0], labels[1])
-        self.assertEqual(labels[0], labels[2])
-        self.assertTrue(all(s.general_toggle for s in v2.CATALOG[groups[1]]))     # toggle d'override
-        self.assertFalse(any(s.general_toggle for s in v2.CATALOG[groups[0]]))
-        self.assertIn("cheminement", v2._LINKED_TABLES)
+        self.assertEqual(bar.crumbs.findChildren(pb.QLabel), [])
 
 
 class TabStripRadiusTest(unittest.TestCase):

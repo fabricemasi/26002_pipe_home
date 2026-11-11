@@ -539,6 +539,22 @@ class SettingsLinkMixin:
             if manager is not None and hasattr(manager, "settings_changed"):
                 manager.settings_changed(applied)
             return
+        if changed and all(k.startswith("taches_") for k in changed):
+            # Reglages : Taches : seul le panneau des taches (s'il est construit) et son service appliquent.
+            if isinstance(ui_state.APPLIED_SETTINGS, dict):
+                ui_state.APPLIED_SETTINGS.update({k: settings.get(k) for k in changed})
+            applied = ui_state.APPLIED_SETTINGS or settings
+            if getattr(self, "_taches", None) is not None:
+                self._taches.apply_settings(applied)
+            elif getattr(self, "_taches_service", None) is not None:
+                self._taches_service.apply_settings({k: applied.get(k) for k in changed})
+            manager = getattr(getattr(self, "_taches_service", None), "sync", None)
+            if manager is not None:
+                manager.settings_changed(applied)
+            reminders = getattr(self, "_taches_reminders", None)
+            if reminders is not None:
+                reminders.settings_changed(applied)
+            return
         if changed and all(k.startswith(("board_", "tableur_")) for k in changed):
             # Reglages > Module MRO (magnetisme du board, module Tableur) : rien d'autre a refaire que le board ouvert.
             if isinstance(ui_state.APPLIED_SETTINGS, dict):
@@ -567,11 +583,12 @@ class SettingsLinkMixin:
             for column in self.columns:
                 column.list.viewport().update()
             return
-        if changed and all(k.startswith(("navbar_", "statusbar_")) for k in changed):
-            # fm_theme > Barre de navigation / Barre d'etat : seules ces deux barres sont rhabillees.
+        if changed and all(k.startswith(("navbar_", "navtool_", "statusbar_", "viewer_group_")) for k in changed):
+            # fm_theme > Barre de navigation / Barre d'etat (+ icones de la barre et cadre des modules, reglages de
+            # fm_browser) : seules ces deux barres sont rhabillees.
             if isinstance(ui_state.APPLIED_SETTINGS, dict):
                 ui_state.APPLIED_SETTINGS.update({k: settings.get(k) for k in changed})
-            if any(k.startswith("navbar_") for k in changed):
+            if any(k.startswith(("navbar_", "navtool_", "viewer_group_")) for k in changed):
                 self.refresh_navbar()
             if any(k.startswith("statusbar_") for k in changed):
                 self.refresh_status_bar()
@@ -593,7 +610,9 @@ class SettingsLinkMixin:
             self._refresh_button_shadows()
             if "input_height" in changed:
                 self.refresh_chrome_sizes()               # champs de la barre de navigation
-            if any(k.startswith("crumb_") for k in changed):
+            if any(k.startswith("crumb_cut_border") for k in changed):
+                self.titlebar.refresh_look()              # filet de la barre coupe sous les onglets (+ cheminement)
+            elif any(k.startswith("crumb_") for k in changed):
                 self.titlebar.refresh_crumbs()            # cheminement : habillage et hauteur de la barre
             return
         prev_geometry = {title: (conf["height"], conf["spacing"]) for title, conf in COLUMN_SETTINGS.items()}

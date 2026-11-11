@@ -402,7 +402,8 @@ class _AllDayBand(QWidget):
         drag_key = self._drag["occ"].key if self._drag and self._drag.get("moved") else None
         for rect, occ, cut_l, cut_r in self._items:
             paint_bar(p, rect, view.ctx.colors(occ), occ.title, occ.key == view.selected_key, occ.key == self._hover,
-                      t.c("accent"), cut_l, cut_r, dim=0.35 if occ.key == drag_key else 1.0)
+                      t.c("accent"), cut_l, cut_r, dim=0.35 if occ.key == drag_key else 1.0, task=occ.is_task,
+                      done=occ.done)
         if drag_key:
             rect = self._drag["ghost"]
             if rect is not None:
@@ -480,6 +481,10 @@ class _AllDayBand(QWidget):
             self.update()
             return
         self.update()
+        occ, rect = press["occ"], press["rect"]
+        if occ is not None and occ.is_task and rect is not None and press["pos"].x() < rect.left() + 22:
+            self.view.toggleDone.emit(occ)                # case de la tâche (paint_bar)
+            return
         self.view.selected.emit(press["occ"])
 
     def mouseDoubleClickEvent(self, event):

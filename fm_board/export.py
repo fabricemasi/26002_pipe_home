@@ -20,7 +20,8 @@ def _area(scene) -> QRectF:
     return rect.adjusted(-MARGIN, -MARGIN, MARGIN, MARGIN)
 
 
-def _render(scene, painter: QPainter, target: QRectF, source: QRectF, transparent: bool):
+def _render(scene, painter: QPainter, target: QRectF, source: QRectF, transparent: bool,
+            mode=Qt.KeepAspectRatio):
     from fm_miro.items import CommentItem
     selected = scene.selectedItems()
     scene.clearSelection()
@@ -41,7 +42,7 @@ def _render(scene, painter: QPainter, target: QRectF, source: QRectF, transparen
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
-        scene.render(painter, target, source, Qt.KeepAspectRatio)
+        scene.render(painter, target, source, mode)
     finally:
         scene.exporting = False
         if hairlines:
@@ -67,15 +68,21 @@ def items_source(items, margin: float = 20.0) -> QRectF:
     return rect.adjusted(-margin, -margin, margin, margin)
 
 
-def _render_only(scene, items, painter: QPainter, target: QRectF, source: QRectF, transparent: bool):
+def _render_only(scene, items, painter: QPainter, target: QRectF, source: QRectF, transparent: bool,
+                 mode=Qt.KeepAspectRatio):
     """Rendu des SEULS elements donnes (les autres masques le temps du rendu)."""
     keep = set(items)
     hidden = [i for i in scene.board_items() if i not in keep and i.isVisible()]
     for item in hidden:
         item.setVisible(False)
+    only = getattr(getattr(scene, "cad_layer", None), "export_only", None)   # lots CAD : lignes gardees seules
+    if only is not None:
+        only(items, True)
     try:
-        _render(scene, painter, target, source, transparent)
+        _render(scene, painter, target, source, transparent, mode)
     finally:
+        if only is not None:
+            only(items, False)
         for item in hidden:
             item.setVisible(True)
 

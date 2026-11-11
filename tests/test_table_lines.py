@@ -136,7 +136,26 @@ class WindowBorderTest(unittest.TestCase):
         for key in ("window_border_enabled", "window_border", "window_border_thickness"):
             self.assertIn(key, DEFAULT_SETTINGS)
             self.assertEqual(tp.theme_key(key)[0], "general")
-        self.assertNotIn("extra_window_border_enabled", [s.key for s in v2.CATALOG["Fenêtres additionnelles"]])
+        # Fenetres additionnelles : de nouveau leur bordure propre (demande de l'utilisateur, 2026-11-08).
+        self.assertIn("extra_window_border_enabled", [s.key for s in v2.CATALOG["Fenêtres additionnelles"]])
+
+
+class TableBackgroundTest(unittest.TestCase):
+    def test_background_color_of_every_table(self):
+        """Thème > Tableaux > Couleur de fond : « @tableRow » (défaut) = la pastille, sinon la sienne, en direct."""
+        from fm_theme.tokens import M
+        settings = copy.deepcopy(DEFAULT_SETTINGS)
+        self.assertEqual(settings["table_bg_color"], "@tableRow")
+        self.assertIn("table_bg_color", [s.key for s in v2.CATALOG["Tableaux"]])
+        settings["colors"] = dict(settings["colors"], table_row="#202020")
+        v2.seed_window_look(settings)
+        self.addCleanup(v2.seed_window_look, copy.deepcopy(DEFAULT_SETTINGS))
+        self.assertEqual(M["table_row_a"], "#202020")
+        frame = v2._flat_cells_table([("Essai", QLabel("x"), None, None), ("Essai 2", QLabel("y"), None, None)])
+        self.addCleanup(shiboken6.delete, frame)
+        v2.restyle_tables_in(frame, dict(settings, table_bg_color="#123456"))
+        self.assertEqual((M["table_row_a"], M["table_row_b"]), ("#123456", "#123456"))
+        self.assertTrue(all("#123456" in row.styleSheet() for row, _bg, _first in frame._flat_rows))
 
 
 if __name__ == "__main__":

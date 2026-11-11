@@ -5,7 +5,7 @@ settings_store (qui les réexporte) à l'étape 2 de fm_theme. Les dicts (`M`, `
 N'importe rien de l'appli (voir fm_theme/hooks.py)."""
 from pathlib import Path
 
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QColor, QFont
 
 from fm_theme.style import C, SEMANTIC_COLOR_SLOTS
 
@@ -79,6 +79,18 @@ M = {
     "dash": "#454d53",
 }
 
+# Thème > Tableaux > « Couleur de fond » (`table_bg_color`, demande de l'utilisateur, 2026-11-08) : couleur ou
+# référence « @slot » posée par seed_table_look / restyle_tables_in ; None = la pastille « Fond de tableau ».
+TABLE_BG: dict = {"ref": None}
+
+
+def set_table_bg(ref: str | None, colors: dict) -> None:
+    """Fond des lignes de tous les tableaux (`M["table_row_a"/"table_row_b"]`) ; les tableaux deja construits le
+    reprennent au prochain `_set_flat_tables_style`."""
+    TABLE_BG["ref"] = ref or None
+    _sync_dynamic_M(colors)
+
+
 def _sync_dynamic_M(colors: dict) -> None:
     """Aligne les entrees de M qui suivent desormais les couleurs REGLABLES
     de l'appli (voir app_style.SEMANTIC_COLOR_SLOTS/COLOR_FIELDS) au lieu de
@@ -107,6 +119,8 @@ def _sync_dynamic_M(colors: dict) -> None:
     topbar = colors.get("topbar", C["topbar"])
     table_head = colors.get("table_head", C["table_head"])
     table_row = colors.get("table_row", C["table_row"])
+    if TABLE_BG["ref"]:                                  # Tableaux > Couleur de fond (sinon la pastille)
+        table_row = _resolve_color_value(TABLE_BG["ref"], {"table_row": table_row, **colors})
     M["field_bg"] = well
     M["toolbar_bg"] = topbar
     M["panel_bg"] = topbar
@@ -218,6 +232,14 @@ def _title_box_defaults(level: int) -> dict:
         "bg_border_thickness": 1, "bg_border_enabled_linked": True,
         "bg_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
         "bg_radius_linked": True,
+        # Titre DEPLOYE (demande de l'utilisateur, 2026-11-08) : fond de son paragraphe (transparent = son fond
+        # habituel), couleur du texte, gras et italique imposes (« follow » = la police du niveau).
+        "open_bg_color": "#00000000", "open_color_enabled": False, "open_color": "#ffffff",
+        "open_bold": "follow", "open_italic": "follow",
+        # Bordures du titre deploye : aucun cote allume = ses bordures habituelles (2026-11-08).
+        "open_border_enabled": {"top": False, "right": False, "bottom": False, "left": False},
+        "open_border": {"top": "#2e343a", "right": "#2e343a", "bottom": "#2e343a", "left": "#2e343a"},
+        "open_border_thickness": 1, "open_border_enabled_linked": True,
     }
 
 for _level, _vals in _TITLE_LEVEL_DEFAULTS.items():
@@ -244,6 +266,23 @@ def _sync_title_level_style(settings: dict) -> None:
         # sur le noir de repli — voir la remarque de l'utilisateur, "quand
         # je selectionne une couleur app, elle apparait noire".
         style["font_color"] = _resolve_color_value(style["font_color"], colors)
+        style["open_bg_hex"] = _resolve_color_value(style["open_bg_color"], colors)
+        style["open_color_hex"] = _resolve_color_value(style["open_color"], colors)
+        border = style["open_border"] if isinstance(style["open_border"], dict) else {}
+        style["open_border_hex"] = {side: _resolve_color_value(border.get(side, "#2e343a"), colors)
+                                    for side in ("top", "right", "bottom", "left")}
+
+
+def _title_open_text(level: int, font: QFont, color: str) -> tuple[QFont, str]:
+    """Police et couleur d'un titre DEPLOYE a partir des siennes (overrides du niveau : couleur, gras, italique)."""
+    style = _TITLE_LEVEL_STYLE.get(level) or _TITLE_LEVEL_STYLE[3]
+    font = QFont(font)
+    for key, setter in (("open_bold", font.setBold), ("open_italic", font.setItalic)):
+        if style.get(key) in ("on", "off"):
+            setter(style[key] == "on")
+    if style.get("open_color_enabled"):
+        color = style.get("open_color_hex") or color
+    return font, color
 
 def _title_font(level: int) -> QFont:
     """Police EFFECTIVE d'un titre de _Section (niveau 1) / _SubSection
@@ -279,6 +318,13 @@ def _title_gap_next(level: int) -> int:
     style = _TITLE_LEVEL_STYLE.get(level) or _TITLE_LEVEL_DEFAULTS[3]
     return max(0, int(style.get("gap_next", 6)))
 
+def _open_border(style: dict) -> tuple | None:
+    sides = _coerce_side_enabled(style.get("open_border_enabled", False), False)
+    if not any(sides.values()):
+        return None
+    return sides, dict(style.get("open_border_hex") or {}), max(0, int(style.get("open_border_thickness", 1)))
+
+
 def _title_box(level: int) -> dict:
     """Habillage « paragraphe » d'un titre de `level` (v2) : margin et paddings en tuples (G, H, D, B), bordure
     (cotes actifs, couleurs hex, epaisseur), rayons par coin, couleur de fond hex ou None."""
@@ -296,6 +342,10 @@ def _title_box(level: int) -> dict:
         "padding": pad(style.get("bg_padding")),
         "body_padding": pad(style.get("body_padding")),
         "fill": style.get("bg_color_hex") if style.get("bg_enabled") else None,
+        # Fond du paragraphe quand le titre est deploye (None : `fill`) ; alpha nul = pas de fond propre.
+        "open_fill": style.get("open_bg_hex") if QColor(style.get("open_bg_hex") or "#00000000").alpha() else None,
+        # Bordures du titre deploye (None : les siennes) : (cotes, couleurs hex, epaisseur).
+        "open_border": _open_border(style),
         "border_on": _coerce_side_enabled(style.get("bg_border_enabled", False), False),
         "border_colors": dict(style.get("bg_border_hex") or {}),
         "thickness": max(0, int(style.get("bg_border_thickness", 1))),
@@ -357,7 +407,12 @@ def set_input_look(values: dict) -> None:
 
 def input_bg() -> str:
     value = INPUT_LOOK.get("input_bg_color")
-    return _resolve_color_value(value, INPUT_LOOK.get("colors") or {}) if value else M["field_bg"]
+    if not value:
+        return M["field_bg"]
+    if isinstance(value, str) and value.startswith("@"):     # « @saisie » (defaut) : la palette de l'appli si les
+        from fm_theme.style import C                          # couleurs des reglages n'ont pas la pastille
+        return _resolve_color_value(value, {**C, **(INPUT_LOOK.get("colors") or {})})
+    return value
 
 
 def input_border_decl() -> str:

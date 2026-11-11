@@ -7,6 +7,7 @@ from app_style import C, custom_softwares, removed_softwares, font
 from config import ICONS_DIR, THUMBNAIL_FILENAME
 from previews import cached_mtime as _previews_mtime
 from previews import SOFTWARE_ICONS, UI_ICON_FILE_DEFAULT, UI_ICON_FOLDER_DEFAULT, UI_ICON_PIN_ACTIVE, UI_ICON_PIN_INACTIVE, _FALLBACK_SOFTWARE_BADGE_PALETTE, _bounded_cache_set, _contain_square, _software_icon_cache, custom_software_icon_path, custom_ui_icon_pixmap
+from fm_theme.placeholder import MAGENTA
 from . import scan as _scan
 
 def _fallback_software_badge_style(key: str) -> tuple[str, str, str]:
@@ -22,6 +23,7 @@ def _fallback_software_badge_style(key: str) -> tuple[str, str, str]:
 def _generate_software_badge(key: str, size: int) -> QPixmap:
     entry = SOFTWARE_ICONS.get(key)
     bg, fg, label = entry if entry is not None else _fallback_software_badge_style(key)
+    bg, fg = MAGENTA, "#1a001a"                          # badge dessine par le code : magenta (provisoire)
     pix = QPixmap(size, size)
     pix.fill(Qt.transparent)
     painter = QPainter(pix)

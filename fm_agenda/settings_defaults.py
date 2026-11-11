@@ -24,6 +24,7 @@ AGENDA_DEFAULTS = {
     "agenda_sidebar_width": 272,
     "agenda_width": 100,                   # % de la place : contenu centré (curseur de la barre d'état)
     "agenda_show_upcoming": True,          # agenda des prochains jours dans le panneau latéral
+    "agenda_show_tasks": True,             # tâches datées du module Tâches (fm_taches) dans l'agenda
     "agenda_list_days": 30,                # jours de la vue Planning
     "agenda_day_autoselect": True,         # vue Jour : sélectionne le prochain événement (design)
     "agenda_long_bars": True,              # événements longs en barres fléchées (Jour / Semaine, maquette v10)

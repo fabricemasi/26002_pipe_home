@@ -206,6 +206,9 @@ class EventRecord:
         return errors
 
 
+EXTERNAL_TASK = "tache:"
+
+
 class Occurrence:
     """Une occurrence AFFICHÉE (événement simple, ou une date d'une série), dans le fuseau d'affichage. Légère
     (`__slots__`) : une vue Année en manipule des milliers."""
@@ -239,6 +242,35 @@ class Occurrence:
         self.transparency = rec.transparency
         self.description = rec.description
         self.categories = rec.categories
+
+    @classmethod
+    def external_task(cls, task_id: str, title: str, start: datetime, end: datetime, day: date, all_day: bool,
+                      done: bool, color: str, list_name: str, has_note: bool = False) -> "Occurrence":
+        """Tâche d'un autre module (fm_taches, HOOK `tasks_due` du panneau) montrée dans l'agenda : lecture seule
+        (ni glisser ni éditeur), clé « tache:<id> » ; cocher / ouvrir passent par les HOOKS du panneau."""
+        occ = cls.__new__(cls)
+        occ.key = occ.event_id = EXTERNAL_TASK + task_id
+        occ.series_id = occ.recurrence_id = None
+        occ.calendar_id = ""
+        occ.title = title
+        occ.start, occ.end = start, end
+        occ.all_day = all_day
+        occ.start_date = day if all_day else None
+        occ.end_date = day + timedelta(days=1) if all_day else None
+        occ.color = color
+        occ.location = ""
+        occ.is_task, occ.done = True, done
+        occ.project, occ.folder = list_name, ""
+        occ.has_note = has_note
+        occ.recurring = False
+        occ.read_only = True
+        occ.status, occ.transparency = "confirmed", "transparent"
+        occ.description, occ.categories = "", []
+        return occ
+
+    @property
+    def external(self) -> bool:
+        return self.key.startswith(EXTERNAL_TASK)
 
     def days(self) -> list[date]:
         """Jours d'affichage couverts (fin exclue ; un événement horaire finissant à minuit n'occupe pas le

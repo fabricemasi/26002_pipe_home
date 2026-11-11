@@ -16,4 +16,5 @@ sont lancés à chaque passage, sans ligne ici (liste `BANCS` de `tools/fluidite
 
 ## File
 
+- [ ] 2026-11-11 — Tâches : volume 10 000 tâches / 20 listes (fm_taches/services/tasks.py, ui/pane.py, ui/tasklist.py, services/reminders.py) : ouverture du service, liste en cache / après modification, cocher, semaine et année de l'Agenda, vues intelligentes, recherche, rappels, panneau (construction, changer de liste, peinture) — à comparer à docs/agents/fm_taches.md « Mesures » — `python -m unittest discover -s tests -p test_taches_perf.py -v`
 - [ ] 2026-11-07 — Agenda : barres longues fléchées (fm_agenda/ui/longbars.py, timegrid.py : chemins à la disposition, encart de survol repeint seul) — peinture de la semaine et glisser à 50 000 événements, à comparer au tableau de docs/agents/fm_agenda.md — `python -m unittest discover -s tests -p test_agenda_perf.py -v`

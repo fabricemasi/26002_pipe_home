@@ -10,7 +10,7 @@ from app_style import C, resolve_color_ref, role_color, scaled
 from settings_store import load_settings, save_live_state, save_settings
 from settings_widgets import Menu
 from browser_core import _resolve_font_family
-from preview_column import IconButton, style_focus_button
+from preview_column import IconButton
 import ui_state
 
 
@@ -101,6 +101,9 @@ class VideoModuleMixin:
         leave_agenda = getattr(self, "_leave_agenda", None)    # agenda ouvert : rangé d'abord (fm_agenda)
         if leave_agenda is not None:
             leave_agenda()
+        leave_taches = getattr(self, "_leave_taches", None)    # tâches ouvertes : rangées d'abord (fm_taches)
+        if leave_taches is not None:
+            leave_taches()
         self._install_video_hooks()
         if self._video is None:
             from fm_video.pane import VideoPane
@@ -207,7 +210,7 @@ class VideoModuleMixin:
         origin = group.content_origin()
         x, height = origin.x(), 0
         for button in self._video_buttons:
-            style_focus_button(button)
+            self.titlebar.style_group_button(button)
             if button._video_kind == "info":
                 button.set_alert(self._mode_on_color() if pane.info_visible() else None)
             button.move(x, origin.y())

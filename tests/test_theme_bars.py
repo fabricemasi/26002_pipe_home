@@ -725,5 +725,134 @@ class HeadersTest(BarCase):
         self.assertIsNone(self.bar("b2")._ctrl_cursor(QPoint(1, 20)))      # barre flottante : rien à ranger
 
 
+class LinkedBarsTest(BarCase):
+    """Barres collées l'une à l'autre : elles bougent ENSEMBLE ; Ctrl + glisser = la barre seule (2026-11-08)."""
+
+    def setUp(self):
+        super().setUp()
+        self.create, self.layer = self.bar("b2"), self.bar("b3")
+        self.layer.set_dock(None)                                          # « Calque » collée à gauche de « Créer »
+        self.layer.fx, self.layer.fy = self.create.x() - self.layer.width(), self.create.y()
+        self.mgr.relayout()
+
+    def test_linked_group_follows_contacts(self):
+        rects = {"a": (0, 0, 100, 30), "b": (100, 0, 50, 30), "c": (150, 10, 20, 20), "d": (400, 400, 10, 10)}
+        self.assertEqual(BM.linked_group(rects, "a"), {"b", "c"})          # de proche en proche
+        self.assertEqual(BM.linked_group(rects, "d"), set())
+
+    def test_a_snapped_bar_moves_with_the_dragged_one(self):
+        start = self.create.mapTo(self.root, self.create.header_rect().center())
+        gap = self.layer.x() - self.create.x()
+        self.drag_bar(self.create, start + QPoint(0, 120))
+        self.assertEqual(self.create.y(), 320)
+        self.assertEqual((self.layer.x() - self.create.x(), self.layer.y()), (gap, 320))
+        self.assertIsNone(self.layer.dock)
+        self.assertEqual((self.layer.fx, self.layer.fy), (self.layer.x(), self.layer.y()))
+
+    def test_ctrl_drag_moves_the_bar_alone_and_ctrl_click_still_renames(self):
+        start = self.create.header_rect().center()
+        layer_pos = self.layer.pos()
+        with mock.patch.object(QApplication, "keyboardModifiers", return_value=Qt.ControlModifier):
+            QTest.mousePress(self.create, Qt.LeftButton, Qt.ControlModifier, start)
+            QTest.mouseMove(self.create, start + QPoint(0, 150))
+            QTest.mouseRelease(self.create, Qt.LeftButton, Qt.ControlModifier, start + QPoint(0, 150))
+        self.assertEqual(self.create.y(), 350)
+        self.assertEqual(self.layer.pos(), layer_pos)                     # restée chez elle
+        self.assertIsNone(self.create._edit)                              # glisser : pas de renommage
+
+    def test_header_goes_on_the_snapped_side(self):
+        """Clipsée en bas : l'en-tête en bas, les cases au-dessus ; en haut / flottante : en haut (2026-11-08)."""
+        bottom = self.layer
+        bottom.set_dock("bottom")
+        self.mgr.relayout()
+        bw, m = P.LOOK["border_w"], P.LOOK["margin"]
+        self.assertEqual(bottom.header_side(), "bottom")
+        self.assertEqual(bottom.header_rect().bottom(), bottom.height() - bw - 1)
+        self.assertEqual(bottom.origin().y(), bw + m)
+        self.assertEqual(bottom.height(), bottom.grid_size().height())     # même taille qu'en haut
+        self.assertEqual(self.bar("b1").header_rect().top(), bw)          # clipsée en haut : en haut
+        self.assertEqual(self.create.header_side(), "top")
+
+    def test_separator_between_snapped_bars(self):
+        P.restyle_palettes_in(self.root, {"palette_snap_separator": True, "palette_separator_color": "#ff00ff"})
+        self.addCleanup(P.restyle_palettes_in, self.root, {})
+        image = self.create.grab().toImage()                              # « Créer » (plus haute) trace la jonction
+        x = 0                                                              # son côté gauche, collé à « Calque »
+        column = {image.pixelColor(x, y).name() for y in range(self.layer.height())}
+        self.assertIn("#ff00ff", column)
+        P.restyle_palettes_in(self.root, {})
+        image = self.create.grab().toImage()
+        self.assertNotIn("#ff00ff", {image.pixelColor(x, y).name() for y in range(self.layer.height())})
+
+
+class NavbarNeighbourTest(unittest.TestCase):
+    """Signalé (2026-11-08, capture) : barre du board clipsée en haut, « pas de bordure » choisi, la bordure basse de la
+    barre de navigation restait. Ce voisin n'est PAS dans le parent de l'espace des barres : la pièce qui ôte sa bordure
+    monte jusqu'au premier parent qui la contient."""
+
+    def test_the_border_of_a_neighbour_outside_the_bars_parent_is_hidden(self):
+        P.set_look({})
+        self.addCleanup(P.set_look, {})
+        root = QWidget()
+        self.addCleanup(root.deleteLater)
+        root.resize(800, 600)
+        nav, line = QWidget(root), QWidget(root)                           # barre de navigation : fond rouge,
+        nav.setGeometry(0, 0, 800, 38)                                     # bordure basse de 2 px bleus
+        line.setGeometry(0, 38, 800, 2)
+        pane = QWidget(root)                                               # module (board) sous elle
+        pane.setGeometry(0, 40, 800, 560)
+        ws = QWidget(pane)
+        ws.setGeometry(0, 0, 800, 560)
+        for w, color in ((nav, "#ff0000"), (line, "#0000ff")):
+            w.setStyleSheet(f"background: {color};")
+            w.setAttribute(Qt.WA_StyledBackground, True)
+        mgr = make_manager(ws)
+        root.show()
+        APP.processEvents()
+        P.restyle_palettes_in(root, {"palette_snap_side": "no_border", "palette_snap_bg_color": True})
+        self.addCleanup(P.restyle_palettes_in, root, {})
+        top = mgr.bar("b1")
+        patch = mgr._patches[(top, "top")]
+        self.assertIs(patch.parentWidget(), root)
+        image = root.grab().toImage()
+        self.assertEqual(image.pixelColor(top.x() + top.width() // 2, 39).name(), "#ff0000")    # ôtée le long
+        self.assertEqual(image.pixelColor(top.x() + top.width() + 20, 39).name(), "#0000ff")   # gardée ailleurs
+
+
+class SnapSideColorTest(BarCase):
+    """« Clipsée : comportement du côté collé » = 3. couleur de bordure : le côté collé de cette couleur, la bordure du
+    voisin ôtée le long de la barre ; l'ancien toggle « pas de bordure » vaut le choix 2 (2026-11-08)."""
+
+    def setUp(self):
+        super().setUp()
+        band = QWidget(self.root)
+        band.setGeometry(0, 0, 800, 38)
+        band.setStyleSheet("background: #ff0000;")
+        line = QWidget(self.root)
+        line.setGeometry(0, 38, 800, 2)
+        line.setStyleSheet("background: #0000ff;")
+        for w in (band, line):
+            w.setAttribute(Qt.WA_StyledBackground, True)
+            w.show()
+        self.mgr.set_area(QRect(0, 40, 800, 560))
+        self.addCleanup(P.restyle_palettes_in, self.root, {})
+
+    def test_old_toggle_is_choice_two(self):
+        self.assertEqual(P.palette_look({"palette_snap_border_off": True})["snap_side"], "no_border")
+        self.assertEqual(P.palette_look({})["snap_side"], "none")
+        self.assertEqual(P.palette_look({"palette_snap_side": "color"})["snap_side"], "color")
+
+    def test_colour_mode_draws_the_snapped_side_and_hides_the_neighbour_border(self):
+        top = self.bar("b1")
+        P.restyle_palettes_in(self.root, {"palette_snap_side": "color", "palette_snap_side_color": "#00ff00",
+                                          "palette_border_thickness": 1})
+        self.assertIn((top, "top"), self.mgr._patches)                     # bordure du voisin ôtée le long de la barre
+        bar = top.grab().toImage()
+        self.assertEqual(bar.pixelColor(top.width() // 2, 0).name(), "#00ff00")
+        image = self.root.grab().toImage()
+        self.assertNotEqual(image.pixelColor(top.x() + top.width() // 2, 39).name(), "#0000ff")
+        self.assertEqual(image.pixelColor(top.x() + top.width() + 20, 39).name(), "#0000ff")
+
+
 if __name__ == "__main__":
     unittest.main()

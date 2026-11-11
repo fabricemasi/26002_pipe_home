@@ -71,6 +71,7 @@ from config import (
 )
 from previews import (
     UI_ICON_APP_LOGO,
+    UI_ICON_NAVBAR_THEME,
     _IdlePreviewScheduler,
     custom_ui_icon_pixmap,
 )
@@ -201,6 +202,7 @@ from main_window.board_module import BoardModuleMixin
 from main_window.font_module import FontModuleMixin
 from main_window.pdf_module import PdfModuleMixin
 from main_window.agenda_module import AgendaModuleMixin
+from main_window.tasks_module import TasksModuleMixin
 from main_window.module_targets import ModuleTargetsMixin
 from main_window.side_module import SideModuleMixin
 
@@ -208,7 +210,8 @@ from main_window.side_module import SideModuleMixin
 class PipelineBrowser(
     ColumnsMixin, CrumbsMixin, PreviewStackMixin, GroupColumnsMixin, SelectionMixin, ColumnsHiddenMixin, GalleryMixin,
     ViewerMixin, ViewerButtonsMixin, ViewerChromeMixin, CollapseMixin, SettingsLinkMixin, ChromeMixin, MdModuleMixin,
-    VideoModuleMixin, BoardModuleMixin, FontModuleMixin, PdfModuleMixin, AgendaModuleMixin, ModuleTargetsMixin,
+    VideoModuleMixin, BoardModuleMixin, FontModuleMixin, PdfModuleMixin, AgendaModuleMixin, TasksModuleMixin,
+    ModuleTargetsMixin,
     SideModuleMixin, QMainWindow,
 ):
     _bulk_navigation = False        # _navigate_to en cours : niveaux intermediaires sans fondu ni animation
@@ -477,10 +480,10 @@ class PipelineBrowser(
         # Symbol...) ne le rendait de facon fiable a cette taille — meme
         # correctif que pour les boutons min/max/close de TitleBar.
         self.btn_settings = IconButton("gear", role_color("buttons", "#c4cacf"), C["text"])
-        # Deuxieme engrenage, ORANGE (Reglages > Barre de navigation : couleur) : ouvre fm_theme (demande de
-        # l'utilisateur, 2026-11-03).
-        theme_color = (ui_state.APPLIED_SETTINGS or {}).get("navbar_theme_button_color") or "#f28c28"
-        self.btn_theme = IconButton("gear", theme_color, QColor(theme_color).lighter(130).name())
+        # Deuxieme engrenage : ouvre fm_theme (demande de l'utilisateur, 2026-11-03). Sa couleur (orange par defaut) et
+        # son icone perso : fm_browser > Barre de navigation > Icones, ligne « Icone fm_theme » (_refresh_navbar_icons).
+        self.btn_theme = IconButton("gear", role_color("buttons", "#c4cacf"), C["text"])
+        self.btn_theme.set_custom_icon_key(UI_ICON_NAVBAR_THEME)   # sans icone perso : celle de l'engrenage
         self.btn_theme.setToolTip("fm_theme (éditeur de l'aspect)")
         self.btn_theme.clicked.connect(self._open_fm_theme)
         # Ancien bouton de la fenetre v1 (retiree) : cache, garde pour les chemins de widgets enregistres.
@@ -520,6 +523,12 @@ class PipelineBrowser(
         self.btn_agenda.clicked.connect(self._toggle_agenda)
         self._agenda = None
         self._agenda_service = None
+        # Tâches (fm_taches/) : toujours actif, main_window/tasks_module.py.
+        self.btn_taches = IconButton("taches", role_color("buttons", "#c4cacf"), C["text"])
+        self.btn_taches.setToolTip("Tâches : listes, sous-tâches, échéances (Google Tasks, Apple Rappels)")
+        self.btn_taches.clicked.connect(self._toggle_taches)
+        self._taches = None
+        self._taches_service = None
         self.btn_viewer.setToolTip("Visionneuse (sélection en cours)")
         self.btn_text_editor.setToolTip("Éditeur Markdown / code (sélectionner une note, un fichier texte ou de code)")
         self.btn_board.setToolTip("Board (sélectionner un fichier .brd — clic droit dans une colonne > Créer un board)")
@@ -534,7 +543,7 @@ class PipelineBrowser(
         self._board_buttons = []
         for btn in (self.btn_browse, self.btn_presets, self.btn_settings, self.btn_theme, self.btn_collapse,
                     self.btn_columns, self.btn_viewer, self.btn_text_editor, self.btn_board, self.btn_video, self.btn_font,
-                    self.btn_pdf, self.btn_agenda):
+                    self.btn_pdf, self.btn_agenda, self.btn_taches):
             btn.setCursor(Qt.ArrowCursor)
             btn.setFlat(True)
             btn.setStyleSheet("QPushButton { background: transparent; border: none; }"
@@ -727,7 +736,9 @@ class PipelineBrowser(
                                 self.btn_settings, self.btn_theme, self.btn_collapse, self.btn_columns,
                                 self.btn_viewer,
                                 self.btn_text_editor,
-                                self.btn_board, self.btn_video, self.btn_font, self.btn_pdf, self.btn_agenda)
+                                self.btn_board, self.btn_video, self.btn_font, self.btn_pdf, self.btn_agenda,
+                                self.btn_taches)
+        self._refresh_navbar_icons()          # avant _sync_mode_buttons : couleur desactivee, pas de voile
         self._sync_mode_buttons()
         self.titlebar.refresh_sizes()
         self.titlebar.refresh_look()
@@ -1006,6 +1017,8 @@ class PipelineBrowser(
             QTimer.singleShot(0, self._apply_ui_spaces)
             # Agenda (fm_agenda) : base ouverte en fond, rappels et synchronisation même module fermé.
             QTimer.singleShot(2500, self._start_agenda_background)
+            # Tâches (fm_taches) : base ouverte en fond pendant l'inactivité (premier clic immédiat).
+            QTimer.singleShot(4000, self._start_taches_background)
 
     def closeEvent(self, event):
         video_pane = getattr(self, "_video", None)
@@ -1033,6 +1046,7 @@ class PipelineBrowser(
         if pane is not None and pane.parentWidget() is None:
             pane.deleteLater()           # page prechargee sans parent : detruite avant l'application (QtWebEngine)
         self._shutdown_agenda()          # agenda : ecritures terminees, base fermee proprement (fm_agenda)
+        self._shutdown_taches()          # taches : idem (fm_taches)
         automatic = getattr(self, "_automatic_tasks", None)
         if automatic is not None:
             automatic.stop()
@@ -1081,6 +1095,16 @@ class PipelineBrowser(
         on = border["thickness"] > 0 and border["sides"].get("top")
         apply_dwm_frame(self, ui_state.WINDOW_RADIUS, (border["colors"].get("top") or C["border"]) if on else "none",
                         resizable=True)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange:
+            # Agrandie / plein ecran : coins carres, ceux de DWM (`apply_dwm_frame`, rien si inchange) comme ceux
+            # peints par le cadre central (`CentralFrame`) ; restauree : le rayon regle revient.
+            self._apply_native_frame()
+            central = getattr(self, "central", None)
+            if central is not None:
+                central.update()
 
 
 def _save_menu_layouts(layouts: dict) -> None:
@@ -1157,6 +1181,8 @@ def main():
     _install_qt_message_filter()
     settings = load_settings(startup=True)      # le preset par defaut devient le preset actif
     apply_all_settings(settings)
+    import save_dialog_memory                   # toute boite « Enregistrer / Exporter » : dernier dossier utilise
+    save_dialog_memory.install(settings)
     root = Path(settings["root_path"])
     _config.ROOT = root
     # Cache en arriere-plan : index des noms (lu une fois), anciens noms renommes, puis menage (ni images

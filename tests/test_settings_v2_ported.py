@@ -45,10 +45,11 @@ def open_nodes(win, index: int, titles: tuple):
     win._show_page(index)
     page = win.stack.widget(index)
     for _ in range(3):
+        from fm_theme.layout import logical_parent    # corps des sections : dans le volet (theme_side_detail)
         for node in page.findChildren(v2._LazyNode):
-            parent = node.parentWidget()
+            parent = logical_parent(node)
             while parent is not None and not isinstance(parent, v2._LazyNode):
-                parent = parent.parentWidget()
+                parent = logical_parent(parent)
             if node.node.title in titles or (parent is not None and parent.node.title in titles):
                 node.set_collapsed(False)
         app.processEvents()
@@ -128,7 +129,7 @@ class PortedSectionsTest(unittest.TestCase):
         open_nodes(self.theme, 0, ("Barre de navigation", "Bouton", "Tabs", "Zone de saisie"))
         keys = {spec.key for win, label in ((self.win, "General"), (self.theme, v2.THEME_TAB))
                 for spec, _widget in win.stores[label]["specs"] if not isinstance(spec, str)}
-        expected = {"navbar_height", "navbar_bottom_enabled", "navbar_title_font_family",
+        expected = {"navbar_height", "navbar_bg_color", "navbar_bottom_enabled", "navbar_title_font_family",
                     "button_bg_color", "button_border_enabled", "button_shadow_enabled",
                     "tabs_bg_color", "tabs_corner_radius", "input_bg_color", "input_corner_radius"}
         self.assertFalse(expected - keys, expected - keys)

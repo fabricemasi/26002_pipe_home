@@ -113,6 +113,7 @@ def _post_form(http, url: str, data: dict) -> dict:
 class _Handler(_hs.BaseHTTPRequestHandler):
     result: dict = {}
     done: threading.Event | None = None
+    product = "Google Agenda"
 
     def do_GET(self):  # noqa: N802
         query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
@@ -124,7 +125,7 @@ class _Handler(_hs.BaseHTTPRequestHandler):
         ok = "code" in query
         page = ("<html><head><meta charset='utf-8'><title>PIPE FMZ</title></head><body style='font-family:Segoe UI;"
                 "background:#16181a;color:#eef0f2;padding:40px'><h2>" + (
-                    "Connexion à Google Agenda réussie." if ok else "Connexion refusée.") +
+                    f"Connexion à {type(self).product} réussie." if ok else "Connexion refusée.") +
                 "</h2><p>Vous pouvez fermer cet onglet et revenir dans PIPE FMZ.</p></body></html>")
         data = page.encode("utf-8")
         self.send_response(200)
@@ -140,12 +141,14 @@ class _Handler(_hs.BaseHTTPRequestHandler):
 
 
 def authorize(client: ClientConfig, http, open_browser, timeout: float = 300.0,
-              cancelled: threading.Event | None = None) -> Tokens:
-    """Ouvre le consentement Google dans le navigateur et attend la redirection (BLOQUANT : fil de fond)."""
+              cancelled: threading.Event | None = None, scopes=SCOPES,
+              product: str = "Google Agenda") -> Tokens:
+    """Ouvre le consentement Google dans le navigateur et attend la redirection (BLOQUANT : fil de fond).
+    `scopes` / `product` : portées demandées et nom montré (fm_taches : Google Tasks)."""
     verifier, challenge = pkce_pair()
     state = secrets.token_urlsafe(24)
     done = threading.Event()
-    handler = type("Handler", (_Handler,), {"result": {}, "done": done})
+    handler = type("Handler", (_Handler,), {"result": {}, "done": done, "product": product})
     server = _hs.HTTPServer(("127.0.0.1", 0), handler)       # boucle locale : jamais d'écoute hors de la machine
     port = server.server_address[1]
     redirect = f"http://127.0.0.1:{port}"
@@ -154,7 +157,7 @@ def authorize(client: ClientConfig, http, open_browser, timeout: float = 300.0,
     try:
         url = AUTH_URL + "?" + urllib.parse.urlencode({
             "client_id": client.client_id, "redirect_uri": redirect, "response_type": "code",
-            "scope": " ".join(SCOPES), "code_challenge": challenge, "code_challenge_method": "S256",
+            "scope": " ".join(scopes), "code_challenge": challenge, "code_challenge_method": "S256",
             "state": state, "access_type": "offline", "prompt": "consent"})
         open_browser(url)
         end = time.time() + timeout

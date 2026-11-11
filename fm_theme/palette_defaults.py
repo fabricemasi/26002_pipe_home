@@ -25,7 +25,11 @@ PALETTE_DEFAULTS: dict = {
     "palette_drag_border_color": TRANSPARENT,
     # Barre clipsée (demande de l'utilisateur, 2026-11-03) : pas de bordure du côté collé ; en-tête / fond de la
     # couleur de l'élément contre lequel elle est collée
-    "palette_snap_border_off": False, "palette_snap_header_color": False, "palette_snap_bg_color": False,
+    # « Clipsée : comportement du côté collé » (2026-11-08, remplace le toggle `palette_snap_border_off`) : « none »
+    # (rien), « no_border » (pas de bordure, ni sur la barre ni sur l'élément voisin le long de la barre), « color »
+    # (une bordure de la couleur `palette_snap_side_color`) ; séparateur entre barres collées l'une à l'autre
+    "palette_snap_side": "none", "palette_snap_side_color": TRANSPARENT, "palette_snap_separator": False,
+    "palette_snap_header_color": False, "palette_snap_bg_color": False,
     "palette_snap_border_match": False,    # clipsée contre un élément à bordure : bordure de SA couleur (côté collé exclu)
     # En-tête : titre (police), poignée de déplacement
     "palette_title_font_family": "", "palette_title_font_size": 10, "palette_title_font_bold": True,

@@ -44,7 +44,8 @@ class ExtraWindowsTest(unittest.TestCase):
 
     def test_section_rows(self):
         labels = [spec.label for spec in v2.CATALOG["Fenêtres additionnelles"]]
-        self.assertEqual(labels, ["Border radius", "Ombres", "Bordure interface / barre des boutons"])
+        self.assertEqual(labels, ["Couleur de fond", "Bordures", "Border radius", "Ombres",
+                                  "Bordure interface / barre des boutons"])
         # Barre du haut des fenetres : Barre de navigation > Fenetres additionnelles (2026-11-05).
         bar = [spec.label for spec in v2.CATALOG["Barre de navigation : Fenetres additionnelles"]]
         self.assertEqual(bar, ["Hauteur barre", "Couleur de fond", "Texte", "Taille des boutons",
@@ -58,8 +59,9 @@ class ExtraWindowsTest(unittest.TestCase):
 
     def test_shadow_margin_border_and_title_bar(self):
         all_sides = {k: True for k in ("top", "right", "bottom", "left")}
-        win = self.window(extra_window_shadow_size=18, window_border_thickness=3,
-                          extra_window_shadow_enabled=all_sides, window_border_enabled=all_sides,
+        win = self.window(extra_window_shadow_size=18, extra_window_border_thickness=3,
+                          extra_window_shadow_enabled=all_sides, extra_window_border_enabled=all_sides,
+                          window_border_thickness=0,          # celle de Theme > General : plus ici (2026-11-08)
                           extra_window_title_height=46, extra_window_radius=10)
         self.assertTrue(win.testAttribute(Qt.WA_TranslucentBackground))
         margins = sw.shadow_margins(win)
@@ -69,7 +71,8 @@ class ExtraWindowsTest(unittest.TestCase):
         self.assertEqual(win.width(), win.table.width() + 2 * win.MARGIN + 42)  # le tableau suit toujours
         # Ombre coupee, en direct : plus de marge, la fenetre se recale.
         settings = settings_store.load_settings()
-        settings.update(extra_window_shadow_size=0, window_border_thickness=1, window_border_enabled=all_sides)
+        settings.update(extra_window_shadow_size=0, extra_window_border_thickness=1,
+                        extra_window_border_enabled=all_sides, window_border_thickness=5)
         sw.seed_extra_window_look(settings)
         app.processEvents()
         self.assertEqual(sw.chrome_size(win), (2, 2))
@@ -87,6 +90,20 @@ class ExtraWindowsTest(unittest.TestCase):
         self.assertIn("border-bottom-left-radius: 6px", bar.close_btn.styleSheet())
         self.assertGreaterEqual(bar.height(), 30)
         self.assertEqual(bar.height(), max(30, bar._text_h + 4))
+
+    def test_own_background_and_border(self):
+        """Fond et bordure propres aux fenetres additionnelles (2026-11-08)."""
+        settings = settings_store.load_settings()
+        settings.update(extra_window_bg_color="#123456", extra_window_border_thickness=2,
+                        extra_window_border={k: "#ff0000" for k in ("top", "right", "bottom", "left")},
+                        extra_window_border_enabled={"top": True, "right": False, "bottom": False, "left": False})
+        sw.seed_extra_window_look(settings)
+        look = sw.EXTRA_WINDOW_LOOK
+        self.assertEqual(look["bg"], "#123456")
+        self.assertEqual((look["thickness"], look["border_colors"]["top"], look["sides"]["right"]), (2, "#ff0000", False))
+        settings.update(extra_window_border_enabled={k: False for k in ("top", "right", "bottom", "left")})
+        sw.seed_extra_window_look(settings)
+        self.assertEqual(sw.EXTRA_WINDOW_LOOK["thickness"], 0)               # aucun cote : aucune epaisseur
 
     def test_alert_border(self):
         win = self.window()

@@ -69,6 +69,11 @@ C = {
     # aura un.
     "table_head":    "#1b1e21",
     "table_row":     "#181b1d",
+    # Trois tons de texte de la palette (fm_theme > Couleurs, demande de l'utilisateur 2026-11-07) : references
+    # « @texte1 / @texte2 / @texte3 » de n'importe quelle couleur ; defauts = les trois tons de texte de l'appli.
+    "text_l1":       "#d6d9dc",
+    "text_l2":       "#b9bfc4",
+    "text_l3":       "#5f666b",
 }
 
 # ==========================================================================
@@ -420,6 +425,9 @@ COLOR_FIELDS: list[tuple[str, str, str]] = [
     ("scroll_hover", "Ascenseur (survol)", ""),
     ("table_head", "Fond entete de tableau", "Bandeau titre des tableaux (fenetre de parametres)"),
     ("table_row", "Fond de tableau", "Lignes des tableaux (fenetre de parametres) — toutes les lignes, sans variation"),
+    ("text_l1", "Texte niveau 1", ""),
+    ("text_l2", "Texte niveau 2", ""),
+    ("text_l3", "Texte niveau 3", ""),
 ]
 
 
@@ -515,6 +523,60 @@ def _control_font(prefix: str) -> str:
             f"font-size: {scaled(max(6, int(look.get(f'{prefix}_font_size', 11))))}px; "
             f"font-weight: {'bold' if look.get(f'{prefix}_font_bold') else 'normal'}; "
             f"font-style: {'italic' if look.get(f'{prefix}_font_italic') else 'normal'};")
+
+
+def _set_or(value, fallback: str) -> str:
+    """Couleur réglée (hex, « @pastille ») ; vide ou transparente = `fallback` (la teinte du thème)."""
+    resolved = resolve_color_ref(value, fallback) if value else fallback
+    color = QColor(resolved)
+    return resolved if color.isValid() and color.alpha() else fallback
+
+
+def button_state_look(look: dict) -> dict:
+    """Survol et état actif (enfoncé / focus) d'un bouton (`look` : clés `button_*`) : fond au survol, fond, bordure et
+    épaisseur à l'état actif ; transparent = le thème (`C`), épaisseur 0 = celle de l'état standard (variante
+    « toolbar », demande de l'utilisateur, 2026-11-10)."""
+    try:
+        width = max(0, int(look.get("button_active_border_thickness") or 0))
+    except (TypeError, ValueError):
+        width = 0
+    return {"hover": _set_or(look.get("button_hover_color"), C["btn_hover"]),
+            "active": _set_or(look.get("button_active_color"), C["accent"]),
+            "active_border": _set_or(look.get("button_active_border_color"), C["accent"]),
+            "active_width": width}
+
+
+def _active_border_css(states: dict) -> str:
+    color = states["active_border"]
+    if states["active_width"]:
+        return f"border: {states['active_width']}px solid {color};"
+    return f"border-color: {color};"
+
+
+BUTTON_STATES = (("standard", "État standard"), ("survol", "État survol"), ("focus", "État focus (clic si Entrée)"))
+
+
+def button_state_css(look: dict, state: str = "standard") -> str:
+    """QSS d'UN bouton dessiné avec les valeurs `look` (clés `button_*` d'une variante du type « bouton ») et FIGÉ dans
+    l'état `state` (« standard », « survol », « focus » = celui que déclenche Entrée) : mêmes règles que le QSS commun
+    (`build_stylesheet`) ; aperçus des variantes de l'éditeur fm_theme (2026-11-10)."""
+    global _CONTROL_LOOK
+    saved, _CONTROL_LOOK = _CONTROL_LOOK, look
+    try:
+        border = _control_border("button", C["btn_border"], _BUTTON_FRAME)
+        radius = _control_radius("button", _BUTTON_RADIUS)
+        font = _control_font("button")
+    finally:
+        _CONTROL_LOOK = saved
+    bg = resolve_color_ref(look.get("button_bg_color"), C["btn"])
+    color = resolve_color_ref(look.get("button_font_color"), "#c4cacf")
+    extra = ""
+    states = button_state_look(look)
+    if state == "survol":
+        bg, extra = states["hover"], f"border-color: {C['btn_hover_bd']};"
+    elif state == "focus":
+        bg, color, extra = states["active"], C["accent_text"], _active_border_css(states)
+    return f"QPushButton {{ background: {bg}; {border} {radius} {font} color: {color}; padding: 0 12px; {extra} }}"
 
 
 def set_button_radius(px: int) -> None:
@@ -760,6 +822,9 @@ SEMANTIC_COLOR_SLOTS: list[tuple[str, str, str]] = [
     # (improbable mais sans consequence) comme source de la couleur d'entete
     # de colonne.
     ("tableRow", "table_row", "Tableau - fond"),
+    ("texte1", "text_l1", "Texte niveau 1"),
+    ("texte2", "text_l2", "Texte niveau 2"),
+    ("texte3", "text_l3", "Texte niveau 3"),
 ]
 _SEMANTIC_TO_REAL = {slot: real for slot, real, _ in SEMANTIC_COLOR_SLOTS}
 
@@ -1127,7 +1192,7 @@ def column_header_qss(object_name: str, title: str) -> str:
     )
 
 
-def column_frame_style(title: str, suppress_left: bool = False) -> dict:
+def column_frame_style(title: str, suppress_left: bool = False, hidden_sides=()) -> dict:
     """Cadre de la colonne elle-meme (Colonnes > Bordure/Rayon des angles
     de bordure) — remplace, pour TOUTE colonne, le simple "border-right:
     1px solid" code en dur jusqu'ici (voir Column.__init__/refresh_colors,
@@ -1155,6 +1220,8 @@ def column_frame_style(title: str, suppress_left: bool = False) -> dict:
     enabled = dict(s.get("column_border_enabled") or {})
     if suppress_left:
         enabled["left"] = False
+    for side in hidden_sides:                   # cotes qui touchent le bord de la zone (_column_edge_sides)
+        enabled[side] = False
     thickness = max(0, int(s.get("column_border_thickness", 1)))
     colors = {k: resolve_color_ref(v) for k, v in (s.get("column_border") or {}).items()}
     # "@skinN2" (= C["void"]) par defaut : comportement INCHANGE tant que
@@ -1195,6 +1262,7 @@ def build_stylesheet() -> str:
     button_color = resolve_color_ref(_CONTROL_LOOK.get("button_font_color"), "#c4cacf")
     input_font = _control_font("input")
     button_font = _control_font("button")
+    button_states = button_state_look(_CONTROL_LOOK)
     # QListWidget (Skin principale niveau 2 / void), PAS Fond (window) : le
     # vide propre a chaque colonne de l'appli principale (QListWidget, seul
     # usage de cette classe hors fenetre de parametres, voir Column) suit
@@ -1224,10 +1292,10 @@ QPushButton {{
     color: {button_color};
     padding: 0 12px;
 }}
-QPushButton:hover {{ background: {C['btn_hover']}; border-color: {C['btn_hover_bd']}; }}
+QPushButton:hover {{ background: {button_states['hover']}; border-color: {C['btn_hover_bd']}; }}
 QPushButton:pressed {{
-    background: {C['accent']};
-    border-color: {C['accent']};
+    background: {button_states['active']};
+    {_active_border_css(button_states)}
     color: {C['accent_text']};
 }}
 
@@ -1351,6 +1419,8 @@ def apply_dwm_frame(widget, radius: int, border_hex: str, resizable: bool = Fals
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
                 )
         hexcolor = (border_hex or "").lstrip("#")
+        if fills_screen(widget):               # agrandie / plein ecran : jamais d'arrondi DWM (2026-11-07)
+            radius = 0
         cache_key = (radius <= 0, hexcolor)
         if getattr(widget, "_dwm_frame_cache", None) == cache_key:
             return
@@ -1377,6 +1447,14 @@ def apply_dwm_frame(widget, radius: int, border_hex: str, resizable: bool = Fals
             )
     except Exception:
         pass
+
+
+def fills_screen(widget) -> bool:
+    """La fenetre de `widget` est agrandie ou en plein ecran : ses coins ne sont plus arrondis (demande de
+    l'utilisateur, 2026-11-07). Lu a la peinture : agrandir / restaurer redimensionne, donc repeint."""
+    from PySide6.QtCore import Qt
+    window = widget.window()
+    return bool(window is not None and window.windowState() & (Qt.WindowMaximized | Qt.WindowFullScreen))
 
 
 def start_native_move(widget) -> None:

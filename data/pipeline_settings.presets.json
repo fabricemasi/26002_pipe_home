@@ -636,7 +636,7 @@
       }
     },
     "header_font_family": "Police principale",
-    "navbar_height": 64,
+    "navbar_height": 30,
     "navbar_bottom_enabled": true,
     "navbar_bottom_color": "#2c3034",
     "navbar_bottom_thickness": 0,
@@ -5630,7 +5630,7 @@
     "header_visible": true,
     "header_height": 26,
     "header_padding": 2,
-    "header_color": "skinN2",
+    "header_color": "skinN2/0",
     "header_radius": {
       "top_left": 3,
       "top_right": 3,
@@ -5666,10 +5666,10 @@
       "left": true
     },
     "column_border": {
-      "top": "@ligne/5",
-      "right": "@ligne/5",
-      "bottom": "@ligne/5",
-      "left": "@ligne/5"
+      "top": "@ligne",
+      "right": "@ligne",
+      "bottom": "@ligne",
+      "left": "@ligne"
     },
     "column_border_thickness": 1,
     "column_border_radius": {
@@ -5679,7 +5679,7 @@
       "bottom_left": 0
     },
     "column_border_radius_linked": true,
-    "column_bg_color": "@skinN2",
+    "column_bg_color": "@navbar",
     "resize_badge_position": "top_right",
     "resize_badge_offset_x": 25,
     "resize_badge_offset_y": 4,
@@ -5799,7 +5799,7 @@
     "item_font_size": 13,
     "item_font_bold": false,
     "item_font_italic": false,
-    "item_color": "#e1e1e1",
+    "item_color": "@texte1",
     "item_antialias_override_enabled": true,
     "item_antialias_override": "current",
     "item_icon_enabled": false,
@@ -5812,7 +5812,7 @@
     "viewer_filmstrip_enabled": false,
     "viewer_filmstrip_shortcut": "D",
     "viewer_slide_enabled": false,
-    "viewer_info_enabled": true,
+    "viewer_info_enabled": false,
     "viewer_info_shortcut": "I",
     "viewer_gallery_ripple_enabled": false,
     "viewer_scroll_animated": false,
@@ -6012,7 +6012,32 @@
     "viewer_film_text_cell_font_smoothing": "current",
     "viewer_film_text_cell_font_color": "#d6d9dc",
     "viewer_film_text_cell_bg": "#00000000",
-    "viewer_group_bg_color": "#00000000",
+    "viewer_group_bg_color": "@saisie",
+    "viewer_group_label_enabled": true,
+    "viewer_group_btn_bg_color": "#00000000",
+    "viewer_group_btn_icon_color": "#c4cacf",
+    "viewer_group_btn_border_enabled": {
+      "top": false,
+      "right": false,
+      "bottom": false,
+      "left": false
+    },
+    "viewer_group_btn_border": {
+      "top": "#303539",
+      "right": "#303539",
+      "bottom": "#303539",
+      "left": "#303539"
+    },
+    "viewer_group_btn_border_thickness": 1,
+    "viewer_group_btn_border_enabled_linked": true,
+    "viewer_group_btn_corner_radius": {
+      "top_left": 4,
+      "top_right": 4,
+      "bottom_right": 4,
+      "bottom_left": 4
+    },
+    "viewer_group_btn_corner_radius_linked": true,
+    "viewer_group_btn_close_hover_bg_color": "#c42b1c",
     "viewer_group_label_font_family": "",
     "viewer_group_label_font_size": 9,
     "viewer_group_label_font_bold": true,
@@ -6021,29 +6046,29 @@
     "viewer_group_label_font_smoothing_enabled": true,
     "viewer_group_label_font_smoothing": "current",
     "viewer_group_border_enabled": {
-      "top": true,
+      "top": false,
       "right": true,
       "bottom": true,
       "left": true
     },
     "viewer_group_border": {
-      "top": "#303539",
-      "right": "#303539",
-      "bottom": "#303539",
-      "left": "#303539"
+      "top": "@ligne",
+      "right": "@ligne",
+      "bottom": "@ligne",
+      "left": "@ligne"
     },
     "viewer_group_border_thickness": 1,
-    "viewer_group_border_enabled_linked": true,
+    "viewer_group_border_enabled_linked": false,
     "viewer_group_corner_radius": {
-      "top_left": 4,
-      "top_right": 4,
-      "bottom_right": 4,
-      "bottom_left": 4
+      "top_left": 0,
+      "top_right": 0,
+      "bottom_right": 8,
+      "bottom_left": 8
     },
-    "viewer_group_corner_radius_linked": true,
+    "viewer_group_corner_radius_linked": false,
     "viewer_group_padding": {
       "left": 8,
-      "top": 2,
+      "top": 9,
       "right": 2,
       "bottom": 2
     },
@@ -6060,7 +6085,7 @@
     "item_row_border_enabled": false,
     "item_row_border_color": "@ligne/10",
     "item_row_border_thickness": 1,
-    "item_header_gap": 5,
+    "item_header_gap": 1,
     "item_text_padding": 5,
     "item_image_padding_linked": true,
     "item_image_padding": {
@@ -6090,10 +6115,10 @@
     },
     "item_image_radius_linked": true,
     "item_image_ratio": 1.0,
-    "item_selection_focus_color": "@selCur/20",
-    "item_selection_unfocus_color": "@selDone/15",
-    "item_hover_color": "@hover/10",
-    "item_idle_color": "@itemIdle/0",
+    "item_selection_focus_color": "@selCur",
+    "item_selection_unfocus_color": "@selDone",
+    "item_hover_color": "@hover",
+    "item_idle_color": "@itemIdle",
     "item_row_bg_color": "#001b1d20",
     "item_selection_padding_linked": true,
     "item_selection_padding": {
@@ -6213,7 +6238,7 @@
     "item_selection_idle_edge_border_override": false,
     "item_selection_idle_edge_border": true,
     "column_type_overrides": {
-      "item_column_width": 181,
+      "item_column_width": 204,
       "item_row_height": 39
     },
     "column_type_override_enabled": {
@@ -6247,6 +6272,55 @@
       }
     },
     "header_font_family": "Police principale",
+    "navtool_extra_height": 70,
+    "navtool_bg_color": "#0affffff",
+    "navtool_border_enabled": {
+      "top": true,
+      "right": true,
+      "bottom": true,
+      "left": true
+    },
+    "navtool_border": {
+      "top": "@ligne",
+      "right": "#0d0d0d",
+      "bottom": "#0d0d0d",
+      "left": "@ligne"
+    },
+    "navtool_border_thickness": 1,
+    "navtool_corner_radius": {
+      "top_left": 3,
+      "top_right": 3,
+      "bottom_right": 3,
+      "bottom_left": 3
+    },
+    "navtool_corner_radius_linked": true,
+    "navtool_hover_bg_color": "#407b7b7b",
+    "navtool_margin": {
+      "left": 0,
+      "top": 4,
+      "right": 3,
+      "bottom": 0
+    },
+    "navtool_margin_linked": false,
+    "navtool_icon_size": 28,
+    "navtool_icon_base_color": "#c4cacf",
+    "navtool_icon_tone_value": 45,
+    "navtool_icon_disabled_color": "#59c4cacf",
+    "navtool_icon_color_theme": "#f28c28",
+    "navtool_icon_color_viewer": "#00ff0d",
+    "navtool_icon_color_text_editor": "#7c45ed",
+    "navtool_icon_color_board": "#ffd800",
+    "navtool_icon_color_video": "#ff0000",
+    "navtool_icon_color_font": "#00c4ff",
+    "navtool_icon_color_pdf": "#ff7b7b",
+    "navtool_icon_color_agenda": "#0083ff",
+    "navtool_padding": {
+      "left": 2,
+      "top": 2,
+      "right": 2,
+      "bottom": 2
+    },
+    "navtool_padding_linked": true,
     "table_rows_movable": true,
     "columns_resizable": true,
     "geo_table_columns": [
@@ -6379,7 +6453,7 @@
     "step_badge_border_smoothing": true,
     "header_icon_right_padding": 0,
     "header_font_bold": true,
-    "header_font_color": "#9aa1a7",
+    "header_font_color": "@texte2",
     "header_font_size": 10,
     "header_font_italic": false,
     "header_font_antialias_override_enabled": true,
@@ -6471,6 +6545,7 @@
     },
     "video_frame_shadow_size": 10,
     "video_frame_shadow_enabled_linked": true,
+    "navtool_border_enabled_linked": false,
     "step_badge_border_enabled_linked": false,
     "item_selection_unfocus_padding_linked": false,
     "item_selection_hover_padding_linked": false,
@@ -6646,14 +6721,14 @@
     "board_cad_magnet": true,
     "board_cad_magnet_radius": 10,
     "board_cad_magnet_tooltip": true,
-    "board_cad_ortho": true,
+    "board_cad_ortho": false,
     "board_cad_polar": false,
     "board_cad_polar_increment": "45",
     "board_cad_polar_custom": 45,
-    "board_cad_otrack": true,
+    "board_cad_otrack": false,
     "board_cad_track_polar": true,
     "board_cad_dyn": false,
-    "board_cad_grid_snap": false,
+    "board_cad_grid_snap": true,
     "board_cad_unit": "cm",
     "board_cad_linetypes": [
       {
@@ -7093,6 +7168,20 @@
     "board_ovr_ctx_menu_shadow_enabled_linked": false,
     "board_ctx_menu_border_enabled_linked": true,
     "board_ovr_ctx_menu_border_enabled_linked": false,
+    "navtool_bottom_enabled": true,
+    "navtool_bottom_color": "@ligne",
+    "navtool_bottom_thickness": 1,
+    "navtool_ovr_bottom_enabled": false,
+    "navtool_title_font_family": "Police principale",
+    "navtool_title_font_size": 12,
+    "navtool_title_font_bold": true,
+    "navtool_title_font_italic": false,
+    "navtool_title_font_color": "#7d858b",
+    "navtool_title_font_smoothing_enabled": true,
+    "navtool_title_font_smoothing": "current",
+    "navtool_ovr_title_font_family": false,
+    "navtool_height": 35,
+    "navtool_ovr_height": false,
     "md_open_extensions": [
       ".md"
     ],

@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
+from fm_theme.placeholder import ink as _placeholder_ink
 from fm_cad import cad_aliases, cad_items, cad_model
 from . import export, model, serialization
 from fm_miro import miro_io
@@ -95,6 +96,7 @@ TEXT_KINDS = ("sticky", "text", "shape")
 
 def paint_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
     """Icones des outils et commandes (traits, comme les glyphes des boutons de l'appli)."""
+    color = _placeholder_ink(color)                     # icone dessinee par le code : magenta (provisoire)
     if kind.startswith("cad"):
         from fm_cad.cad_ui import paint_cad_glyph              # module CAD : ses icones
         paint_cad_glyph(painter, kind, rect, color)

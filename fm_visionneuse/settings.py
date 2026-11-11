@@ -67,20 +67,8 @@ VIEWER_FILM_GROUPS = (("Tableau", "Visionneuse : Tableau"), ("Cellules", "Vision
 CATALOG["Visionneuse : Tableau"] = _viewer_film_specs("table", "Police (rang n / N)")
 CATALOG["Visionneuse : Cellule image"] = _viewer_film_specs("image_cell", "Police (type de fichier)", image=True)
 CATALOG["Visionneuse : Cellule texte"] = _viewer_film_specs("text_cell", "Police (nom du fichier)")
-# Cadre « Visionneuse » de la barre de navigation : les boutons de la visionneuse y sont regroupes.
-CATALOG["Visionneuse : Regroupement"] = [
-    Spec("viewer_group_bg_color", "Couleur de fond", "color_app", "#00000000", {"title": "Fond du regroupement"}),
-    Spec("viewer_group_label_font_family", "Police du libellé", "font_gabarit", "",
-         {"prefix": "viewer_group_label", "size": (6, 40), "size_default": 9, "bold_default": True,
-          "color_default": "#7d858b", "color_title": "Couleur du libellé"},
-         extra_keys=_gabarit_extra("viewer_group_label")),
-    Spec("viewer_group_border_enabled", "Bordures", "sides_thick", True,
-         {"colors_key": "viewer_group_border", "thickness_key": "viewer_group_border_thickness",
-          "width": 90, "box": 54}, extra_keys=("viewer_group_border", "viewer_group_border_thickness")),
-    Spec("viewer_group_corner_radius", "Border radius", "corners", 4, {"max": 30}),
-    Spec("viewer_group_padding", "Padding", "padding", {}),
-    Spec("viewer_group_margin", "Margin", "padding", {}),
-]
+# Cadre « Visionneuse » de la barre de navigation : réglages déplacés dans fm_browser > Barre de navigation >
+# Cadre des modules (settings_window_v2, 2026-11-08) ; les clés `viewer_group_*` restent déclarées ici.
 # Image en FOCUS (au centre de la visionneuse, focus.FocusOverlay) : son cadre.
 CATALOG["Visionneuse : Focus"] = [
     Spec("viewer_focus_image_border_enabled", "Bordures de l'image", "sides_thick", False,
@@ -135,7 +123,6 @@ VIEWER_TREE = (
     Node("Affichage", "Visionneuse"),
     *(Node(t, g) for t, g in VIEWER_FILM_GROUPS),
     Node("Focus", "Visionneuse : Focus"),
-    Node("Regroupement", "Visionneuse : Regroupement"),
     Node("Filtres", "Visionneuse : Filtres"),
     Node("Icônes", "Visionneuse : Icones"),
 )

@@ -701,10 +701,13 @@ class TitleTarget(Target):
 def apply_title_look(title: QWidget, look: dict | None, level: int) -> None:
     from settings_store import _title_color, _title_font
     title._title_look = look
-    font, color = (look["font"], look["color"]) if look else (_title_font(level), _title_color(level))
-    title._name_label.setFont(font)
-    title._name_label.setStyleSheet(f"color: {color}; background: transparent;")
-    title._chevron.setColor(color)
+    if hasattr(title, "apply_text_look"):
+        title.apply_text_look()             # + overrides du titre deploye (fm_theme.layout)
+    else:
+        font, color = (look["font"], look["color"]) if look else (_title_font(level), _title_color(level))
+        title._name_label.setFont(font)
+        title._name_label.setStyleSheet(f"color: {color}; background: transparent;")
+        title._chevron.setColor(color)
     titles = [title, *[t for t in title.findChildren(QWidget) if hasattr(t, "apply_box")]]
     for t in titles:                        # parents d'abord : l'abscisse d'un enfant en depend
         t.apply_box()

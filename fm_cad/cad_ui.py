@@ -18,6 +18,8 @@ from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtCore import QObject, QEvent, Signal
 from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QLineEdit, QVBoxLayout, QWidget
 
+from fm_theme.palette import PaletteSelectBar
+from fm_theme.placeholder import ink as _placeholder_ink
 from . import cad_attrib, cad_block, cad_commands, cad_hatch, cad_input, cad_model, cad_snap, cad_text
 from . import cad_geometry as geo
 from .cad_bars import (
@@ -32,10 +34,12 @@ OVERRIDE_TAG = "ovr:"         # fenetre des reglages du dessin : interrupteur d'
 WEIGHTS = (0.0, 0.1, 0.18, 0.25, 0.35, 0.5, 0.7, 1.0, 1.4, 2.0, 3.0, 5.0)   # menu des epaisseurs (unite du dessin)
 HISTORY_LINES = 3
 HISTORY_EXPANDED = 14
+LINETYPE_WIDTH = 180          # px : controleur « Type de ligne » de la barre Proprietes (libelle + menu)
 
 
 def paint_cad_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
     """Icones des outils CAD (traits, dans l'esprit des glyphes du board)."""
+    color = _placeholder_ink(color)                     # icone dessinee par le code : magenta (provisoire)
     pen = QPen(color, 1.4)
     pen.setCapStyle(Qt.RoundCap)
     pen.setJoinStyle(Qt.RoundJoin)
@@ -372,9 +376,12 @@ class CadChrome:
                                            cells=2)
         self.weight_button.clicked.connect(lambda: self.weight_menu(self.weight_button))
         register("weight", self.weight_button)
-        self.linetype_button = CadTextButton("linetype", "ByLayer", "Type de ligne", cells=3)
-        self.linetype_button.clicked.connect(lambda: self.linetype_menu(self.linetype_button))
-        register("linetype", self.linetype_button)
+        # type de ligne : CONTRÔLEUR liste déroulante de la barre Propriétés (demande de l'utilisateur, 2026-11-10)
+        self.linetype_select = PaletteSelectBar("linetype", "Type de ligne", self._linetype_labels(), cad_model.BYLAYER,
+                                                width=LINETYPE_WIDTH)
+        self.linetype_select.setToolTip("Type de ligne (ByLayer : celui du calque)")
+        self.linetype_select.valueChanged.connect(self._linetype_chosen)
+        register("linetype", self.linetype_select)
         self.mode_buttons = {}
         for name, text, tip in PRECISION:
             button = CadModeButton(name, text, tip)
@@ -695,7 +702,8 @@ class CadChrome:
         self.color_button.set_swatch(resolved if isinstance(resolved, str) and resolved.startswith("#") else "#808080")
         self.color_button.setToolTip(f"Couleur : {cad_model.describe_color(color) if color else '*varié*'}")
         self.weight_button.setText(cad_model.describe_weight(weight, ctl.unit()) if weight is not None else "*varié*")
-        self.linetype_button.setText(_elide(cad_model.describe_linetype(linetype) if linetype else "*varié*", 10))
+        self.linetype_select.set_options(self._linetype_labels(),
+                                         cad_model.describe_linetype(linetype) if linetype else "*varié*")
 
     def toggle_history(self):
         self._history_open = not self._history_open
@@ -764,8 +772,20 @@ class CadChrome:
         menu.addAction("Calques…").triggered.connect(self.open_layers)
         menu.addAction("Accrochages et suivi…").triggered.connect(self.open_snap_settings)
         menu.addSeparator()
+        menu.addMenu(self.export_menu(menu))
         menu.addMenu(self.photoshop_menu(menu))
         menu.popup(global_pos)
+
+    def export_menu(self, parent):
+        """Exporter la SELECTION seule (cad_commands_export) : zone d'export (deux coins), taille en px, puis la
+        sortie ; grise sans selection (demande de l'utilisateur, 2026-11-08)."""
+        from .cad_commands_export import EXPORT_NAMES, TARGETS
+        sub = _menu(parent, "cad_export")
+        sub.setTitle("Exporter")
+        sub.setEnabled(bool(self.ctl.selection()))
+        for key, name in EXPORT_NAMES.items():
+            sub.addAction(TARGETS[key][0]).triggered.connect(lambda _c=False, n=name: self._run(n))
+        return sub
 
     def photoshop_menu(self, parent):
         """Envoi vers Photoshop (cad_photoshop) : la selection, sinon tout le dessin."""
@@ -868,6 +888,18 @@ class CadChrome:
             cad["celweight"] = value
             ctl.set_cad(cad, "Épaisseur courante")
         self.pane.view.setFocus()
+
+    @staticmethod
+    def _linetype_labels() -> list:
+        return [cad_model.BYLAYER] + [label for label, _pattern in cad_model.LINETYPES.values()]
+
+    def _linetype_chosen(self, label):
+        if label == cad_model.BYLAYER:
+            self.set_linetype(cad_model.BYLAYER)
+            return
+        key = next((k for k, (name, _p) in cad_model.LINETYPES.items() if name == label), None)
+        if key is not None:
+            self.set_linetype(key)
 
     def linetype_menu(self, anchor):
         menu = _menu(self.pane, "cad_linetype")

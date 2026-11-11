@@ -173,6 +173,68 @@ def render(ctl, items) -> QImage:
     return export.render_items(ctl.scene, items, scale, transparent=True)
 
 
+def _zone_source(zone):
+    from PySide6.QtCore import QRectF
+    x0, y0, x1, y1 = zone
+    return QRectF(x0, -y1, x1 - x0, y1 - y0)                    # scene : Y vers le bas
+
+
+def render_zone(scene, items, zone, width: int, height: int) -> QImage:
+    """Image `width` x `height` (fond transparent) des SEULS `items`, cadree EXACTEMENT sur la zone document
+    [x0, y0, x1, y1] : ni marge ni cadre (clic droit > Exporter, cad_commands_export)."""
+    from PySide6.QtCore import QRectF
+    from fm_board.export import _render_only
+    image = QImage(int(width), int(height), QImage.Format_ARGB32_Premultiplied)
+    image.fill(Qt.transparent)
+    painter = QPainter(image)
+    try:
+        target = QRectF(0, 0, width, height)
+        painter.setClipRect(target)
+        _render_only(scene, items, painter, target, _zone_source(zone), True, Qt.IgnoreAspectRatio)
+    finally:
+        painter.end()
+    return image
+
+
+def write_zone_vector(scene, items, zone, width: int, height: int, path) -> Path:
+    """Les SEULS `items` en VECTORIEL (SVG ou PDF selon l'extension), fond transparent, cadres EXACTEMENT sur la
+    zone : SVG de `width` x `height` px ; PDF d'une page de `width` x `height` points (Photoshop l'ouvre a ces
+    pixels a 72 ppp)."""
+    from PySide6.QtCore import QMarginsF, QRectF, QSize, QSizeF
+    from PySide6.QtGui import QPageLayout, QPageSize, QPdfWriter
+    from fm_board.export import _render_only
+    path = Path(path)
+    if path.suffix.lower() == ".svg":
+        from PySide6.QtSvg import QSvgGenerator
+        device = QSvgGenerator()
+        device.setFileName(str(path))
+        device.setSize(QSize(int(width), int(height)))
+        device.setViewBox(QRectF(0, 0, width, height))
+        device.setTitle(path.stem)
+        target = QRectF(0, 0, width, height)
+    else:
+        device = QPdfWriter(str(path))
+        device.setResolution(72)
+        device.setPageSize(QPageSize(QSizeF(width, height), QPageSize.Point))
+        device.setPageMargins(QMarginsF(0, 0, 0, 0), QPageLayout.Point)
+        device.setTitle(path.stem)
+        target = None
+    painter = QPainter(device)
+    try:
+        if target is None:
+            target = QRectF(0, 0, device.width(), device.height())
+        painter.setClipRect(target)
+        _render_only(scene, items, painter, target, _zone_source(zone), True, Qt.IgnoreAspectRatio)
+    finally:
+        painter.end()
+    if path.suffix.lower() == ".svg":                   # Qt ecrit la taille en mm : en PIXELS (Photoshop, navigateurs)
+        text = path.read_text(encoding="utf-8")
+        text = re.sub(r'(<svg\b[^>]*?)width="[^"]*"\s+height="[^"]*"',
+                      lambda m: f'{m.group(1)}width="{int(width)}px" height="{int(height)}px"', text, count=1)
+        path.write_text(text, encoding="utf-8")
+    return path
+
+
 def _stem(ctl) -> str:
     base = getattr(ctl.pane, "path", None) or getattr(ctl.pane, "source", None)
     return f"{Path(base).stem}_cad" if base else "cad"

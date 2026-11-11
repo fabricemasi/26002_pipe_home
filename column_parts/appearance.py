@@ -9,7 +9,7 @@ import ui_state
 from previews import software_icon_key
 from settings_widgets import Menu, _radius_dict, _radius_shrink
 from browser_core import ROLE_ISDIR, ROLE_PATH, _pin_icon_pixmap, _resolve_font_family, _update_layout_setting, col_width, load_layout_settings, save_layout_settings, software_choices, software_icon_pixmap
-from capture_widgets import _column_suppress_left
+from capture_widgets import _column_hidden_sides, _column_suppress_left
 from .shared import opens_in_viewer
 
 
@@ -55,7 +55,8 @@ class ColumnAppearanceMixin:
         # meme pour toute les colonnes de l'appli. les settings doivent
         # refletter a 100% ce qui se passe dans l'appli".
         set_qss(self.header_fill, column_header_qss("ColumnHeader", self.style_title))
-        frame = column_frame_style(self.style_title, self._suppress_left())
+        frame = column_frame_style(
+            self.style_title, hidden_sides=_column_hidden_sides(self, self.style_title, self._suppress_left()))
         # scaled() ICI, sur le MEME dict que celui repasse tel quel au
         # masque (voir _update_card_mask, qui relit self.card._radius
         # plutot que de recalculer independamment) : sans ca, peinture et
@@ -161,15 +162,14 @@ class ColumnAppearanceMixin:
         border_thickness = max(0, int(s.get("column_border_thickness", 1)))
         enabled = s.get("column_border_enabled") or {}
         suppress_left = self._suppress_left()
+        hidden = _column_hidden_sides(self, self.style_title, suppress_left)   # bords de la zone + voisine
 
-        def reserve(side_enabled: bool) -> int:
-            return border_thickness if side_enabled else 0
+        def reserve(side: str) -> int:
+            return border_thickness if bool(enabled.get(side, True)) and side not in hidden else 0
 
         self._column_layout.setContentsMargins(
-            scaled(reserve(bool(enabled.get("left", True)) and not suppress_left), 0),
-            scaled(reserve(bool(enabled.get("top", True))), 0),
-            scaled(reserve(bool(enabled.get("right", True))), 0),
-            scaled(reserve(bool(enabled.get("bottom", True))), 0),
+            scaled(reserve("left"), 0), scaled(reserve("top"), 0),
+            scaled(reserve("right"), 0), scaled(reserve("bottom"), 0),
         )
         # Padding de la colonne, PAR COTE (voir settings_window.
         # _ColumnPreview.setPadding/Colonnes > Colonnes > Padding) : fait
@@ -184,7 +184,7 @@ class ColumnAppearanceMixin:
         # l'utilisateur, "la distance entre 2 colonnes doit etre la valeur
         # du padding et non celle du padding*2".
         col_pad = dict(column_padding_for(self.style_title))
-        if self._suppress_left():
+        if suppress_left:
             col_pad["left"] = 0
         self._outer_layout.setContentsMargins(
             scaled(col_pad["left"], 0), scaled(col_pad["top"], 0),

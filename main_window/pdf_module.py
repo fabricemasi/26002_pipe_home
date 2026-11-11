@@ -56,6 +56,9 @@ class PdfModuleMixin:
         leave_agenda = getattr(self, "_leave_agenda", None)    # agenda ouvert : rangé d'abord (fm_agenda)
         if leave_agenda is not None:
             leave_agenda()
+        leave_taches = getattr(self, "_leave_taches", None)    # tâches ouvertes : rangées d'abord (fm_taches)
+        if leave_taches is not None:
+            leave_taches()
         self._close_video()
         self._install_pdf_hooks()
         pane = getattr(self, "_pdf", None)
@@ -123,7 +126,7 @@ class PdfModuleMixin:
     def _layout_pdf_buttons(self):
         """Cadre « PDF » de la barre : annuler, rétablir, enregistrer (accent si modifié), imprimer, réglages,
         fermer. Rappelé seulement quand annuler / rétablir / « modifié » changent (`PdfPane.stateChanged`)."""
-        from preview_column import IconButton, style_focus_button
+        from preview_column import IconButton
         pane = getattr(self, "_pdf", None)
         group = self.titlebar.pdf_group()
         if pane is None:
@@ -150,7 +153,7 @@ class PdfModuleMixin:
         origin = group.content_origin()
         x, height = origin.x(), 0
         for button in buttons:
-            style_focus_button(button)
+            self.titlebar.style_group_button(button)
             kind = button._pdf_kind
             if kind == "undo":
                 self._set_button_usable(button, session.can_undo())

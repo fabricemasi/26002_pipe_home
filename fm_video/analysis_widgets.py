@@ -13,6 +13,7 @@ from PySide6.QtGui import (QColor, QFont, QFontDatabase, QFontMetricsF, QImage, 
                            QPainterPath, QPen, QPixmap)
 from PySide6.QtWidgets import QApplication, QComboBox, QWidget
 
+from fm_theme.placeholder import ink as _placeholder_ink
 from fm_video.analysis_look import LOOK
 
 _WEIGHTS = {400: QFont.Weight.Normal, 500: QFont.Weight.Medium, 600: QFont.Weight.DemiBold}
@@ -82,6 +83,7 @@ _ICON_CACHE: dict = {}
 
 
 def icon(name: str, color: str, size: int, dpr: float) -> QPixmap:
+    color = _placeholder_ink(color).name()               # icone dessinee par le code : magenta (provisoire)
     key = (name, color, size, dpr)
     pm = _ICON_CACHE.get(key)
     if pm is None:

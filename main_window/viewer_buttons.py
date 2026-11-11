@@ -166,6 +166,9 @@ class ViewerButtonsMixin:
         origin = group.content_origin()
         x = origin.x()
         gap = scaled(4, 0)
+        for _key, button in items:
+            if isinstance(button, IconButton):
+                self.titlebar.style_group_button(button)   # taille des icones de la barre, habillage du cadre
         height = max((button.height() for _k, button in items), default=0)
         for key, button in items:
             self._host_in_group(button, group)
@@ -206,6 +209,9 @@ class ViewerButtonsMixin:
         """Bouton sorti du cadre « Visionneuse » : rendu a son parent d'origine (colonne Focus, zone des colonnes) ;
         son parent a disparu (colonne Focus refaite) : detruit."""
         try:
+            if hasattr(widget, "_group_home_colors"):            # habillage de la colonne Focus repris
+                self.titlebar.release_group_button(widget)
+                style_focus_button(widget)
             home = getattr(widget, "_viewer_home", None)
             if home is not None and shiboken6.isValid(home):
                 widget.setParent(home)

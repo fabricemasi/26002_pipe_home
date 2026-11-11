@@ -60,9 +60,9 @@ Réglages : `DEFAULT_SETTINGS` (`settings_store.py`) est la source de vérité, 
 | fm_theme (aspect, variantes, presets, isolation des modules), barres flottantes | `fm_theme.md`, `barres_outils_spec.md` |
 | Board (`.brd`) / tableau blanc / CAD / Design / Tableur | `fm_board.md` / `fm_miro.md` / `fm_cad.md` / `fm_design.md` / `fm_tableur.md` |
 | Illustrator / Photoshop / Typographie | `fm_illustrator.md` / `fm_photoshop.md` / `fm_font.md` |
-| Markdown / Vidéo / PDF / Agenda | `fm_markdown.md` / `fm_video.md` / `fm_pdf.md` / `fm_agenda.md` |
+| Markdown / Vidéo / PDF / Agenda / Tâches | `fm_markdown.md` / `fm_video.md` / `fm_pdf.md` / `fm_agenda.md` / `fm_taches.md` |
 
-Suivis de mission à la racine : `PDF_MODULE_PROGRESS.md`, `FM_AGENDA_PROGRESS.md`, `COLOR_ANALYSIS_PROGRESS.md`.
+Suivis de mission à la racine : `PDF_MODULE_PROGRESS.md`, `FM_AGENDA_PROGRESS.md`, `FM_TACHES_PROGRESS.md`, `COLOR_ANALYSIS_PROGRESS.md`.
 
 ## Règles de l'appli
 

@@ -42,7 +42,7 @@ class InfoTableMixin:
         meme style, parametres par parametres") : fond/bordure/rayon du
         cadre suivent desormais Colonnes > Colonnes, comme toute colonne."""
         set_qss(self.header_fill, column_header_qss("DetailHeader", INSPECTOR_TITLE))
-        frame = column_frame_style(INSPECTOR_TITLE, self._suppress_left())
+        frame = column_frame_style(INSPECTOR_TITLE, hidden_sides=self._hidden_sides())
         # scaled() ICI, sur le MEME dict que celui repasse tel quel au
         # masque (voir _update_card_mask/Column.refresh_colors, MEME raison).
         scaled_radius = {k: scaled(v, 0) for k, v in frame["radius"].items()}

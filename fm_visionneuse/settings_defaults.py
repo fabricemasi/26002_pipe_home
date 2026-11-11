@@ -111,8 +111,19 @@ VIEWER_DEFAULTS: dict[str, Any] = {
     "viewer_film_text_cell_font_smoothing": "current",
     "viewer_film_text_cell_font_color": "#d6d9dc",
     "viewer_film_text_cell_bg": "#00000000",
-    # Visionneuse > Regroupement : cadre « Visionneuse » de la barre de navigation (boutons de la visionneuse).
-    "viewer_group_bg_color": "#00000000",
+    # Cadre des modules de la barre de navigation (Visionneuse, Board, Vidéo...) : réglages dans fm_browser >
+    # Barre de navigation > Cadre des modules (2026-11-08) ; fond noir demandé par l'utilisateur.
+    "viewer_group_bg_color": "#000000",
+    "viewer_group_label_enabled": True,                    # nom du module affiché dans le cadre
+    # Boutons du cadre (taille / padding : ceux des icônes de la barre, `navtool_*`).
+    "viewer_group_btn_bg_color": "#00000000",
+    "viewer_group_btn_icon_color": "#c4cacf",
+    "viewer_group_btn_border_enabled": {s: False for s in ("top", "right", "bottom", "left")},
+    "viewer_group_btn_border": {s: "#303539" for s in ("top", "right", "bottom", "left")},
+    "viewer_group_btn_border_thickness": 1, "viewer_group_btn_border_enabled_linked": True,
+    "viewer_group_btn_corner_radius": {"top_left": 4, "top_right": 4, "bottom_right": 4, "bottom_left": 4},
+    "viewer_group_btn_corner_radius_linked": True,
+    "viewer_group_btn_close_hover_bg_color": "#c42b1c",   # survol rouge du bouton fermer le module
     "viewer_group_label_font_family": "", "viewer_group_label_font_size": 9, "viewer_group_label_font_bold": True,
     "viewer_group_label_font_italic": False, "viewer_group_label_font_color": "#7d858b",
     "viewer_group_label_font_smoothing_enabled": False, "viewer_group_label_font_smoothing": "current",

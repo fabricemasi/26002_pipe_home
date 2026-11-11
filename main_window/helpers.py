@@ -38,11 +38,13 @@ class CentralFrame(QWidget):
     def paintEvent(self, event):
         from app_style import C
         from fm_theme.widgets import _paint_bordered_vector
+        from fm_theme.style import fills_screen
         import ui_state
         border = ui_state.WINDOW_BORDER
         colors = {k: border["colors"].get(k) or C["border"] for k in ("top", "right", "bottom", "left")}
         painter = QPainter(self)
-        _paint_bordered_vector(painter, self.rect(), int(ui_state.WINDOW_RADIUS), border["sides"],
+        radius = 0 if fills_screen(self) else int(ui_state.WINDOW_RADIUS)   # agrandie / plein ecran : coins carres
+        _paint_bordered_vector(painter, self.rect(), radius, border["sides"],
                                border["thickness"], colors, C["window"])
         painter.end()
 

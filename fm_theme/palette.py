@@ -34,6 +34,7 @@ from PySide6.QtWidgets import QAbstractButton, QApplication, QGraphicsOpacityEff
 
 from fm_theme.palette_defaults import (CONTROL_MAX_WIDTH, CONTROL_MIN_WIDTH, PALETTE_DEFAULTS, SIDES, SLIDER_STYLES,
                                        TITLE_ALIGNS, TOGGLE_STYLES, TRANSPARENT)
+from fm_theme.placeholder import ink as _placeholder_ink
 from fm_theme.style import font as _font, scaled
 from fm_theme.tokens import M, _resolve_color_value
 from fm_theme.widgets import (DRAG_GHOST_OPACITY, _MiniSlider, _paint_bordered_vector, _rounded_rect_path, attach_shadow,
@@ -101,6 +102,51 @@ def _font_spec(settings: dict, prefix: str, caps: bool, tracking: float) -> tupl
             str(smoothing), caps, tracking)
 
 
+SNAP_SIDES = (("none", "1. Rien"), ("no_border", "2. Pas de bordure"), ("color", "3. Couleur de bordure"))
+
+
+def _snap_side(settings: dict) -> str:
+    """« Clipsée : comportement du côté collé » ; l'ancien toggle `palette_snap_border_off` (allumé) vaut « no_border »."""
+    value = settings.get("palette_snap_side")
+    if value is None and settings.get("palette_snap_border_off"):
+        return "no_border"
+    value = value or PALETTE_DEFAULTS["palette_snap_side"]
+    return value if value in dict(SNAP_SIDES) else "none"
+
+
+TOOLBAR_BUTTON_VARIANT = "toolbar"
+
+
+def toolbar_button_fields(settings: dict | None) -> dict:
+    """Champs (sans préfixe `button_`) d'une variante du type « bouton » tirée des boutons des barres d'outils
+    (`settings` : les clés `palette_*` et `colors`) : fond, bordure, épaisseur et arrondi des cases, couleur des icônes
+    pour le texte, police des contrôles des barres, fond au survol, fond / bordure / épaisseur de l'état actif ; une
+    couleur transparente « suit le thème » : sa teinte RÉSOLUE. La taille des cases et des icônes n'a pas d'équivalent
+    dans le type « bouton » (demande de l'utilisateur, 2026-11-10)."""
+    s = settings or {}
+    colors = s.get("colors") or {}
+    radius = _int(s, "palette_cell_radius", 0, 40)
+    border_on = _sides(_setting(s, "palette_cell_border_enabled"), False)
+    return {
+        "frame": True, "radius": radius, "bg_color": _color(s, "palette_cell_bg_color", None, colors),
+        "border_enabled": border_on, "border_enabled_linked": len(set(border_on.values())) == 1,
+        "border": _side_colors(_setting(s, "palette_cell_border"), "panel_border", colors),
+        "border_thickness": _int(s, "palette_cell_border_thickness", 0, 8),
+        "corner_radius": dict.fromkeys(CORNERS, radius), "corner_radius_linked": True,
+        "font_family": str(_setting(s, "palette_bar_font_family") or ""),
+        "font_size": _int(s, "palette_bar_font_size", 6, 40),
+        "font_bold": bool(_setting(s, "palette_bar_font_bold")), "font_italic": bool(_setting(s, "palette_bar_font_italic")),
+        "font_smoothing_enabled": bool(_setting(s, "palette_bar_font_smoothing_enabled")),
+        "font_smoothing": _setting(s, "palette_bar_font_smoothing"),
+        "font_color": _color(s, "palette_icon_color", "value_fg", colors),
+        "shadow_enabled": dict.fromkeys(SIDES, False), "shadow_enabled_linked": True,
+        "hover_color": _color(s, "palette_cell_hover_color", "btn_hover", colors),
+        "active_color": _color(s, "palette_cell_active_color", None, colors),
+        "active_border_color": _color(s, "palette_cell_active_border_color", None, colors),
+        "active_border_thickness": _int(s, "palette_cell_active_border_thickness", 0, 6),
+    }
+
+
 def palette_look(settings: dict | None) -> dict:
     """Habillage des barres depuis des réglages à plat (`settings` : les clés `palette_*` et `colors`) : tout est
     résolu (couleurs en hex, tailles à l'échelle de l'interface). `key` change avec la moindre valeur."""
@@ -118,7 +164,10 @@ def palette_look(settings: dict | None) -> dict:
         "border": _side_colors(_setting(s, "palette_border"), "panel_border", colors),
         "border_w": scaled(_int(s, "palette_border_thickness", 0, 8), 0),
         "drag_border": _color(s, "palette_drag_border_color", "dash", colors),
-        "snap_border_off": bool(_setting(s, "palette_snap_border_off")),
+        "snap_side": _snap_side(s),
+        "snap_border_off": _snap_side(s) in ("no_border", "color"),     # côté collé : sans SA bordure
+        "snap_side_color": _color(s, "palette_snap_side_color", "panel_border", colors),
+        "snap_separator": bool(_setting(s, "palette_snap_separator")),
         "snap_header_color": bool(_setting(s, "palette_snap_header_color")),
         "snap_bg_color": bool(_setting(s, "palette_snap_bg_color")),
         "snap_border_match": bool(_setting(s, "palette_snap_border_match")),
@@ -332,6 +381,7 @@ def _dots(painter: QPainter, rect: QRectF, color: str) -> None:
 def demo_glyph(kind: str):
     """Peintre `(painter, rect, color)` d'un glyphe d'exemple (carré, triangle, tableau, crayon, image, cercle)."""
     def paint(painter, rect: QRectF, color: QColor):
+        color = _placeholder_ink(color)                     # icone dessinee par le code : magenta (provisoire)
         pen = QPen(color, max(1.2, rect.width() / 14))
         pen.setCapStyle(Qt.RoundCap)
         pen.setJoinStyle(Qt.RoundJoin)
@@ -881,6 +931,16 @@ class PaletteSelectBar(PaletteControl):
             self.field._value = value
             self.field._sync_text()
 
+    def set_options(self, options: list[str], current: str) -> None:
+        """Choix (une liste qui change : types de ligne réglables…) et valeur affichée, sans signal ; une valeur hors
+        des choix (« *varié* » d'une sélection mêlée) est montrée telle quelle."""
+        options = list(options)
+        if options != self.field._options:
+            self.field._options = options
+        if current != self.field._value:
+            self.field._value = current
+            self.field._sync_text()
+
 
 class PaletteToggleBar(PaletteControl):
     """Toggle (« Grille : ● ») : l'interrupteur des réglages (`_Toggle`, style « Toggle 1 » ou « Toggle 2 » choisi dans
@@ -1016,20 +1076,32 @@ class ToolBar(QWidget):
         self.apply_look()
 
     # -- Géométrie : tout est multiple d'une case ---------------------------------------------------------------------
+    def header_side(self, orient: str | None = None) -> str:
+        """Côté de l'en-tête : celui du BORD où la barre est clipsée (demande de l'utilisateur, 2026-11-08 : clipsée en
+        bas, l'en-tête est en bas ; à droite, à droite) ; sinon le haut (horizontale) ou la gauche (verticale)."""
+        if (orient or self.orient) == "h":
+            return "bottom" if self.dock == "bottom" else "top"
+        return "right" if self.dock == "right" else "left"
+
     def origin(self, orient: str | None = None) -> QPoint:
-        """Coin haut gauche de la grille. Marges ÉGALES à gauche, à droite et en bas (et en haut d'une barre verticale) ;
-        le titre occupe le haut (horizontale) ou la gauche (verticale)."""
+        """Coin haut gauche de la grille. Marges ÉGALES tout autour des cases ; le titre occupe le côté `header_side`."""
         look = LOOK
         bw, m, header = look["border_w"], look["margin"], self.header_px()
-        return QPoint(bw + m, bw + header + m) if (orient or self.orient) == "h" else QPoint(bw + header + m, bw + m)
+        side = self.header_side(orient)
+        return QPoint(bw + m + (header if side == "left" else 0), bw + m + (header if side == "top" else 0))
+
+    def frame_px(self, orient: str | None = None) -> tuple[int, int]:
+        """Pixels hors des cases, en largeur et en hauteur : bordures, marges et (dans son sens) l'en-tête."""
+        look = LOOK
+        frame, header = 2 * (look["border_w"] + look["margin"]), self.header_px()
+        horizontal = (orient or self.orient) == "h"
+        return frame + (0 if horizontal else header), frame + (header if horizontal else 0)
 
     def grid_size(self, cols: int | None = None, rows: int | None = None, orient: str | None = None) -> QSize:
         """Taille de la barre pour `cols` × `rows` cases : bordure + (titre) + marge + cases + marge + bordure."""
-        look = LOOK
         cols, rows = cols or self.cols, rows or self.rows
-        origin = self.origin(orient)
-        return QSize(origin.x() + cells_px(cols) + look["margin"] + look["border_w"],
-                     origin.y() + cells_px(rows) + look["margin"] + look["border_w"])
+        frame_w, frame_h = self.frame_px(orient)
+        return QSize(frame_w + cells_px(cols), frame_h + cells_px(rows))
 
     def natural_size(self, orient: str | None = None) -> QSize:
         return self.grid_size(orient=orient)
@@ -1091,10 +1163,9 @@ class ToolBar(QWidget):
 
     def snap(self, width: float, height: float) -> tuple[int, int]:
         """Grille la plus proche d'une taille en pixels, bornée par le contenu."""
-        origin = self.origin()
-        look = LOOK
-        cols = px_cells(width - origin.x() - look["margin"] - look["border_w"])
-        rows = px_cells(height - origin.y() - look["margin"] - look["border_w"])
+        frame_w, frame_h = self.frame_px()
+        cols = px_cells(width - frame_w)
+        rows = px_cells(height - frame_h)
         min_cols, min_rows = self.min_grid()
         return max(min_cols, min(MAX_CELLS, cols)), max(min_rows, min(MAX_CELLS, rows))
 
@@ -1164,9 +1235,13 @@ class ToolBar(QWidget):
         self.relayout()
 
     def set_dock(self, dock: str | None) -> None:
-        """Bord de clipsage (gestionnaire) : l'ombre disparaît, les bords redimensionnables changent."""
+        """Bord de clipsage (gestionnaire) : l'ombre disparaît, les bords redimensionnables changent ; l'en-tête passe du
+        côté du bord (les cases suivent)."""
         if dock != self.dock:
+            side = self.header_side()
             self.dock = dock
+            if self.header_side() != side and self.header_px():
+                self.relayout()
             self._static_key = None
             self.update()
             self._sync_shadow()
@@ -1193,10 +1268,11 @@ class ToolBar(QWidget):
             self.layoutChanged.emit()
 
     def header_rect(self) -> QRect:
-        look = LOOK
-        if self.orient == "h":
-            return QRect(0, look["border_w"], self.width(), self.header_px())
-        return QRect(look["border_w"], 0, self.header_px(), self.height())
+        bw, header = LOOK["border_w"], self.header_px()
+        return {"top": QRect(0, bw, self.width(), header),
+                "bottom": QRect(0, self.height() - bw - header, self.width(), header),
+                "left": QRect(bw, 0, header, self.height()),
+                "right": QRect(self.width() - bw - header, 0, header, self.height())}[self.header_side()]
 
     def set_touch(self, touch: dict) -> None:
         """Côtés / coins en contact (gestionnaire) : coins carrés, bordure partagée tracée par une seule barre."""
@@ -1230,6 +1306,47 @@ class ToolBar(QWidget):
         x = 0 if side == "left" else self.width() - width
         return QRect(x, lo, width, max(0, hi - lo))
 
+    def _contacts(self, touch: dict, spans: dict, edges: bool):
+        """(côté, parties) des côtés collés que CETTE barre trace : contre une autre barre, celle qui garde la bordure
+        commune (pas de « n* ») ; avec `edges`, aussi les côtés plaqués contre un bord de la zone."""
+        for side in SIDES:
+            length = self.height() if side in ("left", "right") else self.width()
+            if edges and touch.get("e" + side[0]):
+                yield side, ((0, length),)
+            elif side in spans and not touch.get("n" + side[0]):
+                yield side, ((0, length),) if spans[side] is None else spans[side]
+
+    def _paint_side_color(self, painter: QPainter, touch: dict, spans: dict, border_on: dict) -> None:
+        """« Clipsée : comportement du côté collé » = couleur de bordure : UN trait de cette couleur le long de la partie
+        collée (la bordure du voisin y est ôtée par le gestionnaire ; entre deux barres, une seule le trace)."""
+        width, color = max(1, LOOK["border_w"]), QColor(LOOK["snap_side_color"])
+        for side, parts in self._contacts(touch, spans, edges=True):
+            for lo, hi in parts:
+                painter.fillRect(self._side_strip(side, lo, hi, width, border_on), color)
+
+    def _paint_snap_separators(self, painter: QPainter, touch: dict, spans: dict) -> None:
+        """Séparateur entre deux barres collées (réglage « Séparateur entre barres collées ») : un trait de la couleur
+        des séparateurs, le long de la partie collée, à hauteur des cases (même retrait que ceux de la grille)."""
+        look = LOOK
+        origin, inset = self.origin(), max(3, look["cell"] // 6)
+        grid = QRect(origin.x(), origin.y(), cells_px(self.cols), cells_px(self.rows))
+        painter.save()
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(look["separator"]))
+        for side, parts in self._contacts(touch, spans, edges=False):
+            for lo, hi in parts:
+                if side in ("left", "right"):
+                    lo, hi = max(lo, grid.top() + inset), min(hi, grid.top() + grid.height() - inset)
+                    x = 0 if side == "left" else self.width() - 1
+                    rect = QRectF(x, lo, 1, hi - lo)
+                else:
+                    lo, hi = max(lo, grid.left() + inset), min(hi, grid.left() + grid.width() - inset)
+                    y = 0 if side == "top" else self.height() - 1
+                    rect = QRectF(lo, y, hi - lo, 1)
+                if hi > lo:
+                    painter.drawRect(rect)
+        painter.restore()
+
     def borderless(self) -> bool:
         """Collée contre un élément SANS bordure (demande de l'utilisateur, 2026-11-04 : « la barre est attachée à un
         élément qui n'a pas de bordure : il ne devrait pas y en avoir non plus sur la barre ») : aucune bordure, dès
@@ -1237,7 +1354,7 @@ class ToolBar(QWidget):
         couleur de l'élément voisin »). Pas pendant un geste (bordure d'accent / de déplacement)."""
         look = LOOK
         return bool(self._snap_color and not self._snap_border and not self._target and not self._moving
-                    and (look["snap_border_off"] or look["snap_border_match"]))
+                    and (look["snap_side"] == "no_border" or look["snap_border_match"]))
 
     def set_snap_color(self, color: str, border: str = "", border_w: int = 0) -> None:
         """Couleurs de l'élément contre lequel la barre est collée (gestionnaire) : son fond, sa bordure et l'épaisseur
@@ -1658,6 +1775,10 @@ class ToolBar(QWidget):
                 parts = spans[side]
                 for lo, hi in parts:
                     painter.fillRect(self._side_strip(side, lo, hi, border_w, border_on), QColor(fill))
+            if look["snap_side"] == "color" and not match:
+                self._paint_side_color(painter, touch, spans, border_on)
+            if look["snap_separator"]:
+                self._paint_snap_separators(painter, touch, spans)
         header = self.header_rect()
         header_bg = snap if snap and look["snap_header_color"] else look["header_bg"]
         if header.width() > 0 and header.height() > 0 and QColor(header_bg).alpha():
@@ -1666,10 +1787,15 @@ class ToolBar(QWidget):
             painter.setClipPath(_rounded_rect_path(self.rect().adjusted(inset, inset, -inset, -inset),
                                                    self._corner_radius()))
             band = QRect(header)
-            if self.orient == "h":
+            side = self.header_side()
+            if side == "top":
                 band.setTop(0)
-            else:
+            elif side == "bottom":
+                band.setBottom(self.height() - 1)
+            elif side == "left":
                 band.setLeft(0)
+            else:
+                band.setRight(self.width() - 1)
             painter.fillRect(band.intersected(self.rect().adjusted(inset, inset, -inset, -inset)), QColor(header_bg))
             painter.restore()
         if header.width() > 0 and header.height() > 0:
@@ -1684,6 +1810,9 @@ class ToolBar(QWidget):
             thick = self.header_px()
             x = 6
             top = min(6, max(0, thick - 12))               # padding haut de 6 px (prototype), la ligne en dessous
+            if self.header_side() in ("bottom", "right"):  # en-tête en bas / à droite : le padding passe dehors
+                top = 0
+                thick -= min(6, max(0, self.header_px() - 12))
             if look["grip_on"]:
                 _dots(painter, QRectF(x, top, 12, thick - top), look["grip_ink"])     # (laisse le crayon à « aucun »)
                 x += 12 + 4
@@ -1868,9 +1997,9 @@ class ToolBar(QWidget):
                                             -delta.x() if mode.startswith("-h") else 0)
             height = drag["size"].height() + (delta.y() if "v" in mode and not mode.startswith("-v") else
                                               -delta.y() if mode.startswith("-v") else 0)
-            origin, look = self.origin(), LOOK
-            cols = px_cells(width - origin.x() - look["margin"] - look["border_w"]) if "h" in mode else drag["grid"][0]
-            rows = px_cells(height - origin.y() - look["margin"] - look["border_w"]) if "v" in mode else drag["grid"][1]
+            frame_w, frame_h = self.frame_px()
+            cols = px_cells(width - frame_w) if "h" in mode else drag["grid"][0]
+            rows = px_cells(height - frame_h) if "v" in mode else drag["grid"][1]
             title = self._title_cells()                # le titre entier ; la largeur d'un élément ; sinon tout retasse
             cols, rows = max(1, min(MAX_CELLS, cols)), max(1, min(MAX_CELLS, rows))
             if self.orient == "h":                     # (titre vertical : coupé d'un « … », voir `min_grid`)
@@ -1886,7 +2015,13 @@ class ToolBar(QWidget):
             event.accept()
             return
         if self._hdr is not None:
-            if not self._hdr["ctrl"]:
+            if self._hdr["ctrl"] is True and self.manager is not None and (
+                    global_pos - self._hdr["start"]).manhattanLength() >= QApplication.startDragDistance():
+                self._hdr["ctrl"] = "solo"                 # Ctrl + glisser : la barre part SEULE (sans ses liées)
+                self.manager.begin_bar_drag(self, self._hdr["start"], linked=False)
+            if self._hdr["ctrl"] == "solo":
+                self.manager.bar_drag_to(self, global_pos)
+            elif not self._hdr["ctrl"]:
                 if self.manager is not None:
                     self.manager.bar_drag_to(self, global_pos)
                 else:
@@ -1922,7 +2057,7 @@ class ToolBar(QWidget):
             return
         if self._hdr is not None:
             hdr, self._hdr = self._hdr, None
-            if hdr["ctrl"]:
+            if hdr["ctrl"] is True:                        # Ctrl + clic sans glisser : renommer
                 self.start_rename()
             elif self.manager is not None:
                 self.manager.end_bar_drag(self)

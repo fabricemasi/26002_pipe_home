@@ -51,14 +51,30 @@ class DefaultsTest(unittest.TestCase):
         self.assertEqual({k for k in covered if k.startswith("palette_")} - set(PALETTE_DEFAULTS), set())
 
     def test_the_section_is_in_the_theme_editor(self):
-        self.assertIn("Palette", v2.THEME_SECTIONS)
-        node = next(n for n in v2.theme_tree() if n.title == "Palette")
+        self.assertIn("Barres d'outils", v2.THEME_SECTIONS)
+        node = next(n for n in v2.theme_tree() if n.title == "Barres d'outils")
         self.assertEqual([c.title for c in node.children], ["Grille", "Barre", "En-tête", "Icônes", "Contrôleur"])
         controller = next(c for c in node.children if c.title == "Contrôleur")
         self.assertEqual([c.title for c in controller.children], ["Slider", "Liste déroulante", "Zone de saisie", "Toggle"])
-        self.assertNotIn("Palette", [n.title for n in v2.tab_tree("General")])
+        self.assertNotIn("Barres d'outils", [n.title for n in v2.tab_tree("General")])
         import theme_editor
-        self.assertEqual(theme_editor.SECTION_TYPES["Palette"], "palette")
+        self.assertEqual(theme_editor.SECTION_TYPES["Barres d'outils"], "palette")
+
+    def test_snapped_side_menu_shows_its_colour_only_for_choice_three(self):
+        """« Clipsée : comportement du côté collé » : menu 1. rien / 2. pas de bordure / 3. couleur de bordure, la
+        couleur dans la sous-cellule voisine seulement au 3 (2026-11-08)."""
+        spec = next(s for s in v2.CATALOG["Palette : Barre"] if s.key == "palette_snap_side")
+        self.assertEqual(spec.label, "Clipsée : comportement du côté collé")
+        values = dict(settings_store.DEFAULT_SETTINGS, palette_snap_side="color", palette_snap_side_color="#00ff00")
+        field = v2.make_field(spec, v2.ScopeValues(values, None), values.get("colors") or {})
+        self.addCleanup(field.deleteLater)
+        self.assertFalse(field._color.isHidden())
+        self.assertEqual(v2.read_spec(spec, field)["palette_snap_side"], "color")
+        field._menu.setValue("2. Pas de bordure")
+        field._menu.changed.emit("2. Pas de bordure")
+        self.assertTrue(field._color.isHidden())
+        self.assertEqual(v2.read_spec(spec, field)["palette_snap_side"], "no_border")
+        self.assertTrue(any(s.key == "palette_snap_separator" for s in v2.CATALOG["Palette : Barre"]))
 
     def test_a_preset_keeps_the_palette_as_a_type_with_variants(self):
         values = {k: v for k, v in settings_store.DEFAULT_SETTINGS.items() if k.startswith("palette_")}
@@ -271,12 +287,12 @@ class EditorPreviewTest(unittest.TestCase):
     def test_the_preview_shows_a_working_workspace_of_bars(self):
         panel = PreviewPanel(lambda: dict(settings_store.DEFAULT_SETTINGS))
         try:
-            panel.show_section("Palette")
+            panel.show_section("Barres d'outils")
             bars = panel.findChildren(P.ToolBar)
             self.assertEqual(sorted(b.title() for b in bars), ["Contrôleurs", "Créer", "Outils"])
             self.assertTrue(all(b.size() == b.natural_size() for b in bars))
             self.assertTrue(all(b.manager is not None for b in bars))        # le vrai système
-            self.assertIn("Palette", [s for s in panel._builders])
+            self.assertIn("Barres d'outils", [s for s in panel._builders])
             panel.show_section(None)                                         # la planche en montre aussi
             self.assertEqual(len(panel.findChildren(P.ToolBar)), 3)
         finally:
@@ -365,8 +381,61 @@ class SettingsSectionsTest(PaletteCase):
         self.assertEqual(pal.cell_of("pen"), (4, 0, 1))                       # retassée dans la case libre
 
 
+class ToolbarButtonVariantTest(unittest.TestCase):
+    """Demande de l'utilisateur (2026-11-10) : un style de bouton « toolbar » qui reprend les réglages des boutons des
+    barres d'outils."""
+
+    def test_fields_come_from_the_toolbar_cells(self):
+        import tempfile
+        from pathlib import Path
+        from fm_theme.style import button_state_css
+        settings = {"palette_cell_radius": 9, "palette_cell_bg_color": "#112233", "palette_cell_border_thickness": 2,
+                    "palette_cell_border_enabled": {"top": True, "right": True, "bottom": True, "left": True},
+                    "palette_cell_border": {s: "#445566" for s in ("top", "right", "bottom", "left")},
+                    "palette_icon_color": "#00000000", "palette_bar_font_size": 13}
+        fields = P.toolbar_button_fields(settings)
+        self.assertEqual((fields["radius"], fields["bg_color"], fields["border_thickness"]), (9, "#112233", 2))
+        self.assertEqual(fields["corner_radius"]["bottom_left"], 9)
+        self.assertEqual(fields["border"]["left"], "#445566")
+        self.assertEqual(fields["font_color"], P.M["value_fg"])          # transparente = la teinte du thème
+        self.assertEqual(fields["font_size"], 13)
+        with tempfile.TemporaryDirectory() as folder:
+            name = tp.new_preset("Toolbar", settings_store.load_settings(), Path(folder))
+            made = tp.add_variant(name, "bouton", P.TOOLBAR_BUTTON_VARIANT, folder=Path(folder), fields=fields)
+            flat = tp.type_flat(tp.load_preset(tp.find_preset(name, Path(folder))), "bouton", made)
+        self.assertEqual(made, "toolbar")
+        self.assertEqual(flat["button_bg_color"], "#112233")
+        self.assertIn("#112233", button_state_css(flat))
+
+    def test_hover_and_active_states_reach_the_button_type(self):
+        from fm_theme import style
+        fields = P.toolbar_button_fields({"palette_cell_hover_color": "#202122", "palette_cell_active_color": "#303132",
+                                          "palette_cell_active_border_color": "#404142",
+                                          "palette_cell_active_border_thickness": 2})
+        self.assertEqual((fields["hover_color"], fields["active_color"], fields["active_border_color"],
+                          fields["active_border_thickness"]), ("#202122", "#303132", "#404142", 2))
+        look = {f"button_{k}": v for k, v in fields.items()}
+        self.assertIn("#202122", style.button_state_css(look, "survol"))
+        focus = style.button_state_css(look, "focus")
+        self.assertIn("#303132", focus)
+        self.assertIn("2px solid #404142", focus)
+        self.assertIn(style.C["btn_hover"], style.button_state_css({}, "survol"))   # transparent / absent = le thème
+        saved = style._CONTROL_LOOK
+        style._CONTROL_LOOK = look
+        try:
+            sheet = style.build_stylesheet()
+        finally:
+            style._CONTROL_LOOK = saved
+        self.assertIn("QPushButton:hover { background: #202122;", sheet)
+        self.assertIn("2px solid #404142", sheet)
+        for key in ("button_hover_color", "button_active_color", "button_active_border_color",
+                    "button_active_border_thickness"):
+            self.assertIn(key, settings_store.DEFAULT_SETTINGS)
+            self.assertIn(key, [s.key for s in v2.CATALOG["Bouton"] if not isinstance(s, str)])
+
+
 class PreviewWidthTest(unittest.TestCase):
-    def test_the_preview_width_follows_the_left_edge(self):
+    def test_the_preview_width_follows_the_right_edge(self):
         from fm_theme import preview
         panel = PreviewPanel(lambda: dict(settings_store.DEFAULT_SETTINGS), width=300)
         try:
@@ -376,9 +445,10 @@ class PreviewWidthTest(unittest.TestCase):
             done = []
             panel.widthChanged.connect(done.append)
             grip = panel._grip
+            self.assertEqual(grip.x(), panel.width() - grip.width())     # bord DROIT : le volet est à gauche
             QTest.mousePress(grip, Qt.LeftButton, Qt.NoModifier, QPoint(2, 100))
-            QTest.mouseMove(grip, QPoint(-98, 100))
-            QTest.mouseRelease(grip, Qt.LeftButton, Qt.NoModifier, QPoint(-98, 100))
+            QTest.mouseMove(grip, QPoint(102, 100))
+            QTest.mouseRelease(grip, Qt.LeftButton, Qt.NoModifier, QPoint(102, 100))
             self.assertEqual(panel.width(), 400)
             self.assertEqual(done, [400])
             panel.set_panel_width(5)

@@ -8,7 +8,7 @@ from PySide6.QtCore import QObject, Qt, Signal
 
 from app_style import C, role_color, scaled
 from previews import custom_ui_icon_pixmap
-from preview_column import IconButton, style_focus_button
+from preview_column import IconButton
 import ui_state
 
 
@@ -148,6 +148,9 @@ class BoardModuleMixin:
         leave_agenda = getattr(self, "_leave_agenda", None)    # agenda ouvert : rangé d'abord (fm_agenda)
         if leave_agenda is not None:
             leave_agenda()
+        leave_taches = getattr(self, "_leave_taches", None)    # tâches ouvertes : rangées d'abord (fm_taches)
+        if leave_taches is not None:
+            leave_taches()
         if self._board is not None:
             if (self._board.source if imported is not None else self._board.path) == Path(path):
                 return True
@@ -254,7 +257,7 @@ class BoardModuleMixin:
         origin = group.content_origin()
         x, height = origin.x(), 0
         for button in self._board_buttons:
-            style_focus_button(button)
+            self.titlebar.style_group_button(button)
             kind = button._board_kind
             if kind == "undo":
                 self._set_button_usable(button, pane.can_undo())

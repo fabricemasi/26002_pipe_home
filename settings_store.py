@@ -202,6 +202,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "window_border_enabled": {"top": True, "right": True, "bottom": True, "left": True},
     "window_border": {"top": "@border2", "right": "@border2", "bottom": "@border2", "left": "@border2"},
     "window_border_thickness": 1,
+    # Editeur fm_theme, volet des variantes : CADRE DE SÉLECTION de la variante éditée (croquis de l'utilisateur,
+    # 2026-11-10) ; réglages de l'appli (pas du preset), Thème > Général
+    "variant_sel_border_enabled": {"top": True, "right": True, "bottom": True, "left": True},
+    "variant_sel_border": {"top": "#4c80b3", "right": "#4c80b3", "bottom": "#4c80b3", "left": "#4c80b3"},
+    "variant_sel_border_thickness": 1, "variant_sel_border_enabled_linked": True,
+    "variant_sel_corner_radius": 6, "variant_sel_corner_radius_linked": True,
+    "variant_sel_bg_color": "#00000000",
     "header_visible": True,
     "header_height": 26,
     "header_padding": 0,
@@ -461,6 +468,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "item_ext_color_enabled": False,
     "item_ext_color": "#8a9097",
     # Fenetres additionnelles (reglages, override / a la volee, presets) : Reglages > Fenetres additionnelles.
+    "extra_window_bg_color": "@skinN1",          # fond des fenetres additionnelles (= M["panel_bg"], skin niveau 1)
     "extra_window_border_enabled": {"top": True, "right": True, "bottom": True, "left": True},
     "extra_window_border": {"top": "#2a2e32", "right": "#2a2e32", "bottom": "#2a2e32", "left": "#2a2e32"},
     "extra_window_border_thickness": 1,
@@ -612,9 +620,51 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "input_radius": 0,
     "button_frame": True,
     "button_radius": 0,
-    "navbar_height": 32,
-    "navbar_theme_button_color": "#f28c28",     # bouton orange qui ouvre fm_theme (à côté des réglages)
+    "navbar_height": 30,                        # 1re ligne de la barre (fm_theme)
+    "navtool_extra_height": 70,                 # ajoutee a navbar_height : etage du cheminement (fm_browser)
     "window_always_on_top": False,              # fenêtre principale « toujours au-dessus » (état temps réel)
+    "navbar_bg_color": "@navbar",               # fond de la barre ; « @navbar » = pastille C["app_bg"]
+    # Boutons d'outils de la barre de navigation (reglages de fm_browser, 2026-11-07) : defauts = l'aspect d'avant.
+    "navtool_bg_color": "#00000000",
+    "navtool_border_enabled": {"top": False, "right": False, "bottom": False, "left": False},
+    "navtool_border": {side: "#303539" for side in ("top", "right", "bottom", "left")},
+    "navtool_border_thickness": 1,
+    "navtool_corner_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
+    "navtool_corner_radius_linked": True,
+    "navtool_hover_bg_color": "@hover",
+    # Marge autour de chaque icone (carree) : 0 = les icones se touchent.
+    "navtool_margin": {"left": 4, "top": 0, "right": 4, "bottom": 0},
+    "navtool_margin_linked": False,
+    # Cote du carre de chaque icone (jamais plus que la 1re ligne moins la marge) ; padding = entre cadre et dessin.
+    "navtool_icon_size": 24,
+    "navtool_icon_base_color": "#c4cacf",       # Icones > Couleur des icones (main_window/chrome._refresh_navbar_icons)
+    "last_save_dir": "",  # dernier dossier d'enregistrement / d'export de l'appli (save_dialog_memory)
+    "last_open_dir": "",  # dernier dossier d'ouverture / de chargement de l'appli (save_dialog_memory)
+    "navtool_icon_tone_value": 30,  # module ouvert a l'icone coloree : valeur du fond (% de celle de l'icone)
+    "navtool_icon_disabled_color": "#59c4cacf",  # bouton desactive (ex voile d'opacite 35 %)
+    # Colonne Couleur du tableau d'icones de la barre (settings_window_v2.NAVBAR_ICON_COLORS) : fusion produit.
+    "navtool_icon_color_theme": "#f28c28", "navtool_icon_color_viewer": "#ffffff",
+    "navtool_icon_color_text_editor": "#ffffff", "navtool_icon_color_board": "#ffffff",
+    "navtool_icon_color_video": "#ffffff", "navtool_icon_color_font": "#ffffff", "navtool_icon_color_pdf": "#ffffff",
+    "navtool_icon_color_agenda": "#ffffff",
+    "navtool_icon_color_taches": "#ffffff",
+    "navtool_padding": {"left": 0, "top": 0, "right": 0, "bottom": 0},
+    "navtool_padding_linked": True,
+    # Boutons de la fenetre (punaise, reduire, agrandir, fermer ; fm_theme > Barre de navigation > Boutons fenetre,
+    # 2026-11-07) : CARRES, colles en haut de la fenetre, cadre peint (IconButton).
+    "navbar_winbtn_size": 30,
+    "navbar_winbtn_margin": {"left": 0, "top": 0, "right": 0, "bottom": 0},
+    "navbar_winbtn_margin_linked": True,
+    "navbar_winbtn_padding": {"left": 0, "top": 0, "right": 0, "bottom": 0},
+    "navbar_winbtn_padding_linked": True,
+    "navbar_winbtn_bg_color": "#00000000",
+    "navbar_winbtn_border_enabled": {"top": False, "right": False, "bottom": False, "left": False},
+    "navbar_winbtn_border": {side: "#303539" for side in ("top", "right", "bottom", "left")},
+    "navbar_winbtn_border_thickness": 1,
+    "navbar_winbtn_corner_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
+    "navbar_winbtn_corner_radius_linked": True,
+    "navbar_winbtn_hover_bg_color": "@hover",
+    "navbar_winbtn_close_hover_bg_color": "#c42b1c",   # survol du bouton fermer (rouge)
     "navbar_bottom_enabled": True,
     "navbar_bottom_color": "#2c3034",
     "navbar_bottom_thickness": 1,
@@ -660,7 +710,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "button_font_color": "#c4cacf",
     "button_font_smoothing_enabled": False,
     "button_font_smoothing": "current",
-    "input_bg_color": "#141618",
+    # Survol et état actif (enfoncé / focus) ; transparent = le thème, épaisseur 0 = celle de l'état standard
+    # (variante « toolbar » tirée des barres d'outils, 2026-11-10)
+    "button_hover_color": "#00000000", "button_active_color": "#00000000",
+    "button_active_border_color": "#00000000", "button_active_border_thickness": 0,
+    "input_bg_color": "@saisie",                # fm_theme > Couleurs > Zone de saisie (C["well"])
     "input_border_enabled": True,
     "input_border": {side: "#303539" for side in ("top", "right", "bottom", "left")},
     "input_border_thickness": 1,
@@ -672,7 +726,21 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "input_font_color": "#b9bfc4",
     "input_font_smoothing_enabled": False,
     "input_font_smoothing": "current",
-    # Barre de navigation > Cheminement (choix de chaque colonne, sous le titre).
+    # Barre de navigation > Cheminement : les onglets (refonte du 2026-11-08, main_window/title_bar._crumb_look).
+    "crumb_left_spacing": 10,               # avant le 1er onglet
+    "crumb_spacing": 5,                     # entre les onglets
+    "crumb_cut_border_active": False,       # sous l'onglet actif : ni sa bordure basse ni le filet de la barre
+    "crumb_cut_border_others": False,       # idem sous les autres onglets
+    "crumb_bg_color": "@skinN1",
+    "crumb_border_enabled": {"top": False, "right": False, "bottom": False, "left": False},
+    "crumb_border": {side: "#303539" for side in ("top", "right", "bottom", "left")},
+    "crumb_border_thickness": 1,
+    "crumb_corner_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
+    "crumb_corner_radius_linked": True,
+    # Transparent = la couleur de fond commune.
+    "crumb_active_bg_color": "#00000000",
+    "crumb_hover_bg_color": "#00000000",
+    "crumb_after_active_bg_color": "#00000000",
     "crumb_font_family": "",
     "crumb_font_size": 10,
     "crumb_font_bold": False,
@@ -680,27 +748,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "crumb_font_color": "#b9bfc4",
     "crumb_font_smoothing_enabled": False,
     "crumb_font_smoothing": "current",
-    "crumb_spacing": 5,
-    "crumb_separator_kind": "char",         # « char » : un caractere ; « icon » : l'icone choisie
-    "crumb_separator_char": "›",
-    "crumb_sep_font_family": "",            # vide = la police des textes
-    "crumb_sep_font_size": 0,               # 0 = la taille des textes
-    "crumb_sep_font_bold": False,
-    "crumb_sep_font_italic": False,
-    "crumb_sep_font_color": "#5f666b",
-    "crumb_sep_font_smoothing_enabled": False,
-    "crumb_sep_font_smoothing": "current",
-    "crumb_set_bg_color": "#00000000",      # fond des reperes des colonnes de SET
-    "crumb_after_bg_color": "#00000000",    # fond des reperes APRES le set (et de tout projet sans set)
-    "crumb_border_enabled": {"top": False, "right": False, "bottom": False, "left": False},
-    "crumb_border": {side: "#303539" for side in ("top", "right", "bottom", "left")},
-    "crumb_border_thickness": 1,
-    "crumb_corner_radius": {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0},
-    "crumb_corner_radius_linked": True,
-    "crumb_padding": {"left": 0, "top": 0, "right": 0, "bottom": 0},
-    "crumb_padding_linked": True,
-    "crumb_margin": {"left": 0, "top": 0, "right": 0, "bottom": 0},     # espace AUTOUR de chaque repere
-    "crumb_margin_linked": True,
+    "crumb_after_active_font_family": "",
+    "crumb_after_active_font_size": 10,
+    "crumb_after_active_font_bold": False,
+    "crumb_after_active_font_italic": False,
+    "crumb_after_active_font_color": "#5f666b",
+    "crumb_after_active_font_smoothing_enabled": False,
+    "crumb_after_active_font_smoothing": "current",
     "input_height": 0,                  # 0 = la hauteur propre a chaque zone de saisie
     "tabs_bottom_enabled": True,        # bordure entre la barre des tabs et l'interface
     "tabs_bottom_color": "#2a2e32",
@@ -726,6 +780,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "tabs_font_smoothing_enabled": False,
     "tabs_font_smoothing": "current",
     "table_radius": 0,
+    "table_bg_color": "@tableRow",              # Theme > Tableaux > Couleur de fond (fm_theme.tokens.set_table_bg)
     # Padding du texte a l'interieur des cellules de tableau (voir
     # _CellPaddingField/SettingsWindow._apply_cell_padding) — 4 valeurs
     # independantes par cote, "linked" gouverne si le 1er slider (Haut)
@@ -967,43 +1022,8 @@ for _title_level, _title_defaults in _TITLE_LEVEL_DEFAULTS.items():
 
 del _title_level, _title_defaults, _title_key, _title_val
 
-# Cheminement (Reglages > Barre de navigation > Cheminement) : un tableau par ETAT des reperes — « Set » (cles
-# `crumb_*`), « Apres set » (`crumb_after_*`), « Apres focus » (`crumb_afterfocus_*`, les reperes APRES celui qui a
-# le focus : l'image affichee garde tout son cheminement) — memes lignes ; dans les deux derniers, un toggle par
-# ligne (`<prefixe>_ovr_<ligne>`) : allume = la ligne remplace celle du tableau Set, eteint = celle du Set.
-CRUMB_STATE_PREFIXES = {"after": "crumb_after", "after_focus": "crumb_afterfocus"}
-CRUMB_STATE_ROWS = ("font", "bg", "border", "radius", "padding", "margin", "shadow")
-for _pre in CRUMB_STATE_PREFIXES.values():
-    for _k in ("family", "size", "bold", "italic", "color", "smoothing_enabled", "smoothing"):
-        DEFAULT_SETTINGS.setdefault(f"{_pre}_font_{_k}", DEFAULT_SETTINGS[f"crumb_font_{_k}"])
-    DEFAULT_SETTINGS.setdefault(f"{_pre}_bg_color", "#00000000")
-    DEFAULT_SETTINGS.setdefault(f"{_pre}_border_enabled", {s: False for s in ("top", "right", "bottom", "left")})
-    DEFAULT_SETTINGS.setdefault(f"{_pre}_border", {s: "#303539" for s in ("top", "right", "bottom", "left")})
-    DEFAULT_SETTINGS.setdefault(f"{_pre}_border_thickness", 1)
-    DEFAULT_SETTINGS.setdefault(f"{_pre}_border_enabled_linked", False)
-    DEFAULT_SETTINGS.setdefault(f"{_pre}_corner_radius",
-                                {"top_left": 0, "top_right": 0, "bottom_right": 0, "bottom_left": 0})
-    for _k in ("corner_radius", "padding", "margin"):
-        DEFAULT_SETTINGS.setdefault(f"{_pre}_{_k}_linked", True)
-    for _k in ("padding", "margin"):
-        DEFAULT_SETTINGS.setdefault(f"{_pre}_{_k}", {"left": 0, "top": 0, "right": 0, "bottom": 0})
-    for _row in CRUMB_STATE_ROWS:
-        DEFAULT_SETTINGS.setdefault(f"{_pre}_ovr_{_row}", False)
-DEFAULT_SETTINGS["crumb_after_ovr_bg"] = True               # l'ancien « Couleur fond apres set »
-DEFAULT_SETTINGS["crumb_afterfocus_ovr_font"] = True        # apres le focus : une autre couleur de texte
-DEFAULT_SETTINGS["crumb_afterfocus_font_color"] = "#5f666b"
-# Survol / focus d'un repere : fond et bordures (border radius : celui de l'etat du repere).
-for _pre, _color in (("crumb_hover", "#5f666b"), ("crumb_focus", "#5f9bd0")):
-    DEFAULT_SETTINGS.setdefault(f"{_pre}_bg_color", "#00000000")
-    DEFAULT_SETTINGS.setdefault(f"{_pre}_border_enabled", {s: False for s in ("top", "right", "bottom", "left")})
-    DEFAULT_SETTINGS.setdefault(f"{_pre}_border", {s: _color for s in ("top", "right", "bottom", "left")})
-    DEFAULT_SETTINGS.setdefault(f"{_pre}_border_thickness", 1)
-    DEFAULT_SETTINGS.setdefault(f"{_pre}_border_enabled_linked", False)
-DEFAULT_SETTINGS.setdefault("crumb_separator_enabled", True)
-del _pre, _k, _row, _color
-
 # Lignes « Ombres » (settings_widgets.shadow_look) : cotes, couleur par cote (opacite comprise), taille.
-SHADOW_PREFIXES = ("crumb_shadow", "crumb_after_shadow", "crumb_afterfocus_shadow", "button_shadow", "item_image_shadow", "preview_shadow", "viewer_film_image_shadow", "viewer_focus_image_shadow",
+SHADOW_PREFIXES = ("button_shadow", "item_image_shadow", "preview_shadow", "viewer_film_image_shadow", "viewer_focus_image_shadow",
                    "table_shadow", "viewer_film_table_shadow", "ctx_menu_shadow", "extra_window_shadow",
                    "video_frame_shadow")
 for _shadow in SHADOW_PREFIXES:
@@ -1019,6 +1039,7 @@ for _key, _default in (("button_border_enabled", False), ("button_corner_radius"
                        ("input_border_enabled", False), ("input_corner_radius", True),
                        ("tabs_border_enabled", False), ("tabs_inactive_border_enabled", False),
                        ("tabs_corner_radius", True), ("crumb_border_enabled", False),
+                       ("navtool_border_enabled", False), ("navbar_winbtn_border_enabled", False),
                        ("ctx_menu_border_enabled", False), ("step_badge_border_enabled", False),
                        ("item_selection_unfocus_padding", True), ("item_selection_hover_padding", True),
                        ("item_selection_idle_padding", True)):
@@ -1068,6 +1089,41 @@ for _key in BOARD_MENU_KEYS:
     DEFAULT_SETTINGS[f"board_ovr_{_key}"] = False
 del _key
 
+# Barre de navigation de fm_browser (demande de l'utilisateur, 2026-11-07) : bordure basse, police du titre et
+# hauteur de fm_theme surchargeables dans les reglages de fm_browser — copie `navtool_<...>` de chaque cle
+# `navbar_<...>`, interrupteur `navtool_ovr_<ligne>` (coupe = la valeur de fm_theme). Lu par `navbar_effective`.
+NAVBAR_OVERRIDE_ROWS = {"bottom_enabled": "navbar_bottom_", "title_font_family": "navbar_title_font_",
+                        "height": "navbar_height"}
+NAVBAR_OVERRIDE_KEYS = {row: tuple(k for k in DEFAULT_SETTINGS if k.startswith(prefix))
+                        for row, prefix in NAVBAR_OVERRIDE_ROWS.items()}
+for _row, _keys in NAVBAR_OVERRIDE_KEYS.items():
+    for _key in _keys:
+        DEFAULT_SETTINGS["navtool" + _key[len("navbar"):]] = json.loads(json.dumps(DEFAULT_SETTINGS[_key]))
+    DEFAULT_SETTINGS[f"navtool_ovr_{_row}"] = False
+del _row, _keys, _key
+
+_NAVBAR_EFFECTIVE: list = [None, None]
+
+
+def navbar_effective(settings: dict) -> dict:
+    """Reglages de la barre de navigation de la fenetre principale : ceux de fm_theme (`navbar_*`), remplaces par
+    ceux de fm_browser (`navtool_*`) dont l'override est allume. Meme objet si aucun override ; calcule une fois
+    par jeu de reglages (relu a chaque placement du cheminement)."""
+    if _NAVBAR_EFFECTIVE[0] is settings and _NAVBAR_EFFECTIVE[1] is not None:
+        return _NAVBAR_EFFECTIVE[1]
+    result = settings
+    for row, keys in NAVBAR_OVERRIDE_KEYS.items():
+        if settings.get(f"navtool_ovr_{row}"):
+            if result is settings:
+                result = dict(settings)
+            for key in keys:
+                own = "navtool" + key[len("navbar"):]
+                if own in settings:
+                    result[key] = settings[own]
+    _NAVBAR_EFFECTIVE[0], _NAVBAR_EFFECTIVE[1] = settings, result
+    return result
+
+
 # Module Markdown : défauts dans son paquet (fm_markdown/settings_defaults.py, source unique).
 from fm_markdown.settings_defaults import MARKDOWN_DEFAULTS  # noqa: E402
 DEFAULT_SETTINGS.update(MARKDOWN_DEFAULTS)
@@ -1091,6 +1147,9 @@ DEFAULT_SETTINGS.update(PDF_DEFAULTS)
 # Agenda (fm_agenda/settings_defaults.py)
 from fm_agenda.settings_defaults import AGENDA_DEFAULTS  # noqa: E402
 DEFAULT_SETTINGS.update(AGENDA_DEFAULTS)
+# Tâches (fm_taches/settings_defaults.py)
+from fm_taches.settings_defaults import TACHES_DEFAULTS  # noqa: E402
+DEFAULT_SETTINGS.update(TACHES_DEFAULTS)
 
 # Module vidéo : défauts dans son paquet (fm_video/settings_defaults.py, source unique).
 from fm_video.settings_defaults import VIDEO_DEFAULTS  # noqa: E402
@@ -1107,7 +1166,7 @@ _LIVE_STATE_KEYS = ("md_toolbar_font_color", "md_toolbar_background_color",
                     "interface_edit_appearance", "video_grade", "video_grade_presets", "video_export_last",
                     "video_info_enabled", "video_loop", "video_volume", "video_last_zoom",
                     "video_time_display", "video_scopes", "video_timeline_thumb_height",
-                    "agenda_theme", "agenda_default_calendar")
+                    "agenda_theme", "agenda_default_calendar", "taches_theme", "taches_show_done", "last_save_dir", "last_open_dir")
 
 
 

@@ -9,6 +9,7 @@ from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate
 
+from fm_theme.placeholder import MAGENTA
 from app_style import scaled
 import previews
 
@@ -263,8 +264,6 @@ def _backdrop(painter: QPainter, rect: QRectF, strength: int = 185):
 
 
 def _paint_star(painter: QPainter, rect: QRect, lit: bool, preview: bool = False):
-    from settings_store import M
-    from settings_widgets import _selection_color
     side = rect.height()
     on = previews.custom_ui_icon_pixmap(previews.UI_ICON_VIEWER_STAR_ON, side)
     off = previews.custom_ui_icon_pixmap(previews.UI_ICON_VIEWER_STAR_OFF, side)
@@ -281,7 +280,7 @@ def _paint_star(painter: QPainter, rect: QRect, lit: bool, preview: bool = False
         painter.drawPixmap(target, pix)
         painter.restore()
         return
-    color = QColor(_selection_color(255) if lit else M["value_fg"])
+    color = QColor(MAGENTA)                             # etoile dessinee par le code : magenta (provisoire)
     if not lit:
         color.setAlpha(120)                 # etoile vide : contour discret mais visible sur la photo
     if preview:
@@ -301,7 +300,7 @@ def _paint_flag(painter: QPainter, rect: QRect, status: str, dim: bool = False):
     if pix is not None:
         painter.drawPixmap(rect.adjusted(scaled(1), scaled(1), -scaled(1), -scaled(1)), pix)
     else:
-        painter.setPen(QColor(M["value_fg"]))
+        painter.setPen(QColor(MAGENTA))                 # repli dessine par le code : magenta (provisoire)
         painter.drawText(rect, Qt.AlignCenter, "✓" if status == "keep" else "✕")
     painter.restore()
 

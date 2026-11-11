@@ -29,6 +29,7 @@ from fm_theme.tokens import (
     _title_box,
     _title_color,
     _title_font,
+    _title_open_text,
     _title_gap_next,
     _title_indent,
 )
@@ -502,13 +503,46 @@ class _BodyMixin:
         _ml, mt, mr, mb = self._box_style["margin"]
         return QRect(self._box_off, mt, self.width() - self._box_off - mr, self.height() - mt - mb)
 
+    def box_fill(self) -> str | None:
+        """Fond EFFECTIF du paragraphe : celui du titre deploye (Paragraphes > « Deploye : couleur de fond »)
+        tant qu'il est deploye, sinon son fond habituel."""
+        box = getattr(self, "_box_style", None) if self._boxed else None
+        if box is None:
+            return None
+        return (box.get("open_fill") if not self._collapsed else None) or box["fill"]
+
+    def box_border(self) -> tuple:
+        """(cotes, couleurs, epaisseur) EFFECTIFS de la bordure du paragraphe : celles du titre deploye
+        (Paragraphes > « Deploye : bordures ») tant qu'il l'est et qu'elles sont reglees, sinon les siennes."""
+        box = self._box_style
+        own = box.get("open_border") if not self._collapsed else None
+        if own:
+            return own
+        return box["border_on"], box["border_colors"], box["thickness"]
+
+    def apply_text_look(self):
+        """Police / couleur du titre (et du chevron) : celles de son niveau (ou de son style propre), plus les
+        overrides du titre DEPLOYE (couleur, gras, italique ; demande de l'utilisateur, 2026-11-08)."""
+        level = self._title_level()
+        look = getattr(self, "_title_look", None)
+        font, color = (look["font"], look["color"]) if look else (_title_font(level), _title_color(level))
+        if not self._collapsed:
+            font, color = _title_open_text(level, font, color)
+        self._name_label.setFont(font)
+        self._name_label.setStyleSheet(f"color: {color}; background: transparent;")
+        self._chevron.setColor(color)
+
     def paintEvent(self, event):
         box = getattr(self, "_box_style", None) if self._boxed else None
-        if box is not None and (box["fill"] or (box["thickness"] and any(box["border_on"].values()))):
+        fill = self.box_fill()
+        sides, colors, thickness = self.box_border() if box is not None else ({}, {}, 0)
+        if box is not None and (fill or (thickness and any(sides.values()))):
             p = QPainter(self)
-            _paint_bordered_rect(p, self._box_rect(),
-                                 box["radius"], box["border_on"], box["thickness"], box["border_colors"],
-                                 box["fill"])
+            clip = getattr(self, "_side_clip", None)
+            if clip is not None:
+                # Editeur fm_theme : rien sous le volet des parametres (theme_side_detail), le titre ouvert y entre.
+                p.setClipRect(QRect(0, 0, max(0, clip), self.height()))
+            _paint_bordered_rect(p, self._box_rect(), box["radius"], sides, thickness, colors, fill)
             p.end()
         super().paintEvent(event)
 
@@ -616,6 +650,8 @@ class _Section(_BodyMixin, QWidget):
         # entre-temps) — voir refresh_min_height, meme raison.
         _activate_layout_tree(self)
         self._refresh_chevron()
+        self.apply_text_look()             # titre deploye : couleur / gras / italique imposes
+        self.update()                      # ... et son fond
         # setMinimumHeight explicite a la taille naturelle : sans lui, le
         # layout PARENT (SettingsWindow._build_content, qui empile toutes
         # les sections) redistribue l'espace total disponible en gardant un
@@ -760,6 +796,8 @@ class _SubSection(_BodyMixin, QWidget):
         if not self._boxed:
             self._head_layout.setContentsMargins(self._left_margin, 0, 0, 0 if collapsed else _title_gap_next(self._level))
         self._refresh_chevron()
+        self.apply_text_look()             # titre deploye : couleur / gras / italique imposes, et son fond
+        self.update()
         # Signal AVANT le recalcul : ses abonnes (spaceurs entre titres, voir
         # _make_gap_spacer) changent la hauteur du contenu, que les planchers
         # calcules ensuite doivent deja inclure.

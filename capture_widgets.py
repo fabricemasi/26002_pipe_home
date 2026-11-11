@@ -1463,3 +1463,57 @@ def _column_suppress_left(widget: QWidget, title: str) -> bool:
     if prev_title is not None and column_padding_for(prev_title)["right"] > 0:
         return False
     return True
+
+
+def _column_edge_sides(widget: QWidget, title: str) -> set:
+    """Cotes de la carte de `widget` (Column / PreviewColumn / DetailPanel) qui TOUCHENT le bord de la
+    zone des colonnes (barre de titre en haut, barre d'etat en bas, cadre de la fenetre a gauche et a
+    droite) : leur bordure est masquee (demande de l'utilisateur, « quand une colonne touche un bord, sa
+    bordure contre cet element doit disparaitre »). Un cote garde sa bordure s'il a un padding (la carte
+    ne touche alors rien). Structurel (index dans les layouts), pas de geometrie : valable avant
+    l'affichage, cout negligeable."""
+    layout = _widget_containing_layout(widget)
+    if layout is None:
+        return set()
+    pad = column_padding_for(title)
+
+    def visible_items(lay):
+        return [lay.itemAt(i).widget() for i in range(lay.count())
+                if lay.itemAt(i).widget() is not None and not lay.itemAt(i).widget().isHidden()]
+
+    sides = set()
+    items = visible_items(layout)
+    if isinstance(layout, QVBoxLayout):
+        # Pile verticale (groupe IN/OVER/OUT/LOGICIELS, Focus) : haut = 1re, bas = derniere SI la pile
+        # descend jusqu'en bas (pas de AlignTop) ; gauche = la pile est la 1re de la rangee.
+        if items and items[0] is widget:
+            sides.add("top")
+        if items and items[-1] is widget and not (layout.alignment() & Qt.AlignTop):
+            sides.add("bottom")
+        wrapper = layout.parentWidget()
+        row = _widget_containing_layout(wrapper) if wrapper is not None else None
+        row_items = visible_items(row) if row is not None else []
+        if row_items and row_items[0] is wrapper:
+            sides.add("left")
+    else:
+        sides.update(("top", "bottom"))
+        if items and items[0] is widget and layout.indexOf(items[0]) == 0:
+            sides.add("left")
+        # Droite : seulement le dernier element du layout RACINE de la zone (l'inspecteur) ; la
+        # derniere colonne de columns_layout est suivie d'un etirement, elle ne touche rien.
+        parent = widget.parentWidget()
+        if (parent is not None and parent.layout() is layout
+                and layout.indexOf(widget) == layout.count() - 1):
+            sides.add("right")
+    if getattr(widget, "_fit_height", False):
+        sides.discard("bottom")                 # hauteur ajustee au contenu : ne descend pas jusqu'en bas
+    return {side for side in sides if pad.get(side, 0) <= 0}
+
+
+def _column_hidden_sides(widget: QWidget, title: str, suppress_left: bool) -> set:
+    """Cotes dont la bordure n'est PAS peinte : bords de la zone (_column_edge_sides) + gauche contre
+    une voisine collee (`suppress_left`, voir _column_suppress_left)."""
+    sides = _column_edge_sides(widget, title)
+    if suppress_left:
+        sides.add("left")
+    return sides

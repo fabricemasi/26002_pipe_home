@@ -45,7 +45,7 @@ MODULES = {
                  "test_presets.py", "test_row_templates.py", "test_settings_*.py", "test_shadows.py", "test_table_*.py",
                  "test_title_reorder.py", "test_navigation_bar.py", "test_space_below.py", "test_ext_color.py",
                  "test_toggle_states.py"],
-    "colonnes": ["test_bottom_pin.py", "test_rounded_effect.py", "test_column_loading.py", "test_file_operations.py",
+    "colonnes": ["test_bottom_pin.py", "test_save_dialog_memory.py", "test_placeholder_icons.py", "test_navbar_look.py", "test_rounded_effect.py", "test_column_edge_border.py", "test_column_loading.py", "test_file_operations.py",
                  "test_navigation_loading.py", "test_pin_per_preset.py", "test_project_config_defaults.py",
                  "test_software_launch.py", "test_software_menu.py", "test_type_reorder.py",
                  "test_inspector_resize.py", "test_folder_icon_colors.py"],
@@ -53,6 +53,7 @@ MODULES = {
     "fm_font": ["test_fm_font*.py"],
     "fm_pdf": ["test_pdf_*.py"],
     "fm_agenda": ["test_agenda_*.py"],
+    "fm_taches": ["test_taches_*.py"],
 }
 # Noms des docs actuelles (docs/agents/<nom>.md) acceptés aussi.
 ALIAS = {"video": "fm_video", "markdown": "fm_markdown", "visionneuse": "fm_visionneuse",

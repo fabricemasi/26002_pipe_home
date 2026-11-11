@@ -69,6 +69,27 @@ def edge_line(edge: str, width: int, height: int) -> tuple:
             "left": (0, 0, LINE, height), "right": (width - LINE, 0, LINE, height)}[edge]
 
 
+def linked_group(rects: dict, start) -> set:
+    """Barres LIÉES à `start` (`rects` : {id: (x, y, w, h)}) : celles qui la touchent par un côté (au contact, sur une
+    longueur), de proche en proche ; `start` exclue. Elles bougent avec elle (demande de l'utilisateur, 2026-11-08)."""
+    def touching(a, b) -> bool:
+        ax, ay, aw, ah = a
+        bx, by, bw, bh = b
+        v_over = ay < by + bh - 2 and ay + ah > by + 2
+        h_over = ax < bx + bw - 2 and ax + aw > bx + 2
+        side = v_over and (abs(ax + aw - bx) <= EPS or abs(bx + bw - ax) <= EPS)
+        return side or (h_over and (abs(ay + ah - by) <= EPS or abs(by + bh - ay) <= EPS))
+
+    seen, todo = {start}, [start]
+    while todo:
+        key = todo.pop()
+        for other, rect in rects.items():
+            if other not in seen and touching(rects[key], rect):
+                seen.add(other)
+                todo.append(other)
+    return seen - {start}
+
+
 def measure_touch(rects: dict, width: int, height: int) -> dict:
     """Côtés et coins au contact (prototype `measureTouch`) pour chaque barre de `rects` ({id: (x, y, w, h)}) : coin
     carré (`tl`, `tr`, `br`, `bl`) si un côté du coin est plaqué contre un bord ou si une barre voisine couvre ce
@@ -514,7 +535,8 @@ class BarManager(QObject):
         """Pose la barre selon son bord (`dock`, `along` ; clipsée à droite / en bas : par rapport à CE bord) ou sa
         position flottante, dans la zone. Pendant un déplacement de barre, celles qui lui font place sont menées par
         `_live_arrange`."""
-        if self._bar_drag is not None and bar is not self._bar_drag["bar"] and getattr(bar, "_live", None) is not None:
+        if self._bar_drag is not None and bar is not self._bar_drag["bar"] and (
+                getattr(bar, "_live", None) is not None or bar in self._bar_drag["followers"]):
             return
         area = self.area()
         w, h = bar.width(), bar.height()
@@ -593,7 +615,8 @@ class BarManager(QObject):
         """Places le long d'un bord ({barre: début}) : chaque barre à sa place voulue, sans chevauchement (`_push_apart`) ;
         avec `dragged` (barre tirée sur ce bord) : les barres dont le milieu est avant le sien GLISSENT vers l'arrière pour
         lui faire place, les autres vers l'avant ; elle-même est poussée si le bord manque de place."""
-        group = [b for b in self.bars if b.dock == edge and not b.isHidden() and b is not dragged]
+        followers = self._bar_drag["followers"] if self._bar_drag else {}
+        group = [b for b in self.bars if b.dock == edge and not b.isHidden() and b is not dragged and b not in followers]
         by_id = {b.bar_id: b for b in group}
 
         def anchor(b, depth=0):
@@ -715,8 +738,10 @@ class BarManager(QObject):
         barre collée derrière une autre (`after`) la suit. La barre en cours de déplacement n'est pas comptée (elle se
         range au relâchement) ; une barre cachée non plus."""
         dragged = self._bar_drag["bar"] if self._bar_drag else None
+        followers = self._bar_drag["followers"] if self._bar_drag else {}
         for edge in DOCKS:
-            group = [b for b in self.bars if b.dock == edge and not b.isHidden() and not b.end and b is not dragged]
+            group = [b for b in self.bars if b.dock == edge and not b.isHidden() and not b.end and b is not dragged
+                     and b not in followers]
             if len(group) < 2:
                 for b in group:
                     if not b.after:
@@ -825,11 +850,11 @@ class BarManager(QObject):
                 "bottom": QRect(geo.left(), area.bottom() + 1, geo.width(), bw),
                 "left": QRect(area.left() - bw, geo.top(), bw, geo.height()),
                 "right": QRect(area.right() + 1, geo.top(), bw, geo.height())}[edge]
-        host = self.ws                         # la pièce vit au plus près : l'espace des barres s'il contient le
-        if not host.rect().contains(rect):     # voisin, sinon son parent (jamais au-dessus du reste de l'appli)
-            host = self.ws.parentWidget() or self.ws
-            if host is not self.ws:
-                rect = QRect(self.ws.mapTo(host, rect.topLeft()), rect.size())
+        host, local = self.ws, rect            # la pièce vit au plus près : le premier parent qui contient la bordure
+        while not host.rect().contains(local) and host.parentWidget() is not None:   # du voisin (barre de navigation
+            host = host.parentWidget()         # de la fenêtre au-dessus du board : la fenêtre elle-même, signalé
+            local = QRect(self.ws.mapTo(host, rect.topLeft()), rect.size())          # le 2026-11-08)
+        rect = local
         if not host.rect().intersects(rect):
             return False
         key = (bar, edge)
@@ -916,17 +941,31 @@ class BarManager(QObject):
 
     # -- Déplacer une barre : glisser son titre (prototype `onBarDown` / `onMove` / `onUp`) ---------------------------
 
-    def begin_bar_drag(self, bar: ToolBar, global_pos: QPoint) -> None:
+    def begin_bar_drag(self, bar: ToolBar, global_pos: QPoint, linked: bool = True) -> None:
+        """Début du déplacement d'une barre (titre tiré). `linked` : les barres collées à elle (de proche en proche)
+        la SUIVENT (demande de l'utilisateur, 2026-11-08) ; Ctrl tenu au départ du geste : elle part seule."""
         p = self.ws.mapFromGlobal(global_pos)
+        shown = [b for b in self.bars if b.isVisible()]
+        rects = {id(b): (b.x(), b.y(), b.width(), b.height()) for b in shown}
+        group = linked_group(rects, id(bar)) if linked else set()
+        followers = {b: QPoint(b.x() - bar.x(), b.y() - bar.y()) for b in shown if id(b) in group}
+        for other in followers:
+            self.bring_to_front(other)
+            other.set_moving(True)
         self.bring_to_front(bar)
         bar.set_moving(True)
         area = self.area()
         others = [{"x": b.x() - area.x(), "y": b.y() - area.y(), "w": b.width(), "h": b.height(), "dock": b.dock}
-                  for b in self.bars if b is not bar and b.isVisible()]
+                  for b in shown if b is not bar and b not in followers]
         turned = bar.grid_size(bar.rows, bar.cols, "v" if bar.orient == "h" else "h")     # grille transposée
+        box = QRect(bar.geometry())                # emprise du groupe, relative à la barre tirée
+        for other in followers:
+            box = box.united(other.geometry())
         self._bar_drag = {"bar": bar, "off": QPoint(p.x() - bar.x(), p.y() - bar.y()), "w": bar.width(),
                           "h": bar.height(), "orient": bar.orient, "others": others, "snap": None,
-                          "layout": bar.layout_snapshot(), "turned": (turned.width(), turned.height())}
+                          "layout": bar.layout_snapshot(), "turned": (turned.width(), turned.height()),
+                          "followers": followers, "home": {b: b.pos() for b in followers},
+                          "box": box.translated(-bar.pos())}
         self.bar_drag_to(bar, global_pos)          # aimantée dès l'appui, comme le prototype
 
     def bar_drag_to(self, bar: ToolBar, global_pos: QPoint) -> None:
@@ -936,7 +975,12 @@ class BarManager(QObject):
         area = self.area()
         p = self.ws.mapFromGlobal(global_pos)
         w, h, orient, turned = d["w"], d["h"], d["orient"], d["turned"]
-        snap = compute_snap(p.x() - d["off"].x() - area.x(), p.y() - d["off"].y() - area.y(), w, h, d["others"],
+        x, y = p.x() - d["off"].x() - area.x(), p.y() - d["off"].y() - area.y()
+        if d["followers"]:                         # groupe lié : il reste entier dans la zone
+            box = d["box"]
+            x = clamp(x, -box.left(), max(-box.left(), area.width() - box.right() - 1))
+            y = clamp(y, -box.top(), max(-box.top(), area.height() - box.bottom() - 1))
+        snap = compute_snap(x, y, w, h, d["others"],
                             area.width(), area.height(), P.LOOK["snap"],
                             lambda o: (w, h) if o == orient else turned)
         d["snap"] = snap
@@ -955,11 +999,45 @@ class BarManager(QObject):
             bar.set_dock(None)
         self._live_arrange(bar)                    # sur un bord, les autres barres glissent pour lui faire place
         self.place(bar)
+        self._move_followers(bar)
         if snap["line"]:
             self._line.show_rect(snap["line"], area.topLeft())
         else:
             self._line.hide()
         self.measure()
+
+    def _move_followers(self, bar: ToolBar) -> None:
+        """Les barres liées suivent la barre tirée, à leur écart d'origine ; si elle pivote (clipsée sur un bord de
+        l'autre sens), elles restent chez elles."""
+        d = self._bar_drag
+        area = self.area()
+        for other, off in d["followers"].items():
+            if bar.orient != d["orient"]:
+                other.move(d["home"][other])
+                continue
+            x = clamp(bar.x() + off.x(), area.x(), max(area.x(), area.x() + area.width() - other.width()))
+            y = clamp(bar.y() + off.y(), area.y(), max(area.y(), area.y() + area.height() - other.height()))
+            other.move(QPoint(round(x), round(y)))
+
+    def _settle_followers(self, bar: ToolBar, d: dict) -> None:
+        """Fin du geste : chaque barre liée se clipse sur le bord qu'elle touche (le sien d'abord, puis celui de la barre
+        tirée) si elle a le sens de ce bord ; sinon elle flotte là où elle est."""
+        area = self.area()
+        for other in d["followers"]:
+            other.set_moving(False)
+            if other.pos() == d["home"][other]:
+                continue
+            touched = self._touched_edges(other, area)
+            dock = next((e for e in (other.dock, bar.dock) if e and e in touched and dock_orient(e) == other.orient),
+                        None)
+            other.after, other.end = "", False
+            x, y = other.x() - area.x(), other.y() - area.y()
+            if dock:
+                other.set_dock(dock)
+                other.along = other.want = round(x if dock in ("top", "bottom") else y)
+            else:
+                other.set_dock(None)
+                other.fx, other.fy = x, y
 
     def end_bar_drag(self, bar: ToolBar) -> None:
         d, self._bar_drag = self._bar_drag, None
@@ -967,6 +1045,7 @@ class BarManager(QObject):
         if d is None:
             return
         bar.set_moving(False)
+        self._settle_followers(bar, d)
         if bar.dock:                               # la place faite est gardée : ordre et positions du bord retenus
             for other in self.bars:
                 if other.dock == bar.dock and not other.isHidden():

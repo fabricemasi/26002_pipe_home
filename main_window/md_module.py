@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QApplication
 from app_style import C, resolve_color_ref, role_color, scaled
 from settings_store import load_settings, save_live_state, save_settings
 from browser_core import _resolve_font_family
-from preview_column import IconButton, style_focus_button
+from preview_column import IconButton
 import ui_state
 
 
@@ -147,6 +147,9 @@ class MdModuleMixin:
         leave_agenda = getattr(self, "_leave_agenda", None)    # agenda ouvert : rangé d'abord (fm_agenda)
         if leave_agenda is not None:
             leave_agenda()
+        leave_taches = getattr(self, "_leave_taches", None)    # tâches ouvertes : rangées d'abord (fm_taches)
+        if leave_taches is not None:
+            leave_taches()
         try:
             pane = self._md_pane()
         except ImportError:
@@ -239,7 +242,7 @@ class MdModuleMixin:
             button.setVisible(visible)
             if not visible:
                 continue
-            style_focus_button(button)
+            self.titlebar.style_group_button(button)
             if kind == "nav_back":
                 self._set_button_usable(button, pane.can_back)
             elif kind == "nav_forward":

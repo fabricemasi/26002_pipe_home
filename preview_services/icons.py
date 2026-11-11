@@ -89,7 +89,6 @@ UI_ICON_NAVBAR_BROWSE = "ui_navbar_browse"       # parcourir (choix de la racine
 
 UI_ICON_NAVBAR_PRESETS = "ui_navbar_presets"     # gerer les presets
 
-UI_ICON_NAVBAR_CRUMB_SEPARATOR = "ui_navbar_crumb_separator"   # separateur du cheminement (mode « icone »)
 
 UI_ICON_NAVBAR_VIEWER = "ui_navbar_viewer"             # entrer dans la visionneuse
 
@@ -98,6 +97,18 @@ UI_ICON_NAVBAR_TEXT_EDITOR = "ui_navbar_text_editor"   # ouvrir l'editeur Markdo
 UI_ICON_NAVBAR_BOARD = "ui_navbar_board"   # ouvrir le board (.mro) selectionne
 
 UI_ICON_NAVBAR_FONT = "ui_navbar_font"     # ouvrir le module typographique (fm_font) sur la police selectionnee
+
+UI_ICON_NAVBAR_COLUMNS = "ui_navbar_columns"   # masquer / montrer les colonnes (les deux etats)
+
+UI_ICON_NAVBAR_VIDEO = "ui_navbar_video"       # module video (fm_video)
+
+UI_ICON_NAVBAR_PDF = "ui_navbar_pdf"           # editeur PDF (fm_pdf)
+
+UI_ICON_NAVBAR_AGENDA = "ui_navbar_agenda"     # calendrier (fm_agenda)
+
+UI_ICON_NAVBAR_TACHES = "ui_navbar_taches"     # liste à cocher (fm_taches)
+
+UI_ICON_NAVBAR_THEME = "ui_navbar_theme"       # bouton fm_theme (sans icone perso : celle de l'engrenage)
 
 UI_ICON_NAVBAR_PIN = "ui_navbar_pin"       # punaise : fenetre « toujours au-dessus » (clic droit sur sa barre)
 

@@ -61,6 +61,7 @@ from settings_store import (
     _coerce_side_enabled,
 )
 from settings_widgets import _paint_bordered_rect, _radius_any, _radius_dict
+from fm_theme.placeholder import ink as placeholder_ink
 from browser_core import (
     COLUMN_MAX_WIDTH,
     COLUMN_MIN_WIDTH,
@@ -78,6 +79,7 @@ from capture_widgets import (
     _ColumnCard,
     _PreviewBlock,
     _RoundedCornersEffect,
+    _column_hidden_sides,
     _column_suppress_left,
     update_card_mask,
 )
@@ -544,15 +546,14 @@ class PreviewColumn(QWidget):
         border_thickness = max(0, int(s.get("column_border_thickness", 1)))
         enabled = s.get("column_border_enabled") or {}
         suppress_left = self._suppress_left()
+        hidden = _column_hidden_sides(self, self.column_title, suppress_left)   # bords de la zone + voisine
 
-        def reserve(side_enabled: bool) -> int:
-            return border_thickness if side_enabled else 0
+        def reserve(side: str) -> int:
+            return border_thickness if bool(enabled.get(side, True)) and side not in hidden else 0
 
         self._card_layout.setContentsMargins(
-            scaled(reserve(bool(enabled.get("left", True)) and not suppress_left), 0),
-            scaled(reserve(bool(enabled.get("top", True))), 0),
-            scaled(reserve(bool(enabled.get("right", True))), 0),
-            scaled(reserve(bool(enabled.get("bottom", True))), 0),
+            scaled(reserve("left"), 0), scaled(reserve("top"), 0),
+            scaled(reserve("right"), 0), scaled(reserve("bottom"), 0),
         )
         col_pad = dict(column_padding_for(self.column_title))
         if suppress_left:
@@ -590,7 +591,8 @@ class PreviewColumn(QWidget):
         # PAS de reapplication de self.title_label ici — voir Column.
         # refresh_colors, MEME correctif/MEME raison (refresh_header,
         # toujours appele AVANT, gere deja ce style correctement).
-        frame = column_frame_style(self.column_title, self._suppress_left())
+        frame = column_frame_style(
+            self.column_title, hidden_sides=_column_hidden_sides(self, self.column_title, self._suppress_left()))
         scaled_radius = {k: scaled(v, 0) for k, v in frame["radius"].items()}
         self.card.setFrameStyle(
             frame["bg"], scaled_radius, frame["enabled"], frame["colors"], scaled(frame["thickness"], 0))
@@ -1131,6 +1133,37 @@ def read_pur_exported_image(path: Path) -> QImage | None:
     image = reader.read()
     return None if image.isNull() else image
 
+def multiply_color(base: str, blend: str) -> str:
+    """Fusion PRODUIT (multiply) de `blend` sur `base`, dosee par l'alpha de `blend` (meme calcul que
+    QPainter.CompositionMode_Multiply sur une icone : IconButton.set_icon_blend)."""
+    a, b = QColor(base), QColor(blend)
+    t = b.alphaF()
+    mix = lambda x, y: round(x + (x * y / 255 - x) * t)
+    out = QColor(mix(a.red(), b.red()), mix(a.green(), b.green()), mix(a.blue(), b.blue()), a.alpha())
+    return out.name(QColor.HexArgb)
+
+
+def icon_tone_bg(color: str, value: int = 30) -> tuple | None:
+    """Fond d'un bouton dont l'icone est COLOREE (colonne Couleur de fm_browser > Barre de navigation > Icones) :
+    meme teinte, VALEUR eloignee pour la lisibilite (icone claire -> fond sombre, icone sombre -> fond clair) ;
+    `value` (0-100, `navtool_icon_tone_value`) = valeur du fond en % de celle de l'icone (icone sombre : en % du
+    chemin vers le blanc, a l'envers) ; le survol se rapproche de l'icone de 12 points. (fond, fond au survol), ou
+    None si la couleur n'est pas coloree (blanc, gris, transparente). Demande de l'utilisateur, 2026-11-08."""
+    c = QColor(color)
+    if not c.isValid() or c.alphaF() < 0.05:
+        return None
+    h, s, v, _a = c.getHsvF()
+    if h < 0 or s < 0.15 or v < 0.08:
+        return None
+    k, kh = max(0, min(100, int(value))) / 100, max(0, min(100, int(value) + 12)) / 100
+    if v >= 0.5:
+        rest, hover = v * k, v * kh                # icone claire : fond sombre de la meme teinte
+    else:
+        rest, hover = v + (1 - v) * (1 - k), v + (1 - v) * (1 - kh)    # icone sombre : fond clair
+    tone = lambda val: QColor.fromHsvF(h, s, val, 1.0).name(QColor.HexArgb)
+    return tone(rest), tone(hover)
+
+
 class IconButton(QPushButton):
     """Bouton dessine au QPainter (─ □ × pour TitleBar, engrenage pour les
     Parametres) plutot qu'avec un glyphe de police : quel que soit le
@@ -1156,6 +1189,77 @@ class IconButton(QPushButton):
         self._frame = None   # (bg, enabled, colors, thickness, radius) | None
         self._text = ""      # kind "text" : libelle centre (boutons PureRef de la visionneuse)
         self._alert = None   # couleur de fond imposee (bouton filtre de la planche : rouge quand un filtre agit)
+        self._tint = None    # couleur posee SUR l'icone perso (punaise allumee de la barre)
+        self._blend = None   # couleur FUSIONNEE (produit) sur l'icone active : modules de la barre, bouton fm_theme
+        self._disabled_color = None   # icone grisee (bouton desactive) de cette couleur ; None = rien de propre
+        self._icon_key = None   # icone perso PROPRE au bouton (bouton fm_theme), essayee avant celle de son glyphe
+        self._tinted = None  # (cle du pixmap source, mode, couleur, pixmap) : rien de refait a chaque peinture
+
+    def set_icon_tint(self, color: str | None):
+        """Filtre de couleur sur l'icone perso (sa forme / transparence gardees) ; None = icone telle quelle."""
+        if color != self._tint:
+            self._tint = color
+            self.update()
+
+    def set_icon_blend(self, color: str | None):
+        """Couleur posee en mode de fusion PRODUIT (multiply) sur l'icone tant que le bouton est actif : glyphe ou
+        icone perso gardent leur modele (un blanc donne la couleur exacte), son alpha dose la fusion ; None = sans."""
+        if color != self._blend:
+            self._blend = color
+            self._retone()
+            self.update()
+
+    def set_icon_tone_value(self, value: int):
+        """Valeur du fond de l'icone coloree (`navtool_icon_tone_value`, voir icon_tone_bg)."""
+        if value != getattr(self, "_tone_value", 30):
+            self._tone_value = value
+            self._retone()
+            self.update()
+
+    def _retone(self):
+        # calcule ici, jamais a la peinture
+        self._blend_bg = icon_tone_bg(self._blend, getattr(self, "_tone_value", 30)) if self._blend else None
+
+    def set_custom_icon_key(self, key: str | None):
+        """Icone perso propre a ce bouton (cle UI_ICON_*) ; absente = celle de son glyphe (`_custom_icon_pixmap`)."""
+        self._icon_key = key
+        self.update()
+
+    def set_disabled_color(self, color: str | None):
+        """Couleur de l'icone du bouton desactive (glyphe, ou forme de l'icone perso) ; None = icone normale."""
+        if color != self._disabled_color:
+            self._disabled_color = color
+            self.update()
+
+    def _icon_recolor(self) -> tuple:
+        """(mode, couleur) a poser sur l'icone : ("in", c) = forme remplie, ("mul", c) = fusion produit, ou None."""
+        if self._disabled_color and not self.isEnabled():
+            return ("in", self._disabled_color)
+        if self._blend:
+            return ("mul", self._blend)
+        if self._tint:
+            return ("in", self._tint)
+        return None
+
+    def _recolored_pixmap(self, pix: QPixmap, recolor: tuple) -> QPixmap:
+        key = (pix.cacheKey(), *recolor)
+        if self._tinted is None or self._tinted[:3] != key:
+            out = QPixmap(pix.size())
+            out.setDevicePixelRatio(pix.devicePixelRatio())
+            out.fill(Qt.transparent)
+            p = QPainter(out)
+            p.drawPixmap(0, 0, pix)
+            if recolor[0] == "in":
+                p.setCompositionMode(QPainter.CompositionMode_SourceIn)    # la couleur, la ou l'icone est opaque
+                p.fillRect(out.rect(), QColor(recolor[1]))
+            else:
+                p.setCompositionMode(QPainter.CompositionMode_Multiply)    # produit (deborde sur le transparent...)
+                p.fillRect(out.rect(), QColor(recolor[1]))
+                p.setCompositionMode(QPainter.CompositionMode_DestinationIn)   # ... recoupe a la forme de l'icone
+                p.drawPixmap(0, 0, pix)
+            p.end()
+            self._tinted = (*key, out)
+        return self._tinted[3]
 
     def set_text_label(self, text: str):
         self._text = text
@@ -1185,17 +1289,54 @@ class IconButton(QPushButton):
         self._frame = (bg, enabled, colors, thickness, radius)
         self.update()
 
+    def set_hover_bg(self, color: str | None):
+        """Fond du cadre peint (set_frame_style) sous la souris ; None = celui du repos."""
+        if color != getattr(self, "_hover_bg", None):
+            self._hover_bg = color
+            self.setAttribute(Qt.WA_Hover, color is not None)      # entree / sortie : repeint
+            self.update()
+
+    def set_margins(self, left: int, top: int, right: int, bottom: int):
+        """Marge AUTOUR du cadre peint et de l'icone (boutons de la barre de navigation, `navtool_margin`) : le
+        bouton garde toute sa surface cliquable, cadre et icone sont peints dans le rectangle interieur."""
+        margins = (left, top, right, bottom)
+        if margins != getattr(self, "_margins", (0, 0, 0, 0)):
+            self._margins = margins
+            self.update()
+
+    def set_padding(self, left: int, top: int, right: int, bottom: int):
+        """Espace ENTRE le cadre peint et le dessin de l'icone (`navtool_padding`)."""
+        padding = (left, top, right, bottom)
+        if padding != getattr(self, "_padding", (0, 0, 0, 0)):
+            self._padding = padding
+            self.update()
+
+    def _inner_rect(self) -> QRect:
+        left, top, right, bottom = getattr(self, "_margins", (0, 0, 0, 0))
+        return self.rect().adjusted(left, top, -right, -bottom)
+
+    def _icon_rect(self) -> QRect:
+        left, top, right, bottom = getattr(self, "_padding", (0, 0, 0, 0))
+        return self._inner_rect().adjusted(left, top, -right, -bottom)
+
     def paintEvent(self, event):
         if self._frame is not None:
             painter = QPainter(self)
             bg, enabled, colors, thickness, radius = self._frame
+            hover_bg = getattr(self, "_hover_bg", None)
+            alert = self._alert
+            tone = getattr(self, "_blend_bg", None) if alert and self.isEnabled() else None
+            if tone is not None:            # module OUVERT a l'icone coloree : fond de sa teinte (icon_tone_bg)
+                alert, bg, hover_bg = None, *tone
+            if hover_bg and self.underMouse():
+                bg = hover_bg
             painter.setRenderHint(QPainter.Antialiasing, _radius_any(radius))
-            _paint_bordered_rect(painter, self.rect(), radius, enabled, thickness, colors, self._alert or bg)
+            _paint_bordered_rect(painter, self._inner_rect(), radius, enabled, thickness, colors, alert or bg)
         else:
             super().paintEvent(event)
             painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
-        rect = self.rect()
+        rect = self._icon_rect()
         if self._kind == "text":
             painter.setPen(QColor(self._hover_color if self.underMouse() else self._color))
             painter.setFont(self.font())
@@ -1203,13 +1344,21 @@ class IconButton(QPushButton):
             painter.end()
             return
         custom_pix = self._custom_icon_pixmap(rect)
+        recolor = self._icon_recolor()
         if custom_pix is not None:
+            if recolor is not None:
+                custom_pix = self._recolored_pixmap(custom_pix, recolor)
             target = QRect(0, 0, custom_pix.width(), custom_pix.height())
             target.moveCenter(rect.center())
             painter.drawPixmap(target, custom_pix)
             painter.end()
             return
         color = self._hover_color if (self.underMouse() or self._alert) else self._color
+        if self._disabled_color and not self.isEnabled():
+            color = self._disabled_color                        # desactive : glyphe de la couleur reglee
+        elif recolor is not None and recolor[0] == "mul":
+            color = multiply_color(color, recolor[1])
+        color = placeholder_ink(color)                          # glyphe dessine par le code : magenta (provisoire)
         pen = QPen(QColor(color))
         pen.setWidthF(1.3)
         pen.setCapStyle(Qt.FlatCap)
@@ -1472,6 +1621,17 @@ class IconButton(QPushButton):
                     painter.drawEllipse(QPointF(cx + s * gx, cy + s * gy), s * 0.2, s * 0.2)
             painter.setPen(pen)
             painter.setBrush(Qt.NoBrush)
+        elif self._kind == "taches":
+            # Module tâches (fm_taches) : trois lignes, une case cochée et deux cases vides.
+            painter.setBrush(Qt.NoBrush)
+            for i, gy in enumerate((-1.1, 0.0, 1.1)):
+                box = QRectF(cx - s * 1.7, cy + s * gy - s * 0.38, s * 0.76, s * 0.76)
+                painter.drawRoundedRect(box, s * 0.18, s * 0.18)
+                painter.drawLine(QPointF(cx - s * 0.55, cy + s * gy), QPointF(cx + s * 1.7, cy + s * gy))
+                if i == 0:
+                    painter.drawPolyline(QPolygonF([QPointF(box.left() + s * 0.15, box.center().y()),
+                                                    QPointF(box.center().x() - s * 0.05, box.bottom() - s * 0.15),
+                                                    QPointF(box.right() + s * 0.1, box.top() - s * 0.1)]))
         elif self._kind == "video":
             # Module video : une pellicule et son triangle de lecture.
             painter.setBrush(Qt.NoBrush)
@@ -1532,13 +1692,19 @@ class IconButton(QPushButton):
         size = int(min(rect.width(), rect.height()) * 0.9)
         if size <= 0:
             return None
+        if self._icon_key:
+            own = custom_ui_icon_pixmap(self._icon_key, size)
+            if own is not None:
+                return own
         if self._kind == "gear":
             return custom_ui_icon_pixmap(UI_ICON_SETTINGS_GEAR, size)
         if self._kind == "sliders":
             return custom_ui_icon_pixmap(UI_ICON_SETTINGS_STYLE, size)
         if self._kind in ("min", "max", "close", "browse", "presets", "viewer", "text_editor", "board", "video",
-                          "font", "pdf", "pin"):
+                          "font", "pdf", "agenda", "taches", "pin"):
             return custom_ui_icon_pixmap(f"ui_navbar_{self._kind}", size)
+        if self._kind in ("fade_columns", "show_columns"):                   # masquer / montrer les colonnes
+            return custom_ui_icon_pixmap("ui_navbar_columns", size)
         viewer_key = VIEWER_BUTTON_ICONS.get(self._kind)
         if viewer_key is not None:
             return custom_ui_icon_pixmap(viewer_key, size)      # Reglages > Visionneuse > Icones

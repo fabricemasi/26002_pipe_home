@@ -56,6 +56,9 @@ class FontModuleMixin:
         leave_agenda = getattr(self, "_leave_agenda", None)    # agenda ouvert : rangé d'abord (fm_agenda)
         if leave_agenda is not None:
             leave_agenda()
+        leave_taches = getattr(self, "_leave_taches", None)    # tâches ouvertes : rangées d'abord (fm_taches)
+        if leave_taches is not None:
+            leave_taches()
         self._close_video()
         self._install_font_hooks()
         pane = getattr(self, "_font", None)
@@ -135,7 +138,7 @@ class FontModuleMixin:
         le bouton planche de la visionneuse), annuler, rétablir, enregistrer (accent si modifié), exporter, réglages
         du module, fermer. Rappelé seulement quand annuler / rétablir / « modifié » ou la page changent
         (`FontPane.stateChanged`, `pageChanged`), jamais à chaque geste."""
-        from preview_column import IconButton, style_focus_button
+        from preview_column import IconButton
         pane = getattr(self, "_font", None)
         group = self.titlebar.font_group()
         if pane is None:
@@ -166,7 +169,7 @@ class FontModuleMixin:
         origin = group.content_origin()
         x, height = origin.x(), 0
         for button in buttons:
-            style_focus_button(button)
+            self.titlebar.style_group_button(button)
             kind = button._font_kind
             if kind == "gallery":
                 on_grid = pane.current_page() == "Glyphes"

@@ -69,19 +69,20 @@ class InputLookTest(unittest.TestCase):
         self.assertIn("#aa1122", select.styleSheet())
         self.assertIn("border-top: 2px solid #22bb33", select.styleSheet())
 
-    def test_input_height_applies_to_the_bar_fields_and_to_every_input(self):
-        self._apply(input_height=26)
-        self.assertEqual(self.win.root_field.height(), 26)
-        self.assertEqual(self.win.preset_picker.select.height(), 26)
+    def test_input_height_applies_to_every_input_but_not_to_the_bar_fields(self):
+        # Champ racine et menu des presets : hauteur du cadre des icones de la barre (fm_browser > Barre de
+        # navigation > Taille des icones, 2026-11-07), plus Zone de saisie > Hauteur.
+        self._apply(input_height=26, navtool_icon_size=22, navtool_margin={"left": 0, "top": 0, "right": 0,
+                                                                            "bottom": 0})
+        self.assertEqual(self.win.root_field.height(), 22)
+        self.assertEqual(self.win.preset_picker.select.height(), 22)
         field = _SelectField(["a", "b"], "a")
         self.assertEqual(field.height(), 26)                            # nouvelle zone de saisie : a la bonne hauteur
-        self._apply(input_height=0)
-        self.assertEqual(self.win.root_field.height(), 20)              # 0 : retour a la hauteur d'origine
-        self.assertEqual(self.win.preset_picker.select.height(), 20)
 
-    def test_inputs_ignore_the_height_when_the_row_is_too_small(self):
-        self._apply(input_height=60)
-        self.assertLessEqual(self.win.root_field.height(), app_style.scaled(28))
+    def test_bar_fields_never_exceed_the_row(self):
+        self._apply(navtool_icon_size=80)
+        # jamais plus haut que la 1re ligne de la barre (fm_theme > Barre de navigation > Hauteur barre)
+        self.assertLessEqual(self.win.root_field.height(), self.win.titlebar._row_height())
 
     def test_registered_inputs_are_restyled_live(self):
         field = _SelectField(["a", "b"], "a")
@@ -116,29 +117,19 @@ class InputLookTest(unittest.TestCase):
         apply_input_look({**settings, "input_bg_color": "#654321"})     # la zone de saisie, si
         self.assertEqual(Probe.calls, first + 1)
 
-    def test_separator_uses_the_same_font_as_the_texts_and_updates_in_place(self):
+    def test_crumbs_update_in_place(self):
+        """Reglage du cheminement change : les reperes sont mis a jour sur place (aucun recree) ; plus de separateur
+        entre eux (retire le 2026-11-07)."""
         bar = self.win.titlebar
-        import browser_core as _bc                                      # separateur « taille des textes »
-        _bc.apply_all_settings({**settings_store.load_settings(), "crumb_sep_font_size": 0, "crumb_sep_font_family": ""})
-        bar.refresh_crumbs()
         bar.set_crumbs([("set", "a", lambda: None), ("set", "b", lambda: None)], force=True)
         chips = bar.crumbs.findChildren(pb._CrumbChip)
-        separators = [w for w in bar.crumbs.findChildren(pb.QLabel)]
-        self.assertEqual(len(separators), 1)
-        text_font = chips[0]._look["font"]                              # famille et taille : celles des textes
-        self.assertEqual((separators[0].font().family(), separators[0].font().pixelSize()),
-                         (text_font.family(), text_font.pixelSize()))
-        before = (id(chips[0]), id(separators[0]))
-        import ui_state
+        self.assertEqual(bar.crumbs.findChildren(pb.QLabel), [])
+        before = id(chips[0])
         import browser_core
-        browser_core.apply_all_settings({**settings_store.load_settings(), "crumb_font_size": 17, "crumb_spacing": 12,
-                                       # separateur « taille des textes » (sinon : le reglage de l'utilisateur)
-                                       "crumb_sep_font_size": 0, "crumb_sep_font_family": ""})
+        browser_core.apply_all_settings({**settings_store.load_settings(), "crumb_font_size": 17, "crumb_spacing": 12})
         bar.refresh_crumbs()
         chips = bar.crumbs.findChildren(pb._CrumbChip)
-        separators = [w for w in bar.crumbs.findChildren(pb.QLabel)]
-        self.assertEqual((id(chips[0]), id(separators[0])), before)      # rien de recree : mise a jour sur place
-        self.assertEqual(separators[0].font().pixelSize(), 17)           # le separateur suit la taille des textes
+        self.assertEqual(id(chips[0]), before)                          # rien de recree : mise a jour sur place
         self.assertEqual(chips[0]._look["font"].pixelSize(), 17)
         self.assertEqual(bar._crumb_layout.spacing(), 12)
 

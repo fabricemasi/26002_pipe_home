@@ -7,7 +7,7 @@ from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 
 from . import theme as th
-from .widgets import brighter, draw_icon, elide
+from .widgets import brighter, draw_icon, elide, paint_check
 
 
 def wrap_lines(text: str, px: int, weight: int, width: float, max_lines: int) -> list[str]:
@@ -123,8 +123,10 @@ def paint_event_block(p: QPainter, rect: QRectF, colors, title: str, time_text: 
 
 
 def paint_bar(p: QPainter, rect: QRectF, colors, title: str, selected: bool, hover: bool, accent: QColor,
-              cut_left: bool = False, cut_right: bool = False, dim: float = 1.0) -> None:
-    """Barre « journée » (`.ad`) : fond et texte de la famille, 12 px 600, padding 3 × 8."""
+              cut_left: bool = False, cut_right: bool = False, dim: float = 1.0, task: bool = False,
+              done: bool = False) -> None:
+    """Barre « journée » (`.ad`) : fond et texte de la famille, 12 px 600, padding 3 × 8. Tâche : case à cocher
+    (22 px cliquables à gauche, `timegrid._AllDayBand`) et titre barré une fois terminée."""
     bg, _bar, fg = colors
     if hover:
         bg, fg = brighter(bg, 1.1), brighter(fg, 1.1)
@@ -145,6 +147,18 @@ def paint_bar(p: QPainter, rect: QRectF, colors, title: str, selected: bool, hov
     avail = rect.right() - right_pad - left
     if cut_right:
         draw_icon(p, "next", QRectF(rect.right() - 11, rect.center().y() - 5, 10, 10), fg, 1.8)
+    font = th.font(12, 600)
+    if task:
+        paint_check(p, QRectF(left - 2, rect.center().y() - 6, 12, 12), done, _bar, fg, 3)
+        left += 14
+        avail -= 14
+        if done:
+            from PySide6.QtGui import QFont
+            font = QFont(font)                         # copie : la police en cache est partagée
+            font.setStrikeOut(True)
+            fg = th.with_alpha(fg, 0.6)
+    p.setFont(font)
+    p.setPen(fg)
     p.drawText(QRectF(left, rect.top(), max(0.0, avail), rect.height()), Qt.AlignVCenter | Qt.AlignLeft,
                elide(title or "(Sans titre)", 12, 600, avail))
     if selected:

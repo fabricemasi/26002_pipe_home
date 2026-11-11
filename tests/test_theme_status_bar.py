@@ -20,11 +20,28 @@ class SectionsTest(unittest.TestCase):
     def test_both_bars_are_theme_sections(self):
         theme = {n.title: n for n in v2.theme_tree()}
         general = [n.title for n in v2.tab_tree("General")]
-        for title in ("Barre de navigation", "Barre d'état"):
-            self.assertIn(title, theme)
-            self.assertNotIn(title, general)
-        subs = [c.title for c in theme["Barre de navigation"].children]
-        self.assertEqual(subs, ["Icônes", "Cheminement", "Fenêtres additionnelles"])
+        self.assertIn("Barre d'état", theme)
+        self.assertNotIn("Barre d'état", general)
+        # Barre de navigation partagee (2026-11-07) : fm_theme garde l'aspect de la barre et reduire / agrandir /
+        # fermer, fm_browser le reste, meme hierarchie.
+        self.assertIn("Barre de navigation", theme)
+        self.assertIn("Barre de navigation", general)
+        self.assertEqual([c.title for c in theme["Barre de navigation"].children], ["Icônes"])
+        app = next(n for n in v2.tab_tree("General") if n.title == "Barre de navigation")
+        self.assertEqual([c.title for c in app.children], ["Icônes", "Cheminement", "Fenêtres additionnelles"])
+        self.assertEqual([s.key for s in v2.CATALOG["Barre de navigation"]],
+                         ["navbar_bg_color", "navbar_bottom_enabled", "navbar_title_font_family",
+                          "navbar_height"])
+        self.assertEqual([s.params["ui_key"] for s in v2.CATALOG["Barre de navigation : Icones"]],
+                         ["navbar_min", "navbar_max", "navbar_close"])
+        self.assertEqual([s.key for s in v2.CATALOG["Barre de navigation (appli)"]],
+                         ["navtool_extra_height", "navtool_bg_color",
+                          "navtool_border_enabled", "navtool_corner_radius", "navtool_hover_bg_color",
+                          "navtool_margin"])
+        for spec in v2.CATALOG["Barre de navigation (appli)"]:
+            for key in (spec.key, *spec.extra_keys):
+                self.assertIn(key, settings_store.DEFAULT_SETTINGS, key)
+            self.assertIsNone(tp.theme_key(spec.key) if spec.key.startswith("navtool_") else None)
         # Plus aucune ligne de barre de navigation dans Fenetres additionnelles.
         self.assertFalse([s for s in v2.CATALOG["Fenêtres additionnelles"] if s.key.startswith("extra_window_title")])
 

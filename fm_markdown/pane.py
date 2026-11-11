@@ -911,8 +911,8 @@ def _entry_icon(entry: dict, ratio: float) -> QIcon | None:
             from PySide6.QtSvg import QSvgRenderer
         except ImportError:
             return None
-        text = re.sub(r'stroke="currentColor"', 'stroke="#d6d9dc"', svg)
-        text = re.sub(r'fill="currentColor"', 'fill="#d6d9dc"', text)
+        text = re.sub(r'stroke="currentColor"', 'stroke="#ff00ff"', svg)
+        text = re.sub(r'fill="currentColor"', 'fill="#ff00ff"', text)
         renderer = QSvgRenderer(QByteArray(text.encode("utf-8")))
         if not renderer.isValid():
             return None

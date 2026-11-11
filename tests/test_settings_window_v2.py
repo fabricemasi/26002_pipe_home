@@ -215,6 +215,7 @@ class WiringTest(WindowTestCase):
                           "viewer": [v2.VIEWER_TAB], "font": [v2.TYPO_TAB],          # font : fm_font
                           "pdf": [v2.PDF_TAB],                                       # pdf : fm_pdf
                           "agenda": [v2.AGENDA_TAB],                                 # agenda : fm_agenda
+                          "taches": [v2.TACHES_TAB],                                 # taches : fm_taches
                           "theme": [v2.THEME_TAB]})                                    # theme : editeur fm_theme
         self.assertEqual(v2.MARKDOWN_TAB, "Markdown")
         self.assertEqual(v2.MRO_TAB, "Module MRO")

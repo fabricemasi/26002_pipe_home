@@ -17,6 +17,7 @@ from __future__ import annotations
 from PySide6.QtCore import QEvent, QRect, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF
 
+from fm_theme.placeholder import ink as _placeholder_ink
 from fm_theme.palette import PaletteButton, PaletteInputBar, PaletteSelectBar, PaletteTextButton
 
 # -- Disposition par défaut ----------------------------------------------------------------------------------------------
@@ -274,6 +275,7 @@ GLYPHS = {"brush": _g_brush, "eraser": _g_eraser, "eyedropper": _g_eyedropper, "
 
 def paint_tool(painter: QPainter, tool: str, rect: QRectF, color: QColor) -> None:
     """Icône d'un outil : dessinée dans une grille de 24 unités, traits arrondis de la couleur d'icône de la barre."""
+    color = _placeholder_ink(color)                     # icone dessinee par le code : magenta (provisoire)
     painter.save()
     painter.setRenderHint(QPainter.Antialiasing, True)
     if tool == "hand":

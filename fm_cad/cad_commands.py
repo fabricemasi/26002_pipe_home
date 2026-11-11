@@ -3009,7 +3009,7 @@ for _entry in REGISTRY:
 import importlib as _importlib  # noqa: E402
 for _name in ("cad_commands_more", "cad_commands_extra", "cad_commands_tools", "cad_commands_blocks",
               "cad_commands_attribs", "cad_commands_dynamic", "cad_commands_images", "cad_commands_xline",
-              "cad_commands_plot"):
+              "cad_commands_plot", "cad_commands_export"):
     _module = _importlib.import_module(f".{_name}", __package__)
     if hasattr(_module, "register"):
         _module.register(REGISTRY, Entry, _BY_WORD)

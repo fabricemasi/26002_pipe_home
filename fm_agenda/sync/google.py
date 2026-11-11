@@ -72,6 +72,7 @@ def instance_id(master_remote_id: str, rid: str) -> str:
 
 class GoogleProvider(RemoteProvider):
     name = "google"
+    api = API                                            # racine de l'API (fm_taches : Google Tasks)
 
     def __init__(self, tokens, http, sleep=time.sleep, max_retries: int = 4):
         self.tokens = tokens
@@ -84,7 +85,7 @@ class GoogleProvider(RemoteProvider):
 
     def _call(self, method: str, path: str, params: dict | None = None, body: dict | None = None,
               headers: dict | None = None) -> dict:
-        url = API + path + ("?" + urllib.parse.urlencode(params, doseq=True) if params else "")
+        url = self.api + path + ("?" + urllib.parse.urlencode(params, doseq=True) if params else "")
         data = json.dumps(body).encode("utf-8") if body is not None else None
         refreshed = False
         attempt = 0

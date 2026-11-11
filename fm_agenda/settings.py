@@ -64,6 +64,7 @@ CATALOG["Agenda : Affichage"] = [
     Spec("agenda_width", "Largeur de l'agenda (aussi dans la barre d'état)", "slider", D["agenda_width"],
          {"min": 30, "max": 100, "unit": "%"}),
     Spec("agenda_show_upcoming", "Prochains jours dans le panneau latéral", "bool", D["agenda_show_upcoming"]),
+    Spec("agenda_show_tasks", "Tâches datées du module Tâches", "bool", D["agenda_show_tasks"]),
     Spec("agenda_list_days", "Jours de la vue Liste", "slider", D["agenda_list_days"],
          {"min": 7, "max": 365, "unit": "j"}),
     Spec("agenda_day_autoselect", "Vue Jour : sélectionner le prochain événement", "bool",

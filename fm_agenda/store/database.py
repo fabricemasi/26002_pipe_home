@@ -109,11 +109,11 @@ def _integrity_ok(path: Path) -> bool:
         return False
 
 
-def latest_backup(path: Path) -> Path | None:
+def latest_backup(path: Path, prefix: str = "agenda") -> Path | None:
     folder = backups_dir(path)
     if not folder.is_dir():
         return None
-    files = sorted(folder.glob("agenda-*.sqlite3"), key=lambda p: p.stat().st_mtime, reverse=True)
+    files = sorted(folder.glob(f"{prefix}-*.sqlite3"), key=lambda p: p.stat().st_mtime, reverse=True)
     for candidate in files:
         if _integrity_ok(candidate):
             return candidate
@@ -134,15 +134,15 @@ def backup(conn: sqlite3.Connection, dest: Path) -> Path:
     return dest
 
 
-def backup_name() -> str:
-    return time.strftime("agenda-%Y%m%d-%H%M%S.sqlite3")
+def backup_name(prefix: str = "agenda") -> str:
+    return time.strftime(f"{prefix}-%Y%m%d-%H%M%S.sqlite3")
 
 
-def rotate_backups(path: Path, keep: int) -> list[Path]:
+def rotate_backups(path: Path, keep: int, prefix: str = "agenda") -> list[Path]:
     folder = backups_dir(path)
     if not folder.is_dir():
         return []
-    files = sorted(folder.glob("agenda-*.sqlite3"), key=lambda p: p.stat().st_mtime, reverse=True)
+    files = sorted(folder.glob(f"{prefix}-*.sqlite3"), key=lambda p: p.stat().st_mtime, reverse=True)
     removed = []
     for old in files[max(1, keep):]:
         try:
@@ -153,8 +153,8 @@ def rotate_backups(path: Path, keep: int) -> list[Path]:
     return removed
 
 
-def _quarantine(path: Path) -> Path:
-    target = path.with_name(time.strftime("agenda.corrupt-%Y%m%d-%H%M%S.sqlite3"))
+def _quarantine(path: Path, prefix: str = "agenda") -> Path:
+    target = path.with_name(time.strftime(f"{prefix}.corrupt-%Y%m%d-%H%M%S.sqlite3"))
     os.replace(path, target)
     for suffix in ("-wal", "-shm"):
         side = path.with_name(path.name + suffix)
@@ -166,12 +166,14 @@ def _quarantine(path: Path) -> Path:
     return target
 
 
-def migrate(conn: sqlite3.Connection) -> int | None:
-    """Applique les migrations manquantes ; rend l'ancienne version (None si rien à faire)."""
+def migrate(conn: sqlite3.Connection, migrations=None) -> int | None:
+    """Applique les migrations manquantes ; rend l'ancienne version (None si rien à faire). `migrations` : liste
+    (version, script) d'une autre base (fm_taches) ; défaut = schéma de l'agenda."""
+    migrations = schema.MIGRATIONS if migrations is None else migrations
     current = conn.execute("PRAGMA user_version").fetchone()[0]
-    if current >= schema.LATEST:
+    if current >= migrations[-1][0]:
         return None
-    for version, script in schema.MIGRATIONS:
+    for version, script in migrations:
         if version <= current:
             continue
         with transaction(conn):
@@ -198,8 +200,12 @@ def _statements(script: str) -> list[str]:
     return out
 
 
-def open_database(path: Path) -> tuple[sqlite3.Connection, OpenReport]:
-    """Ouvre (crée, vérifie, migre) la base ; rend la connexion d'ÉCRITURE et le rapport d'ouverture."""
+def open_database(path: Path, migrations=None, prefix: str = "agenda",
+                  label: str = "de l'agenda") -> tuple[sqlite3.Connection, OpenReport]:
+    """Ouvre (crée, vérifie, migre) la base ; rend la connexion d'ÉCRITURE et le rapport d'ouverture.
+    `migrations` / `prefix` (sauvegardes, base mise de côté) / `label` (messages) : réutilisé par fm_taches."""
+    migrations = schema.MIGRATIONS if migrations is None else migrations
+    latest = migrations[-1][0]
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     report = OpenReport(path=path, created=not path.exists())
@@ -207,9 +213,9 @@ def open_database(path: Path) -> tuple[sqlite3.Connection, OpenReport]:
     if path.exists() and marker.exists():
         report.checked = True
         if not _integrity_ok(path):
-            report.quarantined = _quarantine(path)
-            report.messages.append(f"Base de l'agenda endommagée : mise de côté ({report.quarantined.name}).")
-            source = latest_backup(path)
+            report.quarantined = _quarantine(path, prefix)
+            report.messages.append(f"Base {label} endommagée : mise de côté ({report.quarantined.name}).")
+            source = latest_backup(path, prefix)
             if source is not None:
                 shutil.copyfile(source, path)
                 report.recovered_from = source
@@ -221,13 +227,13 @@ def open_database(path: Path) -> tuple[sqlite3.Connection, OpenReport]:
         conn = connect(path)
         version = conn.execute("PRAGMA user_version").fetchone()[0]
     except sqlite3.DatabaseError as exc:
-        report.quarantined = _quarantine(path)
-        report.messages.append(f"Base de l'agenda illisible ({exc}) : mise de côté.")
+        report.quarantined = _quarantine(path, prefix)
+        report.messages.append(f"Base {label} illisible ({exc}) : mise de côté.")
         conn = connect(path)
         version = 0
-    if 0 < version < schema.LATEST:
-        backup(conn, backups_dir(path) / time.strftime(f"agenda-avant-v{schema.LATEST}-%Y%m%d-%H%M%S.sqlite3"))
-    report.migrated_from = migrate(conn)
+    if 0 < version < latest:
+        backup(conn, backups_dir(path) / time.strftime(f"{prefix}-avant-v{latest}-%Y%m%d-%H%M%S.sqlite3"))
+    report.migrated_from = migrate(conn, migrations)
     try:
         marker.write_text(str(os.getpid()), encoding="ascii")
     except OSError:

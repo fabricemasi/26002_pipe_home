@@ -21,17 +21,17 @@ Couches : chaque couche n'importe que celles du dessous. L'interface ne connaît
 | `core/layout.py` | Voies des événements simultanés (algorithme du design), lignes des barres « journée » |
 | `core/ics.py` | iCalendar sans dépendance : lecture (repli, échappements, TZID, VALARM, RECURRENCE-ID, EXDATE, X-PIPE-*) et écriture (repli à 75 octets, CRLF) |
 | `store/schema.py` | Schéma SQLite et migrations (`PRAGMA user_version` ; v1 tables, v2 index UID) |
-| `store/database.py` | Emplacement, connexions (WAL, NORMAL, clés étrangères), transactions explicites, sauvegardes (API backup), rotation, témoin d'arrêt brutal + `quick_check`, mise de côté d'une base illisible + restauration |
+| `store/database.py` | Emplacement, connexions (WAL, NORMAL, clés étrangères), transactions explicites, sauvegardes (API backup), rotation, témoin d'arrêt brutal + `quick_check`, mise de côté d'une base illisible + restauration. PARTAGÉ avec fm_taches (`migrations`, `prefix`, `label` en paramètres ; défauts = agenda) |
 | `store/repository.py` | Requêtes : fenêtre d'affichage indexée (bornée par la durée maximale), séries, exceptions, recherche, rappels, file d'envoi, conflits, journal `changes`, méta / préférences |
-| `services/writer.py` | Fil d'écriture SQLite unique (une transaction par tâche, rappels dans le fil Qt) |
+| `services/writer.py` | Fil d'écriture SQLite unique (une transaction par tâche, rappels dans le fil Qt). PARTAGÉ avec fm_taches (`repo=`, `name=`) |
 | `services/agenda.py` | `AgendaService` : cache par mois, modifications en mémoire puis sur disque, annuler / rétablir, portées des séries, brouillons de l'éditeur, compteurs de la vue Année, sauvegarde quotidienne |
 | `services/reminders.py` | Planificateur de rappels (30 s + minuteur exact), rattrapage, report, notification Windows (zone de notification) + fenêtre de rappel |
 | `services/ics_io.py` | Import (une commande annulable, mise à jour par UID, jamais de doublon) / export .ics |
 | `sync/provider.py` | Interface d'une source distante + erreurs typées ; `ServerProvider` (futur serveur, non implémenté) |
 | `sync/credentials.py` | Gestionnaire d'identifiants Windows par ctypes (mémoire en test) |
-| `sync/oauth.py` | OAuth 2.0 application installée : navigateur du système, boucle 127.0.0.1, PKCE S256, `state`, jetons |
+| `sync/oauth.py` | OAuth 2.0 application installée : navigateur du système, boucle 127.0.0.1, PKCE S256, `state`, jetons. PARTAGÉ avec fm_taches (`authorize(..., scopes=, product=)`, `TokenSource` sous-classé) |
 | `sync/http.py` | Transport HTTP (urllib, TLS) ; `FM_AGENDA_NO_NETWORK` |
-| `sync/google.py` | Client Google Calendar v3 (reprises exponentielles, 401 -> actualisation) et correspondance des champs |
+| `sync/google.py` | Client Google Calendar v3 (reprises exponentielles, 401 -> actualisation) et correspondance des champs. `GoogleProvider.api` = racine de l'API (fm_taches la change pour Google Tasks) |
 | `sync/engine.py` | Moteur : réception incrémentale / complète, 410, envoi idempotent, fusion à trois voies, conflits, provenance |
 | `sync/manager.py` | Pilote Qt : fil de synchronisation, minuteries, comptes, état, conflits |
 | `ui/theme.py` | SOURCE UNIQUE de l'aspect : jetons du design (sombre relu dans `M` de fm_theme, clair), couleurs d'événements, polices, métriques |
@@ -92,6 +92,11 @@ Couches : chaque couche n'importe que celles du dessous. L'interface ne connaît
   `moveRequested` (annuler / série comme tout déplacement). Le corps de la barre ne se glisse pas (maquette).
 - **Journée** : un rappel compte à partir de 9:00 le jour même.
 - **Invitations** : la synchronisation n'envoie aucun courriel (`sendUpdates=none`).
+- **Tâches du module Tâches** (2026-11-11) : HOOKS `tasks_due` / `toggle_task` / `open_task` du panneau ; toutes
+  les lectures du panneau passent par `AgendaPane._occurrences` (service + `Occurrence.external_task`, clé
+  « tache:<id> », lecture seule, `occ.external`). Bande « Journée » : case des tâches (`paint_bar(task=, done=)`,
+  clic dans les 22 px de gauche = cocher), aussi pour les tâches de l'agenda. Réglage `agenda_show_tasks`.
+  Détail : `fm_taches.md`, « Tâches dans l'Agenda ».
 
 ## Connecter Google Agenda (actions de l'utilisateur, une fois)
 

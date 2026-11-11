@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 from fm_theme.style import (
     C,
+    fills_screen,
     start_native_move,
 )
 from fm_theme.theme import _set_text_role
@@ -249,7 +250,8 @@ class _SettingsTitleBar(QWidget):
         glyph.setPixelSize(max(10, min(round(self._text_h * 1.45), bh - 4)))
         self.close_btn.setFont(glyph)
         on, color, thick = look["title_line"]
-        tl, tr = look["inner_radius"]["top_left"], look["inner_radius"]["top_right"]
+        self._extra_look, self._extra_full = look, fills_screen(self)      # voir resizeEvent
+        tl, tr = (0, 0) if self._extra_full else (look["inner_radius"]["top_left"], look["inner_radius"]["top_right"])
         self.setStyleSheet(
             f"#SettingsTitleBar {{ background: {look['title_bg']}; "
             f"border-bottom: {thick if on else 0}px solid {color}; "
@@ -283,6 +285,13 @@ class _SettingsTitleBar(QWidget):
                 self.saveClicked.emit()
             return True                     # pas de deplacement de la fenetre
         return super().eventFilter(obj, event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Agrandie / restauree (la barre change de largeur) : coins du haut repris, seulement si l'etat a change.
+        look = getattr(self, "_extra_look", None)
+        if look is not None and fills_screen(self) != self._extra_full:
+            self.apply_extra(look)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -364,6 +373,7 @@ class _PanelFrame(QWidget):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
+        full = fills_screen(self)                    # agrandie / plein ecran : coins carres
         if self._extra:
             from fm_theme.widgets import _paint_bordered_vector
             look = EXTRA_WINDOW_LOOK
@@ -372,12 +382,14 @@ class _PanelFrame(QWidget):
                 sides = {k: True for k in sides}
                 colors = {k: self._alert for k in colors}
                 thick = max(1, thick)
-            _paint_bordered_vector(p, self.rect(), look["radius"], sides, thick, colors, self._bg)
+            radius = 0 if full else look["radius"]
+            _paint_bordered_vector(p, self.rect(), radius, sides, thick, colors, look.get("bg") or self._bg)
             p.end()
             return
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         path = QPainterPath()
-        path.addRoundedRect(rect, self._radius, self._radius)
+        radius = 0 if full else self._radius
+        path.addRoundedRect(rect, radius, radius)
         p.fillPath(path, QColor(self._bg))
         p.setPen(QPen(QColor(self._alert or self._border), 1))
         p.drawPath(path)
@@ -385,8 +397,8 @@ class _PanelFrame(QWidget):
 
 
 # -- Fenetres additionnelles (demande de l'utilisateur) : toutes les fenetres en plus de la principale
-# (reglages, override / a la volee, presets) partagent Reglages > Fenetres additionnelles : bordures,
-# border radius EXACT, ombre, barre de navigation (hauteur, couleur, filet), filet de la barre des boutons.
+# (reglages, override / a la volee, presets) partagent Reglages > Fenetres additionnelles : fond, bordures PROPRES
+# (pas celle de Theme > General, 2026-11-08), border radius EXACT, ombre, barre de navigation (hauteur, couleur, filet), filet de la barre des boutons.
 # Fenetre TRANSPARENTE : le panneau (_PanelFrame) est peint arrondi, l'ombre dans une marge autour
 # (_WindowShadow) ; pas d'ombre ni de filet de Windows. --
 
@@ -408,13 +420,15 @@ def seed_extra_window_look(settings: dict) -> None:
         return (bool(s[f"extra_window_{name}_enabled"]), res(s[f"extra_window_{name}_color"]),
                 max(0, int(s[f"extra_window_{name}_thickness"] or 0)))
 
-    # Bordure : celle de TOUTES les fenetres (Theme > General, `window_border_*`), plus la sienne propre.
-    sides = _coerce_side_enabled(s["window_border_enabled"])
-    thickness = max(0, int(s["window_border_thickness"] or 0))
+    # Fond et bordure PROPRES (Fenetres additionnelles, demande de l'utilisateur, 2026-11-08) : la « Bordure des
+    # fenetres » de Theme > General (`window_border_*`) ne vaut plus que pour la fenetre principale.
+    sides = _coerce_side_enabled(s["extra_window_border_enabled"])
+    thickness = max(0, int(s["extra_window_border_thickness"] or 0)) if any(sides.values()) else 0
     radius = _coerce_corner_radius(s["extra_window_radius"])
+    raw = s["extra_window_border"]
     EXTRA_WINDOW_LOOK.update(
-        sides=sides, thickness=thickness, radius=radius,
-        border_colors={k: res(v) for k, v in (s["window_border"] or {}).items()},
+        sides=sides, thickness=thickness, radius=radius, bg=res(s.get("extra_window_bg_color") or "@skinN1"),
+        border_colors={k: res(raw.get(k) if isinstance(raw, dict) else raw) for k in ("top", "right", "bottom", "left")},
         # Coins des barres (titre en haut, boutons en bas) : ceux de la fenetre, moins sa bordure.
         inner_radius={k: max(0, v - thickness) for k, v in radius.items()},
         shadow=shadow_look(s, "extra_window_shadow", res),

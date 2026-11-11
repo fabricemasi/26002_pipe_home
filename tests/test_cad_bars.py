@@ -90,6 +90,21 @@ class CadFloatingBarsTest(CadBoardCase):
         self.assertTrue(all(mgr.bar_of(key) is not None for key in mgr.widgets))     # tout inscrit est pose dans une barre
         self.assertEqual(self.ctl.ui.buttons["LINE"], mgr.widgets["LINE"])
 
+    def test_linetype_is_a_dropdown_controller_in_properties(self):
+        """Type de ligne : contrôleur liste déroulante de la barre Propriétés (demande de l'utilisateur, 2026-11-10)."""
+        from fm_cad import cad_model
+        from fm_theme.palette import PaletteSelectBar
+        mgr = self.manager()
+        select = mgr.widgets["linetype"]
+        self.assertIsInstance(select, PaletteSelectBar)
+        self.assertEqual(mgr.bar_of("linetype").title(), "Propriétés")
+        key, (label, _pattern) = next(iter(cad_model.LINETYPES.items()))
+        self.assertIn(label, select.field._options)
+        select.valueChanged.emit(label)                                  # choix dans le menu : type courant
+        self.assertEqual(self.ctl.cad_page()["celtype"], key)
+        self.ctl.ui.sync()
+        self.assertEqual(select.value(), label)
+
     def test_bars_exist_only_with_the_cad_module(self):
         pane = self.pane
         mgr = self.manager()

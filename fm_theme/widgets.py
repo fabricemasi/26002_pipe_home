@@ -3900,23 +3900,35 @@ class _TableFrame(QWidget):
     _dims_key: str | None = None
 
     def dimsKey(self) -> str:
-        """Cle stable : titres des sections ancetres + rang parmi les tableaux de la section."""
+        """Cle stable : titres des sections ancetres + rang parmi les tableaux de la section, precedes de
+        « <onglet>| » sous une page qui porte `_dims_scope` (onglets de modules : deux onglets d'une meme fenetre
+        ont des sections de meme titre, « Navigation », « Grille »... ; avec la meme cle, leurs tableaux
+        s'ecrasaient dimensions et ordre des lignes, signale le 2026-11-08)."""
         if self._dims_key:
             return self._dims_key
         titles = []
         node = self.parentWidget()
         owner = None
+        scope = ""
         while node is not None:
+            scope = scope or (getattr(node, "_dims_scope", None) or "")
             title = getattr(node, "_title_text", None)
-            if title:
+            # Titre « transparent » (sous-section « Main » creee pour les tableaux d'une section) : ignore, la cle
+            # reste celle d'avant, les largeurs enregistrees sont gardees.
+            if title and not getattr(node, "_dims_transparent", False):
                 titles.append(title)
                 owner = owner or node
-            node = node.parentWidget()
+            # Parent LOGIQUE : le corps d'une section sorti dans le volet des parametres (theme_side_detail) reste
+            # sous son titre (sinon : titre perdu, dix tableaux de l'editeur fm_theme avaient la cle « #0 »).
+            node = getattr(node, "_logical_parent", None) or node.parentWidget()
         rank = 0
         if owner is not None:
-            frames = [f for f in owner.findChildren(_TableFrame)]
+            frames = owner.findChildren(_TableFrame)
+            body = getattr(owner, "_body", None)
+            if body is not None and getattr(body, "_logical_parent", None) is owner:
+                frames += body.findChildren(_TableFrame)        # corps sorti dans le volet
             rank = frames.index(self) if self in frames else 0
-        return "/".join(reversed(titles)) + f"#{rank}"
+        return (f"{scope}|" if scope else "") + "/".join(reversed(titles)) + f"#{rank}"
 
     def _dims_children(self):
         head, resizer = None, None

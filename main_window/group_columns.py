@@ -397,6 +397,7 @@ class GroupColumnsMixin:
             column.set_group_fill_height(kind == new_last_kind)
         layout.activate()
         self.group_columns = [by_kind[k] for k in self._group_column_order if k in by_kind]
+        self._refresh_stacked_frames(self.group_columns)   # haut / bas : la 1re et la derniere ont change
 
         if getattr(self, "_group_reorder_anim", None) is not None:
             self._group_reorder_anim.stop()

@@ -63,9 +63,10 @@ from settings_sections import (
 from settings_store import (
     M, _coerce_corner_radius, _coerce_side_enabled, _load_window_geometry,
     _resolve_color_value, _ICONS_DIR, _save_window_geometry, import_toggle_image, toggle_style_list,
-    update_active_preset, _subsection_left_margin, _title_color, _title_font, _title_indent, _sync_dynamic_M,
+    update_active_preset, _subsection_left_margin, _title_indent, _sync_dynamic_M,
     _sync_slider_style, _sync_title_level_style, load_settings, save_settings,
 )
+from fm_theme.tokens import set_table_bg
 from settings_theme import _qfont, _set_button_radius, _set_input_radius, _set_text_role, _text_label
 from settings_widgets import (
     Menu, _Btn, _DualFontSelectField, _FontSelectField, _MiniSlider, _OverrideSmoothingField, _RatioSliderField,
@@ -95,6 +96,7 @@ from fm_photoshop.settings import PS_TAB, PS_TREE
 from fm_font.settings import TYPO_TAB, TYPO_TREE
 from fm_pdf.settings import PDF_TAB, PDF_TREE
 from fm_agenda.settings import AGENDA_TAB, AGENDA_TREE
+from fm_taches.settings import TACHES_TAB, TACHES_TREE
 from fm_visionneuse.settings import VIEWER_TAB, VIEWER_TREE
 from app_style import SEMANTIC_COLOR_SLOTS
 
@@ -265,8 +267,27 @@ def _title_bg_specs(n: int) -> list[Spec]:
              {"colors_key": f"{pre}_border", "thickness_key": f"{pre}_border_thickness", "width": 90, "box": 54},
              extra_keys=(f"{pre}_border", f"{pre}_border_thickness")),
         Spec(f"{pre}_radius", "Border radius", "corners", 0, {"max": 30}),
+        # Titre DEPLOYE (demande de l'utilisateur, 2026-11-08) : fond de son paragraphe (transparent = le fond
+        # habituel ; editeur fm_theme : aussi le volet des parametres, theme_side_detail), texte impose.
+        Spec(f"title_level{n}_open_bg_color", "Déployé : couleur de fond", "color_app", "#00000000",
+             {"title": f"Fond titre déployé niveau {n}"}),
+        Spec(f"title_level{n}_open_color_enabled", "Déployé : override couleur de texte", "bg_fill", False,
+             {"color_key": f"title_level{n}_open_color", "color_default": "#ffffff",
+              "title": f"Texte titre déployé niveau {n}"}, extra_keys=(f"title_level{n}_open_color",)),
+        # Aucun cote allume : les bordures habituelles du titre ; editeur fm_theme : aussi le contour du volet.
+        Spec(f"title_level{n}_open_border_enabled", "Déployé : bordures", "sides_thick", False,
+             {"colors_key": f"title_level{n}_open_border", "thickness_key": f"title_level{n}_open_border_thickness",
+              "width": 90, "box": 54},
+             extra_keys=(f"title_level{n}_open_border", f"title_level{n}_open_border_thickness")),
+        Spec(f"title_level{n}_open_bold", "Déployé : override gras", "choice", "follow",
+             {"choices": _OPEN_STYLE_CHOICES, "width": 160}),
+        Spec(f"title_level{n}_open_italic", "Déployé : override italique", "choice", "follow",
+             {"choices": _OPEN_STYLE_CHOICES, "width": 160}),
     ]
 
+
+# Override gras / italique d'un titre deploye : « follow » = la police du niveau (fm_theme.tokens._title_open_text).
+_OPEN_STYLE_CHOICES = (("follow", "Suivre la police"), ("on", "Oui"), ("off", "Non"))
 
 for _n in range(1, 6):
     CATALOG[f"Titre : Fond {_n}"] = _title_bg_specs(_n)
@@ -274,6 +295,8 @@ for _n in range(1, 6):
 # -- Tableaux --
 CATALOG["Tableaux"] = [
     Spec("columns_resizable", "Colonnes dimensionnables", "bool", True),
+    # Fond des lignes de tous les tableaux (2026-11-08) : « @tableRow » = la pastille Couleurs > Fond de tableau.
+    Spec("table_bg_color", "Couleur de fond", "color_app", "@tableRow", {"title": "Fond des tableaux"}),
     Spec("table_border_enabled", "Bordure", "sides_thick", True,
          {"colors_key": "table_border", "thickness_key": "table_border_thickness", "width": 140, "box": 58},
          extra_keys=("table_border", "table_border_thickness")),
@@ -459,7 +482,12 @@ def _normalized_extensions(values) -> list[str]:
 # -- Menu contextuel (settings_menu : tous les menus contextuels, lus a chaque ouverture) --
 # Fenetres additionnelles (demande de l'utilisateur) : toutes les fenetres en plus de la principale.
 CATALOG["Fenêtres additionnelles"] = [
-    # Bordures : « Bordure des fenêtres » de Thème > Général (toutes les fenêtres), plus ici.
+    # Fond et bordures PROPRES (demande de l'utilisateur, 2026-11-08) : la « Bordure des fenêtres » de Thème > Général
+    # ne vaut plus que pour la fenêtre principale. fm_theme.window.seed_extra_window_look.
+    Spec("extra_window_bg_color", "Couleur de fond", "color_app", "@skinN1", {"title": "Fond des fenêtres additionnelles"}),
+    Spec("extra_window_border_enabled", "Bordures", "sides_thick", True,
+         {"colors_key": "extra_window_border", "thickness_key": "extra_window_border_thickness", "width": 90, "box": 54},
+         extra_keys=("extra_window_border", "extra_window_border_thickness")),
     Spec("extra_window_radius", "Border radius", "corners", 0, {"max": 24}),
     _shadow_spec("extra_window_shadow"),
     # Barre de navigation des fenetres : dans Barre de navigation > Fenetres additionnelles (2026-11-05).
@@ -589,70 +617,74 @@ CATALOG["Couleurs"] = [
     Spec(f"colors:{slot}", label, "semantic_color", None, {"real_key": real_key})
     for slot, real_key, label in SEMANTIC_COLOR_SLOTS
 ]
-CRUMB_SEPARATORS = (("char", "Caractère"), ("icon", "Icône"))
+# Onglets du cheminement (refonte demandee par l'utilisateur, 2026-11-08 : ces lignes SEULES, plus d'etats Set /
+# Apres set / Apres focus, ni padding, margin, ombre, bordures de survol / focus). main_window/title_bar._crumb_look.
 CATALOG["Barre de navigation : Cheminement"] = [
+    Spec("crumb_left_spacing", "Espacement à gauche", "slider", 10, {"min": 0, "max": 200, "unit": "px"}),
     Spec("crumb_spacing", "Espacement entre les items", "slider", 5, {"min": 0, "max": 40, "unit": "px"}),
-    # Colonne « Activer » (params["column"]) : separateurs affiches ou non ; coupes, leurs lignes sont grisees.
-    Spec("crumb_separator_kind", "Séparateur : type", "crumb_separator_kind", "char",
-         {"column": Spec("crumb_separator_enabled", "Activer", "bool", True),
-          "active_when": ("crumb_separator_enabled", True)}),
-    # Une seule ligne : le caractere puis TOUS les champs de police (grisee quand le separateur est une icone).
-    Spec("crumb_sep_font_family", "Séparateur : caractère", "font_gabarit", "",
-         {"prefix": "crumb_sep", "size": (0, 40), "size_default": 0, "bold_default": False,
-          "color_default": "#5f666b", "color_title": "Couleur du séparateur",
-          "char_key": "crumb_separator_char", "char_default": "›",
-          "active_when": [("crumb_separator_enabled", True), ("crumb_separator_kind", "char")]},
-         extra_keys=(*_gabarit_extra("crumb_sep"), "crumb_separator_char")),
-    Spec("ui_icon:navbar_crumb_separator", "Séparateur : icône", "ui_icon", None,
-         {"ui_key": "navbar_crumb_separator",
-          "active_when": [("crumb_separator_enabled", True), ("crumb_separator_kind", "icon")]}),
-    # Survol / focus : par-dessus l'etat du repere (son border radius).
-    *(spec for pre, label, color in (("crumb_hover", "survol", "#5f666b"), ("crumb_focus", "focus", "#5f9bd0"))
-      for spec in (
-          Spec(f"{pre}_border_enabled", f"Bordure {label}", "sides_thick", False,
-               {"colors_key": f"{pre}_border", "thickness_key": f"{pre}_border_thickness", "width": 90, "box": 54},
-               extra_keys=(f"{pre}_border", f"{pre}_border_thickness")),
-          Spec(f"{pre}_bg_color", f"Fond {label}", "color_app", "#00000000", {"title": f"Fond {label}"}))),
+    # Sous l'onglet : ni sa bordure basse ni le filet de la barre (les colonnes qui touchent la barre n'ont deja
+    # aucune bordure haute, capture_widgets._column_edge_sides).
+    Spec("crumb_cut_border_active", "Couper la bordure (onglet actif)", "bool", False),
+    Spec("crumb_cut_border_others", "Couper la bordure (les autres onglets)", "bool", False),
+    Spec("crumb_bg_color", "Couleur de fond", "color_app", "@skinN1", {"title": "Fond des onglets"}),
+    Spec("crumb_border_enabled", "Bordures", "sides_thick", False,
+         {"colors_key": "crumb_border", "thickness_key": "crumb_border_thickness", "width": 90, "box": 54},
+         extra_keys=("crumb_border", "crumb_border_thickness")),
+    Spec("crumb_corner_radius", "Border radius", "corners", 0, {"max": 30}),
+    # Transparent = la couleur de fond commune.
+    Spec("crumb_active_bg_color", "Couleur de fond onglet actif", "color_app", "#00000000",
+         {"title": "Fond de l'onglet actif"}),
+    Spec("crumb_hover_bg_color", "Couleur de fond survol", "color_app", "#00000000", {"title": "Fond au survol"}),
+    Spec("crumb_after_active_bg_color", "Couleur de fond après onglet actif", "color_app", "#00000000",
+         {"title": "Fond des onglets après l'onglet actif"}),
+    Spec("crumb_font_family", "Police", "font_gabarit", "",
+         {"prefix": "crumb", "size": (6, 40), "size_default": 10, "color_default": "#b9bfc4",
+          "color_title": "Couleur du texte"}, extra_keys=_gabarit_extra("crumb")),
+    Spec("crumb_after_active_font_family", "Police après onglet actif", "font_gabarit", "",
+         {"prefix": "crumb_after_active", "size": (6, 40), "size_default": 10, "color_default": "#5f666b",
+          "color_title": "Couleur du texte après l'onglet actif"}, extra_keys=_gabarit_extra("crumb_after_active")),
 ]
-
-
-def _crumb_state_specs(pre: str, bg_key: str, label: str, override: bool) -> list:
-    """Un tableau d'etat du cheminement (Set / Apres set / Apres focus) : memes lignes (tableaux LIES) ;
-    `override` : un toggle devant chaque ligne (`<pre>_ovr_<ligne>`), eteint = la valeur du tableau Set."""
-    def ovr(row):
-        return {"general_toggle": f"{pre}_ovr_{row}"} if override else {}
-    return [
-        Spec(f"{pre}_font_family", "Police", "font_gabarit", "",
-             {"prefix": pre, "size": (6, 40), "size_default": 10,
-              "color_default": "#5f666b" if pre == "crumb_afterfocus" else "#b9bfc4",
-              "color_title": "Couleur du texte"}, extra_keys=_gabarit_extra(pre), **ovr("font")),
-        Spec(bg_key, "Couleur de fond", "color_app", "#00000000", {"title": f"Fond des items {label}"},
-             **ovr("bg")),
-        Spec(f"{pre}_border_enabled", "Bordures", "sides_thick", False,
-             {"colors_key": f"{pre}_border", "thickness_key": f"{pre}_border_thickness", "width": 90, "box": 54},
-             extra_keys=(f"{pre}_border", f"{pre}_border_thickness"), **ovr("border")),
-        Spec(f"{pre}_corner_radius", "Border radius", "corners", 0, {"max": 30}, **ovr("radius")),
-        Spec(f"{pre}_padding", "Padding", "padding", {}, **ovr("padding")),
-        Spec(f"{pre}_margin", "Margin", "padding", {}, **ovr("margin")),
-        _shadow_spec(f"{pre}_shadow", **ovr("shadow")),
-    ]
-
-
-CATALOG["Cheminement : Set"] = _crumb_state_specs("crumb", "crumb_set_bg_color", "du set", False)
-CATALOG["Cheminement : Apres set"] = _crumb_state_specs("crumb_after", "crumb_after_bg_color", "après le set", True)
-CATALOG["Cheminement : Apres focus"] = _crumb_state_specs("crumb_afterfocus", "crumb_afterfocus_bg_color",
-                                                          "après le focus", True)
-# Barre de navigation > Icones (sous-section, demande de l'utilisateur : alleger l'affichage).
-CATALOG["Barre de navigation : Icones"] = [
-    Spec(f"ui_icon:{key}", label, "ui_icon", None, {"ui_key": key}) for key, label in (
-        ("app_logo", "Icône de l'application"), ("navbar_min", "Icône réduire"),
-        ("navbar_max", "Icône agrandir"), ("navbar_close", "Icône fermer"),
-        ("navbar_browse", "Icône parcourir (racine)"), ("navbar_presets", "Icône gérer les presets"),
-        ("settings_gear", "Icône réglages"), ("navbar_viewer", "Icône visionneuse"),
-        ("navbar_text_editor", "Icône éditeur Markdown / code"), ("navbar_board", "Icône board"),
-        ("navbar_font", "Icône typographie"), ("navbar_pin", "Icône « toujours au-dessus » (punaise)"))
-]
-CATALOG["Barre de navigation"] = [
+# Barre de navigation : PARTAGEE entre fm_theme et fm_browser (demande de l'utilisateur, 2026-11-07). fm_theme garde
+# fond, bordure basse, police du titre (et son decalage), hauteur et les icones reduire / agrandir / fermer ; tout le
+# reste (autres icones et leur colonne Couleur, cheminement, barre des fenetres additionnelles) est dans la
+# fenetre de reglages de fm_browser, MEME hierarchie (a reorganiser plus tard). Voir NAVBAR_THEME_NODE / NAVBAR_APP_NODE.
+_NAVBAR_ICONS = (
+    ("app_logo", "Icône de l'application"), ("navbar_min", "Icône réduire"),
+    ("navbar_max", "Icône agrandir"), ("navbar_close", "Icône fermer"),
+    ("navbar_browse", "Icône parcourir (racine)"), ("navbar_presets", "Icône gérer les presets"),
+    ("settings_gear", "Icône réglages"), ("navbar_theme", "Icône fm_theme"),
+    ("navbar_columns", "Icône masquer les colonnes"), ("navbar_viewer", "Icône visionneuse"),
+    ("navbar_text_editor", "Icône éditeur Markdown / code"), ("navbar_board", "Icône board"),
+    ("navbar_video", "Icône module vidéo"), ("navbar_font", "Icône typographie"), ("navbar_pdf", "Icône PDF"),
+    ("navbar_agenda", "Icône calendrier"), ("navbar_taches", "Icône tâches"), ("navbar_pin", "Icône « toujours au-dessus » (punaise)"))
+# Colonne « Couleur » du tableau d'icones de fm_browser (demande de l'utilisateur, 2026-11-08) : icone -> (cle, defaut).
+# Couleur FUSIONNEE (produit) sur l'icone du bouton tant qu'il est actif (main_window/chrome._refresh_navbar_icons) ;
+# blanc = l'icone telle quelle. fm_theme : son ancien orange (ex « Couleur de l'icone fm_theme »).
+NAVBAR_ICON_COLORS = {
+    "navbar_theme": ("navtool_icon_color_theme", "#f28c28"), "navbar_viewer": ("navtool_icon_color_viewer", "#ffffff"),
+    "navbar_text_editor": ("navtool_icon_color_text_editor", "#ffffff"),
+    "navbar_board": ("navtool_icon_color_board", "#ffffff"), "navbar_video": ("navtool_icon_color_video", "#ffffff"),
+    "navbar_font": ("navtool_icon_color_font", "#ffffff"), "navbar_pdf": ("navtool_icon_color_pdf", "#ffffff"),
+    "navbar_agenda": ("navtool_icon_color_agenda", "#ffffff"),
+    "navbar_taches": ("navtool_icon_color_taches", "#ffffff"),
+}
+_NAVBAR_THEME_ICONS = ("navbar_min", "navbar_max", "navbar_close", "navbar_pin")   # les boutons de la fenetre
+CATALOG["Barre de navigation : Icones"] = [            # fm_theme
+    Spec(f"ui_icon:{key}", label, "ui_icon", None, {"ui_key": key})
+    for key, label in _NAVBAR_ICONS if key in _NAVBAR_THEME_ICONS]
+CATALOG["Barre de navigation : Icones (appli)"] = [    # fm_browser
+    Spec(f"ui_icon:{key}", label, "ui_icon", None, {"ui_key": key})
+    for key, label in _NAVBAR_ICONS if key not in _NAVBAR_THEME_ICONS] + [
+    Spec(color_key, label, "color_app", default, {"title": f"Couleur : {label[0].lower()}{label[1:]}", "icon_color_of": key})
+    for key, label in _NAVBAR_ICONS if key in NAVBAR_ICON_COLORS
+    for color_key, default in (NAVBAR_ICON_COLORS[key],)] + [
+    # Sous le tableau d'icones (`icon_tail`), coupe et titre au-dessus (demande de l'utilisateur, 2026-11-08) : fond
+    # du module OUVERT a l'icone coloree (preview_column.icon_tone_bg).
+    Spec("navtool_icon_tone_value", "Valeur du fond", "slider", 30,
+         {"min": 0, "max": 100, "icon_tail": "Valeur du fond des icônes colorées"})]
+CATALOG["Barre de navigation"] = [                     # fm_theme
+    # Fond de la barre (2026-11-07) : suit la pastille « Barre de navigation » (C["app_bg"]) par défaut.
+    Spec("navbar_bg_color", "Couleur de fond", "color_app", "@navbar", {"title": "Fond de la barre de navigation"}),
     Spec("navbar_bottom_enabled", "Bordure bas", "inner_line", True,
          {"prefix": "navbar", "axis": "bottom"},
          extra_keys=("navbar_bottom_color", "navbar_bottom_thickness")),
@@ -660,10 +692,100 @@ CATALOG["Barre de navigation"] = [
          {"prefix": "navbar_title", "size": (6, 40), "size_default": 11,
           "color_default": "#7d858b", "color_title": "Couleur du titre"},
          extra_keys=_gabarit_extra("navbar_title")),
-    Spec("navbar_height", "Hauteur barre", "slider", 32, {"min": 24, "max": 160}),
-    Spec("navbar_theme_button_color", "Couleur du bouton fm_theme", "color", "#f28c28",
-         {"title": "Couleur du bouton fm_theme"}),
+    # Hauteur de la 1re LIGNE (titre, outils, boutons de la fenetre, centres dessus) : celle d'une barre standard.
+    Spec("navbar_height", "Hauteur barre", "slider", 30, {"min": 16, "max": 160}),
 ]
+def _navbar_override_spec(spec: "Spec") -> "Spec":
+    """Copie d'une ligne de fm_theme > Barre de navigation pour fm_browser : cles `navtool_<...>`, interrupteur
+    d'override `navtool_ovr_<ligne>` devant la ligne (coupe = la valeur de fm_theme, `settings_store.navbar_effective`)."""
+    import copy as _copy
+
+    def scoped(value):
+        return "navtool" + value[len("navbar"):] if isinstance(value, str) and value.startswith("navbar") else value
+    params = {}
+    for name, value in spec.params.items():
+        if isinstance(value, tuple) and value and isinstance(value[0], str):
+            value = tuple(scoped(v) for v in value)
+        params[name] = scoped(value)
+    params["override_toggle_style"] = "toggle1"         # overrides : toggles de type 1 (comme le board)
+    return Spec(scoped(spec.key), spec.label, spec.kind, _copy.deepcopy(spec.default), params,
+                tuple(scoped(k) for k in spec.extra_keys), general_toggle=f"navtool_ovr_{spec.key[len('navbar_'):]}")
+
+
+# Boutons de la fenetre (punaise « toujours au-dessus », reduire, agrandir, fermer ; demande de l'utilisateur,
+# 2026-11-07) : CARRES (cote = Taille, jamais plus que la 1re ligne moins la marge haut / bas), colles en haut.
+CATALOG["Barre de navigation : Boutons fenetre"] = [    # fm_theme
+    Spec("navbar_winbtn_size", "Taille", "slider", 30, {"min": 8, "max": 160, "unit": "px"}),
+    Spec("navbar_winbtn_margin", "Margin", "padding", {}),
+    Spec("navbar_winbtn_padding", "Padding", "padding", {}),
+    Spec("navbar_winbtn_bg_color", "Couleur de fond", "color_app", "#00000000",
+         {"title": "Fond des boutons de la fenêtre"}),
+    Spec("navbar_winbtn_border_enabled", "Bordures", "sides_thick", False,
+         {"colors_key": "navbar_winbtn_border", "thickness_key": "navbar_winbtn_border_thickness",
+          "width": 90, "box": 54},
+         extra_keys=("navbar_winbtn_border", "navbar_winbtn_border_thickness")),
+    Spec("navbar_winbtn_corner_radius", "Border radius", "corners", 0, {"max": 40}),
+    Spec("navbar_winbtn_hover_bg_color", "Fond survol", "color_app", "@hover",
+         {"title": "Fond des boutons de la fenêtre au survol"}),
+    Spec("navbar_winbtn_close_hover_bg_color", "Fond survol bouton fermer", "color_app", "#c42b1c",
+         {"title": "Fond du bouton fermer au survol"}),
+]
+CATALOG["Barre de navigation (appli)"] = [             # fm_browser
+    # Bordure basse, police du titre, hauteur de fm_theme : surchargeables ici (2026-11-07).
+    *(_navbar_override_spec(_sp) for _sp in CATALOG["Barre de navigation"]
+      if _sp.key in ("navbar_bottom_enabled", "navbar_title_font_family", "navbar_height")),
+    # Ajoutee a la hauteur de fm_theme (1re ligne) : l'etage du cheminement (demande de l'utilisateur, 2026-11-07).
+    Spec("navtool_extra_height", "Hauteur barre additionnelle", "slider", 70, {"min": 0, "max": 200, "unit": "px"}),
+    # Boutons d'outils de la barre (parcourir, presets, reglages, modules...) : cadre peint (IconButton.set_frame_style).
+    Spec("navtool_bg_color", "Couleur de fond des icônes", "color_app", "#00000000",
+         {"title": "Fond des icônes de la barre"}),
+    Spec("navtool_border_enabled", "Bordure des icônes", "sides_thick", False,
+         {"colors_key": "navtool_border", "thickness_key": "navtool_border_thickness", "width": 90, "box": 54},
+         extra_keys=("navtool_border", "navtool_border_thickness")),
+    Spec("navtool_corner_radius", "Border radius des icônes", "corners", 0, {"max": 30}),
+    Spec("navtool_hover_bg_color", "Couleur de fond du survol des icônes", "color_app", "@hover",
+         {"title": "Fond des icônes au survol"}),
+    # Icones CARREES (cote = taille des icones, jamais plus que la 1re ligne moins la marge du haut et du bas) ;
+    # champ racine et menu des presets : meme hauteur et meme position en Y (demande de l'utilisateur, 2026-11-07).
+    Spec("navtool_icon_size", "Taille des icônes", "slider", 24, {"min": 8, "max": 80, "unit": "px"}),
+    Spec("navtool_padding", "Padding des icônes", "padding", {}),   # entre le cadre et le dessin
+    Spec("navtool_margin", "Margin des icônes", "padding", {}),     # autour ; 0 partout : elles se touchent
+]
+# Cadre des modules (Visionneuse, Éditeur, Board, Vidéo, Typographie, PDF, Agenda) dans la barre : avant
+# Visionneuse > Regroupement, déplacé dans fm_browser avec l'habillage de ses boutons (demande de l'utilisateur,
+# 2026-11-08). Boutons : taille et padding des icônes de la barre (TitleBar.style_group_button).
+CATALOG["Barre de navigation : Cadre des modules"] = [
+    Spec("viewer_group_bg_color", "Couleur de fond", "color_app", "#000000", {"title": "Fond du cadre des modules"}),
+    Spec("viewer_group_border_enabled", "Bordures", "sides_thick", True,
+         {"colors_key": "viewer_group_border", "thickness_key": "viewer_group_border_thickness",
+          "width": 90, "box": 54}, extra_keys=("viewer_group_border", "viewer_group_border_thickness")),
+    Spec("viewer_group_corner_radius", "Border radius", "corners", 4, {"max": 30}),
+    Spec("viewer_group_label_enabled", "Nom du module", "bool", True),
+    Spec("viewer_group_label_font_family", "Police du nom", "font_gabarit", "",
+         {"prefix": "viewer_group_label", "size": (6, 40), "size_default": 9, "bold_default": True,
+          "color_default": "#7d858b", "color_title": "Couleur du nom"},
+         extra_keys=_gabarit_extra("viewer_group_label")),
+    Spec("viewer_group_padding", "Padding", "padding", {}),
+    Spec("viewer_group_margin", "Margin", "padding", {}),
+    Spec("viewer_group_btn_bg_color", "Boutons : couleur de fond", "color_app", "#00000000",
+         {"title": "Fond des boutons du cadre"}),
+    Spec("viewer_group_btn_icon_color", "Boutons : couleur de base des icônes", "color_app", "#c4cacf",
+         {"title": "Couleur des icônes du cadre"}),
+    Spec("viewer_group_btn_border_enabled", "Boutons : bordures", "sides_thick", False,
+         {"colors_key": "viewer_group_btn_border", "thickness_key": "viewer_group_btn_border_thickness",
+          "width": 90, "box": 54}, extra_keys=("viewer_group_btn_border", "viewer_group_btn_border_thickness")),
+    Spec("viewer_group_btn_corner_radius", "Border radius des boutons", "corners", 4, {"max": 30}),
+    Spec("viewer_group_btn_close_hover_bg_color", "Bouton fermer : fond au survol", "color_app", "#c42b1c",
+         {"title": "Survol du bouton fermer le module"}),
+]
+# Override coupe : le champ montre la valeur de fm_theme (ScopeValues.seed).
+for _sp in CATALOG["Barre de navigation"]:
+    if _sp.key in ("navbar_bottom_enabled", "navbar_title_font_family", "navbar_height"):
+        for _key in (_sp.key, *_sp.extra_keys):
+            _own = "navtool" + _key[len("navbar"):]
+            BOARD_MENU_FOLLOW[_own] = (f"navtool_ovr_{_sp.key[len('navbar_'):]}", _key)
+            BOARD_MENU_FOLLOW[f"{_own}_linked"] = (f"navtool_ovr_{_sp.key[len('navbar_'):]}", f"{_key}_linked")
+del _sp, _key, _own
 # Barre d'etat (fm_theme, 2026-11-05) : bas de la fenetre principale, chemin a gauche, infos a droite
 # (fm_theme/status_bar.py l'applique).
 CATALOG["Barre d'état"] = [
@@ -682,7 +804,7 @@ CATALOG["Barre d'état"] = [
 def _standard_control_specs(prefix: str, *, shadow: bool = False) -> list[Spec]:
     rows = [
         Spec(f"{prefix}_bg_color", "Couleur", "color_app",
-             "#282c30" if prefix == "button" else "#00000000" if prefix == "tabs" else "#141618",
+             "#282c30" if prefix == "button" else "#00000000" if prefix == "tabs" else "@saisie",
              {"title": "Couleur de fond"}),
         Spec(f"{prefix}_border_enabled", "Bordures", "sides_thick", True,
              {"colors_key": f"{prefix}_border", "thickness_key": f"{prefix}_border_thickness"},
@@ -695,6 +817,18 @@ def _standard_control_specs(prefix: str, *, shadow: bool = False) -> list[Spec]:
     ]
     if shadow:
         rows.append(_shadow_spec(f"{prefix}_shadow"))
+    if prefix == "button":
+        # Survol et état actif (enfoncé / focus), comme les boutons des barres d'outils (2026-11-10).
+        rows[2:2] = [
+            Spec("button_hover_color", "Couleur de fond au survol", "color_app", "#00000000",
+                 {"title": "Fond des boutons au survol (transparent = celui du thème)"}),
+            Spec("button_active_color", "Couleur de fond à l'état actif", "color_app", "#00000000",
+                 {"title": "Fond des boutons enfoncés / focus (transparent = l'accent)"}),
+            Spec("button_active_border_color", "Couleur de bordure à l'état actif", "color_app", "#00000000",
+                 {"title": "Bordure des boutons enfoncés / focus (transparent = l'accent)"}),
+            Spec("button_active_border_thickness", "Épaisseur de bordure à l'état actif (0 = la même)", "slider", 0,
+                 {"min": 0, "max": 6, "unit": "px"}),
+        ]
     if prefix == "input":
         rows.append(Spec("input_height", "Hauteur des zones de saisie (0 = d'origine)", "slider", 0,
                          {"min": 0, "max": 60, "unit": "px"}))
@@ -731,6 +865,7 @@ def _palette_specs() -> dict[str, list[Spec]]:
     """Section « Palette » (type d'élément « palette » de fm_theme, fm_theme/palette.py) : un tableau par partie (le
     Contrôleur a un sous-tableau par type : slider, liste déroulante, zone de saisie, toggle), une ligne par
     réglage `palette_*` (défauts dans fm_theme/palette_defaults.py ; couleur transparente = celle du thème)."""
+    from fm_theme.palette import SNAP_SIDES
     from fm_theme.palette_defaults import PALETTE_DEFAULTS as D, SLIDER_STYLES, TITLE_ALIGNS, TOGGLE_STYLES
 
     def slider(key, label, low, high, unit="px"):
@@ -765,8 +900,16 @@ def _palette_specs() -> dict[str, list[Spec]]:
             Spec("palette_corner_radius", "Border radius", "corners", D["palette_corner_radius"], {"max": 40}),
             _shadow_spec("palette_shadow"),
             color("palette_drag_border_color", "Bordure pendant un déplacement"),
-            Spec("palette_snap_border_off", "Clipsée : pas de bordure du côté collé", "bool",
-                 D["palette_snap_border_off"]),
+            # menu 1. rien / 2. pas de bordure / 3. couleur de bordure ; au 3 : sa couleur dans la sous-cellule
+            # voisine (demande de l'utilisateur, 2026-11-08 ; remplace le toggle « pas de bordure du côté collé »)
+            Spec("palette_snap_side", "Clipsée : comportement du côté collé", "snap_side", None,
+                 {"parts": (("Comportement", Spec("palette_snap_side", "Comportement", "choice", D["palette_snap_side"],
+                                                  {"choices": SNAP_SIDES, "width": 190})),
+                            ("Couleur", color("palette_snap_side_color", "Couleur",
+                                              "Bordure du côté collé (transparent = bordure des panneaux)")))},
+                 extra_keys=("palette_snap_side_color",)),
+            Spec("palette_snap_separator", "Séparateur entre barres collées l'une à l'autre", "bool",
+                 D["palette_snap_separator"]),
             Spec("palette_snap_header_color", "Clipsée : en-tête de la couleur de l'élément voisin", "bool",
                  D["palette_snap_header_color"]),
             Spec("palette_snap_bg_color", "Clipsée : fond de la couleur de l'élément voisin", "bool",
@@ -870,6 +1013,13 @@ CATALOG["Icones : Couleurs des dossiers"] = [
         Spec(f"folder_text_color_{kind}_from_icon", label, "bool", False),
         Spec(f"folder_text_color_{kind}", label, "color_app", text_default, {"title": f"Texte : {title.lower()}"}))
 ]
+# Icones de la barre de navigation (outils et modules) : couleur de base, couleur du bouton desactive (remplace le
+# voile d'opacite) : main_window/chrome._refresh_navbar_icons (demande de l'utilisateur, 2026-11-08).
+CATALOG["Icones : Couleur des icones"] = [
+    Spec("navtool_icon_base_color", "Couleur de base", "color_app", "#c4cacf", {"title": "Icônes : couleur de base"}),
+    Spec("navtool_icon_disabled_color", "Couleur désactivée", "color_app", "#59c4cacf",
+         {"title": "Icônes : couleur désactivée"}),
+]
 CATALOG["Icones : Logiciels"] = [
     Spec("custom_softwares", "Logiciels", "logiciels", [], extra_keys=("removed_softwares",)),
 ]
@@ -957,6 +1107,16 @@ def general_tree(settings: dict | None = None) -> tuple:
                  for n in GENERAL_TREE)
 
 
+# Barre de navigation, MEME titre dans les deux fenetres : fm_theme (aspect de la barre) / fm_browser (le reste).
+NAVBAR_THEME_NODE = Node("Barre de navigation", "Barre de navigation",
+                         children=(Node("Boutons fenêtre", "Barre de navigation : Boutons fenetre"),
+                                   Node("Icônes", "Barre de navigation : Icones")))
+NAVBAR_APP_NODE = Node("Barre de navigation", "Barre de navigation (appli)",
+                       children=(Node("Icônes", "Barre de navigation : Icones (appli)"),
+                                 Node("Cheminement", "Barre de navigation : Cheminement"),
+                                 Node("Cadre des modules", "Barre de navigation : Cadre des modules"),
+                                 Node("Fenêtres additionnelles", "Barre de navigation : Fenetres additionnelles")))
+
 GENERAL_TREE = (
     GENERAL_COLUMNS,
     SPECIAL_COLUMNS,
@@ -974,16 +1134,11 @@ GENERAL_TREE = (
     Node("LUT", "LUT"),
     Node("Polices principales", "Polices principales"),
     Node("Couleurs", "Couleurs"),
-    Node("Barre de navigation", "Barre de navigation",
-         children=(Node("Icônes", "Barre de navigation : Icones"),
-                   Node("Cheminement", "Barre de navigation : Cheminement",
-                        children=(Node("Set", "Cheminement : Set"), Node("Après set", "Cheminement : Apres set"),
-                                  Node("Après focus", "Cheminement : Apres focus"))),
-                   Node("Fenêtres additionnelles", "Barre de navigation : Fenetres additionnelles"))),
+    NAVBAR_APP_NODE,                                    # fm_theme : NAVBAR_THEME_NODE (voir theme_tree)
     Node("Barre d'état", "Barre d'état"),
     Node("Bouton", "Bouton"),
     Node("Tabs", "Tabs"),
-    Node("Palette", children=(Node("Grille", "Palette : Grille"), Node("Barre", "Palette : Barre"),
+    Node("Barres d'outils", children=(Node("Grille", "Palette : Grille"), Node("Barre", "Palette : Barre"),
                               Node("En-tête", "Palette : En-tete"), Node("Icônes", "Palette : Icones"),
                               Node("Contrôleur", "Palette : Controleur", children=(
                                   Node("Slider", "Palette : Slider"), Node("Liste déroulante", "Palette : Liste"),
@@ -995,6 +1150,7 @@ GENERAL_TREE = (
     Node("Sliders", children=(Node("Rail", "Slider : Rail"), Node("Selecteur", "Slider : Selecteur"))),
     Node("ICONES", children=(Node("General", "Icones : General"),
                              Node("Couleur des dossiers", "Icones : Couleurs des dossiers"),
+                             Node("Couleur des icônes", "Icones : Couleur des icones"),
                              Node("Logiciels", "Icones : Logiciels"))),
 )
 
@@ -1004,7 +1160,7 @@ GENERAL_TREE = (
 # fenetre de l'onglet Application (qui melange aspect et fonctionnement).
 THEME_TAB = "Thème"
 THEME_SECTIONS = ("Couleurs", "Polices principales", "TITRES", "Toggles", "Sliders", "Zone de saisie", "Bouton",
-                  "Tableaux", "Tabs", "Palette", "Menu contextuel", "Fenêtres additionnelles",
+                  "Tableaux", "Tabs", "Barres d'outils", "Menu contextuel", "Fenêtres additionnelles",
                   # Barres de la fenetre (2026-11-05) : aspect general, plus dans General de fm_browser.
                   "Barre de navigation", "Barre d'état")
 CATALOG["Thème : Général"] = [s for s in CATALOG["Application"] if s.key in ("ui_scale", "window_radius")] + [
@@ -1013,6 +1169,13 @@ CATALOG["Thème : Général"] = [s for s in CATALOG["Application"] if s.key in (
     Spec("window_border_enabled", "Bordure des fenêtres", "sides_thick", True,
          {"colors_key": "window_border", "thickness_key": "window_border_thickness", "width": 90, "box": 54},
          extra_keys=("window_border", "window_border_thickness")),
+    # Volet des variantes de l'editeur : cadre de la variante editee (croquis de l'utilisateur, 2026-11-10).
+    Spec("variant_sel_border_enabled", "Variantes : bordure du cadre de sélection", "sides_thick", True,
+         {"colors_key": "variant_sel_border", "thickness_key": "variant_sel_border_thickness", "width": 90, "box": 54},
+         extra_keys=("variant_sel_border", "variant_sel_border_thickness")),
+    Spec("variant_sel_corner_radius", "Variantes : border radius du cadre de sélection", "corners", 6, {"max": 30}),
+    Spec("variant_sel_bg_color", "Variantes : couleur de fond du cadre de sélection", "color_app", "#00000000",
+         {"title": "Fond de la variante éditée (transparent = aucun)"}),
 ]
 # Etape 6 : ces deux reglages ne sont plus dans Application (General de fm_browser), seulement dans le Theme.
 CATALOG["Application"] = [s for s in CATALOG["Application"] if s.key not in ("ui_scale", "window_radius")]
@@ -1021,6 +1184,7 @@ CATALOG["Application"] = [s for s in CATALOG["Application"] if s.key not in ("ui
 def theme_tree(settings: dict | None = None) -> tuple:
     """Arbre de l'onglet Thème : « General » (echelle, arrondi de la fenetre) puis les sections d'aspect."""
     nodes = {n.title: n for n in general_tree(settings)}
+    nodes["Barre de navigation"] = NAVBAR_THEME_NODE    # la partie fm_browser reste dans la fenetre generale
     return (Node("Général", "Thème : Général"),) + tuple(nodes[title] for title in THEME_SECTIONS)
 
 
@@ -1031,15 +1195,22 @@ def tab_tree(label: str, settings: dict | None = None) -> tuple:
         return STANDALONE_TABS[label]
     if label == THEME_TAB:
         return theme_tree(settings)
-    return tuple(n for n in general_tree(settings) if n.title not in THEME_SECTIONS)
+    return tuple(n for n in general_tree(settings) if n.title not in THEME_SECTIONS or n is NAVBAR_APP_NODE)
 
 
 # Onglets de reglages generaux a part (pas une colonne) : leur arbre.
 STANDALONE_TABS = {MARKDOWN_TAB: MARKDOWN_TREE, VIDEO_TAB: VIDEO_TREE, BOARD_TAB: BOARD_TREE, MRO_TAB: MRO_TREE,
                    CAD_TAB: CAD_TREE, DESIGN_TAB: DESIGN_TREE, TABLEUR_TAB: TABLEUR_TREE, ILL_TAB: ILL_TREE, PS_TAB: PS_TREE, VIEWER_TAB: VIEWER_TREE,
-                   TYPO_TAB: TYPO_TREE, PDF_TAB: PDF_TREE, AGENDA_TAB: AGENDA_TREE}
+                   TYPO_TAB: TYPO_TREE, PDF_TAB: PDF_TREE, AGENDA_TAB: AGENDA_TREE,
+                   TACHES_TAB: TACHES_TREE}
 
 # Groupes repris de la v1 : leurs tableaux ont une cle de dimensions a eux (voir build_group).
+# Groupes dont la section porte le MEME titre qu'une section de l'autre fenetre (fm_theme / fm_browser) : la cle
+# deduite des titres serait commune, et les deux tableaux s'ecrasaient leurs largeurs (signale, 2026-11-07).
+SHARED_TITLE_GROUPS = frozenset(("Barre de navigation (appli)",))
+# Sous-section creee a la construction pour les tableaux propres d'une section qui a aussi des sous-sections
+# (_LazyNode._build ; demande de l'utilisateur, 2026-11-08).
+MAIN_SUBSECTION = "Main"
 PORTED_GROUPS = frozenset(("Application", "Omettre", "LUT", "Polices principales", "Couleurs",
                            "Raccourci", "Icones : General", "Icones : Logiciels", "Focus : Image",
                            "Focus : Zone titre", "Projets : Icone de niveaux"))
@@ -1061,14 +1232,15 @@ MODULE_SCOPES: dict[str, list[tuple[str, str | None]]] = {
     "font": [(TYPO_TAB, None)],             # module typographique (fm_font)
     "pdf": [(PDF_TAB, None)],               # éditeur PDF (fm_pdf ; aussi onglet de « Réglages : Board »)
     "agenda": [(AGENDA_TAB, None)],         # agenda (fm_agenda)
+    "taches": [(TACHES_TAB, None)],         # tâches (fm_taches)
     "theme": [(THEME_TAB, None)],          # editeur fm_theme (pas dans la rangee de la fenetre generale)
 }
 MODULE_TITLES = {"video": "Vidéo", "markdown": "Markdown", "board": "Board", "viewer": "Visionneuse",
-                 "font": "Typographie", "pdf": "PDF", "agenda": "Agenda"}
+                 "font": "Typographie", "pdf": "PDF", "agenda": "Agenda", "taches": "Tâches"}
 # Libelle AFFICHE d'un onglet quand il differe de son identifiant (cles retenues, tests).
 TAB_LABELS = {MARKDOWN_TAB: "Module Markdown", BOARD_TAB: "Board", MRO_TAB: "MRO", CAD_TAB: "CAD", DESIGN_TAB: "Design",
               TABLEUR_TAB: "Tableur", ILL_TAB: "Illustrator", PS_TAB: "Photoshop", PDF_TAB: "PDF",
-              AGENDA_TAB: "Agenda"}
+              AGENDA_TAB: "Agenda", TACHES_TAB: "Tâches"}
 
 
 # ==========================================================================
@@ -1276,7 +1448,7 @@ def _font_parts(spec, v, colors) -> dict:
         title=p.get("color_title", spec.label))
     parts = {"family": family, "bold": bold, "italic": italic, "size": size,
              "smoothing": smoothing, "color": color}
-    if p.get("char_key"):                                # ligne « caractere + police » (separateur du cheminement)
+    if p.get("char_key"):                                # ligne « caractere + police » (Markdown)
         parts = {"char": _TextField(str(v.seed(p["char_key"], p.get("char_default", "")) or ""), width=56), **parts}
     return parts
 
@@ -1891,6 +2063,22 @@ class _StatePairField(QWidget):
         return next(w for sub, w in self.parts if key in (sub.key, *sub.extra_keys))
 
 
+class _SnapSideField(_StatePairField):
+    """« Clipsée : comportement du côté collé » : le menu, et la couleur dans la sous-cellule voisine, montrée
+    seulement au choix « 3. Couleur de bordure » (Barres d'outils > Barre)."""
+
+    def __init__(self, spec, v, colors):
+        super().__init__(spec, v, colors)
+        self._menu = next(w for sub, w in self.parts if sub.kind == "choice")
+        self._color = next(w for sub, w in self.parts if sub.kind != "choice")
+        self._menu.changed.connect(lambda *_a: self._sync())
+        self._sync()
+
+    def _sync(self):
+        label = dict(getattr(self._menu, "_choices", ())).get("color")
+        self._color.setVisible(self._menu.value() == label)
+
+
 def _f_xy(spec, v, colors):
     """Deux curseurs sur une ligne (position X / Y, largeur / hauteur) : cellule divisee."""
     p = spec.params
@@ -1958,12 +2146,13 @@ FIELD_FACTORIES: dict[str, Callable] = {
     "frame_radius": _f_frame_radius, "color_pair": _f_color_pair, "xy": _f_xy, "ui_icon": _f_ui_icon,
     "logiciels": _f_logiciels, "cad_linetypes": _f_cad_linetypes, "collapse_mode": _choice_factory(COLLAPSE_MODES),
     "coche_skin": _f_coche_skin, "text": _f_text, "icon_choice": _f_icon_choice,
-    "crumb_separator_kind": _choice_factory(CRUMB_SEPARATORS), "toggle_kind": _choice_factory(TOGGLE_KINDS), "toggle_motion": _choice_factory(TOGGLE_MOTIONS),
+    "toggle_kind": _choice_factory(TOGGLE_KINDS), "toggle_motion": _choice_factory(TOGGLE_MOTIONS),
     "toggle_icons": _f_toggle_icons, "image_sequence": _f_image_sequence, "toggle_image": _f_toggle_image,
     "state_pair": _StatePairField,
     # Meme cellule divisee (un champ par sous-cellule, `params["parts"]`), avec SON gabarit de ligne : celui des
     # lignes « Fond | Coche » ne s'y applique pas (lignes des guides du Magnetisme, fm_board/settings.py).
     "split_fields": _StatePairField,
+    "snap_side": _SnapSideField,
     "badge_position": _f_badge_position, "ratio_slider": _f_ratio_slider,
     "font_gabarit": _f_font_gabarit, "sides_thick": _f_sides_thick, "shadow": _f_shadow, "inner_line": _f_inner_line,
     "toggle_style": _f_toggle_style, "bg_fill": _f_bg_fill,
@@ -1976,6 +2165,8 @@ FIELD_FACTORIES: dict[str, Callable] = {
 # Champs d'actions de l'agenda (comptes Google, données locales) : definis dans leur paquet.
 from fm_agenda.settings import FIELD_FACTORIES as _AGENDA_FACTORIES, FIELD_READERS as _AGENDA_READERS  # noqa: E402
 FIELD_FACTORIES.update(_AGENDA_FACTORIES)
+from fm_taches.settings import FIELD_FACTORIES as _TACHES_FACTORIES, FIELD_READERS as _TACHES_READERS  # noqa: E402
+FIELD_FACTORIES.update(_TACHES_FACTORIES)
 
 
 # ==========================================================================
@@ -2042,13 +2233,14 @@ FIELD_READERS: dict[str, Callable] = {
         sp.params["scale_key"]: w._v2_parts["scale"].value()},
     "collapse_mode": _choice_reader(COLLAPSE_MODES),
     "coche_skin": lambda sp, w: {sp.key: {label: key for key, label in SKINS}[w.value()]},
-    "crumb_separator_kind": _choice_reader(CRUMB_SEPARATORS), "toggle_kind": _choice_reader(TOGGLE_KINDS), "toggle_motion": _choice_reader(TOGGLE_MOTIONS),
+    "toggle_kind": _choice_reader(TOGGLE_KINDS), "toggle_motion": _choice_reader(TOGGLE_MOTIONS),
     "toggle_icons": lambda sp, w: {sp.key: w._v2_parts["on"].value(),
                                    sp.params["off_key"]: w._v2_parts["off"].value()},
     "image_sequence": lambda sp, w: {sp.key: w.value()},
     "toggle_image": lambda sp, w: {sp.key: w.value()},
     "state_pair": lambda sp, w: {k: val for sub, f in w.parts for k, val in read_spec(sub, f).items()},
     "split_fields": lambda sp, w: {k: val for sub, f in w.parts for k, val in read_spec(sub, f).items()},
+    "snap_side": lambda sp, w: {k: val for sub, f in w.parts for k, val in read_spec(sub, f).items()},
     "text": lambda sp, w: {sp.key: w.text()},
     "icon_choice": lambda sp, w: {sp.key: w.value()},
     "badge_position": lambda sp, w: {
@@ -2092,6 +2284,7 @@ FIELD_READERS: dict[str, Callable] = {
                                  sp.params["thickness_key"]: w._v2_parts["thickness"].value()},
 }
 FIELD_READERS.update(_AGENDA_READERS)
+FIELD_READERS.update(_TACHES_READERS)
 
 
 def read_spec(spec: Spec, widget: QWidget) -> dict:
@@ -2174,6 +2367,7 @@ FIELD_WRITERS: dict[str, Callable] = {
     "toggle_image": lambda sp, w, v: (w.setNames([v[sp.key]] if v[sp.key] else []), True)[1],
     "state_pair": lambda sp, w, v: all([write_spec(sub, f, v) for sub, f in w.parts]),
     "split_fields": lambda sp, w, v: all([write_spec(sub, f, v) for sub, f in w.parts]),
+    "snap_side": lambda sp, w, v: (all([write_spec(sub, f, v) for sub, f in w.parts]), w._sync())[0],
     "xy": lambda sp, w, v: (w._v2_parts["first"].setValue(int(v[sp.key])),
                             w._v2_parts["second"].setValue(int(v[sp.params["second_key"]])), True)[2],
 }
@@ -2455,24 +2649,78 @@ def _shortcut_field(spec: Spec, values: ScopeValues, colors: dict, fields: dict,
 
 
 # Groupes dont TOUTES les lignes sont des icones : un tableau d'icones commun (colonnes Apercu | Nom | Etat | Action).
-ICON_GROUPS = frozenset(group for group, specs in CATALOG.items() if specs and all(s.kind == "ui_icon" for s in specs))
+# Tableaux d'icones : lignes d'icones, plus les couleurs qui s'y rattachent (`icon_color_of` : colonne Couleur).
+ICON_GROUPS = frozenset(group for group, specs in CATALOG.items()
+                        if specs and all(s.kind == "ui_icon" or "icon_color_of" in s.params or "icon_tail" in s.params
+                                         for s in specs))
 
 
-def _build_icon_table(group: str, fields: dict, resizers: list) -> QWidget:
+def _build_icon_table(group: str, fields: dict, resizers: list, values=None, colors=None, record=None,
+                      on_change=None) -> QWidget:
     """Groupe d'icones : UN tableau commun (`settings_v2_app.icon_table`), une ligne par icone (par etat pour la
-    punaise) — Apercu | Nom | Etat | Action. Les boutons agissent tout de suite sur les fichiers d'icone perso."""
+    punaise) — Apercu | Nom | Etat | Action. Les boutons agissent tout de suite sur les fichiers d'icone perso.
+    Specs `icon_color_of` (barre de navigation de fm_browser) : une colonne Couleur de plus, vide pour les icones
+    sans couleur ; ce sont des reglages enregistres comme les autres."""
+    specs = CATALOG[group]
+    tints = {s.params["icon_color_of"]: s for s in specs if "icon_color_of" in s.params}
     entries, keep = [], []
-    for spec in CATALOG[group]:
+    for spec in specs:
+        if spec.kind != "ui_icon":
+            continue
         field = UiIconField(spec.params["ui_key"])
         keep.append(field)
         fields[spec.key] = field
+        extra = ()
+        if tints:
+            tint = tints.get(spec.params["ui_key"])
+            if tint is None:
+                extra = (QLabel(""),)
+            else:
+                widget = make_field(tint, values, colors)
+                fields[tint.key] = widget
+                if record is not None:
+                    record.append((tint, widget))
+                    _connect_changed(widget, on_change)
+                extra = (widget,)
         for caption, avatar, buttons, state in field.states():
-            entries.append((f"{spec.label} : {caption.lower()}" if caption else spec.label, avatar, state, buttons))
-    frame, head = icon_table(entries)
+            entries.append((f"{spec.label} : {caption.lower()}" if caption else spec.label, avatar, state, buttons,
+                            *extra))
+    from settings_v2_app import ICON_TABLE_COLUMNS
+    frame, head = icon_table(entries, ICON_TABLE_COLUMNS + ((("Couleur", 110),) if tints else ()))
     frame._dims_key = f"v2:{group}#0"               # jamais les largeurs de l'ancien tableau a sous-cellules
     frame._ui_icon_fields = keep                    # garde les champs en vie : leurs boutons leur sont relies
+    if tints:
+        normalize_toggles(frame)                    # toggles app / sys de la colonne Couleur : type 2, sans texte
     resizers.append(head)
-    return frame
+    tail = [s for s in specs if "icon_tail" in s.params]
+    if not tail:
+        return frame
+    # Reglages poses SOUS le tableau d'icones (`icon_tail`) : tableau Parametre | Valeur a part, entete supprime et
+    # titre au-dessus (le texte de `icon_tail`) par defaut ; l'utilisateur peut les changer (table_dims).
+    rows = []
+    for spec in tail:
+        widget = make_field(spec, values, colors)
+        fields[spec.key] = widget
+        if record is not None:
+            record.append((spec, widget))
+            _connect_changed(widget, on_change)
+        rows.append((spec.label, widget, None, None))
+    wrap = QWidget()
+    wrap.setStyleSheet("background: transparent;")
+    lay = QVBoxLayout(wrap)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(0)
+    lay.addWidget(frame, 0, Qt.AlignLeft)
+    sub = _flat_cells_table(rows, wrap)
+    sub._dims_key = f"v2:{group}#1"
+    normalize_toggles(sub)
+    resizers.append(sub._v2_head)
+    extra = getattr(sub, "_extra_dims", None)
+    if extra is not None:                           # defaut, remplace par les dimensions enregistrees (showEvent)
+        extra.apply({"head_hidden": True, "above_texts": {"0": tail[0].params["icon_tail"]}})
+    lay.addWidget(sub, 0, Qt.AlignLeft)
+    wrap._ui_icon_fields = keep
+    return wrap
 
 
 TABLE_FIELDS = frozenset({"cad_linetypes"})
@@ -2544,7 +2792,7 @@ def build_group(group: str, values: ScopeValues, colors: dict,
     if group in COLUMN_TABLES:
         return _build_font_table(group, values, colors, fields, resizers, record, on_change, on_range, parent)
     if group in ICON_GROUPS:
-        return _build_icon_table(group, fields, resizers)
+        return _build_icon_table(group, fields, resizers, values, colors, record, on_change)
     specs = CATALOG[group]
     if len(specs) == 1 and specs[0].kind in TABLE_FIELDS:
         # Le champ EST le tableau (une ligne par element : types de ligne du CAD) : pas de Parametre | Valeur autour.
@@ -2583,7 +2831,7 @@ def build_group(group: str, values: ScopeValues, colors: dict,
     for rows in (flat_rows, toggle_rows):
         if rows:
             frame = _flat_cells_table(rows, wrap if wrap is not None else parent)
-            if group in PORTED_GROUPS:
+            if group in PORTED_GROUPS or group in SHARED_TITLE_GROUPS:
                 # Cle de dimensions propre a la v2 : la v1 a enregistre sous le meme titre de section
                 # les largeurs de SES tableaux (autres colonnes), qui ecraseraient celles-ci.
                 frame._dims_key = f"v2:{group}#{len(frames)}"
@@ -2725,8 +2973,11 @@ class _LazyNode(QWidget):
             return
         self._built = True
         node = self.node
+        # Section qui a des sous-sections ET ses propres tableaux : ces tableaux passent dans une sous-section
+        # « Main », en tete (demande de l'utilisateur, 2026-11-08). L'arbre (Node) ne change pas.
+        main = Node(MAIN_SUBSECTION, node.group) if node.group and node.children else None
         with _section_host(self):
-            if node.group:
+            if node.group and main is None:
                 self._group_widget = self._make_group()
                 self._head.add(self._group_widget)
             if node.children:
@@ -2739,10 +2990,14 @@ class _LazyNode(QWidget):
                 self._child_wrap = wrap
                 key = self._stack_key()
                 ordered = self._store.get("title_order")
-                for child in (ordered(node.children, key) if ordered else node.children):
-                    _add_stacked(wl, children, _LazyNode(child, min(self.level + 1, 5), self._values, self._colors,
-                                                         self._store, self._eager, self._child_refresh, wrap,
-                                                         self.wired))
+                nodes = ((main,) if main is not None else ()) + tuple(node.children)
+                for child in (ordered(nodes, key) if ordered else nodes):
+                    lazy = _LazyNode(child, min(self.level + 1, 5), self._values, self._colors, self._store,
+                                     self._eager, self._child_refresh, wrap, self.wired)
+                    if child is main:
+                        # Largeurs enregistrees des tableaux : meme cle qu'avant « Main » (titre ignore par dimsKey).
+                        lazy._head._dims_transparent = True
+                    _add_stacked(wl, children, lazy)
                 _make_accordion(children)      # en deplier un replie les soeurs, sauf avec Ctrl
                 # Titres des enfants a leur retrait absolu : pas de decalage
                 # de corps (voir _BodyMixin._holds_titles).
@@ -2932,12 +3187,14 @@ class _TitleStack:
 
 
 def ordered_nodes(nodes, titles) -> list:
-    """`nodes` dans l'ordre enregistre `titles` (titres inconnus : a la fin, dans leur ordre)."""
+    """`nodes` dans l'ordre enregistre `titles` (titres inconnus : a la fin, dans leur ordre ; « Main » jamais
+    deplace : en tete)."""
     nodes = list(nodes)
     if not titles:
         return nodes
     rank = {title: i for i, title in enumerate(titles)}
-    return sorted(nodes, key=lambda n: (rank.get(n.title, len(rank)), nodes.index(n)))
+    return sorted(nodes, key=lambda n: (rank.get(n.title, -1 if n.title == MAIN_SUBSECTION else len(rank)),
+                                        nodes.index(n)))
 
 
 def _add_stacked(layout: QVBoxLayout, nodes: list, node: _LazyNode):
@@ -3010,9 +3267,9 @@ def _renamed_dims(dims: dict) -> dict:
             legacy = sorted(k for k in out if k.startswith(prefix) and k != shared)
             if legacy:
                 out[shared] = out[legacy[0]]
-    # Barre de navigation : ses icones sont passees dans une sous-section, le Cheminement a ete refait (lignes
-    # differentes) — des dimensions par ligne d'avant viseraient d'autres lignes : seules les largeurs restent.
-    for key, rows in (("Barre de navigation#0", 4), ("Barre de navigation/Cheminement#0", 8)):
+    # Barre de navigation : ses icones sont passees dans une sous-section (lignes differentes) — des dimensions par
+    # ligne d'avant viseraient d'autres lignes : seules les largeurs restent.
+    for key, rows in (("Barre de navigation#0", 4),):
         old = out.get(key)
         if isinstance(old, dict) and any(int(k[1:].split("c")[0]) >= rows for k in (old.get("split") or {})
                                          if k.startswith("r") and "c" in k):
@@ -3060,15 +3317,14 @@ def _shift_paragraph_rows(dims: dict) -> dict:
 # une largeur de colonne ou de sous-cellule, une hauteur de ligne, un ordre ou une justification
 # dans l'un se reporte en direct sur tous les autres (_link_tables). {groupe: (prefixe des cles
 # deduites des titres, cle partagee)}.
-_LINKED_TABLES = {"paragraphes": ("TITRES/Paragraphes/", "TITRES/Paragraphes#0"),
-                  # Cheminement > Set / Apres set / Apres focus : copies conformes (demande de l'utilisateur).
-                  "cheminement": ("Barre de navigation/Cheminement/", "Barre de navigation/Cheminement/États#0")}
+_LINKED_TABLES = {"paragraphes": ("TITRES/Paragraphes/", "TITRES/Paragraphes#0")}
 
 
 def seed_table_look(settings: dict):
     """Etat de depart de l'habillage des tableaux (filets interieurs, padding, couleur d'entete, de
     selection, lignes deplacables) : chaque tableau le lit a sa creation."""
     colors = settings["colors"]
+    set_table_bg(settings.get("table_bg_color"), colors)      # avant tout tableau : fond de ses lignes
     _set_table_inner_border(*(
         (settings[f"table_inner_{axis}_enabled"], _resolve_color_value(settings[f"table_inner_{axis}_color"], colors),
          settings[f"table_inner_{axis}_thickness"]) for axis in ("h", "v")))
@@ -3094,21 +3350,19 @@ def restyle_titles_in(root: QWidget, merged: dict):
     """Titres (niveaux 1-5) : polices, couleurs, retraits et paragraphes des _Section / _SubSection de `root`."""
     _sync_title_level_style(merged)
     for section in root.findChildren(_Section):
-        section._name_label.setFont(_title_font(1))
-        section._name_label.setStyleSheet(f"color: {_title_color(1)}; background: transparent;")
-        section._chevron.setColor(_title_color(1))
+        section.apply_text_look()          # police, couleur ; overrides du titre deploye
         section._title_indent = _title_indent(1)
     for sub in root.findChildren(_SubSection):
         level = sub._level
-        sub._name_label.setFont(_title_font(level))
-        sub._name_label.setStyleSheet(f"color: {_title_color(level)}; background: transparent;")
-        sub._chevron.setColor(_title_color(level))
+        sub.apply_text_look()
         sub._left_margin = _subsection_left_margin(level)
     # Paragraphes (retrait, paddings, fond) : parents d'abord, l'abscisse d'un enfant en depend.
     titles = root.findChildren(_Section) + root.findChildren(_SubSection)
     depth = {t: sum(isinstance(a, (_Section, _SubSection)) for a in _ancestors(t)) for t in titles}
     for title in sorted(titles, key=depth.get):
         title.apply_box()
+    for pane in root.findChildren(QFrame, "ThemeSideDetail"):
+        getattr(pane, "refresh", pane.update)()   # volet de l'editeur fm_theme : fond, contour du titre deploye
     _reflow_all(root)
 
 
@@ -3121,9 +3375,32 @@ def restyle_toggles_in(root: QWidget, merged: dict):
         picker.refreshPreviews()
 
 
+def seed_table_globals(merged: dict) -> None:
+    """Habillage GLOBAL des tableaux d'après `merged`, sans restyler aucun tableau construit (éditeur fm_theme : dessiner
+    une variante non éditée, puis remettre l'habillage courant)."""
+    from fm_theme.layout import _FLAT_TABLE_STYLE
+    from fm_theme.widgets import _TABLE_SHADOW
+    colors = merged.get("colors") or {}
+    set_table_bg(merged.get("table_bg_color"), colors)
+    _set_table_inner_border(*(
+        (merged.get(f"table_inner_{axis}_enabled", True),
+         _resolve_color_value(merged.get(f"table_inner_{axis}_color", "#2c3034"), colors),
+         merged.get(f"table_inner_{axis}_thickness", 1)) for axis in ("h", "v")))
+    _TABLE_HEAD["bg"] = _head_hex(colors, merged.get("table_head_color", "tableHead"))
+    _TABLE_HEAD["cell_bg"] = _head_hex(colors, merged.get("table_cell_head_color", "tableHead"))
+    _TABLE_SELECTION["color"] = _resolve_color_value(merged.get("table_selection_color", "#5f9bd0"), colors)
+    _TABLE_SHADOW["look"] = shadow_look(merged, "table_shadow", lambda value: _resolve_color_value(value, colors))
+    border_colors = {k: _resolve_color_value(v, colors) for k, v in (merged.get("table_border") or {}).items()}
+    _FLAT_TABLE_STYLE.update(
+        radius=int(merged.get("table_radius", 0)),
+        border=(merged.get("table_border_enabled"), border_colors, int(merged.get("table_border_thickness", 1))),
+        padding=_padding_tuple(merged.get("table_cell_padding") or {}))
+
+
 def restyle_tables_in(root: QWidget, merged: dict):
     """Tableaux de `root` : habillage commun (filets, entetes, selection, ombre, rayon, bordure, padding)."""
     colors = merged["colors"]
+    set_table_bg(merged.get("table_bg_color"), colors)        # fond des lignes, repris par _set_flat_tables_style
     enabled = merged.get("table_border_enabled")
     border_colors = {k: _resolve_color_value(v, colors) for k, v in (merged.get("table_border") or {}).items()}
     _set_table_inner_border(*(
@@ -3273,10 +3550,14 @@ def _toggle_style_listener(toggle: QWidget, key: str | None) -> None:
 TOGGLE_STYLE_LISTENERS.append(_toggle_style_listener)
 
 
+# Apercu en direct : au plus un toutes les LIVE_MIN_MS (16 ms ~ une image a 60 Hz ; 30 ms avant, saccade signalee
+# le 2026-11-10), et jamais plus souvent que deux fois son propre cout (le glisser garde la main).
+LIVE_MIN_MS = 16
+
 WIRED_SECTIONS = ("Général", "Colonnes", "Colonnes spéciales", "TITRES", "Tableaux", "Toggles", "Sliders", "Application", "Visionneuse",
                   "Menu contextuel", "Fenêtres additionnelles",
                   "Dossiers et fichiers à omettre", "LUT", "Polices principales", "Couleurs",
-                  "Barre de navigation", "Barre d'état", "Bouton", "Tabs", "Palette", "Zone de saisie",
+                  "Barre de navigation", "Barre d'état", "Bouton", "Tabs", "Barres d'outils", "Zone de saisie",
                   "ICONES")
 
 # Enregistrement EN TEMPS REEL de ce qui n'est pas un reglage a valider : taille/position de la
@@ -3352,7 +3633,9 @@ class SettingsWindowV2(QDialog):
     constructeur ; `page_seconds[label]` = temps de chaque onglet a sa
     premiere visite ; `widget_count` = widgets vivants a l'ouverture."""
 
-    settingsChanged = Signal(dict)     # apercu en direct (rien n'est ecrit sur le disque)
+    # apercu en direct (rien n'est ecrit sur le disque) ; `object` : le dict passe tel quel (en `dict`, Qt le
+    # convertissait a chaque tick, ~8 ms pour tous les reglages : apercu saccade, signale le 2026-11-10)
+    settingsChanged = Signal(object)
     settingsSaved = Signal(dict)       # apres Enregistrer
     moduleSettingsRequested = Signal(str)   # fenetre generale : bouton d'un module (cle de MODULE_SCOPES)
     themeEditorRequested = Signal()         # fenetre generale : bouton « Thème » (editeur fm_theme)
@@ -3384,7 +3667,7 @@ class SettingsWindowV2(QDialog):
         self._last_slider_sig = None
         # Apercu en direct : regroupe les rafales (glisser un curseur) comme l'ancienne fenetre.
         self._live_timer = QTimer(self)
-        self._live_timer.setInterval(30)
+        self._live_timer.setInterval(LIVE_MIN_MS)
         self._live_timer.setSingleShot(True)
         self._live_timer.timeout.connect(self._flush_live)
         # Aspect change dans l'editeur fm_theme (`follow_theme`) : regroupe, cadence adaptee a son cout.
@@ -3532,14 +3815,20 @@ class SettingsWindowV2(QDialog):
             return
         if self.isVisible():
             _save_window_geometry(bytes(self.saveGeometry().toBase64()).decode("ascii"), self._geometry_key())
-        dims = dict(self.settings.get("table_dims") or {})
         dirty, self._dims_dirty = getattr(self, "_dims_dirty", set()), set()
+        updates = {}
         for frame in dirty:
             try:
                 if frame._dims_applied:      # un tableau jamais affiche n'a pas encore ses dimensions
-                    dims[frame.dimsKey()] = frame.collectDims()
+                    updates[frame.dimsKey()] = frame.collectDims()
             except RuntimeError:             # tableau detruit depuis
                 pass
+        dims = dict(self.settings.get("table_dims") or {})
+        if updates:
+            # Seuls les tableaux modifies, sur ce qui est DEJA sur le disque : avant, toute la copie prise a
+            # l'ouverture etait reecrite, et une autre fenetre (fm_theme lance a part, fm_browser) effacait les
+            # largeurs que l'on venait d'enregistrer (signale : tableaux de la barre de navigation, 2026-11-07).
+            dims = {**(load_settings().get("table_dims") or {}), **updates}
         dims.pop(ROW_TEMPLATES_KEY, None)          # gabarits de lignes : dans le preset fm_theme (_save_row_templates)
         if dims != (self.settings.get("table_dims") or {}):
             rows = _TABLE_DIMS.get(ROW_TEMPLATES_KEY)
@@ -3564,7 +3853,7 @@ class SettingsWindowV2(QDialog):
             unique, n = f"{name} ({n})", n + 1
         return unique
 
-    def add_toggle_style(self, name: str) -> str:
+    def add_toggle_style(self, name: str, source: str | None = None) -> str:
         """Cree un style de toggle (reglages copies sur le style par defaut, enregistres tout de suite),
         sa sous-section Toggles > <nom> (Type, État OFF, État ON) et sa carte dans le choix du style."""
         styles = toggle_style_list(self.settings)
@@ -3575,7 +3864,7 @@ class SettingsWindowV2(QDialog):
         key = f"toggle{number}"
         name = self._unique_toggle_name(name)
         current = self.current_values()
-        source = current.get("toggle_style")
+        source = source or current.get("toggle_style")             # copie du style donné (volet des variantes)
         source = source if source in {s["key"] for s in styles} else styles[0]["key"]
         partial = {f"{key}_{k[len(source) + 1:]}": copy.deepcopy(v)
                    for k, v in current.items() if k.startswith(f"{source}_")}
@@ -3900,19 +4189,20 @@ class SettingsWindowV2(QDialog):
         if left > 0:
             self._live_timer.start(left + 8)
             return
-        self._live_timer.setInterval(30)
+        self._live_timer.setInterval(LIVE_MIN_MS)
         values = self.wired_values()                  # une seule lecture des champs
         merged = dict(self.settings)
         merged.update(values)
         self._color_help.settings = merged
-        snapshot = json.dumps(merged, sort_keys=True, default=str)
-        if snapshot == self._last_live_snapshot:       # rien n'a reellement change : on n'embete personne
+        # Valeurs des champs de l'apercu precedent (un dict : la copie JSON de TOUS les reglages, faite et relue a
+        # chaque tick, coutait ~4 ms)
+        if values == self._last_live_snapshot:         # rien n'a reellement change : on n'embete personne
             return
-        previous, self._last_live_snapshot = self._last_live_snapshot, snapshot
+        previous, self._last_live_snapshot = self._last_live_snapshot, values
         start = time.perf_counter()
         # Seulement ce qui a CHANGE depuis l'apercu precedent (ou depuis l'ouverture) : au premier changement,
         # toutes les familles etaient rejouees (tableaux : ~2 s sur une fenetre entierement construite).
-        base = json.loads(previous) if previous else self._original_settings
+        base = previous if previous is not None else self._original_settings
 
         changed = {k: v for k, v in values.items() if v != base.get(k)}
         self._apply_look(merged, changed)
@@ -3924,7 +4214,7 @@ class SettingsWindowV2(QDialog):
         # Cadence ADAPTEE au cout de l'apercu : au moins autant de temps libre que de travail, sinon un
         # glisser (couleur, curseur) n'a plus la main et l'interface rame (signale).
         spent = int((time.perf_counter() - start) * 1000)
-        self._live_timer.setInterval(max(30, 2 * spent))
+        self._live_timer.setInterval(max(LIVE_MIN_MS, 2 * spent))
 
     # -- restylages de la fenetre elle-meme (equivalents de SettingsWindow._apply_*) --
 
@@ -4280,7 +4570,7 @@ class SettingsWindowV2(QDialog):
                     failed.add(id(spec))        # Spec : dict dedans, pas hachable
         self._live_timer.stop()
         self._show_dirty(was_dirty)
-        self._last_live_snapshot = json.dumps(self.current_values(), sort_keys=True, default=str)
+        self._last_live_snapshot = self.wired_values()
         return failed
 
     def _on_save(self):
@@ -4558,6 +4848,8 @@ class SettingsWindowV2(QDialog):
 
     def _build_page(self, label: str, title: str | None) -> QWidget:
         page = QWidget(self.stack)
+        if label in STANDALONE_TABS:
+            page._dims_scope = label       # cles des tableaux propres a l'onglet (_TableFrame.dimsKey)
         page.setStyleSheet(f"background: {M['panel_bg']};")
         outer = QVBoxLayout(page)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -4596,6 +4888,12 @@ class SettingsWindowV2(QDialog):
             self._make_title_stack(inner, sections, top_key)
         lay.addStretch(1)
         scroller.setWidget(inner)
+        if title is None and sections:
+            # Titres FIXES a gauche, parametres de la section ouverte dans un volet a droite (onglet ouvert dans un
+            # panneau) : TOUTES les fenetres de reglages, comme l'editeur fm_theme (demande de l'utilisateur,
+            # 2026-11-08). Import local : theme_side_detail importe ce module.
+            from theme_side_detail import SideDetail
+            page._side_detail = SideDetail(scroller, sections)
         self._apply_saved_spaces()
         self._apply_toggle_styles()
         import settings_element_style

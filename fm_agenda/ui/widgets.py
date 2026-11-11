@@ -7,6 +7,7 @@ from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QAbstractButton, QHBoxLayout, QLineEdit, QSizePolicy, QWidget
 
+from fm_theme.placeholder import ink as _placeholder_ink
 from . import theme as th
 
 
@@ -53,6 +54,7 @@ def brighter(c: QColor, factor: float = 1.12) -> QColor:
 
 def draw_icon(p: QPainter, kind: str, rect: QRectF, color: QColor, width: float = 1.6) -> None:
     """Icônes du design (viewBox 16 × 16) mises à l'échelle de `rect`."""
+    color = _placeholder_ink(color)                     # icone dessinee par le code : magenta (provisoire)
     s = min(rect.width(), rect.height()) / 16.0
     ox = rect.x() + (rect.width() - 16 * s) / 2
     oy = rect.y() + (rect.height() - 16 * s) / 2
