@@ -52,5 +52,4 @@ TABLEUR_TREE = (
     Node("Saisie", "Tableur : Saisie"),
     Node("Formules et nombres", "Tableur : Formules et nombres"),
     Node("Couleurs", "Tableur : Couleurs"),
-    Node("Icônes", "Tableur : Icônes"),          # lignes : fm_board/settings.py (ICON_GROUPS_BY_MODULE)
 )

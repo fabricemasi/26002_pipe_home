@@ -253,37 +253,6 @@ def variables(values: dict) -> dict:
     out["--md-code-file-bg"] = color("md_code_file_bg")
     out["--md-gutter-color"] = color("md_gutter_color", "inherit")
     out["--md-gutter-bg"] = color("md_gutter_bg")
-    # Barre d'outils
-    out["--md-toolbar-bg"] = color("md_toolbar_bg")
-    out["--md-toolbar-icon-color"] = color("md_toolbar_icon_color", "currentColor")
-    out["--md-toolbar-icon-size"] = px("md_toolbar_icon_size")
-    out["--md-toolbar-button-size"] = px("md_toolbar_button_size")
-    out["--md-toolbar-radius"] = _radius(_get(v, "md_toolbar_radius"))
-    out["--md-toolbar-hover-bg"] = color("md_toolbar_hover_bg")
-    out["--md-toolbar-active-bg"] = color("md_toolbar_active_bg")
-    out["--md-toolbar-button-radius"] = _radius(_get(v, "md_toolbar_button_radius"))
-    out["--md-toolbar-padding"] = _box(_get(v, "md_toolbar_padding"))
-    out["--md-toolbar-margin"] = _box(_get(v, "md_toolbar_margin"))
-    sides = _get(v, "md_toolbar_shadow_enabled") or {}
-    colors = _get(v, "md_toolbar_shadow") or {}
-    try:
-        shadow_size = max(0, _int(_get(v, "md_toolbar_shadow_size")))
-    except (TypeError, ValueError):
-        shadow_size = 0
-    shadows = []
-    if shadow_size and isinstance(sides, dict):
-        for side, (x, y) in {"top": (0, -1), "right": (1, 0), "bottom": (0, 1), "left": (-1, 0)}.items():
-            if sides.get(side):
-                value = colors.get(side, "#8c000000") if isinstance(colors, dict) else colors
-                shadows.append(f"{x * shadow_size}px {y * shadow_size}px {shadow_size}px {css_color(value)}")
-    out["--md-toolbar-shadow"] = ", ".join(shadows) if shadows else "none"
-    out["--md-toolbar-gap"] = px("md_toolbar_gap")
-    _border(v, "md_toolbar_border_enabled", out, "toolbar")
-    # Marge haute nulle : le filet superieur est dessine sur le bord bas de la barre de navigation (widget Qt),
-    # afin que les deux filets occupent la meme ligne au lieu d'en afficher deux l'un sous l'autre.
-    if not any(_sides(_get(v, "md_toolbar_margin")).values()):
-        out["--md-toolbar-border-top"] = "0 solid transparent"
-    out["--md-toolbar-justify"] = "center" if _get(v, "md_toolbar_centered") else "flex-start"
     return out
 
 
@@ -305,6 +274,13 @@ def css_variables(values: dict) -> str:
 VARS_SELECTOR = ":root, body, .markdown-reading-view, .markdown-preview-view, .markdown-source-view"
 
 
+def spell_words(values: dict) -> list[str]:
+    """Dictionnaire personnel de l'orthographe (`md_spell_words`) : mots non vides, sans doublon."""
+    raw = _get(values or {}, "md_spell_words")
+    words = [str(w).strip() for w in raw if str(w).strip()] if isinstance(raw, (list, tuple)) else []
+    return list(dict.fromkeys(words))
+
+
 def page_options(values: dict) -> dict:
     """Options de comportement lues par la page (pas d'apparence)."""
     v = values or {}
@@ -312,7 +288,10 @@ def page_options(values: dict) -> dict:
         "livePreview": bool(_get(v, "md_live_preview")),
         "toolbar": bool(_get(v, "md_toolbar_enabled")),
         "lineNumbers": bool(_get(v, "md_line_numbers")),
+        "noteLineNumbers": bool(_get(v, "md_note_line_numbers")),
         "wrapCode": bool(_get(v, "md_code_wrap")),
+        "spellcheck": bool(_get(v, "md_spellcheck")),
+        "spellWords": spell_words(v),
         "tabSize": max(1, min(16, _int(_get(v, "md_tab_size"), 4))),
     }
 

@@ -25,6 +25,10 @@ TEXT_EXTENSIONS = {
 }
 MARKDOWN_EXTENSIONS = {".md", ".markdown"}
 
+# Dictionnaires d'orthographe (fm_markdown/spell.py) : QtWebEngine lit ce dossier à sa première utilisation.
+import os as _os  # noqa: E402
+_os.environ.setdefault("QTWEBENGINE_DICTIONARIES_PATH", str(PACKAGE_DIR / "dictionaries"))
+
 
 def web_dir() -> Path:
     return PACKAGE_DIR / "web"

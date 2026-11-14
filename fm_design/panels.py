@@ -320,9 +320,8 @@ def text_style_button(ctl, style, tip, parent, name=""):
         " · gras" if style.get("bold") else "")
     button = _wide_button(f"{name} — {label}" if name else label, tip,
                           lambda _c=False, st=style: apply_text_style(ctl, st), parent)
-    button.setStyleSheet(f"color: {style['color']}; font-family: '{style['font_family']}';"
-                         if QColor(style.get("color") or dm.INK).lightness() > 60 else
-                         f"font-family: '{style['font_family']}';")
+    # Police du style montrée (c'est l'APERÇU du style) ; tout le reste, couleur comprise : fm_theme (2026-11-12).
+    button.setStyleSheet(f"font-family: '{style['font_family']}';")
     return button
 
 

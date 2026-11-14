@@ -10,6 +10,7 @@ from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate
 
 from fm_theme.placeholder import MAGENTA
+from fm_theme.icon_frame import on_change as _on_icon_margin, paint_framed
 from app_style import scaled
 import previews
 
@@ -190,6 +191,7 @@ class _GalleryDelegate(QStyledItemDelegate):
 
 
 _FLAG_PIXMAPS: dict = {}       # (statut, cote px) -> icone du drapeau (fichiers PNG lourds : lus une fois)
+_on_icon_margin(_FLAG_PIXMAPS.clear)                 # marge des icones changee : refaites
 
 
 def _flag_pixmap(status: str, side: int) -> QPixmap | None:
@@ -202,8 +204,7 @@ def _flag_pixmap(status: str, side: int) -> QPixmap | None:
     if key not in _FLAG_PIXMAPS:
         icon_path = _StatusFlags.ICONS.get(status, ("", ""))[0]
         pix = QPixmap(icon_path) if icon_path else QPixmap()
-        _FLAG_PIXMAPS[key] = None if pix.isNull() else pix.scaled(side, side, Qt.KeepAspectRatio,
-                                                                   Qt.SmoothTransformation)
+        _FLAG_PIXMAPS[key] = None if pix.isNull() else previews._contain_square(pix, side)   # cadre des icones
     return _FLAG_PIXMAPS[key]
 
 
@@ -285,9 +286,13 @@ def _paint_star(painter: QPainter, rect: QRect, lit: bool, preview: bool = False
         color.setAlpha(120)                 # etoile vide : contour discret mais visible sur la photo
     if preview:
         color.setAlpha(150)
-    painter.setPen(QPen(color, 1.2))
-    painter.setBrush(color if lit else Qt.NoBrush)
-    painter.drawPolygon(_star_polygon(rect.center().x() + 0.5, rect.center().y() + 0.5, rect.height() * 0.4))
+
+    def draw(p: QPainter, r: QRectF) -> None:
+        p.setPen(QPen(color, 1.2))
+        p.setBrush(color if lit else Qt.NoBrush)
+        p.drawPolygon(_star_polygon(r.center().x(), r.center().y(), r.height() * 0.4))
+    # Cadre des icones (Theme > General > Marge des icones).
+    paint_framed(painter, QRectF(rect).translated(0.5, 0.5), draw, key=("viewer-star", lit, preview))
 
 
 def _paint_flag(painter: QPainter, rect: QRect, status: str, dim: bool = False):
@@ -300,8 +305,10 @@ def _paint_flag(painter: QPainter, rect: QRect, status: str, dim: bool = False):
     if pix is not None:
         painter.drawPixmap(rect.adjusted(scaled(1), scaled(1), -scaled(1), -scaled(1)), pix)
     else:
-        painter.setPen(QColor(MAGENTA))                 # repli dessine par le code : magenta (provisoire)
-        painter.drawText(rect, Qt.AlignCenter, "✓" if status == "keep" else "✕")
+        def draw(p: QPainter, r: QRectF) -> None:
+            p.setPen(QColor(MAGENTA))                   # repli dessine par le code : magenta (provisoire)
+            p.drawText(r, Qt.AlignCenter, "✓" if status == "keep" else "✕")
+        paint_framed(painter, QRectF(rect), draw, key=("viewer-flag", status))   # cadre des icones
     painter.restore()
 
 

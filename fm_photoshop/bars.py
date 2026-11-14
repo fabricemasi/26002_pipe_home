@@ -18,6 +18,7 @@ from PySide6.QtCore import QEvent, QRect, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF
 
 from fm_theme.placeholder import ink as _placeholder_ink
+from fm_theme.icon_frame import framed as _framed
 from fm_theme.palette import PaletteButton, PaletteInputBar, PaletteSelectBar, PaletteTextButton
 
 # -- Disposition par défaut ----------------------------------------------------------------------------------------------
@@ -273,6 +274,7 @@ GLYPHS = {"brush": _g_brush, "eraser": _g_eraser, "eyedropper": _g_eyedropper, "
           "dodge": _g_dodge, "burn": _g_burn, "swap": _g_swap}
 
 
+@_framed("photoshop")                                 # cadre des icones (fm_theme > General > Marge des icones)
 def paint_tool(painter: QPainter, tool: str, rect: QRectF, color: QColor) -> None:
     """Icône d'un outil : dessinée dans une grille de 24 unités, traits arrondis de la couleur d'icône de la barre."""
     color = _placeholder_ink(color)                     # icone dessinee par le code : magenta (provisoire)
@@ -301,6 +303,8 @@ class PsTool(PaletteButton):
 
     def __init__(self, tool: str, tip: str, parent=None):
         super().__init__(tool, tip, lambda p, r, c, t=tool: paint_tool(p, t, r, c), parent)
+        if tool == "brush":
+            self.set_library_icon("modules/photoshop/pinceau_03")
         self.tool = tool
 
     def isChecked(self) -> bool:

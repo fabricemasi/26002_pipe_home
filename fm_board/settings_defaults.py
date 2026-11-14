@@ -47,7 +47,7 @@ BOARD_DEFAULTS: dict[str, Any] = {
     "board_modulebar_bg_color": "#16181a", "board_modulebar_border_color": "#2a2e32",
     "board_modulebar_icon_size": 36, "board_modulebar_button_size": 24, "board_modulebar_spacing": 4,
     "board_modulebar_padding": 6, "board_modulebar_row_radius": 8, "board_modulebar_row_color": "#22242a",
-    "board_modulebar_active_alpha": 18, "board_modulebar_hover_color": "#232729",
+    "board_modulebar_active_alpha": 18, "board_modulebar_active_border": 1, "board_modulebar_hover_color": "#232729",
     "board_modulebar_ink_color": "#d7d9de", "board_modulebar_dim_color": "#8b8e96",
     "board_modulebar_off_color": "#5a5d64", "board_modulebar_fade_color": "#9a9ca3",
     "board_modulebar_solo_color": "#f3c46b", "board_modulebar_tool_color": "#a4a6ad",
@@ -60,6 +60,13 @@ BOARD_DEFAULTS: dict[str, Any] = {
     "board_modulebar_color_design": "#4fd1c5", "board_modulebar_color_tableur": "#7bd88f",
     "board_modulebar_color_illustrator": "#f08bb4", "board_modulebar_color_photoshop": "#5aa9e6",
     "board_modulebar_color_pdf": "#e0604f",
+    # Espace autour de l'icone de chaque module dans la barre de selection (px a la taille 36 ; suit la taille), regle
+    # sur la ligne de son icone (Barre de selection > Icones, colonne Marge ; demande du 2026-11-13).
+    **{f"board_modulebar_icon_pad_{m}": 3 for m in ("miro", "cad", "design", "tableur", "illustrator", "photoshop",
+                                                       "pdf")},
+    # Toggle de la meme ligne : icone teintee de la couleur du module (sinon ses propres couleurs).
+    **{f"board_modulebar_icon_tint_{m}": False for m in ("miro", "cad", "design", "tableur", "illustrator",
+                                                           "photoshop", "pdf")},
     # Module Design : kit de marque PARTAGÉ entre tous les boards (état temps réel) : couleurs et polices favorites.
     "board_design_brand": {"colors": [], "fonts": [], "logos": [], "styles": []},
     # Grille unique du board et du CAD (Reglages > Module MRO > Grille) : pas en centiemes, intensite en dixiemes de %

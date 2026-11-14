@@ -232,7 +232,8 @@ class CompatibilityTest(BoardCase):
             self.assertEqual(cell_value(item.session.book, item.session.sheet, 0, 1), 2)
         other._set_dirty(True)
         self.assertTrue(other.save())
-        again = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(other.path, path.with_suffix(".brd"))      # ancien `.mro` renommé en `.brd` à l'enregistrement
+        again = json.loads(other.path.read_text(encoding="utf-8"))
         sheet = [i for i in again["items"] if i["id"] == "t1"][0]
         self.assertEqual(sheet["futur"], 7)
         self.assertEqual(sheet["workbook"]["cle_future"], {"x": 1})
@@ -290,9 +291,10 @@ class ExplorerFileTest(BoardCase):
 class SettingsTest(BoardCase):
     def test_rows_declared_and_applied_live(self):
         import settings_store
+        import fm_board.settings  # noqa: F401 - inscrit les sections « Icônes » des modules (ICON_GROUPS_BY_MODULE)
         from fm_tableur.settings import TABLEUR_TREE
         from settings_catalog import CATALOG
-        keys = {spec.key for node in TABLEUR_TREE for spec in CATALOG[node.group]}
+        keys = {spec.key for node in TABLEUR_TREE for spec in CATALOG[node.group] if spec.kind != "ui_icon"}  # lignes « Icônes » (ui_icon) : icônes perso, pas des réglages
         self.assertIn("tableur_formula_lang", keys)
         self.assertIn("tableur_font_family", keys)
         self.assertTrue(keys <= set(settings_store.DEFAULT_SETTINGS))       # clés déclarées (sinon ignorées)

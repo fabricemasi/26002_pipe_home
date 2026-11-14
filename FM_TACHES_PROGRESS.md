@@ -5,8 +5,7 @@ Plan et décisions : `docs/agents/fm_taches.md`.
 ## Phase actuelle
 
 Mission TERMINÉE (2026-11-11). Phase 5 (Apple Rappels) annulée par l'utilisateur. Restent à faire PAR
-L'UTILISATEUR : connexion Google réelle (étapes : `docs/agents/fm_taches.md`, « Connecter Google Tasks ») et mesure de
-volume à temps perdu (`fluidite.bat`, ligne de `docs/agents/a_mesurer.md`).
+L'UTILISATEUR : mesure de volume à temps perdu (`fluidite.bat`, ligne de `docs/agents/a_mesurer.md`).
 
 ## Phases
 

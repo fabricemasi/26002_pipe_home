@@ -1293,15 +1293,23 @@ class MroIconsTest(_PaneCase):
         self.assertIn("ui_board_lock", keys)
         self.assertNotIn("ui_board_design_present", keys)                # chaque module a SA section « Icônes »
         self.assertIn(("Icônes", "MRO : Icones"), [(n.title, n.group) for n in v2.MRO_TREE])
-        for tree, group, key in ((v2.BOARD_TREE, "Board : Icônes", "ui_board_solo"),
-                                 (v2.DESIGN_TREE, "Design : Icônes", "ui_board_design_present"),
-                                 (v2.TABLEUR_TREE, "Tableur : Icônes", "ui_board_tableur"),
-                                 (v2.ILL_TREE, "Illustrator : Icônes", "ui_board_ill_pen"),
-                                 (v2.PS_TREE, "Photoshop : Icônes", "ui_board_photoshop")):
+        bar = "Board : Barre de sélection : Icônes"            # toute la barre des modules (demande du 2026-11-13)
+        sel = next(n for n in v2.BOARD_TREE if n.title == "Barre de sélection")
+        self.assertIn(("Icônes", bar), [(n.title, n.group) for n in sel.children])
+        bar_keys = [spec.params["ui_key"] for spec in v2.CATALOG[bar] if spec.kind == "ui_icon"]
+        for module in ("miro", "cad", "design", "tableur", "illustrator", "photoshop", "pdf"):
+            self.assertIn(f"ui_board_{module}", bar_keys)
+        self.assertIn("ui_board_solo", bar_keys)
+        self.assertNotIn("Icônes", [n.title for n in v2.BOARD_TREE])
+        self.assertNotIn("Icônes", [n.title for n in v2.TABLEUR_TREE] + [n.title for n in v2.PS_TREE])
+        self.assertIn(bar, v2.ICON_GROUPS)
+        for tree, group, key in ((v2.DESIGN_TREE, "Design : Icônes", "ui_board_design_present"),
+                                 (v2.ILL_TREE, "Illustrator : Icônes", "ui_board_ill_pen")):
             self.assertIn(("Icônes", group), [(n.title, n.group) for n in tree])
             self.assertIn(key, {spec.params["ui_key"] for spec in v2.CATALOG[group]})
             self.assertIn(group, v2.ICON_GROUPS)
-        every = [spec.params["ui_key"] for g in __import__("fm_board.settings", fromlist=["x"]).ICON_GROUPS_BY_MODULE for spec in v2.CATALOG[g]]
+        every = [spec.params["ui_key"] for g in __import__("fm_board.settings", fromlist=["x"]).ICON_GROUPS_BY_MODULE for spec in v2.CATALOG[g]
+                 if spec.kind == "ui_icon"]
         self.assertEqual(len(every), len(set(every)))                    # aucune icone dans deux sections
         self.assertEqual(set(every), {f"ui_board_{kind}" for kind, _label in model.ICON_ROWS})
         # Ouverture, Navigation, Grille : onglet Board (venues de MRO)

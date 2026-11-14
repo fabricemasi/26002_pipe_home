@@ -31,6 +31,7 @@ def fill_object_menu(ctl, menu):
     menu.addSeparator()
     add("Joindre (Ctrl+J)", ctl.join_selection, has)
     add("Vectoriser le contour", ctl.outline_stroke, has)
+    add("Convertir en tracés CAD", ctl.convert_to_cad, bool(ctl.shapes()))
     add("Décomposer l'aspect", ctl.expand_appearance, has)
     has_image = any(type(i).__name__ == "IllImageItem" for i in items)
     add("Recadrer l'image (masque)", ctl.crop_with_mask, has_image)
@@ -95,7 +96,8 @@ def transform_menu(ctl, menu, has: bool):
 
 def trace_menu(ctl, menu, enabled: bool):
     """Vectoriser l'image : préréglages (noms d'Illustrator) et réglages par curseurs (seuil, couleurs, détail,
-    fidélité, bruit, angles), comme le panneau Vectorisation de l'image."""
+    précision, bruit, angles, lissage), comme le panneau Vectorisation de l'image. Un préréglage change le mode et
+    les couleurs, et garde les réglages fins choisis (détail, précision, bruit, angles, lissage)."""
     from settings_menu import menu_row
     from fm_board.ui import _slider
     from . import trace as tr
@@ -103,18 +105,18 @@ def trace_menu(ctl, menu, enabled: bool):
     sub.setEnabled(enabled)
     for key, (label, _values) in tr.PRESETS.items():
         sub.addAction(label).triggered.connect(lambda _c=False, k=key: (
-            ctl.trace_settings.update(tr.settings_for(k, detail=ctl.trace_settings["detail"],
-                                                      fidelity=ctl.trace_settings["fidelity"],
-                                                      noise=ctl.trace_settings["noise"])),
+            ctl.trace_settings.update(tr.settings_for(k, **{name: ctl.trace_settings[name] for name in tr.FINE_KEYS
+                                                            if name in ctl.trace_settings})),
             ctl.trace_image()))
     sub.addSeparator()
     s = ctl.trace_settings
     for key, label, low, high, unit, k in (("threshold", "Seuil (noir et blanc)", 0, 255, "", 1),
                                            ("colors", "Couleurs", 2, 30, "", 1),
                                            ("detail", "Détail (px)", 100, 1500, "px", 1),
-                                           ("fidelity", "Fidélité (dixièmes de px)", 3, 50, "", 10),
+                                           ("fidelity", "Précision : écart max (dixièmes de px)", 2, 50, "", 10),
                                            ("noise", "Bruit (px²)", 0, 400, "", 1),
-                                           ("corner", "Angles (°)", 10, 170, "°", 1)):
+                                           ("corner", "Angles : virage mini (°)", 10, 170, "°", 1),
+                                           ("smooth", "Lissage (dixièmes de px)", 0, 30, "", 10)):
         slider = _slider(low, high, round(float(s[key]) * k), unit=unit)
         slider.valueChanged.connect(lambda v, key=key, k=k: s.update({key: v / k if k != 1 else v}))
         menu_row(sub, label, slider)

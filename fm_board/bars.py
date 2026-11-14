@@ -23,6 +23,22 @@ from fm_theme.palette import PaletteButton, PaletteTextButton
 from . import model
 from . import ui as _ui
 
+_ICONES_OUTILS = {
+    "sticky": "modules/miro/note_adhesive_03",
+    "cad_fillet": "modules/cad/conge_03",
+    "cad_erase": "modules/cad/gomme_01",                # « Effacer (E, Suppr) » de la barre Modification du CAD
+    "ill_pen": "modules/illustrator/plume_03",
+    "design_templates": "modules/design/grille_composition_03",
+    "design_delete": "general/supprimer_02",            # « Supprimer (Suppr) » de la barre contextuelle Design
+}
+
+
+def library_icon_for(kind: str) -> str | None:
+    """Icône du catalogue d'un genre de bouton du board (outil ou emblème de module) : UNE table, lue par les barres
+    et par les aperçus de la liste ICÔNES des réglages (settings_v2_app._default_glyph)."""
+    from .modulebar import MODULE_EMBLEMS
+    return _ICONES_OUTILS.get(kind) or MODULE_EMBLEMS.get(kind)
+
 
 def format_percent(zoom: float) -> str:
     return _ui.format_zoom(zoom)
@@ -38,6 +54,13 @@ class BoardTool(PaletteButton):
         self.kind = kind
         self._swatch = None
         self._ring = None
+        if kind in _ICONES_OUTILS:
+            self.set_library_icon(_ICONES_OUTILS[kind])
+
+    def _paint_library_icon(self, painter, rect, color):
+        if _ui.custom_icon(self.kind, int(rect.width())) is not None:
+            return False
+        return super()._paint_library_icon(painter, rect, color)
 
     def set_on(self, on: bool) -> None:
         self.set_active(on)

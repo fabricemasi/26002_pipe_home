@@ -192,18 +192,21 @@ def paper_size(data: dict) -> tuple[float, float] | None:
 
 
 # Boutons dont l'icone se regle (cle d'icone `ui_board_<genre>`) : UNE section « Icônes » PAR MODULE dans la fenetre
-# « Réglages : Board » (demande de l'utilisateur 2026-11-05 : plus de tableau global). Onglet Board : la barre de
-# selection des modules ; onglet MRO : outils et barres du canvas ; chaque autre module : son bouton dans la barre de
-# selection et ses propres outils. CAD : `CAD_ICON_ROWS` plus bas.
+# « Réglages : Board » (demande de l'utilisateur 2026-11-05 : plus de tableau global) avec SES outils ; TOUTE la barre
+# de selection des modules (icone de chaque module, boutons) dans Board > Barre de selection > Icones (demande du
+# 2026-11-13 : les icones des modules, dispersees dans les onglets des modules, etaient introuvables).
+# CAD : `CAD_ICON_ROWS` plus bas.
 BOARD_ICON_ROWS = [
+    ("miro", "Module MRO"), ("cad", "Module CAD"), ("design", "Module Design"), ("tableur", "Module Tableur"),
+    ("illustrator", "Module Illustrator"), ("photoshop", "Module Photoshop"), ("pdf", "Module PDF"),
     ("show", "Modules : éléments affichés"), ("hide", "Modules : éléments masqués"),
     ("fade", "Modules : griser les éléments"), ("solo", "Modules : isoler les éléments"),
     ("modules_reset", "Modules : tout afficher, sortir de l'isolation"),
     ("modules_fold", "Modules : replier la barre"), ("modules_unfold", "Modules : déplier la barre"),
     ("solo_exit", "Modules : quitter l'isolation (barre étroite)"),
+    ("modules_bg", "Modules : couleur de fond de la vue"),
 ]
 MRO_ICON_ROWS = [
-    ("miro", "Module MRO (sélecteur de modules du board)"),
     ("select", "Outil Sélection"), ("hand", "Outil Main"), ("sticky", "Outil Post-it"), ("text", "Outil Texte"),
     ("shape", "Outil Formes"), ("connector", "Outil Connecteur"), ("draw", "Outil Dessin"),
     ("comment", "Commentaire"), ("frame", "Outil Cadre"), ("image", "Image depuis un fichier"),
@@ -218,16 +221,14 @@ MRO_ICON_ROWS = [
     ("close", "Fermer le fil de commentaire"),
 ]
 DESIGN_ICON_ROWS = [
-    ("design", "Module Design (sélecteur de modules du board)"),
     ("design_templates", "Design : modèles et formats"), ("design_elements", "Design : éléments"),
     ("design_text", "Design : texte"), ("design_images", "Design : images"),
     ("design_layers", "Design : position et calques"), ("design_export", "Design : exporter"),
     ("design_present", "Design : présenter"), ("design_add_page", "Design : ajouter une page"),
 ]
-TABLEUR_ICON_ROWS = [("tableur", "Module Tableur (sélecteur de modules du board)")]
+TABLEUR_ICON_ROWS = []          # son icone : barre de selection (BOARD_ICON_ROWS)
 # Module Illustrator (fm_illustrator/glyphs.py) : outils et barre de controle.
 ILL_ICON_ROWS = [
-    ("illustrator", "Module Illustrator (sélecteur de modules du board)"),
     ("ill_select", "Illustrator : Sélection"), ("ill_direct", "Illustrator : Sélection directe"),
     ("ill_pen", "Illustrator : Plume"), ("ill_add_anchor", "Illustrator : Ajout de point"),
     ("ill_delete_anchor", "Illustrator : Suppression de point"),
@@ -245,14 +246,13 @@ ILL_ICON_ROWS = [
     ("ill_align", "Illustrator : aligner et répartir"), ("ill_fx", "Illustrator : effets et aspect"),
     ("ill_layers", "Illustrator : calques"), ("ill_export", "Illustrator : exporter / importer"),
 ]
-PS_ICON_ROWS = [("photoshop", "Module Photoshop (sélecteur de modules du board)")]
+PS_ICON_ROWS = []               # son icone : barre de selection (BOARD_ICON_ROWS)
 # Toutes les icones reglables hors CAD (boutons du board qui lisent `ui_board_<genre>`).
 ICON_ROWS = BOARD_ICON_ROWS + MRO_ICON_ROWS + DESIGN_ICON_ROWS + TABLEUR_ICON_ROWS + ILL_ICON_ROWS + PS_ICON_ROWS
 
 # Icones du module CAD (Reglages : Board > CAD > Icones ; meme cle d'icone `ui_board_<genre>`) : barre d'outils CAD,
 # bouton « Mode CAD » du board, gestion, historique de la barre de commande. Les menus du CAD n'ont pas d'icone.
 CAD_ICON_ROWS = [
-    ("cad", "Module CAD (sélecteur de modules du board)"),
     ("cad_line", "Dessin : ligne"), ("cad_pline", "Dessin : polyligne"), ("cad_circle", "Dessin : cercle"),
     ("cad_arc", "Dessin : arc"), ("cad_rect", "Dessin : rectangle"), ("cad_hatch", "Dessin : hachures"),
     ("cad_polygon", "Dessin : polygone"), ("cad_ellipse", "Dessin : ellipse"), ("cad_point", "Dessin : point"),

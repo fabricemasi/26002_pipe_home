@@ -96,7 +96,7 @@ class PlaceholderIconTest(unittest.TestCase):
     def test_software_badge_is_magenta_but_a_loaded_icon_is_untouched(self):
         from browser_core_parts import icons
         badge = icons._generate_software_badge("MAYA", 32).toImage()
-        self.assertTrue(_magenta(badge.pixelColor(3, 16)))
+        self.assertTrue(_magenta(badge.pixelColor(9, 16)))      # bord gauche du badge (marge des icônes : 20 %)
 
         folder = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, folder, True)

@@ -496,6 +496,11 @@ class DesignController(QObject):
                                     ("Dupliquer (Ctrl+D)", self.duplicate_selected, has),
                                     ("Supprimer (Suppr)", self.delete_selected, has)):
             a = m.addAction(text)
+            if slot == self.delete_selected:
+                from fm_theme import icon_library
+                style = icon_library.style_affiche()
+                a.setIcon(icon_library.icone_cadree("general/supprimer_02", 16, self.view.devicePixelRatioF(), style=style,
+                                                    teinte=None if style == icon_library.COULEUR else icon_library.encre_defaut()))
             a.setEnabled(enabled)
             a.triggered.connect(slot)
         m.addSeparator()

@@ -210,6 +210,7 @@ class _VideoView(QWidget):
 
 
 from detail_panel_parts.resize import ResizeMixin
+from fm_theme.style import theme_button
 from detail_panel_parts.preview_controls import PreviewControlsMixin
 from detail_panel_parts.info_table import InfoTableMixin
 from detail_panel_parts.markdown import MarkdownMixin
@@ -318,11 +319,7 @@ class DetailPanel(
         self.open_render_log_button.setToolTip("Ouvrir le journal des rendus automatiques")
         self.open_render_log_button.setCursor(Qt.PointingHandCursor)
         self.open_render_log_button.setFixedHeight(scaled(24))
-        self.open_render_log_button.setStyleSheet(
-            f"QPushButton {{ background: {C['btn']}; color: {C['text']}; border: 1px solid {C['btn_border']}; "
-            f"border-radius: 3px; padding: 0 7px; font-size: 10px; }}"
-            f"QPushButton:hover {{ background: {C['btn_hover']}; border-color: {C['btn_hover_bd']}; }}"
-        )
+        theme_button(self.open_render_log_button)           # aspect : fm_theme seul (2026-11-12)
         self.open_render_log_button.clicked.connect(self.open_preview_render_log)
         name_row_layout.addWidget(self.open_render_log_button)
 
@@ -335,12 +332,7 @@ class DetailPanel(
         for button in (self.pur_previous_button, self.pur_next_button):
             button.setCursor(Qt.PointingHandCursor)
             button.setFixedSize(scaled(28), scaled(24))
-            button.setStyleSheet(
-                f"QPushButton {{ background: {C['btn']}; color: {C['text']}; "
-                f"border: 1px solid {C['btn_border']}; border-radius: 3px; font-size: 16px; }}"
-                f"QPushButton:hover {{ background: {C['btn_hover']}; border-color: {C['btn_hover_bd']}; }}"
-                f"QPushButton:disabled {{ color: {C['dim']}; }}"
-            )
+            theme_button(button, compact=True)              # aspect : fm_theme seul (2026-11-12)
         self.pur_image_counter = QLabel("")
         self.pur_image_counter.setAlignment(Qt.AlignCenter)
         self.pur_image_counter.setStyleSheet(
@@ -536,36 +528,28 @@ class DetailPanel(
             "image": self.preview_image_button,
             "turntable": self.preview_turntable_button,
         }
-        media_button_style = (
-            f"QPushButton {{ background: {C['btn']}; color: {C['text']}; border: 1px solid {C['btn_border']}; "
-            "border-radius: 3px; padding: 0 6px; font-size: 9px; min-height: 18px; max-height: 18px; }"
-            f"QPushButton:hover {{ background: {C['btn_hover']}; border-color: {C['btn_hover_bd']}; }}"
-            f"QPushButton:checked {{ background: {M['accent']}; color: {M['accent_fg']}; border-color: {M['accent_border']}; }}"
-        )
+        # Aspect : celui des boutons de fm_theme (QSS commun), jamais un style local (2026-11-12). Coché = `QPushButton:checked` du thème.
         for media, button in self.preview_media_buttons.items():
             button.setCheckable(True)
             button.setCursor(Qt.PointingHandCursor)
-            button.setStyleSheet(media_button_style)
+            button.setFixedHeight(scaled(18))
+            theme_button(button)
             self.preview_media_group.addButton(button)
             button.clicked.connect(lambda _checked=False, selected=media: self._select_preview_media(selected))
             media_layout.addWidget(button)
-        self.lightroom_preview_button.setStyleSheet(media_button_style)
+        self.lightroom_preview_button.setFixedHeight(scaled(18))
+        theme_button(self.lightroom_preview_button)
         self.lightroom_preview_button.clicked.connect(self._request_lightroom_preview)
         self.preview_media_buttons["image"].setChecked(True)
         self.render_action_buttons = {}
-        render_button_style = (
-            f"QPushButton {{ background: {C['btn']}; color: {C['text']}; border: 1px solid {C['btn_border']}; "
-            "border-radius: 3px; padding: 0 6px; font-size: 9px; min-height: 18px; max-height: 18px; }"
-            f"QPushButton:hover {{ background: {C['btn_hover']}; border-color: {C['btn_hover_bd']}; }}"
-            f"QPushButton:disabled {{ color: {C['dim']}; }}"
-        )
         for media, mode, title in (("image", "low", "Image LOW"), ("image", "high", "Image HIGH"),
                                    ("turntable", "low", "Turntable LOW"),
                                    ("turntable", "high", "Turntable HIGH")):
             button = QPushButton(title, self.preview_controls_cell)
             button.setToolTip(f"Calculer {media} {mode.upper()} POLY")
             button.setCursor(Qt.PointingHandCursor)
-            button.setStyleSheet(render_button_style)
+            button.setFixedHeight(scaled(18))
+            theme_button(button)
             button.clicked.connect(lambda _checked=False, m=media, r=mode: self._render_preview_media(m, r))
             self.render_action_buttons[(media, mode)] = button
         self.render_protection_label = QLabel("PROTÉGER LE RENDU")
@@ -616,17 +600,12 @@ class DetailPanel(
         self.turntable_render_button = QPushButton("↻")
         self.turntable_render_button.setToolTip("Recalculer les 72 images du turntable")
         self.turntable_render_button.clicked.connect(self._render_turntable)
-        control_button_style = (
-            f"QPushButton {{ background: {C['btn']}; color: {C['text']}; border: 1px solid {C['btn_border']}; "
-            "border-radius: 3px; padding: 0; min-width: 26px; min-height: 24px; }"
-            f"QPushButton:hover {{ background: {C['btn_hover']}; border-color: {C['btn_hover_bd']}; }}"
-            f"QPushButton:disabled {{ color: {C['dim']}; }}"
-        )
         for button in (self.turntable_play_button, self.turntable_stop_button,
                        self.turntable_previous_button, self.turntable_next_button,
                        self.turntable_render_button):
             button.setCursor(Qt.PointingHandCursor)
-            button.setStyleSheet(control_button_style)
+            button.setMinimumSize(26, 24)
+            theme_button(button, compact=True)              # aspect : fm_theme seul (2026-11-12)
         turntable_controls_layout.addWidget(self.turntable_play_button)
         turntable_controls_layout.addWidget(self.turntable_stop_button)
         turntable_controls_layout.addWidget(self.turntable_previous_button)

@@ -49,6 +49,9 @@ from browser_core import (
     ROLE_BOTTOM_GAP,
     ROLE_ISDIR,
     ROLE_PATH,
+    ROLE_SPACE_ABOVE,
+    ROLE_SPACE_BELOW,
+    ROLE_TITLE_ABOVE,
     STATUS_FOLDERS,
     _prompt_capture_thumbnail,
     _prompt_change_thumbnail,
@@ -98,6 +101,8 @@ class _ReorderOverlay(QWidget):
         """(indice d'insertion, y) de chaque emplacement QUI DEPLACE l'element (pas ceux autour de
         lui), y au milieu de l'ecart entre deux lignes, en coordonnees du viewport."""
         view, count = self.view, self.view.count()
+        if hasattr(view, "reorder_slots"):        # espaces et titres = éléments à part (FileListWidget)
+            return view.reorder_slots(self.row)
         out = []
         for index in range(count + 1):
             if index in (self.row, self.row + 1):
@@ -286,9 +291,101 @@ class FileListWidget(QListWidget):
         overlay.deleteLater()
         if not apply or target is None:
             return
-        paths = [Path(self.item(i).data(ROLE_PATH)) for i in range(self.count())]
-        paths.insert(target if target < row else target - 1, paths.pop(row))
-        self.column.save_item_order(paths)
+        self.move_in_sequence(row, target)
+
+    # -- RÈGLE (demande de l'utilisateur, 2026-11-11, la même que les lignes des tableaux) : l'espace au-dessus, son
+    # titre et l'espace en dessous d'une ligne sont des éléments À PART ENTIÈRE de la suite ; déplacer une ligne ne
+    # les emmène pas. Toujours rangés par élément (`item_spaces`, `item_titles`, `item_spaces_below`), réattribués
+    # après le déplacement : un espace au-dessus à la ligne qui le suit, un espace en dessous à celle qui le précède. --
+
+    def reorder_sequence(self) -> list:
+        """Suite affichée : `("above", espace, titre)`, `("row", ligne)`, `("below", espace, None)`."""
+        out = []
+        for i in range(self.count()):
+            item = self.item(i)
+            above, title = int(item.data(ROLE_SPACE_ABOVE) or 0), item.data(ROLE_TITLE_ABOVE)
+            below = int(item.data(ROLE_SPACE_BELOW) or 0)
+            if above or title:
+                out.append(("above", above, title))
+            out.append(("row", i))
+            if below:
+                out.append(("below", below, None))
+        return out
+
+    def reorder_slots(self, row: int) -> list[tuple[int, int]]:
+        """(indice d'insertion dans la suite, y du viewport) de chaque emplacement qui DÉPLACE la ligne `row` : avant
+        et après chaque espace (fin de la partie du dessus / début de celle du dessous)."""
+        seq = self.reorder_sequence()
+        at = seq.index(("row", row))
+        rects = {}
+        for i in range(self.count()):
+            item = self.item(i)
+            rect = self.visualItemRect(item)
+            top = rect.top() + int(item.data(ROLE_BOTTOM_GAP) or 0)
+            above = int(item.data(ROLE_SPACE_ABOVE) or 0)
+            below = int(item.data(ROLE_SPACE_BELOW) or 0)
+            rects[i] = (top, top + above, rect.bottom() + 1 - below, rect.bottom() + 1)
+        out = []
+        for b in range(len(seq) + 1):
+            if b in (at, at + 1):
+                continue
+            if b == len(seq):
+                y = rects[self.count() - 1][3]
+            else:
+                kind, value = seq[b][0], seq[b][1]
+                owner = value if kind == "row" else next(t[1] for t in (seq[b:] if kind == "above" else
+                                                                      reversed(seq[:b])) if t[0] == "row")
+                y = {"above": rects[owner][0], "row": rects[owner][1], "below": rects[owner][2]}[kind]
+            out.append((b, y))
+        return out
+
+    def move_in_sequence(self, row: int, b: int) -> None:
+        """Pose la ligne `row` à l'indice `b` de la suite ; espaces et titres restent où ils sont. Enregistre les
+        espaces / titres réattribués, puis l'ordre."""
+        seq = self.reorder_sequence()
+        at = seq.index(("row", row))
+        seq.insert(b - (1 if b > at else 0), seq.pop(at))
+        order, above, below, pending, last = [], {}, {}, None, None
+
+        def merge(old, new):
+            return new if old is None else (new[0], new[1] or old[1], new[2] or old[2])
+
+        for tok in seq:
+            if tok[0] == "above":
+                pending = merge(pending, tok)
+            elif tok[0] == "row":
+                if pending is not None:
+                    above[tok[1]], pending = pending, None
+                order.append(tok[1])
+                last = tok[1]
+            elif last is None:                     # espace du dessous arrivé tout en haut : au-dessus de la suivante
+                pending = merge(pending, ("above", tok[1], None))
+            else:
+                below[last] = merge(below.get(last), tok)
+        if pending is not None and last is not None:    # espace du dessus resté tout en bas : sous la dernière
+            below[last] = merge(below.get(last), ("below", pending[1], None))
+        column = self.column
+        for i in range(self.count()):
+            item = self.item(i)
+            new_above, new_title = (above[i][1], above[i][2]) if i in above else (0, None)
+            new_below = below[i][1] if i in below else 0
+            if int(item.data(ROLE_SPACE_ABOVE) or 0) != new_above:
+                column.set_item_space(item, new_above)
+            if int(item.data(ROLE_SPACE_BELOW) or 0) != new_below:
+                column.set_item_space(item, new_below, below=True)
+            if (item.data(ROLE_TITLE_ABOVE) or None) != (new_title or None):
+                key = column._item_key(item)
+                if key is not None:
+                    column.set_item_title(key, new_title or None, save_now=False)
+        if getattr(column, "_pending_spaces", None):
+            column._space_timer.stop()
+            column._save_item_spaces()             # avant l'ordre : la colonne se relit en l'appliquant
+        if getattr(column, "_pending_titles", None):
+            column._title_timer.stop()
+            column._save_item_titles()
+        paths = [Path(self.item(i).data(ROLE_PATH)) for i in order]
+        if order != list(range(self.count())):
+            column.save_item_order(paths)
 
     # Qt donne le focus a la 1re ligne quand une liste SANS ligne courante
     # recoit le focus (fermeture du menu contextuel, ouverture/fermeture de

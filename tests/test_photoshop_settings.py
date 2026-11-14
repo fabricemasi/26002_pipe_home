@@ -25,7 +25,7 @@ class PhotoshopSettingsTest(PsCase):
         from fm_photoshop.settings import PS_TAB, PS_TREE
         from settings_catalog import CATALOG
         self.assertIn(PS_TAB, [label for label, _t in v2.MODULE_SCOPES["board"]])
-        specs = [spec for node in PS_TREE for spec in CATALOG[node.group]]
+        specs = [spec for node in PS_TREE for spec in CATALOG[node.group] if spec.kind != "ui_icon"]  # lignes « Icônes » (ui_icon) : icônes perso, pas des réglages
         for spec in specs:
             self.assertEqual(spec.default, settings_store.DEFAULT_SETTINGS[spec.key], spec.key)
         declared = {k for k in settings_store.DEFAULT_SETTINGS if k.startswith("board_ps_")}
@@ -35,6 +35,8 @@ class PhotoshopSettingsTest(PsCase):
             fields, record = {}, []
             v2.build_group(node.group, v2.ScopeValues(settings, None), settings["colors"], fields, {}, [], record,
                            lambda: None)
+            if all(spec.kind == "ui_icon" for spec in CATALOG[node.group]):
+                continue                          # section « Icônes » : icônes perso, rien d'enregistré
             self.assertTrue(record, node.group)
             for spec, widget in record:
                 if hasattr(spec, "kind"):

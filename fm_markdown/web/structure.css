@@ -12,8 +12,9 @@
 /* -- Page ------------------------------------------------------------------------------------------------------ */
 html, body { margin: 0 !important; padding: 0 !important; height: 100% !important; overflow: hidden !important;
   max-width: none !important; }
-.md-view { position: absolute !important; left: var(--md-page-margin-left, 0px) !important;
-  right: var(--md-page-margin-right, 0px) !important; bottom: var(--md-page-margin-bottom, 0px) !important;
+.md-view { position: absolute !important; left: calc(var(--md-bars-left, 0px) + var(--md-page-margin-left, 0px)) !important;
+  right: calc(var(--md-bars-right, 0px) + var(--md-page-margin-right, 0px)) !important;
+  bottom: calc(var(--md-bars-bottom, 0px) + var(--md-page-margin-bottom, 0px)) !important;
   top: calc(var(--md-toolbar-height, 0px) + var(--md-page-margin-top, 0px)) !important;
   display: none !important; margin: 0 !important; box-sizing: border-box !important;
   border: 0 none transparent !important; border-radius: 0 !important; background: transparent !important;
@@ -118,62 +119,17 @@ span.CodeMirror-selectedtext { background: none; }
   width: 24em !important; color: inherit !important; font-family: var(--md-code-file-font) !important;
   font-size: 13px !important; }
 
-/* -- Barre d'outils (reprise du plugin Editing Toolbar) et saisies : immunes aux feuilles chargees -------------- */
-.md-toolbar { position: absolute !important; left: 0 !important; right: 0 !important; top: 0 !important;
-  z-index: 10 !important; display: none !important; box-sizing: border-box !important;
-  background: var(--md-toolbar-bg) !important; padding: var(--md-toolbar-padding) !important;
-  gap: var(--md-toolbar-gap) !important; flex-wrap: wrap !important; align-items: center !important;
-  justify-content: var(--md-toolbar-justify) !important; margin: var(--md-toolbar-margin) !important;
-  border-top: var(--md-toolbar-border-top) !important; border-right: var(--md-toolbar-border-right) !important;
-  border-bottom: var(--md-toolbar-border-bottom) !important; border-left: var(--md-toolbar-border-left) !important;
-  border-radius: var(--md-toolbar-radius) !important;
-  box-shadow: var(--md-toolbar-shadow) !important;
-  font-family: var(--md-text-font) !important; font-size: 13px !important; letter-spacing: normal !important;
-  line-height: normal !important; }
-.md-toolbar.is-shown { display: flex !important; }
-.md-toolbar .md-tool { position: relative !important; display: inline-flex !important; align-items: center !important;
-  justify-content: center !important; width: var(--md-toolbar-button-size) !important;
-  height: var(--md-toolbar-button-size) !important; padding: 0 !important; margin: 0 !important;
-  border: none !important; border-radius: var(--md-toolbar-button-radius) !important;
-  background: transparent !important; color: var(--md-toolbar-icon-color) !important; cursor: pointer !important;
-  outline: none !important; box-shadow: none !important; }
-.md-toolbar .md-tool:hover, .md-toolbar .md-tool.is-open { background: var(--md-toolbar-hover-bg) !important; }
-.md-toolbar .md-tool.is-active { background: var(--md-toolbar-active-bg) !important; }
-.md-toolbar .md-color-split { display: inline-flex !important; align-items: center !important;
-  height: var(--md-toolbar-button-size) !important; border: none !important;
-  border-radius: var(--md-toolbar-button-radius) !important; background: transparent !important; }
-.md-toolbar .md-color-split:hover { background: var(--md-toolbar-hover-bg) !important; }
-.md-toolbar .md-color-split .md-color-main { border-radius: 0 !important; background: transparent !important; }
-.md-toolbar .md-color-caret { display: grid !important; place-items: center !important; flex: 0 0 22px !important;
-  width: 22px !important; height: 100% !important; margin: 0 !important; padding: 0 !important;
-  border: none !important; border-radius: 0 var(--md-toolbar-button-radius) var(--md-toolbar-button-radius) 0 !important;
-  background: transparent !important; color: var(--md-toolbar-icon-color) !important; cursor: pointer !important;
-  outline: none !important; box-shadow: none !important; }
-.md-toolbar .md-color-caret::after { content: "" !important; width: 0 !important; height: 0 !important;
-  border-left: 4px solid transparent !important; border-right: 4px solid transparent !important;
-  border-top: 4px solid currentColor !important; }
-.md-toolbar .md-tool svg { width: var(--md-toolbar-icon-size) !important; height: var(--md-toolbar-icon-size) !important;
-  display: block !important; }
-.md-toolbar .md-tool .md-caret { position: absolute !important; right: 0 !important; bottom: 0 !important;
-  width: 18px !important; height: 18px !important; display: grid !important; place-items: center !important;
-  cursor: pointer !important; opacity: 0.78 !important; }
-.md-toolbar .md-tool .md-caret::after { content: "" !important; width: 0 !important; height: 0 !important;
-  border-left: 4px solid transparent !important; border-right: 4px solid transparent !important;
-  border-top: 4px solid currentColor !important; }
-.md-toolbar .md-sep { width: 1px !important; align-self: stretch !important; margin: 4px 2px !important;
-  background: var(--md-toolbar-hover-bg) !important; }
-.md-toolbar .md-sub { position: absolute !important; left: 0 !important; top: 100% !important; display: none !important;
-  flex-direction: column !important; padding: var(--md-toolbar-padding) !important;
-  gap: var(--md-toolbar-gap) !important; background: var(--md-bg-secondary) !important;
-  border-radius: var(--md-toolbar-button-radius) !important; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4) !important;
-  z-index: 20 !important; }
-.md-toolbar .md-tool:hover > .md-sub { display: flex !important; }
+/* -- Saisies de la page (MD.prompt) : immunes aux feuilles chargees. La barre d'outils est une barre de fm_theme
+   (Qt, fm_markdown/bars.py), plus rien dans la page. ---------------------------------------------------------- */
+/* Numeros de ligne : jamais pris dans une selection (copier-coller du texte seul). */
+.CodeMirror-gutters, .CodeMirror-gutter-wrapper, .CodeMirror-linenumber {
+  -webkit-user-select: none !important; user-select: none !important; }
 .md-prompt { position: fixed !important; left: 50% !important; top: 20% !important; transform: translateX(-50%) !important;
   z-index: 60 !important; min-width: 340px !important; padding: 14px 16px !important; border-radius: 8px !important;
   background: var(--md-bg-secondary) !important; color: var(--md-text-color) !important;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5) !important; font-size: 13px !important;
   font-family: var(--md-text-font) !important; letter-spacing: normal !important; }
 .md-prompt input { display: block !important; width: 100% !important; box-sizing: border-box !important;
-  margin-top: 8px !important; padding: 6px 8px !important; border: 1px solid var(--md-toolbar-hover-bg) !important;
+  margin-top: 8px !important; padding: 6px 8px !important; border: 1px solid rgba(255, 255, 255, 0.1) !important;
   border-radius: 4px !important; background: var(--md-bg) !important; color: inherit !important;
   font: 13px var(--md-code-inline-font) !important; outline: none !important; }

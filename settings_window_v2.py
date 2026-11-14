@@ -31,13 +31,13 @@ import time
 from dataclasses import replace
 from typing import Callable
 
-from PySide6.QtCore import QByteArray, QEvent, QObject, QPoint, QRect, Qt, QTimer, Signal
-from PySide6.QtGui import QFontMetrics
+from PySide6.QtCore import QByteArray, QEvent, QObject, QPoint, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QFontMetrics, QIcon
 import copy
 from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QDialog, QGraphicsOpacityEffect, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QMenu,
-    QMessageBox, QScrollArea, QStackedWidget, QVBoxLayout, QWidget,
+    QMessageBox, QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 import settings_cells
@@ -67,11 +67,13 @@ from settings_store import (
     _sync_slider_style, _sync_title_level_style, load_settings, save_settings,
 )
 from fm_theme.tokens import set_table_bg
+from fm_theme.style import (BUTTON_FOLLOW_CHOICES, BUTTON_STATE_FOLLOW, BUTTON_STATE_ROWS, button_state_copy,
+                            button_state_override, button_state_value)
 from settings_theme import _qfont, _set_button_radius, _set_input_radius, _set_text_role, _text_label
 from settings_widgets import (
     Menu, _Btn, _DualFontSelectField, _FontSelectField, _MiniSlider, _OverrideSmoothingField, _RatioSliderField,
     _ResizeBadgePositionField, _RowBorderField, _ShortcutField, _SliderField, _TableFrame, _Toggle,
-    _ToggleStylePicker, _DIMMED_OPACITY, _SelectField, _set_dimmed, _toggle_icon_pixmap, _toggle_image_pixmap,
+    _ToggleStylePicker, _DIMMED_OPACITY, _SelectField, _set_dimmed, _set_faded, _toggle_icon_pixmap, _toggle_image_pixmap,
     _TABLE_DIMS, _TABLE_SELECTION, _TOGGLE_STYLE_NAMES, _set_table_dims, _set_table_inner_border,
     _set_table_shadow, shadow_look, _sync_toggle_style, TOGGLE_STYLE_LISTENERS, CONTEXT_MENU_EXTRAS,
     make_space_actions, set_space_above, set_space_below, space_target, widget_at_path, widget_path,
@@ -801,6 +803,41 @@ CATALOG["Barre d'état"] = [
 ]
 
 
+def _button_state_rows(state: str, label: str, bg_title: str, text_title: str) -> list[Spec]:
+    """Lignes d'UN état du bouton, chacune OVERRIDE de la ligne de l'état standard (toggle devant la ligne, coupé =
+    la ligne standard, affichée grisée ; demande de l'utilisateur, 2026-11-12 ; fm_theme.style.button_state_override) :
+    fond, Bordures (couleur transparente = le thème, épaisseur 0 = celle de l'état standard), Polices (ligne standard
+    entière), Border radius, Décalage (propre à l'état), Ombres (allumée sans côté = AUCUNE ombre)."""
+    pre = f"button_{state}"
+
+    def ovr(row: str) -> dict:
+        # + petit bouton « copier » devant le titre : la ligne prend celle de l'état choisi dans « suit » (2026-11-12)
+        return {"override": (f"{pre}_ovr_{row}", state, row), "copy_row": (state, row)}
+    shadow = _shadow_spec(f"{pre}_shadow", f"{label} : ombres")
+    shadow.params.update(ovr("shadow"))
+    return [
+        # 1re ligne de l'état : liste « suit » (lignes non surchargées = celles de l'état choisi) et « Réinitialiser »
+        # (l'état prend exactement celui choisi) ; demande de l'utilisateur, 2026-11-12.
+        Spec(f"{pre}_follow", f"{label} : suit", "state_follow", "standard", {"state": state}),
+        Spec(f"{pre}_color", f"{label} : couleur de fond", "color_app", "#00000000", {"title": bg_title, **ovr("color")}),
+        Spec(f"{pre}_border_enabled", f"{label} : bordures", "sides_thick", True,
+             {"colors_key": f"{pre}_border", "thickness_key": f"{pre}_border_thickness",
+              "thickness_label": "Épaisseur (0 = la même)", **ovr("border")},
+             extra_keys=(f"{pre}_border", f"{pre}_border_thickness")),
+        Spec(f"{pre}_font_family", f"{label} : polices", "font_gabarit", "",
+             {"prefix": pre, "size": (6, 40), "size_default": 11, "color_default": "#00000000",
+              "color_title": text_title, "keys": {"color": f"{pre}_text_color"}, "shown_color": True, **ovr("font")},
+             extra_keys=_gabarit_extra(pre, f"{pre}_text_color")),
+        Spec(f"{pre}_corner_radius", f"{label} : border radius", "corners", 0,
+             {"max": 40, "none_from": "button_radius", **ovr("radius")}),
+        # Décalage du bouton entier (ombre comprise), propre à l'état (2026-11-11, fm_theme.style `_ButtonEffect`).
+        Spec(f"{pre}_offset_x", f"{label} : décalage", "offset", 0,
+             {"y_key": f"{pre}_offset_y", "range": (-3, 3), "copy_row": (state, "offset")},
+             extra_keys=(f"{pre}_offset_y",)),
+        shadow,
+    ]
+
+
 def _standard_control_specs(prefix: str, *, shadow: bool = False) -> list[Spec]:
     rows = [
         Spec(f"{prefix}_bg_color", "Couleur", "color_app",
@@ -813,22 +850,30 @@ def _standard_control_specs(prefix: str, *, shadow: bool = False) -> list[Spec]:
              {"prefix": prefix, "size": (6, 40), "size_default": 11,
               "color_default": "#c4cacf" if prefix == "button" else "#b9bfc4",
               "color_title": "Couleur du texte"}, extra_keys=_gabarit_extra(prefix)),
-        Spec(f"{prefix}_corner_radius", "Border radius", "corners", 0, {"max": 40}),
+        # None = l'ancien rayon `<prefix>_radius` (fm_theme.style._control_radius) : le champ le montre aussi, sinon
+        # il affichait 0 et l'enregistrer rendait carrés boutons / champs (presets Studio VFX, Test ; 2026-11-12).
+        Spec(f"{prefix}_corner_radius", "Border radius", "corners", 0,
+             {"max": 40, **({"none_from": f"{prefix}_radius"} if prefix in ("button", "input") else {})}),
     ]
     if shadow:
         rows.append(_shadow_spec(f"{prefix}_shadow"))
     if prefix == "button":
-        # Survol et état actif (enfoncé / focus), comme les boutons des barres d'outils (2026-11-10).
-        rows[2:2] = [
-            Spec("button_hover_color", "Couleur de fond au survol", "color_app", "#00000000",
-                 {"title": "Fond des boutons au survol (transparent = celui du thème)"}),
-            Spec("button_active_color", "Couleur de fond à l'état actif", "color_app", "#00000000",
-                 {"title": "Fond des boutons enfoncés / focus (transparent = l'accent)"}),
-            Spec("button_active_border_color", "Couleur de bordure à l'état actif", "color_app", "#00000000",
-                 {"title": "Bordure des boutons enfoncés / focus (transparent = l'accent)"}),
-            Spec("button_active_border_thickness", "Épaisseur de bordure à l'état actif (0 = la même)", "slider", 0,
-                 {"min": 0, "max": 6, "unit": "px"}),
-        ]
+        # Décalage du TEXTE dans le bouton, tous les états, sous Polices (demande de l'utilisateur, 2026-11-12 ;
+        # fm_theme.style.button_padding_css). Ligne logique 24 du tableau (étape 5 de `_BUTTON_DIMS_STEPS`).
+        rows.insert(3, Spec("button_text_offset_x", "Décalage du texte", "offset", 0,
+                            {"y_key": "button_text_offset_y", "range": (-10, 10)},
+                            extra_keys=("button_text_offset_y",)))
+        # Survol, focus et état enfoncé (« active »), comme les boutons des barres d'outils (2026-11-10) ;
+        # chaque état : overrides des lignes standard + décalage (`_button_state_rows`, 2026-11-12). Ordre des lignes figé : `settings_store._BUTTON_DIMS_MIGRATION` y convertit l'ancienne
+        # mise en page.
+        rows[2:2] = [row for state, label, bg_title, text_title in (
+            ("hover", "Survol", "Fond des boutons au survol (transparent = celui du thème)",
+             "Texte des boutons au survol (transparent = le même)"),
+            ("focus", "Focus", "Fond du bouton qui a le focus (transparent = le même)",
+             "Texte du bouton qui a le focus (transparent = le même)"),
+            ("active", "Enfoncé", "Fond des boutons enfoncés (transparent = l'accent)",
+             "Texte des boutons enfoncés (transparent = le texte sur accent du thème)"),
+        ) for row in _button_state_rows(state, label, bg_title, text_title)]
     if prefix == "input":
         rows.append(Spec("input_height", "Hauteur des zones de saisie (0 = d'origine)", "slider", 0,
                          {"min": 0, "max": 60, "unit": "px"}))
@@ -1013,13 +1058,7 @@ CATALOG["Icones : Couleurs des dossiers"] = [
         Spec(f"folder_text_color_{kind}_from_icon", label, "bool", False),
         Spec(f"folder_text_color_{kind}", label, "color_app", text_default, {"title": f"Texte : {title.lower()}"}))
 ]
-# Icones de la barre de navigation (outils et modules) : couleur de base, couleur du bouton desactive (remplace le
-# voile d'opacite) : main_window/chrome._refresh_navbar_icons (demande de l'utilisateur, 2026-11-08).
-CATALOG["Icones : Couleur des icones"] = [
-    Spec("navtool_icon_base_color", "Couleur de base", "color_app", "#c4cacf", {"title": "Icônes : couleur de base"}),
-    Spec("navtool_icon_disabled_color", "Couleur désactivée", "color_app", "#59c4cacf",
-         {"title": "Icônes : couleur désactivée"}),
-]
+# Couleur des icones de la barre de navigation : deplacee dans Theme > General (2026-11-12, `navtool_icon_base_color`).
 CATALOG["Icones : Logiciels"] = [
     Spec("custom_softwares", "Logiciels", "logiciels", [], extra_keys=("removed_softwares",)),
 ]
@@ -1150,7 +1189,6 @@ GENERAL_TREE = (
     Node("Sliders", children=(Node("Rail", "Slider : Rail"), Node("Selecteur", "Slider : Selecteur"))),
     Node("ICONES", children=(Node("General", "Icones : General"),
                              Node("Couleur des dossiers", "Icones : Couleurs des dossiers"),
-                             Node("Couleur des icônes", "Icones : Couleur des icones"),
                              Node("Logiciels", "Icones : Logiciels"))),
 )
 
@@ -1164,6 +1202,19 @@ THEME_SECTIONS = ("Couleurs", "Polices principales", "TITRES", "Toggles", "Slide
                   # Barres de la fenetre (2026-11-05) : aspect general, plus dans General de fm_browser.
                   "Barre de navigation", "Barre d'état")
 CATALOG["Thème : Général"] = [s for s in CATALOG["Application"] if s.key in ("ui_scale", "window_radius")] + [
+    # Valeur du grise des objets non utilisables : elements d'interface (fonds, bordures, reglages inactifs), textes,
+    # icones ; et la couleur des icones (ex fm_browser > ICONES) : demande de l'utilisateur, 2026-11-12.
+    Spec("dimmed_opacity", "Valeur du grisé : éléments d'interface", "slider", 20,
+         {"min": 5, "max": 100, "unit": "%", "width": 280}),
+    Spec("dimmed_text_opacity", "Valeur du grisé : textes", "slider", 20, {"min": 5, "max": 100, "unit": "%", "width": 280}),
+    Spec("dimmed_icon_opacity", "Valeur du grisé : icônes", "slider", 20, {"min": 5, "max": 100, "unit": "%", "width": 280}),
+    Spec("navtool_icon_base_color", "Couleur des icônes", "color_app", "#c4cacf", {"title": "Icônes : couleur de base"}),
+    # Icones chargees (fichiers choisis, icons/*.png) ramenees au bord de leurs pixels visibles puis recentrees avec
+    # cette marge, % du cadre de chaque cote (demande de l'utilisateur, 2026-11-12).
+    Spec("icon_margin", "Marge des icônes", "slider", 20, {"min": 0, "max": 40, "unit": "%", "width": 280}),
+    # Icones du catalogue (fm_theme.icon_library) en flat monochrome ou flat couleur (demande de l'utilisateur, 2026-11-13).
+    Spec("icon_library_style", "Style des icônes", "choice", "monochrome", {"choices": (
+        ("monochrome", "Flat monochrome"), ("couleur", "Flat couleur")), "width": 190}),
     # Pourtour de TOUTES les fenetres (principale et additionnelles) : remplace la ligne « Bordures » des
     # Fenetres additionnelles (demande de l'utilisateur, 2026-10-30).
     Spec("window_border_enabled", "Bordure des fenêtres", "sides_thick", True,
@@ -1173,7 +1224,7 @@ CATALOG["Thème : Général"] = [s for s in CATALOG["Application"] if s.key in (
     Spec("variant_sel_border_enabled", "Variantes : bordure du cadre de sélection", "sides_thick", True,
          {"colors_key": "variant_sel_border", "thickness_key": "variant_sel_border_thickness", "width": 90, "box": 54},
          extra_keys=("variant_sel_border", "variant_sel_border_thickness")),
-    Spec("variant_sel_corner_radius", "Variantes : border radius du cadre de sélection", "corners", 6, {"max": 30}),
+    Spec("variant_sel_corner_radius", "Border radius du cadre de sélection des variantes", "corners", 6, {"max": 30}),
     Spec("variant_sel_bg_color", "Variantes : couleur de fond du cadre de sélection", "color_app", "#00000000",
          {"title": "Fond de la variante éditée (transparent = aucun)"}),
 ]
@@ -1262,6 +1313,8 @@ class ScopeValues:
         follow = BOARD_MENU_FOLLOW.get(key)
         if follow is not None and not self.settings.get(follow[0]):
             return self.settings.get(follow[1], default)     # override coupe : la valeur de l'appli
+        if key in BUTTON_STATE_FOLLOW:                       # etat du bouton : override de l'etat standard
+            return button_state_value(self.settings, key, default)
         return self.settings.get(key, default)
 
     def linked(self, key: str, default: bool = True) -> bool:
@@ -1270,6 +1323,9 @@ class ScopeValues:
         follow = BOARD_MENU_FOLLOW.get(f"{key}_linked")
         if follow is not None and not self.settings.get(follow[0]):
             return bool(self.settings.get(follow[1], default))
+        if f"{key}_linked" in BUTTON_STATE_FOLLOW:
+            value = button_state_value(self.settings, f"{key}_linked", None)
+            return bool(default if value is None else value)
         return bool(self.settings.get(f"{key}_linked", default))
 
 
@@ -1296,10 +1352,24 @@ def _f_bool(spec, v, colors):
         toggle._table_style = style
     return toggle
 
+def _shown_color_getter(key: str):
+    """Couleur réellement affichée quand la valeur `key` est transparente et suit le thème (« le même ») :
+    le sélecteur s'ouvre dessus au lieu du noir transparent (demande de l'utilisateur, 2026-11-11)."""
+    if key.startswith("button_"):
+        from fm_theme.style import button_shown_color
+        return lambda: button_shown_color(key)
+    if key.startswith("palette_"):
+        from fm_theme.palette import shown_color
+        return lambda: shown_color(key)
+    return None
+
+
 def _f_color_app(spec, v, colors):
     # Meme champ compact que les couleurs des invites police/bordures : app | pastille | sys.
-    return _CompactAppOrCustomColorField(v.seed(spec.key, spec.default), colors, swatch_size=20,
-                                         title=spec.params.get("title", spec.label))
+    field = _CompactAppOrCustomColorField(v.seed(spec.key, spec.default), colors, swatch_size=20,
+                                          title=spec.params.get("title", spec.label))
+    field.set_effective(_shown_color_getter(spec.key))
+    return field
 
 class _CompactHeaderColor(_CompactAppOrCustomColorField):
     """Champ compact (app | pastille | sys) pour les couleurs d'entete : stocke un nom de pastille NU
@@ -1340,8 +1410,16 @@ def _split_field(field: QWidget, parts: list) -> QWidget:
     return wrap_split(SplitCell(parts), field)
 
 
+def _corner_value(spec, value, lookup):
+    """Rayon stocké ; None (« suit l'ancien réglage », `params["none_from"]`) = la valeur de cet ancien réglage."""
+    if value is None and spec.params.get("none_from"):
+        value = lookup(spec.params["none_from"])
+    return _coerce_corner_radius(spec.default if value is None else value)
+
+
 def _f_corners(spec, v, colors):
-    field = _CornerRadiusField(v.linked(spec.key), _coerce_corner_radius(v.seed(spec.key, spec.default)),
+    field = _CornerRadiusField(v.linked(spec.key), _corner_value(spec, v.seed(spec.key, spec.default),
+                                                                 lambda key: v.seed(key, 0)),
                                maximum=spec.params["max"])
     return _split_field(field, [(LINK_CAPTION, [field.toggle])] + [
         (letter, [field.sides.fields[key]]) for key, letter in _CornerRadiusSliders._ORDER])
@@ -1350,8 +1428,16 @@ def _f_corners(spec, v, colors):
 def _f_padding(spec, v, colors):
     # params["order"] : seulement certains cotes (ex. Focus > Zone titre, « Titre - padding » sans D).
     order = spec.params.get("order") or _SidePaddingField._ORDER
+    sides = v.seed(spec.key, spec.default) or {}
+    # Maximum jamais sous la valeur enregistrée ou par défaut (2026-11-12 : Markdown > Page, 40 par défaut, était
+    # rogné à 32 par le curseur et ENREGISTRÉ ainsi à la validation).
+    values = [x for d in (sides, spec.default) if isinstance(d, dict) for x in d.values() if isinstance(x, (int, float))]
+    maximum = max([spec.params.get("max", 32), *(int(x) for x in values)])
     field = _CellPaddingField(v.linked(spec.key, spec.params.get("linked_default", True)),
-                              v.seed(spec.key, spec.default) or {}, order=spec.params.get("order"))
+                              sides, order=spec.params.get("order"), maximum=maximum)
+    # Côtés NON affichés (`order` partiel) : gardés tels quels et rendus à la lecture, sinon enregistrer les perdait.
+    shown = {key for key, _letter in order}
+    field._hidden_sides = {k: x for k, x in sides.items() if k not in shown} if isinstance(sides, dict) else {}
     return _split_field(field, [(LINK_CAPTION, [field.toggle])] + [
         (letter, [field.sides.fields[key]]) for key, letter in order])
 
@@ -1453,6 +1539,18 @@ def _font_parts(spec, v, colors) -> dict:
     return parts
 
 
+def _f_offset(spec, v, colors):
+    """Ligne « Décalage » (nouveau type, 2026-11-11) : X | Y, un curseur en px chacun (`params["range"]`, défaut
+    -3..+3). Clés : `spec.key` (X) et `params["y_key"]` (Y)."""
+    p = spec.params
+    low, high = p.get("range", (-3, 3))
+    parts = {name: _SliderField(low, high, int(v.seed(key, 0) or 0), slider_width=p.get("width", 90), box_width=54)
+             for name, key in (("x", spec.key), ("y", p["y_key"]))}
+    holder = wrap_split(SplitCell([("X", [parts["x"]]), ("Y", [parts["y"]])]))
+    holder._v2_parts = parts            # lus par FIELD_READERS["offset"]
+    return holder
+
+
 def _f_font_gabarit(spec, v, colors):
     """Ligne « police » dans un tableau Parametre/Valeur : une cellule divisee, une sous-cellule par
     champ de la reference (POLICE, GRAS, ITALIQUE, HAUTEUR, NIVEAU DE LISSAGE, COULEUR)."""
@@ -1463,6 +1561,8 @@ def _f_font_gabarit(spec, v, colors):
     cells = [("Caractère", [parts["char"]])] if "char" in parts else []
     cells += [(spec.params.get("size_label", caption) if name == "size" else caption, [parts[name]]) for name, caption in FONT_CAPTIONS if name in parts]
     holder = wrap_split(SplitCell(cells))
+    if spec.params.get("shown_color") and "color" in parts:   # transparent = « le même » : sélecteur ouvert dessus
+        parts["color"].set_effective(_shown_color_getter(_gabarit_keys(spec)["color"]))
     holder._v2_parts = parts            # lus par FIELD_READERS["font_gabarit"]
     return holder
 
@@ -1705,6 +1805,56 @@ def _f_choice(spec, v, colors):
     field = _SelectField(labels, dict(choices).get(current, labels[0]), width=spec.params.get("width", 200))
     field._choices = tuple(choices)
     return field
+
+
+def _f_state_follow(spec, v, colors):
+    """Ligne « suit » d'un état du bouton : liste (Standard / les autres états) + « Réinitialiser » (variante windows_95
+    du bouton, de la hauteur de la liste) ; branchés par `_link_state_follow`."""
+    choices = tuple((key, text) for key, text in BUTTON_FOLLOW_CHOICES if key != spec.params["state"])
+    current = v.seed(spec.key, spec.default) or "standard"
+    select = _SelectField([text for _k, text in choices], dict(choices).get(current, choices[0][1]), width=130)
+    select._choices = choices
+    reset = QPushButton("Réinitialiser")
+    reset.setToolTip("Donne à cet état exactement l'aspect de l'état choisi dans la liste (toutes ses lignes)")
+    reset.setFocusPolicy(Qt.NoFocus)
+    reset.setFixedHeight(select.height())           # même hauteur que la liste (demande de l'utilisateur)
+    from fm_theme.style import style_variant_button  # variante windows_95 du preset lié (demande de l'utilisateur)
+    from settings_store import theme_variant_values
+    style_variant_button(reset, theme_variant_values(v.settings, "bouton", "windows_95"))
+    holder = QWidget()
+    holder.setStyleSheet("background: transparent;")
+    box = QHBoxLayout(holder)
+    box.setContentsMargins(0, 0, 0, 0)
+    box.setSpacing(8)
+    box.addWidget(select, 0, Qt.AlignVCenter)
+    box.addWidget(reset, 0, Qt.AlignVCenter)
+    holder._v2_follow, holder._v2_reset = select, reset
+    holder._v2_parts = {"follow": select}           # branché par _connect_changed (signal `changed`)
+    return holder
+
+
+def _state_copy_button() -> QPushButton:
+    """Petit bouton à icône devant le titre d'une ligne d'état du bouton : la ligne prend celle de l'état choisi dans
+    la liste « suit » de son état, surchargée donc modifiable (demande de l'utilisateur, 2026-11-12). Aspect : fm_theme
+    (bouton compact), icône `icons/copier.svg` à la couleur du texte des boutons."""
+    from fm_theme.style import painted_button_look, theme_button
+    from fm_theme.widgets import _toggle_icon_pixmap
+    button = QPushButton()
+    button.setToolTip("Copier cette ligne de l'état choisi dans « suit »")
+    button.setFocusPolicy(Qt.NoFocus)
+    button.setFixedSize(20, 20)
+    pix = _toggle_icon_pixmap("copier.svg", 14, painted_button_look()["fg"].name())   # 14 px (demande, 2026-11-12)
+    if pix is not None:
+        button.setIcon(QIcon(pix))
+        button.setIconSize(QSize(14, 14))
+    return theme_button(button, compact=True)
+
+
+def _w_state_follow(spec, w, v) -> bool:
+    text = dict(w._v2_follow._choices).get(v[spec.key] or "standard", w._v2_follow._choices[0][1])
+    if w._v2_follow.value() != text:
+        w._v2_follow.setValue(text)
+    return True
 
 
 def _r_choice(sp, w):
@@ -2167,6 +2317,8 @@ from fm_agenda.settings import FIELD_FACTORIES as _AGENDA_FACTORIES, FIELD_READE
 FIELD_FACTORIES.update(_AGENDA_FACTORIES)
 from fm_taches.settings import FIELD_FACTORIES as _TACHES_FACTORIES, FIELD_READERS as _TACHES_READERS  # noqa: E402
 FIELD_FACTORIES.update(_TACHES_FACTORIES)
+FIELD_FACTORIES["offset"] = _f_offset
+FIELD_FACTORIES["state_follow"] = _f_state_follow
 
 
 # ==========================================================================
@@ -2259,7 +2411,8 @@ FIELD_READERS: dict[str, Callable] = {
     "font":lambda sp, w: {sp.key: _font_value(w)},
     "font_select": lambda sp, w: {sp.key: _font_value(w)},
     "corners": lambda sp, w: {sp.key: w.cornersValue(), f"{sp.key}_linked": w.isLinked()},
-    "padding": lambda sp, w: {sp.key: w.sidesValue(), f"{sp.key}_linked": w.isLinked()},
+    "padding": lambda sp, w: {sp.key: {**getattr(w, "_hidden_sides", {}), **w.sidesValue()},
+                              f"{sp.key}_linked": w.isLinked()},
     "title_padding": lambda sp, w: {sp.key: w.sidesValue(), f"{sp.key}_linked": w.isLinked(),
                                     sp.params["before_key"]: w._v2_parts["before"].value(),
                                     sp.params["after_key"]: w._v2_parts["after"].value()},
@@ -2285,10 +2438,91 @@ FIELD_READERS: dict[str, Callable] = {
 }
 FIELD_READERS.update(_AGENDA_READERS)
 FIELD_READERS.update(_TACHES_READERS)
+FIELD_READERS["offset"] = lambda sp, w: {sp.key: w._v2_parts["x"].value(), sp.params["y_key"]: w._v2_parts["y"].value()}
+FIELD_READERS["state_follow"] = lambda sp, w: {
+    sp.key: {text: key for key, text in w._v2_follow._choices}.get(w._v2_follow.value(), "standard")}
 
 
 def read_spec(spec: Spec, widget: QWidget) -> dict:
-    return FIELD_READERS[spec.kind](spec, widget)
+    out = FIELD_READERS[spec.kind](spec, widget)
+    toggle = getattr(widget, "_v2_active", None)
+    if toggle is not None:                  # toggle « activer » de la ligne : coupé = valeurs neutres
+        flag, kept = activation_keys(spec)
+        if toggle.isChecked():
+            out[flag], out[kept] = True, None
+        else:
+            out[kept] = json.loads(json.dumps(out))
+            out.update(_neutral_values(spec, out))
+            out[flag] = False
+    override = getattr(widget, "_v2_override", None)
+    if override is not None:                # toggle d'override devant la ligne (états du bouton)
+        out[spec.params["override"][0]] = override.isChecked()
+    return out
+
+
+# -- Toggle « activer » des lignes Bordures, Border radius, Ombres, Padding, Margin (toggle 1 juste à droite du
+# titre ; demande de l'utilisateur, 2026-11-11). Coupé : les clés RÉELLES reçoivent la valeur neutre (aucun côté,
+# rayons / marges à 0), donc tout ce qui lit ces réglages (appli, modules) voit l'effet coupé sans rien changer ;
+# les valeurs réglées sont gardées dans `<clé>__kept` (affichées grisées, reprises au rallumage) et l'état dans
+# `<clé>__on`. Sans `__on` (réglages d'avant) : actif si l'effet se voit avec les valeurs actuelles.
+_ACTIVATION_KINDS = ("sides_thick", "sides", "shadow", "corners", "padding", "title_padding")
+_ACTIVATION_SLIDER = re.compile(r"^(border radius|padding|margin|marge)", re.I)
+
+
+def has_activation(spec: Spec) -> bool:
+    return spec.kind in _ACTIVATION_KINDS or (spec.kind == "slider" and bool(_ACTIVATION_SLIDER.match(spec.label)))
+
+
+def activation_keys(spec: Spec) -> tuple[str, str]:
+    return f"{spec.key}__on", f"{spec.key}__kept"
+
+
+def _neutral_values(spec: Spec, out: dict) -> dict:
+    value = out.get(spec.key)
+    if spec.kind == "slider":
+        return {spec.key: spec.params.get("min", 0)}
+    neutral = False if spec.kind in ("sides_thick", "sides", "shadow") else 0
+    if isinstance(value, dict):
+        return {spec.key: dict.fromkeys(value, neutral)}
+    return {spec.key: neutral}
+
+
+def _effect_visible(spec: Spec, out: dict) -> bool:
+    """État du toggle sans `__on` enregistré : actif dès que les valeurs diffèrent de la valeur neutre. Jamais
+    « l'effet se voit-il » : une ligne déduite coupée écrirait la valeur neutre et changerait l'aspect (ex. bordure
+    du survol, épaisseur 0 = « la même » : coupée, elle retirerait la bordure au survol)."""
+    return _neutral_values(spec, out)[spec.key] != out.get(spec.key)
+
+
+class _KeptValues(ScopeValues):
+    """Valeurs de départ d'une ligne coupée : les valeurs gardées (`__kept`) avant les réglages."""
+
+    def __init__(self, base: ScopeValues, kept: dict):
+        self.__dict__.update(base.__dict__)
+        self._kept = kept
+
+    def seed(self, key: str, default):
+        return self._kept[key] if key in self._kept else super().seed(key, default)
+
+    def linked(self, key: str, default: bool = True) -> bool:
+        k = f"{key}_linked"
+        return bool(self._kept[k]) if k in self._kept else super().linked(key, default)
+
+
+def _add_activation(spec: Spec, widget: QWidget, values: ScopeValues, on) -> None:
+    if on is None:
+        on = _effect_visible(spec, FIELD_READERS[spec.kind](spec, widget))
+    # Toggle 2 (demande de l'utilisateur, 2026-11-12 ; toggle 1 avant) : se distingue du toggle 1 d'override.
+    toggle = _Toggle(bool(on), style_override="toggle2", show_label=False)
+    toggle._table_style = "toggle2"                 # imposé par la ligne (gardé par normalize_toggles)
+    toggle.style_id = f"{values.name}|{spec.key}#activer"
+    widget._v2_active = toggle
+
+
+def _fade(widget: QWidget, faded: bool) -> None:
+    """Opacité de ligne grisée SANS désactiver (le libellé reste saisissable : Ctrl + glisser). Jamais d'effet dans
+    un effet (`_set_faded`)."""
+    _set_faded(widget, faded)
 
 
 # -- Pose de valeurs dans un champ DEJA construit (inverse de FIELD_READERS) : `external_values` s'en sert pour
@@ -2303,7 +2537,12 @@ def _w_linked(widget: QWidget, spec: Spec, v: dict) -> bool:
 
 def _w_sides(spec, w, v) -> bool:
     if not _w_linked(w, spec, v):
-        return False
+        # « Lier les 4 » différent (autre variante de fm_theme) : posé sur place quand le champ sait le faire,
+        # sinon toute la section était reconstruite à chaque changement de variante.
+        setter = getattr(w, "setLinkedState", None)
+        if setter is None:
+            return False
+        setter(bool(v[f"{spec.key}_linked"]))
     w.setValue(_coerce_side_enabled(v[spec.key]), v[spec.params["colors_key"]] or {})   # ancien format : un bool
     if "thickness_key" in spec.params:
         w._v2_thickness.setValue(int(v[spec.params["thickness_key"]]))
@@ -2352,13 +2591,30 @@ def _w_value(spec, w, v) -> bool:
     return True
 
 
+def _w_padding(spec, w, v) -> bool:
+    """Padding versé (variante, preset) : la plage d'un curseur s'élargit pour la valeur au lieu de la rogner (voir
+    _f_padding)."""
+    sides = v[spec.key]
+    if not isinstance(sides, dict):
+        return False
+    fields = getattr(getattr(w, "sides", None), "fields", {})
+    for key, field in fields.items():
+        value = sides.get(key)
+        if isinstance(value, (int, float)) and value > field.slider._max:
+            field.slider._max = field._max = int(value)
+    if hasattr(w, "_hidden_sides"):
+        w._hidden_sides = {k: x for k, x in sides.items() if k not in fields}
+    w.setValue(v[f"{spec.key}_linked"], sides)
+    return True
+
+
 FIELD_WRITERS: dict[str, Callable] = {
     "slider": lambda sp, w, v: (w.setValue(int(v[sp.key])), True)[1],
     "bool": lambda sp, w, v: (w.setChecked(bool(v[sp.key])), True)[1],
     "color": _w_value, "color_app": _w_value, "header_color": _w_value, "toggle_style": _w_value,
-    "corners": lambda sp, w, v: (w.setValue(v[f"{sp.key}_linked"], _coerce_corner_radius(   # absent : le defaut
-        sp.default if v[sp.key] is None else v[sp.key])), True)[1],
-    "padding": lambda sp, w, v: isinstance(v[sp.key], dict) and (w.setValue(v[f"{sp.key}_linked"], v[sp.key]), True)[1],
+    "corners": lambda sp, w, v: (w.setValue(v[f"{sp.key}_linked"], _corner_value(            # absent : le defaut
+        sp, v[sp.key], lambda key: v.get(key, 0))), True)[1],
+    "padding": lambda sp, w, v: _w_padding(sp, w, v),
     "title_padding": _w_title_padding,
     "sides": _w_sides, "sides_thick": _w_sides, "shadow": _w_sides,
     "inner_line": _w_inner_line,
@@ -2368,9 +2624,14 @@ FIELD_WRITERS: dict[str, Callable] = {
     "state_pair": lambda sp, w, v: all([write_spec(sub, f, v) for sub, f in w.parts]),
     "split_fields": lambda sp, w, v: all([write_spec(sub, f, v) for sub, f in w.parts]),
     "snap_side": lambda sp, w, v: (all([write_spec(sub, f, v) for sub, f in w.parts]), w._sync())[0],
+    # Liste de choix : posée sur place (autre variante de fm_theme) ; sans écrivain, toute la section était refaite.
+    "choice": lambda sp, w, v: (w.setValue(dict(getattr(w, "_choices", ())).get(v[sp.key], str(v[sp.key]))), True)[1],
     "xy": lambda sp, w, v: (w._v2_parts["first"].setValue(int(v[sp.key])),
                             w._v2_parts["second"].setValue(int(v[sp.params["second_key"]])), True)[2],
 }
+FIELD_WRITERS["state_follow"] = _w_state_follow
+FIELD_WRITERS["offset"] = lambda sp, w, v: (w._v2_parts["x"].setValue(int(v[sp.key])),
+                                          w._v2_parts["y"].setValue(int(v[sp.params["y_key"]])), True)[-1]
 
 
 def write_spec(spec: Spec, widget: QWidget, values: dict) -> bool:
@@ -2381,9 +2642,45 @@ def write_spec(spec: Spec, widget: QWidget, values: dict) -> bool:
     current = read_spec(spec, widget)
     if not any(k in values for k in current):
         return True
-    current.update({k: values[k] for k in current if k in values})
+    override = getattr(widget, "_v2_override", None)
+    source = values
+    if override is not None:
+        # État du bouton : la ligne montre ce que l'état utilise (coupée = la ligne standard), comme à la construction.
+        flag_key, state, row = spec.params["override"]
+        if values.get(flag_key) is not None:
+            own = bool(values[flag_key])
+        elif flag_key in values:                     # jamais enregistré : déduit des valeurs versées
+            own = button_state_override(values, state, row)
+        else:
+            own = override.isChecked()
+        # « activer » de l'état absent des valeurs versées = déduit (jamais l'état lu du champ, toujours défini).
+        merged = {**{k: x for k, x in current.items() if k in values or not k.endswith(("__on", "__kept"))},
+                  **values, flag_key: own}
+        current.update({k: button_state_value(merged, k, None if k.endswith(("__on", "__kept")) else current[k])
+                        if k in BUTTON_STATE_FOLLOW else merged.get(k, current[k]) for k in current})
+        current[flag_key], source = own, current
+    else:
+        current.update({k: values[k] for k in current if k in values})
+    legacy = spec.params.get("none_from")
+    if legacy and current.get(spec.key) is None:     # None = l'ancien réglage (rayon des boutons / champs)
+        current[spec.key] = values.get(legacy, 0)
+    toggle = getattr(widget, "_v2_active", None)
+    on = None
+    if toggle is not None:
+        flag, kept = activation_keys(spec)
+        on = source.get(flag)
+        if on is False and isinstance(source.get(kept), dict):
+            current.update(source[kept])            # ligne coupée : ses valeurs gardées, grisées
+        if on is None:
+            on = _effect_visible(spec, current)
     try:
-        return bool(writer(spec, widget, current))
+        if not writer(spec, widget, current):
+            return False
+        if toggle is not None and toggle.isChecked() != bool(on):
+            toggle.setChecked(bool(on))
+        if override is not None and override.isChecked() != own:
+            override.setChecked(own)
+        return True
     except (KeyError, TypeError, ValueError, AttributeError):
         return False
 
@@ -2414,8 +2711,29 @@ def tag_toggles(roots, scope: str, key: str):
 
 
 def make_field(spec: Spec, values: ScopeValues, colors: dict, on_range: Callable | None = None) -> QWidget:
+    on = None
+    if has_activation(spec):
+        flag, kept = activation_keys(spec)
+        on = values.seed(flag, None)
+        if on is False and isinstance(values.seed(kept, None), dict):
+            values = _KeptValues(values, values.seed(kept, None))
     widget = FIELD_FACTORIES[spec.kind](spec, values, colors)
-    widget._row_kind = spec.kind            # gabarit de ligne commun a toutes les lignes de ce type (fm_theme.cells)
+    if has_activation(spec):
+        _add_activation(spec, widget, values, on)
+    if spec.params.get("override"):         # override d'une ligne standard (états du bouton, 2026-11-12)
+        _flag, state, row = spec.params["override"]
+        toggle = _Toggle(button_state_override(values.settings, state, row), style_override="toggle1",
+                         show_label=False)
+        toggle._table_style = "toggle1"
+        toggle.style_id = f"{values.name}|{spec.key}#override"
+        widget._v2_override = toggle
+    if spec.params.get("copy_row"):         # bouton « copier la ligne de l'état suivi » (branché par _link_state_follow)
+        widget._v2_copy = _state_copy_button()
+    # État du bouton de la ligne (Survol, Focus, Enfoncé) : parties repliées en accordéon (_flat_cells_table)
+    widget._v2_state = spec.params.get("state") or (spec.params.get("copy_row") or (None,))[0]
+    # Gabarit de ligne commun a toutes les lignes de ce type (fm_theme.cells) ; `params["row_kind"]` = un gabarit a
+    # part pour des lignes du meme type mais d'une autre forme (polices des etats du bouton : gras + couleur).
+    widget._row_kind = spec.params.get("row_kind", spec.kind)
     if spec.key.startswith(('video_', 'vg_', 'vc_')):
         from fm_video.help_content import key_for_setting
         help_key = key_for_setting(spec.key)
@@ -2440,6 +2758,9 @@ def _connect_changed(widget: QWidget, callback: Callable | None):
     if callback is None:
         return
     targets = [widget, *getattr(widget, "_v2_parts", {}).values()]
+    for name in ("_v2_active", "_v2_override"):
+        if getattr(widget, name, None) is not None:
+            targets.append(getattr(widget, name))
     for target in targets:
         for name in _CHANGE_SIGNALS:
             signal = getattr(target, name, None)
@@ -2493,7 +2814,9 @@ def _flat_cells_table(rows: list, parent: QWidget | None = None) -> QWidget:
     (portee de surcharge) precede le libelle ; OFF grise la ligne, qui suit alors le General.
     `parent` : voir `build_cells_table`."""
     rows = [tuple(row) + (None,) * (4 - len(row)) for row in rows]
-    toggle_extra = 40 if any(t is not None for _l, _f, t, _s in rows) else 0
+    toggle_extra = (40 if any(t is not None for _l, _f, t, _s in rows) else 0) + \
+        (40 if any(getattr(f, "_v2_active", None) is not None for _l, f, _t, _s in rows) else 0) + \
+        (28 if any(getattr(f, "_v2_copy", None) is not None for _l, f, _t, _s in rows) else 0)
     # Jamais plus etroite que le titre de son entete (« PARAMÈTRE », police des entetes) : des libelles
     # courts le tronquaient.
     head_width = QFontMetrics(_qfont(9, 600)).horizontalAdvance("PARAMÈTRE") + 28 + 6
@@ -2504,9 +2827,11 @@ def _flat_cells_table(rows: list, parent: QWidget | None = None) -> QWidget:
         title = next(getattr(s, "_column_title", "Raccourci") for _l, _f, _t, s in rows if s is not None)
         columns.append((title, 150 if title == "Raccourci" else 90))
     table_rows = []
+    toggle_width = next((t.sizeHint().width() + 8 for _l, _f, t, _s in rows if t is not None), 0)
     for label, field, toggle, shortcut in rows:
         text = _label(label)
-        if toggle is None:
+        copy =getattr(field, "_v2_copy", None)     # états du bouton : « copier la ligne de l'état suivi »
+        if toggle is None and copy is None:
             first = text
         else:
             first = QWidget()
@@ -2514,15 +2839,45 @@ def _flat_cells_table(rows: list, parent: QWidget | None = None) -> QWidget:
             box = QHBoxLayout(first)
             box.setContentsMargins(0, 0, 0, 0)
             box.setSpacing(8)
-            box.addWidget(toggle, 0, Qt.AlignVCenter)
+            # « copier » en 1re position (demande de l'utilisateur, 2026-11-12), puis l'override ; ligne sans override
+            # (Décalage) : un espace à sa place, titres alignés.
+            if copy is not None:
+                box.addWidget(copy, 0, Qt.AlignVCenter)
+            if toggle is not None:
+                box.addWidget(toggle, 0, Qt.AlignVCenter)
+            elif toggle_width:
+                box.addSpacing(toggle_width)
             box.addWidget(text)
+        active = getattr(field, "_v2_active", None)
+        if active is not None:              # toggle « activer » juste à droite du titre (2026-11-11)
+            holder = QWidget()
+            holder.setStyleSheet("background: transparent;")
+            box = QHBoxLayout(holder)
+            box.setContentsMargins(0, 0, 0, 0)
+            box.setSpacing(8)
+            box.addWidget(first)
+            box.addWidget(active, 0, Qt.AlignVCenter)
+            box.addStretch(1)
+            first = holder
+        if toggle is not None or active is not None:
+            def grey(*_a, field=field, text=text, toggle=toggle, active=active):
+                # Override coupé (la ligne suit la portée générale / l'état standard) OU « activer » coupé : champ
+                # grisé. Effet RETIRÉ, jamais laissé à 100 %, ni posé dans un autre (`_set_faded`) : signalé, toggles
+                # H, B, D de « lier les 4 » invisibles et artefacts dans les lignes grisées.
+                own = toggle is None or toggle.isChecked()
+                live = active is None or active.isChecked()
+                _set_dimmed(field, not (own and live))
+                if toggle is not None:
+                    text.setStyleSheet(f"color: {M['row_label'] if own else M['label_dim']}; background: transparent;")
+                if active is not None and toggle is not None:
+                    _set_dimmed(active, not own)         # override coupé : « activer » est celui de l'état standard
+                if active is not None:
+                    _fade(text, own and not live)
 
-            def sync(checked: bool, field=field, text=text):
-                _set_dimmed(field, not checked)
-                text.setStyleSheet(f"color: {M['row_label'] if checked else M['label_dim']}; background: transparent;")
-
-            toggle.toggled.connect(sync)
-            sync(toggle.isChecked())
+            for switch in (toggle, active):
+                if switch is not None:
+                    switch.toggled.connect(grey)
+            grey()
         cells = [(first, "left", "center"), (field, "right", "center")]
         if shortcuts:
             if shortcut is None:
@@ -2535,6 +2890,11 @@ def _flat_cells_table(rows: list, parent: QWidget | None = None) -> QWidget:
         head_align[2] = Qt.AlignCenter
     frame, head, _cells = build_cells_table(columns, table_rows, head_align=head_align, parent=parent)
     frame._v2_head = head
+    if any(getattr(f, "_v2_state", None) for _l, f, _t, _s in rows):
+        # Déplier un état du bouton replie les autres (demande de l'utilisateur, 2026-11-12) ; le standard
+        # (parties sans ligne d'état) n'est jamais touché.
+        frame._extra_dims.accordion = lambda part: "states" if any(
+            getattr(rows[r][1], "_v2_state", None) for r in part if r < len(rows)) else None
     set_row_kinds(frame, {r: _row_content_kind(field) for r, (_l, field, _t, _s) in enumerate(rows)})
     return frame
 
@@ -2571,11 +2931,7 @@ def _dim_row(field: QWidget, dimmed: bool):
         return
     for other in row.findChildren(_Cell, options=Qt.FindDirectChildrenOnly):
         if other is not cell:
-            effect = other.content().graphicsEffect()
-            if not isinstance(effect, QGraphicsOpacityEffect):
-                effect = QGraphicsOpacityEffect(other.content())
-                other.content().setGraphicsEffect(effect)
-            effect.setOpacity(_DIMMED_OPACITY if dimmed else 1.0)
+            _set_faded(other.content(), dimmed)
 
 
 def _rule_holds(value, expected) -> bool:
@@ -2616,6 +2972,103 @@ def _link_active_rows(group: str, fields: dict):
         for _d_spec, d_widget, _r in drivers:
             _connect_changed(d_widget, sync)
         sync()
+
+
+_STANDARD_ROW_SPECS = {"color": "button_bg_color", "border": "button_border_enabled", "font": "button_font_family",
+                       "radius": "button_corner_radius", "shadow": "button_shadow_enabled"}
+
+
+def _link_state_follow(group: str, fields: dict, values: ScopeValues):
+    """États du bouton : une ligne non surchargée MONTRE, en direct, les valeurs RÉELLES de la ligne qu'elle suit
+    (toggle « activer » compris) : reposée à chaque changement d'une ligne du même nom (standard ou autre état), de
+    son toggle d'override ou d'une liste « suit » (demande de l'utilisateur, 2026-11-12 : « l'override est
+    prioritaire : coupé, la ligne est grisée coûte que coûte et ses paramètres sont ceux de la ligne qui la pilote »).
+    Seules les lignes de ce nom sont relues / reposées (≤ 4 lectures, 3 poses par mouvement d'un curseur)."""
+    specs = [sp for sp in CATALOG[group] if not isinstance(sp, str) and sp.params.get("override")
+             and getattr(fields.get(sp.key), "_v2_override", None) is not None]
+    if not specs:
+        return
+    by_key = {sp.key: sp for sp in CATALOG[group] if not isinstance(sp, str)}
+    follows = [sp for sp in by_key.values() if sp.kind == "state_follow" and sp.key in fields]
+    rows: dict = {}                             # nom de ligne -> [ligne standard, lignes des états]
+    for sp in specs:
+        rows.setdefault(sp.params["override"][2], []).append(sp)
+    for row, key in _STANDARD_ROW_SPECS.items():
+        if row in rows and key in fields and key in by_key:
+            rows[row].insert(0, by_key[key])
+    busy = []
+
+    def read(spec_list) -> dict:
+        current = dict(values.settings)
+        for sp in spec_list:
+            if sp.key in fields and sp.kind in FIELD_READERS:
+                current.update(read_spec(sp, fields[sp.key]))
+        return current
+
+    def push(names):
+        if busy:                                # ses propres poses : jamais en boucle
+            return
+        busy.append(True)
+        try:
+            current = read(follows + [sp for name in names for sp in rows[name]])
+            for name in names:
+                for sp in rows[name]:
+                    override = getattr(fields[sp.key], "_v2_override", None)
+                    if override is not None and not override.isChecked():
+                        write_spec(sp, fields[sp.key], current)
+        finally:
+            busy.clear()
+
+    def refresh(*_args):
+        push(list(rows))
+
+    def reset(spec):
+        """« Réinitialiser » : l'état prend exactement celui choisi dans sa liste, toutes ses lignes surchargées."""
+        state = spec.params["state"]
+        source = read_spec(spec, fields[spec.key])[spec.key]
+        current = read(by_key.values())
+        current.update(button_state_copy(current, source, state))
+        busy.append(True)
+        try:
+            for sp in by_key.values():
+                if sp.key.startswith(f"button_{state}_") and sp.key in fields:
+                    write_spec(sp, fields[sp.key], current)
+        finally:
+            busy.clear()
+        refresh()                               # les états qui suivent celui-ci
+
+    def copy_row(spec):
+        """Bouton « copier » d'une ligne d'état : CETTE ligne prend celle de l'état choisi dans « suit », surchargée."""
+        state, row = spec.params["copy_row"]
+        follow = by_key.get(f"button_{state}_follow")
+        if follow is None or follow.key not in fields:
+            return
+        source = read_spec(follow, fields[follow.key])[follow.key]
+        current = read(by_key.values())
+        if row == "offset":
+            keys = {f"button_{state}_offset_x", f"button_{state}_offset_y"}
+        else:
+            keys = {f"button_{state}_{suffix}{tail}" for suffix in BUTTON_STATE_ROWS[row]
+                    for tail in ("", "_linked", "__on", "__kept")} | {f"button_{state}_ovr_{row}"}
+        current.update({k: v for k, v in button_state_copy(current, source, state).items() if k in keys})
+        busy.append(True)
+        try:
+            write_spec(spec, fields[spec.key], current)
+        finally:
+            busy.clear()
+        if row in rows:
+            push([row])                         # les états qui suivent celui-ci
+
+    for name, row_specs in rows.items():
+        for sp in row_specs:                    # valeurs, « activer » et override de la ligne
+            _connect_changed(fields[sp.key], lambda name=name: push([name]))
+    for sp in follows:
+        fields[sp.key]._v2_follow.changed.connect(refresh)
+        fields[sp.key]._v2_reset.clicked.connect(lambda _c=False, s=sp: reset(s))
+    for sp in by_key.values():
+        button = getattr(fields.get(sp.key), "_v2_copy", None)
+        if button is not None and sp.params.get("copy_row"):
+            button.clicked.connect(lambda _c=False, s=sp: copy_row(s))
 
 
 def _link_side_colors(group: str, fields: dict):
@@ -2660,9 +3113,15 @@ def _build_icon_table(group: str, fields: dict, resizers: list, values=None, col
     """Groupe d'icones : UN tableau commun (`settings_v2_app.icon_table`), une ligne par icone (par etat pour la
     punaise) — Apercu | Nom | Etat | Action. Les boutons agissent tout de suite sur les fichiers d'icone perso.
     Specs `icon_color_of` (barre de navigation de fm_browser) : une colonne Couleur de plus, vide pour les icones
-    sans couleur ; ce sont des reglages enregistres comme les autres."""
+    sans couleur ; ce sont des reglages enregistres comme les autres. `icon_column` = titre de la colonne (defaut
+    « Couleur ») : UNE colonne par titre, dans l'ordre des specs (barre des modules du board : « Marge » et « Couleur
+    du module », un curseur et un toggle par icone de module)."""
     specs = CATALOG[group]
-    tints = {s.params["icon_color_of"]: s for s in specs if "icon_color_of" in s.params}
+    columns: dict = {}                              # titre -> {cle d'icone: spec}
+    for s in specs:
+        if "icon_color_of" in s.params:
+            columns.setdefault(s.params.get("icon_column", "Couleur"), {})[s.params["icon_color_of"]] = s
+    tints = columns
     entries, keep = [], []
     for spec in specs:
         if spec.kind != "ui_icon":
@@ -2670,23 +3129,24 @@ def _build_icon_table(group: str, fields: dict, resizers: list, values=None, col
         field = UiIconField(spec.params["ui_key"])
         keep.append(field)
         fields[spec.key] = field
-        extra = ()
-        if tints:
-            tint = tints.get(spec.params["ui_key"])
+        extra = []
+        for column in columns.values():
+            tint = column.get(spec.params["ui_key"])
             if tint is None:
-                extra = (QLabel(""),)
-            else:
-                widget = make_field(tint, values, colors)
-                fields[tint.key] = widget
-                if record is not None:
-                    record.append((tint, widget))
-                    _connect_changed(widget, on_change)
-                extra = (widget,)
+                extra.append(QLabel(""))
+                continue
+            widget = make_field(tint, values, colors)
+            fields[tint.key] = widget
+            if record is not None:
+                record.append((tint, widget))
+                _connect_changed(widget, on_change)
+            extra.append(widget)
         for caption, avatar, buttons, state in field.states():
             entries.append((f"{spec.label} : {caption.lower()}" if caption else spec.label, avatar, state, buttons,
                             *extra))
     from settings_v2_app import ICON_TABLE_COLUMNS
-    frame, head = icon_table(entries, ICON_TABLE_COLUMNS + ((("Couleur", 110),) if tints else ()))
+    frame, head = icon_table(entries, ICON_TABLE_COLUMNS + tuple((title, 110 if title == "Couleur" else 160)
+                                                                 for title in columns))
     frame._dims_key = f"v2:{group}#0"               # jamais les largeurs de l'ancien tableau a sous-cellules
     frame._ui_icon_fields = keep                    # garde les champs en vie : leurs boutons leur sont relies
     if tints:
@@ -2823,7 +3283,7 @@ def build_group(group: str, values: ScopeValues, colors: dict,
                 record.append((spec.general_toggle, toggle))
                 _connect_changed(toggle, on_change)
         else:
-            flat_rows.append((spec.label, field_w, None, _shortcut_field(spec, values, colors, fields, record,
+            flat_rows.append((spec.label, field_w, getattr(field_w, "_v2_override", None), _shortcut_field(spec, values, colors, fields, record,
                                                                          on_change)))
     _align_state_pairs(fields)                      # avant le tableau : sa colonne se cale sur les sous-cellules
     frames = []
@@ -2840,6 +3300,7 @@ def build_group(group: str, values: ScopeValues, colors: dict,
             frames.append(frame)
     _link_active_rows(group, fields)
     _link_side_colors(group, fields)
+    _link_state_follow(group, fields, values)
     if len(frames) == 1:
         return frames[0]
     wrap.setStyleSheet("background: transparent;")
@@ -3032,6 +3493,8 @@ class _LazyNode(QWidget):
         for frame in frames:
             if frame._dims_applied:
                 _TABLE_DIMS[frame.dimsKey()] = frame.collectDims()
+        for frame in frames:
+            frame._dims_retired = True              # la copie reprend SA cle (et sa mise en page), pas « #1 »
         mine = lambda w: w is old or old.isAncestorOf(w)
         store = self._store
         if "specs" in store:
@@ -3628,6 +4091,35 @@ class AppSettingsStore:
         return settings
 
 
+def _set_icon_margin(settings: dict) -> bool:
+    """Marge des icones (Theme > General, `icon_margin`) ; changee : caches d'icones vides (fm_theme.icon_frame) et
+    toutes les fenetres repeintes (chaque icone refaite a sa peinture)."""
+    from fm_theme.icon_frame import set_margin
+    if not set_margin(settings.get("icon_margin", 20)):
+        return False
+    for window in QApplication.topLevelWidgets():
+        window.update()
+    return True
+
+
+def _set_icon_style(settings: dict) -> bool:
+    """Style des icones du catalogue (Theme > General, `icon_library_style`) et couleur des icones ; change : les
+    fenetres sont repeintes (abonnes de fm_theme.icon_library deja prevenus)."""
+    from browser_core_parts.settings import apply_icon_style
+    if not apply_icon_style(settings):
+        return False
+    for window in QApplication.topLevelWidgets():
+        window.update()
+    return True
+
+
+def _set_dimmed_value(settings: dict) -> bool:
+    """Valeurs du grise (Theme > General : elements d'interface, textes, icones) ; vrai si une a change."""
+    from fm_theme.widgets import set_dimmed_values
+    return set_dimmed_values(settings.get("dimmed_opacity", 20), settings.get("dimmed_text_opacity", 20),
+                             settings.get("dimmed_icon_opacity", 20))
+
+
 class SettingsWindowV2(QDialog):
     """Fenetre comparative. `build_seconds` = temps de construction du
     constructeur ; `page_seconds[label]` = temps de chaque onglet a sa
@@ -4164,6 +4656,12 @@ class SettingsWindowV2(QDialog):
             "colors": (("colors",), self._restyle_colors),
             # Fenetres additionnelles (celle-ci comprise) : en direct.
             "extra_windows": (("extra_window_", "window_border", "colors"), seed_extra_window_look),
+            # Valeur du grise (Theme > General) : objets deja grises mis a jour en direct (editeur fm_theme seul aussi).
+            "dimmed": (("dimmed_",), lambda merged: _set_dimmed_value(merged)),
+            # Marge des icones (Theme > General) : toutes les icones refaites en direct (editeur fm_theme seul aussi).
+            "icon_margin": (("icon_margin",), lambda merged: _set_icon_margin(merged)),
+            "icon_library_style": (("icon_library_style", "navtool_icon_base_color"),
+                                   lambda merged: _set_icon_style(merged)),
         }
 
     def _apply_look(self, merged: dict, values: dict | None = None):

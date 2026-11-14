@@ -37,12 +37,12 @@ class RenderLogTest(unittest.TestCase):
                                 str(source), "turntable", "high", str(output))
             table = pv._RenderLogTable()
             table.load_entries(pv._read_render_log_entries(path))
-            self.assertEqual(table.columnCount(), 8)
-            self.assertEqual([table.item(0, col).text() for col in range(8)],
+            self.assertEqual(table.columnCount(), 9)                    # + Progression (2026-10-02)
+            self.assertEqual([table.item(0, col).text() for col in range(9)],
                              ["bib/projets/voiture_01.obj", "10:00:00", "10:05:00", "High poly",
-                              "Turntable", str(output.parent), "frame_000.png", "Terminé"])
-            self.assertEqual([table.horizontalHeaderItem(i).text() for i in range(8)], pv._RENDER_LOG_COLUMNS)
-            self.assertEqual(path.read_text(encoding="utf-8").count("<th>"), 8)
+                              "Turntable", str(output.parent), "frame_000.png", "100%", "Terminé"])
+            self.assertEqual([table.horizontalHeaderItem(i).text() for i in range(9)], pv._RENDER_LOG_COLUMNS)
+            self.assertEqual(path.read_text(encoding="utf-8").count("<th>"), 9)
 
     def test_worker_records_actual_generated_image(self):
         with tempfile.TemporaryDirectory(prefix="render_output_path_") as work:
@@ -161,7 +161,7 @@ class RenderLogTest(unittest.TestCase):
         self.assertEqual(table._entries[1]["state"], "Échec")
         table.clear()
         self.assertEqual(table.rowCount(), 0)
-        self.assertEqual(table.columnCount(), 8)
+        self.assertEqual(table.columnCount(), 9)
 
     def test_daily_html_preserves_history_and_escapes_details(self):
         with tempfile.TemporaryDirectory(prefix="daily_table_test_") as work:

@@ -42,6 +42,13 @@ class _TitleBar(QWidget):
     def place_viewer_group(self):
         pass
 
+    def style_group_button(self, button):          # habillage des icônes de la barre (TitleBar, 2026-11-08)
+        pass
+
+    @staticmethod
+    def release_group_button(button):
+        pass
+
 
 class _Host(FontModuleMixin, ChromeMixin, ModuleTargetsMixin):
     """Fenêtre principale réduite à ce que le mixin utilise."""

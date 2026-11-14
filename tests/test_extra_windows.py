@@ -55,7 +55,9 @@ class ExtraWindowsTest(unittest.TestCase):
         scope = v2.ScopeValues(values, None)
         for spec in (*v2.CATALOG["Fenêtres additionnelles"], *v2.CATALOG["Barre de navigation : Fenetres additionnelles"]):
             read = v2.read_spec(spec, v2.make_field(spec, scope, values["colors"]))
-            self.assertTrue(set(read) <= set(settings_store.DEFAULT_SETTINGS), read)
+            # `<cle>__on` / `__kept` du toggle « activer » (2026-11-11) : acceptees sans declaration
+            read = {k for k in read if not settings_store._ACTIVATION_KEY.search(k)}
+            self.assertTrue(read <= set(settings_store.DEFAULT_SETTINGS), read)
 
     def test_shadow_margin_border_and_title_bar(self):
         all_sides = {k: True for k in ("top", "right", "bottom", "left")}

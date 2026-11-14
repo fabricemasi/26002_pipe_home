@@ -64,6 +64,12 @@ EXCEPTIONS: dict[str, tuple[str, str]] = {
     "column_override_enabled_by_title": (FONC, "override d'élément (reste côté appli)"),
     "font_table_columns": (FONC, "disposition du tableau des polices"),
     "ui_scale": (THEME, "échelle générale de l'interface"),
+    "dimmed_opacity": (THEME, "valeur du grisé : éléments d'interface (2026-11-12)"),
+    "dimmed_text_opacity": (THEME, "valeur du grisé : textes (2026-11-12)"),
+    "dimmed_icon_opacity": (THEME, "valeur du grisé : icônes (2026-11-12)"),
+    "navtool_icon_base_color": (THEME, "couleur des icônes (Thème > Général, 2026-11-12)"),
+    "icon_margin": (THEME, "marge des icônes recadrées (Thème > Général, 2026-11-12)"),
+    "icon_library_style": (THEME, "icônes du catalogue en flat monochrome ou flat couleur (Thème > Général, 2026-11-13)"),
     "row_templates": (THEME, "gabarits des lignes des fenêtres de réglages (choix de l'utilisateur, 2026-10-29)"),
     # Mots d'aspect dans le nom, mais comportement ou contenu du document :
     **{k: (FONC, "comportement") for k in (

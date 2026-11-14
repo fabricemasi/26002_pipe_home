@@ -20,6 +20,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QLineEdit, QVB
 
 from fm_theme.palette import PaletteSelectBar
 from fm_theme.placeholder import ink as _placeholder_ink
+from fm_theme.icon_frame import framed as _framed
 from . import cad_attrib, cad_block, cad_commands, cad_hatch, cad_input, cad_model, cad_snap, cad_text
 from . import cad_geometry as geo
 from .cad_bars import (
@@ -37,6 +38,7 @@ HISTORY_EXPANDED = 14
 LINETYPE_WIDTH = 180          # px : controleur « Type de ligne » de la barre Proprietes (libelle + menu)
 
 
+@_framed("cad")                                       # cadre des icones (fm_theme > General > Marge des icones)
 def paint_cad_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
     """Icones des outils CAD (traits, dans l'esprit des glyphes du board)."""
     color = _placeholder_ink(color)                     # icone dessinee par le code : magenta (provisoire)
@@ -774,6 +776,10 @@ class CadChrome:
         menu.addSeparator()
         menu.addMenu(self.export_menu(menu))
         menu.addMenu(self.photoshop_menu(menu))
+        from fm_illustrator.from_cad import KINDS
+        to_ill = menu.addAction("Convertir en tracés Illustrator")
+        to_ill.setEnabled(any(i.kind in KINDS for i in ctl.selection()))
+        to_ill.triggered.connect(lambda: ctl.to_illustrator())
         menu.popup(global_pos)
 
     def export_menu(self, parent):
@@ -846,9 +852,24 @@ class CadChrome:
 
     def _custom_color(self, anchor, layer_id):
         from settings_widgets import _ColorPickerPopup
-        popup = _ColorPickerPopup("#1a1a1a", "Couleur", self.pane)
+        popup = _ColorPickerPopup(self._current_color(layer_id), "Couleur", self.pane)
         popup.committed.connect(lambda c: self.set_color(QColor(c).name(), layer_id))
         popup.show_near(anchor)
+
+    def _current_color(self, layer_id=None) -> str:
+        """Couleur de départ de « Autre couleur… » : celle du calque `layer_id`, sinon de la sélection (ou la couleur
+        courante), ByLayer résolu (même règle que la pastille de la barre) ; avant 2026-11-11 : toujours #1a1a1a."""
+        cad = self.ctl.cad_page()
+        if layer_id is not None:
+            layer = cad_model.layer_by_id(cad, layer_id)
+            color = layer.get("color") if layer else None
+        else:
+            items = self.ctl.selection()
+            color = items[0].data.get("color") if items else cad.get("cecolor")
+            if color == cad_model.BYLAYER or color is None:
+                layer_id = items[0].data.get("layer") if items else cad.get("current")
+                color = cad_model.effective_layer(cad, layer_id)["color"]
+        return color if isinstance(color, str) and color.startswith("#") else "#1a1a1a"
 
     def set_color(self, color, layer_id=None):
         ctl = self.ctl

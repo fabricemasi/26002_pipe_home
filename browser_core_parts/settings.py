@@ -303,6 +303,25 @@ def _register_settings_hooks() -> None:
     HOOKS["lut_curve_choices"] = _pv.lut_curve_choices
     HOOKS["lut_test_image"] = _pv.lut_test_image_for
 
+def apply_icon_margin(settings: dict) -> bool:
+    """Theme > General > « Marge des icônes » (`icon_margin`) ; vrai si elle a change (icones deja cadrees oubliees,
+    punaises comprises : refaites a la prochaine peinture)."""
+    from preview_services.icons import set_icon_margin
+    from .icons import _PIN_ICON_CACHE
+    from fm_theme.icon_frame import on_change
+    on_change(_PIN_ICON_CACHE.clear)
+    return set_icon_margin(settings.get("icon_margin", 20))
+
+def apply_icon_style(settings: dict) -> bool:
+    """Theme > General > « Style des icônes » (`icon_library_style`) et « Couleur des icônes » (teinte des icônes
+    monochromes sans couleur propre) ; vrai si l'un a change (abonnes de fm_theme.icon_library prevenus)."""
+    from fm_theme import icon_library
+    from fm_theme.style import resolve_color_ref
+    from settings_store import DEFAULT_SETTINGS
+    default = DEFAULT_SETTINGS.get("navtool_icon_base_color", "#c4cacf")
+    encre = resolve_color_ref(settings.get("navtool_icon_base_color") or default, default)
+    return icon_library.set_interface_style(settings.get("icon_library_style", "monochrome"), encre)
+
 def apply_window_border(settings: dict) -> None:
     """Theme > General > « Bordure des fenetres » : bordure du pourtour de la fenetre principale, resolue dans
     `ui_state.WINDOW_BORDER` (peinte par main_window.helpers.CentralFrame) ; seule : chemin rapide du glisser."""
@@ -327,6 +346,45 @@ def apply_folder_icon_colors(settings: dict) -> None:
         kind: (ui_state.FOLDER_ICON_COLORS[kind] if settings.get(f"folder_text_color_{kind}_from_icon")
                else settings.get(f"folder_text_color_{kind}") or "#d6d9dc")
         for kind in FOLDER_ICON_KINDS if settings.get(f"folder_text_color_{kind}_enabled")}
+
+
+# Couleur dominante des icônes Flat Couleur de chaque module de la bibliothèque d'iconographie (règle 1 du Design
+# System, 2026-11-13) : UNE clé de réglage EXISTANTE par module, aucune couleur propre aux icônes. Blanc = « icône
+# telle quelle » (même convention que ces réglages) : couleur de référence de la bibliothèque. Nouveau module : une
+# ligne ici + son entrée dans documentation/modules.json de la bibliothèque.
+MODULE_ICON_COLOR_KEYS = {
+    "browser": "folder_icon_color_standard",            # Icônes > Couleur des dossiers
+    "viewer": "navtool_icon_color_viewer",              # Barre de navigation : couleur des icônes de module
+    "video": "navtool_icon_color_video",
+    "markdown": "navtool_icon_color_text_editor",
+    "agenda": "navtool_icon_color_agenda",
+    "font": "navtool_icon_color_font",
+    "miro": "board_modulebar_color_miro",               # Board > Couleurs des modules (« Dominante »)
+    "cad": "board_modulebar_color_cad",
+    "design": "board_modulebar_color_design",
+    "tableur": "board_modulebar_color_tableur",
+    "illustrator": "board_modulebar_color_illustrator",
+    "photoshop": "board_modulebar_color_photoshop",
+    "pdf": "board_modulebar_color_pdf",
+}
+MODULE_ICON_COLOR_SETTINGS = frozenset(MODULE_ICON_COLOR_KEYS.values())
+
+
+def apply_module_icon_colors(settings: dict) -> set:
+    """Pousse la couleur de chaque module vers fm_theme.icon_library (rien n'est lu sur le disque) ; rend les modules
+    dont la couleur a changé (leurs icônes seules sont oubliées et refaites)."""
+    from config import ICON_LIBRARY_ROOT
+    from fm_theme import icon_library
+    from fm_theme.icon_colors import normaliser
+    from fm_theme.style import resolve_color_ref
+    from settings_store import DEFAULT_SETTINGS
+    icon_library.configure(ICON_LIBRARY_ROOT)
+    colors = {}
+    for module, key in MODULE_ICON_COLOR_KEYS.items():
+        default = DEFAULT_SETTINGS.get(key) or "#ffffff"
+        value = normaliser(resolve_color_ref(settings.get(key) or default, default))
+        colors[module] = None if value in (None, "#FFFFFF") else value
+    return icon_library.set_module_colors(colors)
 
 
 def apply_all_settings(settings: dict) -> None:
@@ -430,6 +488,7 @@ def apply_all_settings(settings: dict) -> None:
         "font_smoothing": settings.get("shortcut_font_smoothing", "current"),
     }
     apply_folder_icon_colors(settings)
+    apply_module_icon_colors(settings)
     ui_state.DETAIL_PANEL_WIDTH = int(settings.get("detail_panel_width", 300))
 
     # Habillage des sliders peints a la main (voir settings_window.
@@ -499,6 +558,11 @@ def apply_all_settings(settings: dict) -> None:
     ui_state.HEADER_HEIGHT = settings.get("header_height", ui_state.HEADER_HEIGHT)
     ui_state.HEADER_PADDING = settings.get("header_padding", ui_state.HEADER_PADDING)
     ui_state.WINDOW_RADIUS = settings.get("window_radius", ui_state.WINDOW_RADIUS)
+    from fm_theme.widgets import set_dimmed_values             # Valeur du grise (fm_theme > General)
+    set_dimmed_values(settings.get("dimmed_opacity", 20), settings.get("dimmed_text_opacity", 20),
+                      settings.get("dimmed_icon_opacity", 20))
+    apply_icon_margin(settings)                                 # Marge des icones (fm_theme > General)
+    apply_icon_style(settings)                                  # Style des icones du catalogue (fm_theme > General)
     apply_window_border(settings)
     ui_state.BUTTON_RADIUS = settings.get("button_radius", ui_state.BUTTON_RADIUS)
     set_button_radius(ui_state.BUTTON_RADIUS)

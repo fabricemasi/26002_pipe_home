@@ -42,13 +42,13 @@ class StorageTest(unittest.TestCase):
 
     def test_saved_in_the_folder_and_read_back(self):
         self.assertEqual(fa.get(self.image), fa.DEFAULTS)
-        fa.update(self.image, rating=4, color=2, like=True, keywords=["ciel", " nuit ", "ciel"], status="keep")
+        # « J'aime » retiré le 2026-10-16 (attributs alignés sur Lightroom : note, libellé de couleur, drapeau).
+        fa.update(self.image, rating=4, color=2, keywords=["ciel", " nuit ", "ciel"], status="keep")
         raw = json.loads((self.dir / fa.FILENAME).read_text(encoding="utf-8"))
-        self.assertEqual(raw["photo.jpg"], {"rating": 4, "color": 2, "like": True, "keywords": ["ciel", "nuit"],
-                                            "status": "keep"})
+        self.assertEqual(raw["photo.jpg"], {"rating": 4, "color": 2, "keywords": ["ciel", "nuit"], "status": "keep"})
         fa._CACHE.clear()
         self.assertEqual(fa.get(self.image)["keywords"], ["ciel", "nuit"])
-        fa.update(self.image, rating=0, color=0, like=False, keywords=[], status="")
+        fa.update(self.image, rating=0, color=0, keywords=[], status="")
         self.assertFalse((self.dir / fa.FILENAME).exists())         # plus rien : fichier retire
 
     def test_images_of_a_pureref_board_keep_attributes_with_the_board(self):
@@ -85,11 +85,11 @@ class ViewerTableTest(StorageTest):
         for _ in range(5):
             app.processEvents()
         editor = panel._attributes
-        self.assertEqual([label for label, _w, _n in editor.rows], ["Note", "Couleur", "J'aime", "Mots clés", "Statut"])
+        self.assertEqual([label for label, _w, _n in editor.rows],
+                         ["Note (0–5)", "Libellé de couleur", "Drapeau", "Mots clés"])
         stars = editor.stars
         QTest.mouseClick(stars, Qt.LeftButton, Qt.NoModifier, QPoint(stars._step * 3 + 2, stars.height() // 2))
         editor.colors.changed.emit(3)
-        editor.like.setChecked(True)
         # Mots cles : saisis a la volee, separes par des espaces ; enregistres a la sortie du champ.
         words = editor.keywords
         words.setFocus()
@@ -117,16 +117,16 @@ class ViewerTableTest(StorageTest):
         self.assertEqual(fa.get(self.image)["keywords"], ["ciel", "nuit", "ville"])
         fa.update(self.image, keywords=["ciel", "nuit"])
         words.set_words(["ciel", "nuit"])
-        editor.status.changed.emit("À supprimer")
+        editor.status.changed.emit("delete")                            # drapeau « Rejetée »
         values = fa.get(self.image)
-        self.assertEqual((values["rating"], values["color"], values["like"], values["keywords"], values["status"]),
-                         (4, 3, True, ["ciel", "nuit"], "delete"))
+        self.assertEqual((values["rating"], values["color"], values["keywords"], values["status"]),
+                         (4, 3, ["ciel", "nuit"], "delete"))
         # Un autre fichier : ses propres attributs (vides).
         other = self.dir / "autre.png"
         other.write_bytes(b"y")
         panel.set_path(other)
         self.assertEqual(editor.stars.value(), 0)
-        self.assertFalse(editor.like.isChecked())
+        self.assertEqual(fa.get(other)["status"], "")
 
 
 if __name__ == "__main__":

@@ -28,7 +28,7 @@ from settings_store import (
 )
 from settings_widgets import (
     Menu, mark_current, menu_row, _ColorPickerPopup, DRAG_GHOST_OPACITY, _ColorSwatchButton, _SLOT_LABELS, _SliderField,
-    _Toggle, _set_dimmed,
+    _Toggle, _set_dimmed, normalize_picker_color,
 )
 from settings_layout import (
     _build_linked_sides_toggle,
@@ -456,12 +456,35 @@ class _CompactAppOrCustomColorField(QWidget):
         self._refresh()
         self.changed.emit(self._value)
 
+    # Couleur VISIBLE quand la valeur est transparente et veut dire « suit le thème / le même » (Spec
+    # params["effective"], voir settings_window_v2._f_color_app) : None = transparent veut dire « aucun ».
+    _effective = None
+
+    def set_effective(self, getter):
+        self._effective = getter
+
+    def _picker_start(self) -> str:
+        """Couleur d'ouverture du sélecteur : la valeur, ou la couleur réellement affichée si la valeur est
+        transparente et suit autre chose (demande de l'utilisateur, 2026-11-11)."""
+        start = self._resolved_hex()
+        if self._effective is not None and QColor(start).isValid() and QColor(start).alpha() == 0:
+            try:
+                shown = self._effective()
+            except Exception:
+                shown = None
+            if shown and QColor(shown).isValid():
+                return normalize_picker_color(shown)
+        return start
+
     def _open_custom_picker(self):
         self._before_pick = self._value
-        popup = _ColorPickerPopup(self._resolved_hex(), self._title, self)
+        start = self._picker_start()
+        popup = _ColorPickerPopup(start, self._title, self)
         self._popup = popup
+        start = popup._before                         # forme normalisée (comparée à la validation)
         popup.colorChanged.connect(self._apply_custom_live)
-        popup.committed.connect(self._apply_custom_live)
+        # Valider sans avoir rien changé = garder la valeur (un transparent qui suit le thème le reste).
+        popup.committed.connect(lambda c: self._apply_custom_live(self._before_pick if c == start else c))
         popup.cancelled.connect(lambda: self._apply_custom_live(self._before_pick))
         popup.show_near(self.swatch)
 
@@ -817,6 +840,15 @@ class _ToggleSideColorsField(QWidget):
     def isLinked(self) -> bool:
         return self.link_toggle.isChecked()
 
+    def setLinkedState(self, linked: bool):
+        """« Lier les 4 » posé de l'extérieur (valeurs d'une autre variante), sans signal de modification."""
+        if self.link_toggle.isChecked() == linked:
+            return
+        self.link_toggle.blockSignals(True)
+        self.link_toggle.setChecked(linked)
+        self.link_toggle.blockSignals(False)
+        self.sides.setLinked(linked)
+
     def sidesValue(self) -> dict[str, str]:
         return self.sides.value()
 
@@ -958,7 +990,8 @@ class _CellPaddingField(QWidget):
 
     changed = Signal()
 
-    def __init__(self, linked: bool, sides: dict, order: list[tuple[str, str]] | None = None, parent=None):
+    def __init__(self, linked: bool, sides: dict, order: list[tuple[str, str]] | None = None, parent=None,
+                 maximum: int = 32):
         super().__init__(parent)
         self.setStyleSheet("background: transparent;")  # voir _SidePaddingField, meme correctif
         layout = QHBoxLayout(self)
@@ -973,7 +1006,7 @@ class _CellPaddingField(QWidget):
         toggle_row, self.toggle = _build_linked_sides_toggle(linked)
         self.toggle.toggled.connect(self._on_toggled)
         layout.addWidget(toggle_row)
-        self.sides = _SidePaddingField(sides, order=order)
+        self.sides = _SidePaddingField(sides, order=order, maximum=maximum)
         self.sides.changed.connect(self.changed.emit)
         layout.addWidget(self.sides)
         self.sides.setLinked(linked)

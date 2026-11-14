@@ -1500,6 +1500,15 @@ class BoardView(QGraphicsView):
         return added
 
     def _add_image(self, name: str, width: int, height: int, at: QPointF):
+        # Module Illustrator / Design actif : l'image collee (Ctrl+V), glissee d'un navigateur ou telechargee devient
+        # SON objet image (selectionnable, vectorisable) ; avant, une image du board que le module ignorait
+        # (« l'image n'est pas selectionnable », 2026-11-13).
+        ctl = self._module_ctl()
+        if ctl is not None:
+            if hasattr(ctl, "place_image") and ctl.place_image(None, at, asset=name) is not None:
+                return
+            if hasattr(ctl, "add_image_asset") and ctl.add_image_asset(name, width, height, at) is not None:
+                return
         side = 600.0
         scale = min(1.0, side / max(1, width, height))
         w, h = max(24.0, width * scale), max(24.0, height * scale)

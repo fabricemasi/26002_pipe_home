@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QWidget, QWidgetAction,
 )
 
+from fm_theme.icon_frame import framed_icon
 from fm_theme.style import font as app_font, resolve_color_ref
 from fm_theme.hooks import default_settings
 
@@ -850,7 +851,7 @@ def _apply_icons(menu: QMenu, icons: dict, icon_size: int) -> None:
             continue
         if not hasattr(action, "_ctx_base_icon"):
             action._ctx_base_icon = action.icon()
-        action.setIcon(QIcon(path) if path else action._ctx_base_icon)
+        action.setIcon(framed_icon(path) if path else action._ctx_base_icon)   # cadre des icones (Theme > General)
         plain.append(action)
     # Une ligne a controle a une icone : Qt doit reserver la case d'icone des lignes simples aussi
     # (sinon leur texte ne serait plus aligne) -> icone transparente sur l'une d'elles.
@@ -923,7 +924,7 @@ def _align(menu: QMenu, lk: dict) -> None:
         row.layout().setContentsMargins(ip["left"], ip["top"], ip["right"], ip["bottom"])
         row.icon.setFixedWidth(icon_col)
         if row._icon_path and icon_col:
-            row.icon.setPixmap(QIcon(row._icon_path).pixmap(lk["icon_size"], lk["icon_size"]))
+            row.icon.setPixmap(framed_icon(row._icon_path).pixmap(lk["icon_size"], lk["icon_size"]))
         else:
             row.icon.clear()
         row.label.setFont(lk["font"])
@@ -1099,7 +1100,7 @@ class _MenuEditor(QObject):
             sub = Menu("Icône", edit, editable=False)
             edit.addMenu(sub)
             for path in _icon_choices():
-                choice = sub.addAction(QIcon(str(path)), path.stem)
+                choice = sub.addAction(framed_icon(path), path.stem)
                 icon_actions[choice] = str(path)
             if icon_actions:
                 sub.addSeparator()

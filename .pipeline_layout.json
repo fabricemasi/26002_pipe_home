@@ -1,4 +1,10 @@
 {
+  "group_heights": {
+    "logiciels": 315,
+    "in": 315,
+    "over": 315,
+    "out": 315
+  },
   "by_preset": {
     "fab": {
       "pinned": true,

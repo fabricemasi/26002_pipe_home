@@ -7,6 +7,7 @@ import _isolate  # noqa: E402,F401
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -26,13 +27,19 @@ from browser_core import ROLE_PATH
 
 
 def select(column, name):
-    for i in range(column.list.count()):
-        item = column.list.item(i)
-        if Path(item.data(ROLE_PATH)).name == name:
-            column.list.setCurrentItem(item)
-            APP.processEvents()
-            return
-    raise AssertionError(f"{name} absent de {column.column_title}")
+    # Colonnes remplies en differe (chargement asynchrone) : on attend l'element, 3 s au plus.
+    end = time.monotonic() + 3
+    while True:
+        for i in range(column.list.count()):
+            item = column.list.item(i)
+            if Path(item.data(ROLE_PATH)).name == name:
+                column.list.setCurrentItem(item)
+                APP.processEvents()
+                return
+        if time.monotonic() > end:
+            raise AssertionError(f"{name} absent de {column.column_title}")
+        APP.processEvents()
+        time.sleep(0.01)
 
 
 class FreeScenePathTest(unittest.TestCase):

@@ -68,10 +68,7 @@ class PresetPicker(QWidget):
 
     def restyle(self):
         """Palette des reglages changee (autre preset) : habillage refait."""
-        self.select._refresh_style()
-        for btn in (self.manage,):
-            btn._bg, btn._border, btn._fg, btn._hover = M["btn_bg"], M["btn_border"], M["btn_fg"], M["btn_hover"]
-            btn._refresh_style()
+        self.select._refresh_style()                 # le bouton « Gérer » suit le thème (QSS commun), rien à refaire
 
 
 class PresetManagerWindow(QDialog):

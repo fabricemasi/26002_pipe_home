@@ -52,9 +52,8 @@ Trouver en une recherche où vit un réglage : section affichée -> groupe du ca
 | General | Barre de navigation > Fenêtres additionnelles | `Barre de navigation : Fenetres additionnelles` | fm_theme | `extra_window_title_height`, `extra_window_title_bg`, `extra_window_title_text_font_family`, `extra_window_title_button_width`, `extra_window_title_button_radius`, `extra_window_title_line_enabled` |
 | General | ICONES > General | `Icones : General` | appli | `ui_icon:pin`, `ui_icon:folder_default`, `ui_icon:file_default`, `ui_icon:settings_gear`, `ui_icon:settings_style`, `ui_icon:shortcut` |
 | General | ICONES > Couleur des dossiers | `Icones : Couleurs des dossiers` | appli | `folder_icon_color_standard`, `folder_text_color_standard_enabled`, `folder_text_color_standard_from_icon`, `folder_text_color_standard`, `folder_icon_color_shortcut`, `folder_text_color_shortcut_enabled`, `folder_text_color_shortcut_from_icon`, `folder_text_color_shortcut`, `… (+4)` |
-| General | ICONES > Couleur des icônes | `Icones : Couleur des icones` | appli | `navtool_icon_base_color`, `navtool_icon_disabled_color` |
 | General | ICONES > Logiciels | `Icones : Logiciels` | appli | `custom_softwares` |
-| Thème | Général | `Thème : Général` | fm_theme | `ui_scale`, `window_radius`, `window_border_enabled`, `variant_sel_border_enabled`, `variant_sel_corner_radius`, `variant_sel_bg_color` |
+| Thème | Général | `Thème : Général` | fm_theme | `ui_scale`, `window_radius`, `dimmed_opacity`, `dimmed_text_opacity`, `dimmed_icon_opacity`, `navtool_icon_base_color`, `icon_margin`, `icon_library_style`, `… (+4)` |
 | Thème | Couleurs | `Couleurs` | appli | `colors:skinAccent`, `colors:navbar`, `colors:skinN1`, `colors:selCur`, `colors:skinN2`, `colors:selDone`, `colors:fond`, `colors:hover`, `… (+9)` |
 | Thème | Polices principales | `Polices principales` | fm_theme | `font_main`, `font_info`, `font_titles`, `font_files`, `font_code` |
 | Thème | TITRES > Polices | `Titre : Polices` | fm_theme | `title_level1_font_family`, `title_level2_font_family`, `title_level3_font_family`, `title_level4_font_family`, `title_level5_font_family` |
@@ -73,7 +72,7 @@ Trouver en une recherche où vit un réglage : section affichée -> groupe du ca
 | Thème | Sliders > Rail | `Slider : Rail` | fm_theme | `slider_track_height`, `slider_track_fill_color`, `slider_track_empty_color`, `slider_track_border_enabled`, `slider_track_radius` |
 | Thème | Sliders > Selecteur | `Slider : Selecteur` | fm_theme | `slider_thumb_width`, `slider_thumb_height`, `slider_thumb_color`, `slider_thumb_border_enabled`, `slider_thumb_radius` |
 | Thème | Zone de saisie | `Zone de saisie` | fm_theme | `input_bg_color`, `input_border_enabled`, `input_font_family`, `input_corner_radius`, `input_height` |
-| Thème | Bouton | `Bouton` | fm_theme | `button_bg_color`, `button_border_enabled`, `button_hover_color`, `button_active_color`, `button_active_border_color`, `button_active_border_thickness`, `button_font_family`, `button_corner_radius`, `… (+1)` |
+| Thème | Bouton | `Bouton` | fm_theme | `button_bg_color`, `button_border_enabled`, `button_hover_follow`, `button_hover_color`, `button_hover_border_enabled`, `button_hover_font_family`, `button_hover_corner_radius`, `button_hover_offset_x`, `… (+19)` |
 | Thème | Tableaux | `Tableaux` | appli | `columns_resizable`, `table_bg_color`, `table_border_enabled`, `table_shadow_enabled`, `table_inner_h_enabled`, `table_inner_v_enabled`, `table_radius`, `table_cell_padding`, `… (+5)` |
 | Thème | Tabs | `Tabs` | fm_theme | `tabs_bg_color`, `tabs_active_bg_color`, `tabs_hover_bg_color`, `tabs_strip_color`, `tabs_border_enabled`, `tabs_inactive_border_enabled`, `tabs_font_family`, `tabs_corner_radius`, `… (+3)` |
 | Thème | Barres d'outils > Grille | `Palette : Grille` | fm_theme | `palette_cell_size`, `palette_cell_gap`, `palette_margin`, `palette_snap_distance` |
@@ -130,16 +129,16 @@ Trouver en une recherche où vit un réglage : section affichée -> groupe du ca
 | Module Markdown | Tableaux | `Markdown : Tableaux` | appli | `md_table_font_family`, `md_table_head_font_family`, `md_table_grid_color`, `md_table_grid_width`, `md_table_cell_bg`, `md_table_alt_bg`, `md_table_head_bg`, `md_table_radius`, `… (+2)` |
 | Module Markdown | Séparateurs | `Markdown : Séparateurs` | appli | `md_hr_color`, `md_hr_thickness`, `md_hr_spacing` |
 | Module Markdown | Images | `Markdown : Images` | appli | `md_image_max_width`, `md_image_align`, `md_image_radius`, `md_image_spacing` |
-| Module Markdown | Éditeur | `Markdown : Éditeur` | appli | `md_caret_color`, `md_caret_width`, `md_code_file_font_family`, `md_code_file_line_height`, `md_code_file_bg`, `md_active_line_bg`, `md_line_numbers`, `md_gutter_color`, `… (+3)` |
-| Module Markdown | Barre d'outils | `Markdown : Barre d'outils` | appli | `md_toolbar_enabled`, `md_toolbar_bg`, `md_toolbar_icon_color`, `md_toolbar_icon_size`, `md_toolbar_button_size`, `md_toolbar_radius`, `md_toolbar_hover_bg`, `md_toolbar_active_bg`, `… (+7)` |
+| Module Markdown | Éditeur | `Markdown : Éditeur` | appli | `md_caret_color`, `md_caret_width`, `md_code_file_font_family`, `md_code_file_line_height`, `md_code_file_bg`, `md_active_line_bg`, `md_line_numbers`, `md_note_line_numbers`, `… (+4)` |
+| Module Markdown | Barre d'outils | `Markdown : Barre d'outils` | appli | `md_toolbar_enabled` |
 | Board | Barre de sélection > Général | `Board : Barre de sélection` | appli | `board_modulebar_buttons`, `board_modulebar_long_press_ms`, `board_modulebar_reset`, `board_modulebar_alt_solo`, `board_modulebar_pill`, `board_modulebar_fold_style`, `board_modules_fade_opacity`, `board_modules_fade_saturation` |
-| Board | Barre de sélection > Aspect | `Board : Barre de sélection : Aspect` | appli | `board_modulebar_bg_color`, `board_modulebar_border_color`, `board_modulebar_icon_size`, `board_modulebar_button_size`, `board_modulebar_spacing`, `board_modulebar_padding`, `board_modulebar_row_radius`, `board_modulebar_row_color`, `… (+9)` |
+| Board | Barre de sélection > Aspect | `Board : Barre de sélection : Aspect` | appli | `board_modulebar_bg_color`, `board_modulebar_border_color`, `board_modulebar_icon_size`, `board_modulebar_button_size`, `board_modulebar_spacing`, `board_modulebar_padding`, `board_modulebar_row_radius`, `board_modulebar_row_color`, `… (+10)` |
 | Board | Barre de sélection > Couleurs des modules | `Board : Barre de sélection : Couleurs des modules` | appli | `board_modulebar_color_miro`, `board_modulebar_color_cad`, `board_modulebar_color_design`, `board_modulebar_color_tableur`, `board_modulebar_color_illustrator`, `board_modulebar_color_photoshop`, `board_modulebar_color_pdf` |
 | Board | Barre de sélection > Languette et pastille | `Board : Barre de sélection : Languette et pastille` | appli | `board_modulebar_tab_width`, `board_modulebar_tab_height`, `board_modulebar_tab_color`, `board_modulebar_tab_ink`, `board_modulebar_pill_color`, `board_modulebar_pill_font_size` |
+| Board | Barre de sélection > Icônes | `Board : Barre de sélection : Icônes` | appli | `ui_icon:ui_board_miro`, `ui_icon:ui_board_cad`, `ui_icon:ui_board_design`, `ui_icon:ui_board_tableur`, `ui_icon:ui_board_illustrator`, `ui_icon:ui_board_photoshop`, `ui_icon:ui_board_pdf`, `ui_icon:ui_board_show`, `… (+22)` |
 | Board | Ouverture | `Board : Ouverture` | appli | `board_open_cad_drawings`, `board_cad_import_blocks` |
 | Board | Navigation | `Board : Navigation` | appli | `board_zoom_speed`, `board_zoom_fine` |
 | Board | Grille | `Board : Grille` | appli | `board_grid_step`, `board_grid_unit`, `board_grid_factor`, `board_grid_levels`, `board_grid_fade_start`, `board_grid_fade_full`, `board_grid_origin_x`, `board_grid_origin_y`, `… (+9)` |
-| Board | Icônes | `Board : Icônes` | appli | `ui_icon:ui_board_show`, `ui_icon:ui_board_hide`, `ui_icon:ui_board_fade`, `ui_icon:ui_board_solo`, `ui_icon:ui_board_modules_reset`, `ui_icon:ui_board_modules_fold`, `ui_icon:ui_board_modules_unfold`, `ui_icon:ui_board_solo_exit` |
 | MRO | Magnétisme | `MRO` | appli | `board_snap_enabled`, `board_snap_objects`, `board_snap_grid`, `board_snap_resize`, `board_snap_guides`, `board_snap_doc_guides`, `board_snap_inner_guides`, `board_snap_frame_guides`, `… (+1)` |
 | MRO | Barres d'outils | `MRO : Barres d'outils` | appli | `board_toolbar_bg_color`, `board_toolbar_border_enabled`, `board_toolbar_corner_radius`, `board_toolbar_padding`, `board_toolbar_shadow_enabled`, `board_toolbar_text_font_family`, `board_toolbar_invert`, `board_toolbar_focus_width`, `… (+4)` |
 | MRO | Menus contextuels > Menu | `MRO : Menu contextuel : Menu` | appli | `board_ctx_menu_editable`, `board_ctx_menu_bg`, `board_ctx_menu_border_enabled`, `board_ctx_menu_border_color`, `board_ctx_menu_border_radius`, `board_ctx_menu_shadow_enabled`, `board_ctx_menu_padding` |
@@ -147,7 +146,7 @@ Trouver en une recherche où vit un réglage : section affichée -> groupe du ca
 | MRO | Menus contextuels > Survol | `MRO : Menu contextuel : Survol` | appli | `board_ctx_menu_hover_color`, `board_ctx_menu_hover_text_color`, `board_ctx_menu_hover_border_enabled`, `board_ctx_menu_hover_radius`, `board_ctx_menu_hover_margin` |
 | MRO | Menus contextuels > Libellés | `MRO : Menu contextuel : Libelles` | appli | `board_ctx_menu_label_font_family`, `board_ctx_menu_label_bg`, `board_ctx_menu_label_padding`, `board_ctx_menu_label_uppercase` |
 | MRO | Menus contextuels > Séparateurs | `MRO : Menu contextuel : Separateurs` | appli | `board_ctx_menu_sep_color`, `board_ctx_menu_sep_thickness`, `board_ctx_menu_sep_padding` |
-| MRO | Icônes | `MRO : Icones` | appli | `ui_icon:ui_board_miro`, `ui_icon:ui_board_select`, `ui_icon:ui_board_hand`, `ui_icon:ui_board_sticky`, `ui_icon:ui_board_text`, `ui_icon:ui_board_shape`, `ui_icon:ui_board_connector`, `ui_icon:ui_board_draw`, `… (+27)` |
+| MRO | Icônes | `MRO : Icones` | appli | `ui_icon:ui_board_select`, `ui_icon:ui_board_hand`, `ui_icon:ui_board_sticky`, `ui_icon:ui_board_text`, `ui_icon:ui_board_shape`, `ui_icon:ui_board_connector`, `ui_icon:ui_board_draw`, `ui_icon:ui_board_comment`, `… (+26)` |
 | CAD | Unités | `CAD : Unités` | appli | `board_cad_unit` |
 | CAD | Types de ligne | `CAD : Types de ligne` | appli | `board_cad_linetypes` |
 | CAD | Accrochages | `CAD : Accrochages` | appli | `board_cad_osnap`, `board_cad_osnap_end`, `board_cad_osnap_mid`, `board_cad_osnap_cen`, `board_cad_osnap_gcen`, `board_cad_osnap_qua`, `board_cad_osnap_int`, `board_cad_osnap_appint`, `… (+13)` |
@@ -164,29 +163,27 @@ Trouver en une recherche où vit un réglage : section affichée -> groupe du ca
 | CAD | Textes | `CAD : Textes` | appli | `board_cad_text_height`, `board_cad_text_font`, `board_cad_text_justify`, `board_cad_mtext_justify`, `board_cad_text_spacing` |
 | CAD | Points | `CAD : Points` | appli | `board_cad_point_mode`, `board_cad_point_size` |
 | CAD | Raccourcis clavier | `CAD : Raccourcis clavier` | appli | `board_cad_pgp_path` |
-| CAD | Icônes | `CAD : Icônes` | appli | `ui_icon:ui_board_cad`, `ui_icon:ui_board_cad_line`, `ui_icon:ui_board_cad_pline`, `ui_icon:ui_board_cad_circle`, `ui_icon:ui_board_cad_arc`, `ui_icon:ui_board_cad_rect`, `ui_icon:ui_board_cad_hatch`, `ui_icon:ui_board_cad_polygon`, `… (+33)` |
+| CAD | Icônes | `CAD : Icônes` | appli | `ui_icon:ui_board_cad_line`, `ui_icon:ui_board_cad_pline`, `ui_icon:ui_board_cad_circle`, `ui_icon:ui_board_cad_arc`, `ui_icon:ui_board_cad_rect`, `ui_icon:ui_board_cad_hatch`, `ui_icon:ui_board_cad_polygon`, `ui_icon:ui_board_cad_ellipse`, `… (+32)` |
 | Design | Nouveau design | `Design : Nouveau design` | appli | `board_design_page_format`, `board_design_page_bg` |
 | Design | Nouveaux éléments | `Design : Nouveaux éléments` | appli | `board_design_font`, `board_design_text_color`, `board_design_heading_size`, `board_design_subheading_size`, `board_design_body_size`, `board_design_shape_fill` |
 | Design | Sélection et repères | `Design : Sélection et repères` | appli | `board_design_accent`, `board_design_handle_size`, `board_design_guide_color`, `board_design_page_titles`, `board_design_rulers` |
 | Design | Clavier | `Design : Clavier` | appli | `board_design_nudge`, `board_design_nudge_big` |
 | Design | Présentation | `Design : Présentation` | appli | `board_design_transition_ms`, `board_design_animation_ms` |
-| Design | Icônes | `Design : Icônes` | appli | `ui_icon:ui_board_design`, `ui_icon:ui_board_design_templates`, `ui_icon:ui_board_design_elements`, `ui_icon:ui_board_design_text`, `ui_icon:ui_board_design_images`, `ui_icon:ui_board_design_layers`, `ui_icon:ui_board_design_export`, `ui_icon:ui_board_design_present`, `… (+1)` |
+| Design | Icônes | `Design : Icônes` | appli | `ui_icon:ui_board_design_templates`, `ui_icon:ui_board_design_elements`, `ui_icon:ui_board_design_text`, `ui_icon:ui_board_design_images`, `ui_icon:ui_board_design_layers`, `ui_icon:ui_board_design_export`, `ui_icon:ui_board_design_present`, `ui_icon:ui_board_design_add_page` |
 | Tableur | Ouverture | `Tableur : Ouverture` | appli | `tableur_open_double_click` |
 | Tableur | Nouveaux classeurs | `Tableur : Nouveaux classeurs` | appli | `tableur_font_family`, `tableur_font_size`, `tableur_calc_mode` |
 | Tableur | Saisie | `Tableur : Saisie` | appli | `tableur_enter_moves`, `tableur_date_order` |
 | Tableur | Formules et nombres | `Tableur : Formules et nombres` | appli | `tableur_formula_lang`, `tableur_decimal_sep`, `tableur_thousands_sep`, `tableur_lang` |
 | Tableur | Couleurs | `Tableur : Couleurs` | appli | `tableur_background`, `tableur_text`, `tableur_grid`, `tableur_header_bg`, `tableur_header_text`, `tableur_selection` |
-| Tableur | Icônes | `Tableur : Icônes` | appli | `ui_icon:ui_board_tableur` |
 | Illustrator | Sélection et repères | `Illustrator : Sélection et repères` | appli | `board_ill_accent`, `board_ill_handle_size`, `board_ill_anchor_size`, `board_ill_smart_guides`, `board_ill_snap_px` |
 | Illustrator | Nouveaux objets | `Illustrator : Nouveaux objets` | appli | `board_ill_artboard_format`, `board_ill_font`, `board_ill_text_size`, `board_ill_units` |
 | Illustrator | Clavier et outils | `Illustrator : Clavier et outils` | appli | `board_ill_nudge`, `board_ill_nudge_big`, `board_ill_pencil_fidelity`, `board_ill_trace_detail` |
 | Illustrator | Export | `Illustrator : Export` | appli | `board_ill_pdf_dpi` |
-| Illustrator | Icônes | `Illustrator : Icônes` | appli | `ui_icon:ui_board_illustrator`, `ui_icon:ui_board_ill_select`, `ui_icon:ui_board_ill_direct`, `ui_icon:ui_board_ill_pen`, `ui_icon:ui_board_ill_add_anchor`, `ui_icon:ui_board_ill_delete_anchor`, `ui_icon:ui_board_ill_convert`, `ui_icon:ui_board_ill_text`, `… (+24)` |
+| Illustrator | Icônes | `Illustrator : Icônes` | appli | `ui_icon:ui_board_ill_select`, `ui_icon:ui_board_ill_direct`, `ui_icon:ui_board_ill_pen`, `ui_icon:ui_board_ill_add_anchor`, `ui_icon:ui_board_ill_delete_anchor`, `ui_icon:ui_board_ill_convert`, `ui_icon:ui_board_ill_text`, `ui_icon:ui_board_ill_brush`, `… (+23)` |
 | Photoshop | Établi | `Photoshop : Établi` | appli | `board_ps_checker_a`, `board_ps_checker_b`, `board_ps_checker_size`, `board_ps_bench_color`, `board_ps_frame_color`, `board_ps_selection_color` |
 | Photoshop | Navigation | `Photoshop : Navigation` | appli | `board_ps_zoom_pct`, `board_ps_max_zoom_pct`, `board_ps_cursor_outline` |
 | Photoshop | Mémoire | `Photoshop : Mémoire` | appli | `board_ps_history_mb` |
 | Photoshop | Documents | `Photoshop : Documents` | appli | `board_ps_new_paste_clipboard` |
-| Photoshop | Icônes | `Photoshop : Icônes` | appli | `ui_icon:ui_board_photoshop` |
 | PDF | Affichage | `PDF : Affichage` | appli | `pdf_default_fit`, `pdf_default_zoom`, `pdf_default_mode`, `pdf_view_background`, `pdf_show_thumbnails`, `pdf_left_panel`, `pdf_actual_size_dpi` |
 | PDF | Rendu et mémoire | `PDF : Rendu et mémoire` | appli | `pdf_cache_mb`, `pdf_prefetch_screens` |
 | PDF | Formulaires | `PDF : Formulaires` | appli | `pdf_forms_highlight`, `pdf_forms_highlight_color`, `pdf_forms_highlight_alpha`, `pdf_javascript`, `pdf_js_alerts`, `pdf_design_font_size` |

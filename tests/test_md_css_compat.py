@@ -66,8 +66,7 @@ html, body { overflow: auto !important; height: auto !important; margin: 50px !i
 .cm-line, .CodeMirror-line { white-space: normal !important; margin: 30px !important; display: flex !important;
   position: absolute !important; }
 .cm-content { padding: 80px !important; position: absolute !important; }
-.md-toolbar { display: none !important; position: static !important; }
-.md-toolbar .md-tool { width: 1px !important; background: red !important; }
+.CodeMirror-linenumber, .CodeMirror-gutters { user-select: text !important; }
 div.CodeMirror-cursors { position: absolute !important; z-index: -1 !important; }
 * { box-sizing: border-box; }
 """
@@ -322,8 +321,7 @@ class PaneCssTest(unittest.TestCase):
         self.load_css(self.css_file(HOSTILE_CSS, "hostile.css"))
         self.edit()
         self.assertTrue(_js(self.view, "getComputedStyle(document.getElementById('md-edit')).display === 'block'"))
-        self.assertTrue(_js(self.view, "getComputedStyle(document.getElementById('md-toolbar')).display === 'flex'"))
-        self.assertGreater(_js(self.view, "document.querySelector('#md-toolbar .md-tool').getBoundingClientRect().width"), 10)
+        self.assertEqual(_js(self.view, _style(".CodeMirror-gutters", "user-select")), "none")   # numeros jamais copies
         self.assertGreater(_js(self.view, "document.querySelector('.CodeMirror').getBoundingClientRect().height"), 400)
         self.assertEqual(_js(self.view, _style("pre.cm-line", "white-space")), "pre-wrap")
         self.assertEqual(_js(self.view, _style("pre.cm-line", "position")), "relative")

@@ -42,6 +42,7 @@ from fm_theme.style import (
     installed_font_families,
     ITEM_FONT_ROLE_LABELS,
 )
+from fm_theme import icon_frame as _icon_frame
 from fm_theme.theme import _input_radius, _qfont, _register_input, _register_radius, _set_text_role
 from fm_theme.menu import Menu, ghost_action, mark_current, menu_row  # noqa: F401 (reexporte : menus contextuels)
 from fm_theme.tokens import (
@@ -312,37 +313,29 @@ def _hide_width_badges(host: QWidget):
 
 
 class _Btn(QPushButton):
-    """Bouton rectangulaire plat. Son arrondi suit TOUJOURS Geometrie >
-    Boutons > Coins arrondis (inscription automatique, voir
-    settings_theme._register_radius) : ne jamais le fixer a la main."""
+    """Bouton d'action des réglages et des dialogues. Son aspect vient UNIQUEMENT de fm_theme (règles `QPushButton` du
+    QSS commun = la variante du type « bouton » que l'appli utilise, et son ombre : `_theme_button`) ; demande de
+    l'utilisateur, 2026-11-12 : « pas un seul bouton avec des styles orphelins ». `bg`, `border`, `fg`, `hover`,
+    `weight`, `padding` sont gardés pour les appelants mais ignorés ; seuls la hauteur et l'alignement restent."""
 
-    def __init__(self, text: str, bg: str, border: str, fg: str, hover: str,
+    _theme_button = True
+
+    def __init__(self, text: str, bg: str = "", border: str = "", fg: str = "", hover: str = "",
                  height: int = 24, weight: int = 500, padding: str = "0 11px", align_left: bool = False,
                  parent=None):
         super().__init__(text, parent)
         self.setFixedHeight(height)
         self.setCursor(Qt.ArrowCursor)
         self.setFocusPolicy(Qt.NoFocus)
-        self.setFont(_qfont(11, weight))
-        self._bg, self._border, self._fg, self._hover, self._padding = bg, border, fg, hover, padding
         self._align_left = align_left
-        # Rayon : Geometrie > Boutons > Coins arrondis, suivi en direct (voir settings_theme).
-        self._radius = _register_radius(self, "button")
         self._refresh_style()
 
     def _refresh_style(self):
-        border_rule = f"border: 1px solid {self._border};" if self._border else "border: none;"
-        set_qss(
-            self,
-            f"QPushButton {{ background: {self._bg}; {border_rule} border-radius: {self._radius}px; "
-            f"color: {self._fg}; padding: {self._padding}; }}"
-            f"QPushButton:hover {{ background: {self._hover}; }}"
-            + ("QPushButton { text-align: left; }" if self._align_left else "")
-        )
+        from fm_theme.style import theme_button      # import tardif : style importe ce module
+        theme_button(self, align_left=self._align_left)
 
     def setRadius(self, radius: int):
-        self._radius = max(0, int(radius))
-        self._refresh_style()
+        """Ancien suivi de Géométrie > Boutons > Coins arrondis : le rayon vient du thème (QSS commun)."""
 
 class _MiniSlider(QWidget):
     """Slider peint a la main : rail + curseur ("selecteur"), habillage
@@ -1821,6 +1814,7 @@ def _paint_toggle_shape(p: QPainter, x: int, y: int, style_key: str, style: dict
         p.restore()
 
 _TOGGLE_IMAGE_CACHE: dict = {}
+_icon_frame.on_change(_TOGGLE_IMAGE_CACHE.clear)
 
 def _toggle_image_pixmap(name: str, width: int, height: int, dpr: float | None = None) -> QPixmap | None:
     """Image importee pour un toggle « icones » (data/toggle_icons/), a ses couleurs d'origine,
@@ -1853,11 +1847,14 @@ def _toggle_image_pixmap(name: str, width: int, height: int, dpr: float | None =
             painter.setRenderHint(QPainter.Antialiasing, True)
             renderer.render(painter)
             painter.end()
-            pix = _hidpi_pixmap(image, width, height, dpr)
+            box_w, box_h = round(width * dpr) * ss, round(height * dpr) * ss  # cadre des icones (Theme > General > Marge des icones)
+            pix = _hidpi_pixmap(_icon_frame.frame_into(image, box_w, box_h), width, height, dpr)
     else:
         source = QImage(str(path))
         if not source.isNull():
-            pix = _hidpi_pixmap(source.convertToFormat(QImage.Format_ARGB32_Premultiplied), width, height, dpr)
+            box_w, box_h = round(width * dpr) * 4, round(height * dpr) * 4  # cadre des icones (Theme > General > Marge des icones)
+            pix = _hidpi_pixmap(_icon_frame.frame_into(source.convertToFormat(QImage.Format_ARGB32_Premultiplied),
+                                                       box_w, box_h), width, height, dpr)
     _TOGGLE_IMAGE_CACHE[key] = pix
     return pix
 
@@ -1890,6 +1887,7 @@ def _paint_toggle_icons(p: QPainter, rect: QRect, style: dict, progress: float) 
     draw(style.get("icon_on", ""), progress)
 
 _TOGGLE_ICON_CACHE: dict = {}
+_icon_frame.on_change(_TOGGLE_ICON_CACHE.clear)
 
 def _toggle_icon_pixmap(name: str, size: int, color: str, dpr: float | None = None) -> QPixmap | None:
     """Icone de icons/ pour l'habillage d'une coche : un SVG est recolore (trace uni, rendu comme
@@ -1914,11 +1912,13 @@ def _toggle_icon_pixmap(name: str, size: int, color: str, dpr: float | None = No
             painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
             painter.fillRect(image.rect(), QColor(color))
             painter.end()
-            pix = _hidpi_pixmap(image, size, size, dpr)
+            pix = _hidpi_pixmap(_icon_frame.frame_image(image), size, size, dpr)  # cadre des icones (Theme > General > Marge des icones)
         else:
             source = QImage(str(path))
             if not source.isNull():
-                pix = _hidpi_pixmap(source.convertToFormat(QImage.Format_ARGB32_Premultiplied), size, size, dpr)
+                side = round(size * dpr) * 4  # cadre des icones (Theme > General > Marge des icones)
+                pix = _hidpi_pixmap(_icon_frame.frame_into(source.convertToFormat(QImage.Format_ARGB32_Premultiplied),
+                                                           side, side), size, size, dpr)
     _TOGGLE_ICON_CACHE[key] = pix
     return pix
 
@@ -2760,6 +2760,12 @@ class _GradientSlider(QWidget):
         p.drawRect(x, -3, 3, self.height() + 6)
         p.end()
 
+def _theme_glyph_button(button):
+    """Petit bouton à glyphe peint : son fond, sa bordure, son survol et son ombre = fm_theme (2026-11-12)."""
+    from fm_theme.style import theme_button      # import tardif : style importe ce module
+    return theme_button(button, compact=True)
+
+
 class _PickerCloseButton(QPushButton):
     """Petit bouton "X" peint a la main — meme raison que _HamburgerButton
     (glyphe unicode non fiable a cette taille selon la police systeme)."""
@@ -3139,6 +3145,18 @@ class _PopupHeader(QWidget):
         self._drag_offset = None
         super().mouseReleaseEvent(event)
 
+def normalize_picker_color(value) -> str:
+    """Couleur de depart du selecteur en « #rrggbb » (opaque) ou « #aarrggbb » ; illisible = noir."""
+    text = str(value or "").strip()
+    if text.startswith("@"):
+        from fm_theme.style import resolve_color_ref
+        text = resolve_color_ref(text, "#000000")
+    color = QColor(text)
+    if not color.isValid():
+        return "#000000"
+    return color.name() if color.alpha() == 255 else color.name(QColor.NameFormat.HexArgb)
+
+
 class _ColorPickerPopup(QWidget):
     """Selecteur de couleur maison — remplace QColorDialog. colorChanged
     emet a chaque mouvement (previsualisation en direct sur la fenetre
@@ -3161,6 +3179,10 @@ class _ColorPickerPopup(QWidget):
 
     def __init__(self, initial_hex: str, title: str, parent=None):
         super().__init__(parent, Qt.Popup)
+        # Toute couleur que la pastille sait peindre (QColor : « #rgb », nom, « @pastille ») est convertie en
+        # « #rrggbb » / « #aarrggbb » : sinon _hex_to_rgb ne la lisait pas et le selecteur s'ouvrait sur du noir
+        # (demande de l'utilisateur, 2026-11-11 : il doit s'ouvrir sur la couleur actuelle).
+        initial_hex = normalize_picker_color(initial_hex)
         self._before = initial_hex
         self._resolved = False
         self._h, self._s, self._v = _hex_to_hsv(initial_hex)
@@ -3169,6 +3191,12 @@ class _ColorPickerPopup(QWidget):
         # couleurs dans le selecteur") — 255 (opaque) pour tout hex a 6
         # chiffres, comportement INCHANGE tant que non personnalise.
         self._a = _hex_to_alpha(initial_hex)
+        # Depart TOTALEMENT transparent (« aucune couleur », défaut de beaucoup de fonds) : la 1re teinte choisie
+        # devient opaque. Sinon l'opacité restait à 0 et la couleur, bien enregistrée, ne se voyait jamais (signalé
+        # le 2026-11-11 sur « Variantes : couleur de fond du cadre de sélection ») ; toucher l'opacité ou le hex
+        # désarme ce relèvement.
+        self._lift_alpha = self._a == 0
+        self._lift_from = (self._h, self._s, self._v)
         # Meme rayon que les vraies zones de saisie de l'appli principale
         # (voir get_input_radius) — calcule ici, AVANT _make_row (boites de
         # valeur TSL/RVB) ET la boite HEX/le bloc avant-apres plus bas, qui
@@ -3215,21 +3243,21 @@ class _ColorPickerPopup(QWidget):
         pipette_btn = _PipetteButton(M["label_dim"])
         pipette_btn.setFixedSize(16, 16)
         pipette_btn.setCursor(Qt.ArrowCursor)
-        pipette_btn.setFlat(True)
+        _theme_glyph_button(pipette_btn)
         pipette_btn.setToolTip("Piocher une couleur a l'ecran")
         pipette_btn.clicked.connect(lambda: self._on_pipette(_EyedropperOverlay))
         head_l.addWidget(pipette_btn)
         pipette_area_btn = _PipetteAreaButton(M["label_dim"])
         pipette_area_btn.setFixedSize(16, 16)
         pipette_area_btn.setCursor(Qt.ArrowCursor)
-        pipette_area_btn.setFlat(True)
+        _theme_glyph_button(pipette_area_btn)
         pipette_area_btn.setToolTip("Piocher la couleur moyenne d'une zone de l'ecran")
         pipette_area_btn.clicked.connect(lambda: self._on_pipette(_AreaEyedropperOverlay))
         head_l.addWidget(pipette_area_btn)
         close_btn = _PickerCloseButton(M["label_dim"])
         close_btn.setFixedSize(16, 16)
         close_btn.setCursor(Qt.ArrowCursor)
-        close_btn.setFlat(True)
+        _theme_glyph_button(close_btn)
         close_btn.clicked.connect(self._on_cancel)
         head_l.addWidget(close_btn)
         outer.addWidget(head)
@@ -3450,6 +3478,8 @@ class _ColorPickerPopup(QWidget):
         return _with_alpha(_rgb_to_hex(_hsv_to_rgb(self._h, self._s, self._v)), self._a)
 
     def _refresh_all(self):
+        if self._lift_alpha and self._a == 0 and (self._h, self._s, self._v) != self._lift_from:
+            self._a, self._lift_alpha = 255, False
         rgb = _hsv_to_rgb(self._h, self._s, self._v)
         hexval = _rgb_to_hex(rgb)
         # hexval_a (PAS hexval) : c'est CETTE valeur, alpha inclus, qui
@@ -3533,6 +3563,7 @@ class _ColorPickerPopup(QWidget):
         self._refresh_all()
 
     def _on_alpha(self, frac: float):
+        self._lift_alpha = False
         self._a = round(max(0.0, min(1.0, frac)) * 255)
         self._refresh_all()
 
@@ -3552,11 +3583,13 @@ class _ColorPickerPopup(QWidget):
             else:
                 self._h, self._s, self._v = _hex_to_hsv(text)
                 self._a = _hex_to_alpha(text)
+                self._lift_alpha = False
         self._refresh_all()
 
     def _on_reset(self):
         self._h, self._s, self._v = _hex_to_hsv(self._before)
         self._a = _hex_to_alpha(self._before)
+        self._lift_alpha = self._a == 0
         self._refresh_all()
 
     def _on_pipette(self, overlay_cls):
@@ -3720,10 +3753,69 @@ def _apply_stylesheet_cached(widget: QWidget, stylesheet: str) -> None:
 # remarque de l'utilisateur, "je veux que les parametres inactifs (grise)
 # soit encore moins perceptibles ... generalise ca pour tous les elements
 # inactif/grise".
-_DIMMED_OPACITY = 0.2
+_DIMMED_OPACITY = 0.2               # réglage « Valeur du grisé » (Thème > Général, `dimmed_opacity` en %)
 # Opacite de TOUT element tire pendant un deplacement (lignes, colonnes, sous-cellules, titres, menus,
 # lignes et colonnes de la fenetre principale) : demande de l'utilisateur, valable pour tout deplacement a venir.
 DRAG_GHOST_OPACITY = 0.75
+
+_DIMMED_TEXT_OPACITY = 0.2          # « Valeur du grisé : textes » (`dimmed_text_opacity`)
+_DIMMED_ICON_OPACITY = 0.2          # « Valeur du grisé : icônes » (`dimmed_icon_opacity`)
+
+
+def dimmed_text_opacity() -> float:
+    return _DIMMED_TEXT_OPACITY
+
+
+def dimmed_icon_opacity() -> float:
+    return _DIMMED_ICON_OPACITY
+
+
+def _ratio(percent, default: float) -> float:
+    try:
+        return max(0.05, min(1.0, float(percent) / 100))
+    except (TypeError, ValueError):
+        return default
+
+
+def set_dimmed_values(elements, texts, icons) -> bool:
+    """Les trois valeurs du grisé (%, Thème > Général) ; vrai si l'une a changé (l'appelant refait ce qui en dépend)."""
+    global _DIMMED_TEXT_OPACITY, _DIMMED_ICON_OPACITY
+    text, icon = _ratio(texts, _DIMMED_TEXT_OPACITY), _ratio(icons, _DIMMED_ICON_OPACITY)
+    changed = abs(text - _DIMMED_TEXT_OPACITY) > 1e-6 or abs(icon - _DIMMED_ICON_OPACITY) > 1e-6
+    _DIMMED_TEXT_OPACITY, _DIMMED_ICON_OPACITY = text, icon
+    from fm_theme import style as _style
+    if _style.set_disabled_alpha(_style.disabled_alpha(), text):
+        _style._sync_themed_buttons()
+    return set_dimmed_opacity(elements) or changed
+
+
+def dimmed_opacity() -> float:
+    """Opacité d'un ÉLÉMENT d'interface non utilisable (grisé), 0..1 : « Valeur du grisé : éléments d'interface »."""
+    return _DIMMED_OPACITY
+
+
+def set_dimmed_opacity(percent) -> bool:
+    """Pose la valeur du grisé (`dimmed_opacity`, %) ; les objets déjà grisés la prennent aussitôt (parcours des
+    widgets SEULEMENT quand la valeur change). Faux si rien n'a changé."""
+    global _DIMMED_OPACITY
+    try:
+        value = max(0.05, min(1.0, float(percent) / 100))
+    except (TypeError, ValueError):
+        return False
+    if abs(value - _DIMMED_OPACITY) < 1e-6:
+        return False
+    _DIMMED_OPACITY = value
+    from fm_theme import style as _style                  # boutons désactivés : fond, bordures (QSS)
+    if _style.set_disabled_alpha(value):
+        _style._sync_themed_buttons()                     # boutons de theme_button (QSS posé sur eux)
+    app = QApplication.instance()
+    for widget in (app.allWidgets() if app is not None else ()):
+        effect = widget.graphicsEffect()
+        if isinstance(effect, QGraphicsOpacityEffect) and (getattr(widget, "_dim_self", False)
+                                                            or getattr(widget, "_unusable_veil", False)):
+            effect.setOpacity(value)
+    return True
+
 
 def _set_dimmed(widget: QWidget, dimmed: bool) -> None:
     """setEnabled(not dimmed) + un QGraphicsOpacityEffect a _DIMMED_OPACITY
@@ -3737,11 +3829,60 @@ def _set_dimmed(widget: QWidget, dimmed: bool) -> None:
     effect deja pose sur ce widget s'il y en a un (evite d'en empiler un
     nouveau a chaque appel)."""
     widget.setEnabled(not dimmed)
+    _set_faded(widget, dimmed)
+
+
+# Grisage SANS effet imbrique (bug signale 2026-11-12 : elements grises qui disparaissent, artefacts) : Qt dessine
+# mal un QGraphicsOpacityEffect dans un autre (a 100 %, l'enfant ne se dessine plus du tout ; sinon decalages). Un
+# widget grise porte `_dim_self` ; seul le PLUS HAUT grise d'une branche porte l'effet, ses descendants grises
+# gardent leur marque sans effet et le retrouvent quand il est degrise. Degriser RETIRE l'effet, jamais 1.0.
+def _put_dim_effect(widget: QWidget, on: bool) -> None:
     effect = widget.graphicsEffect()
-    if not isinstance(effect, QGraphicsOpacityEffect):
-        effect = QGraphicsOpacityEffect(widget)
-        widget.setGraphicsEffect(effect)
-    effect.setOpacity(_DIMMED_OPACITY if dimmed else 1.0)
+    if on:
+        if not isinstance(effect, QGraphicsOpacityEffect):
+            effect = QGraphicsOpacityEffect(widget)
+            widget.setGraphicsEffect(effect)
+        effect.setOpacity(_DIMMED_OPACITY)
+    elif isinstance(effect, QGraphicsOpacityEffect):
+        widget.setGraphicsEffect(None)
+
+
+def _dimmed_ancestor(widget: QWidget) -> bool:
+    parent = widget.parentWidget()
+    while parent is not None:
+        if getattr(parent, "_dim_self", False):
+            return True
+        parent = parent.parentWidget()
+    return False
+
+
+def _restore_dimmed_children(widget: QWidget) -> None:
+    """Rend leur effet aux plus hauts descendants grises (ceux qu'aucun autre grise ne contient)."""
+    for child in widget.findChildren(QWidget, options=Qt.FindDirectChildrenOnly):
+        if getattr(child, "_dim_self", False):
+            _put_dim_effect(child, True)
+        else:
+            _restore_dimmed_children(child)
+
+
+def _set_faded(widget: QWidget, faded: bool) -> None:
+    """Opacite de grisage seule (sans setEnabled), jamais imbriquee dans une autre (voir ci-dessus)."""
+    faded = bool(faded)
+    was = getattr(widget, "_dim_self", False)
+    widget._dim_self = faded
+    if faded:
+        if _dimmed_ancestor(widget):
+            _put_dim_effect(widget, False)          # deja grise par un parent : pas d'effet dans l'effet
+            return
+        _put_dim_effect(widget, True)
+        if not was:
+            for child in widget.findChildren(QWidget):
+                if getattr(child, "_dim_self", False):
+                    _put_dim_effect(child, False)
+        return
+    _put_dim_effect(widget, False)
+    if was and not _dimmed_ancestor(widget):
+        _restore_dimmed_children(widget)
 
 # Dimensions enregistrees des tableaux : {cle (voir _TableFrame.dimsKey): {"width": int, "cols": [..]}}.
 _TABLE_DIMS: dict = {}
@@ -3927,6 +4068,10 @@ class _TableFrame(QWidget):
             body = getattr(owner, "_body", None)
             if body is not None and getattr(body, "_logical_parent", None) is owner:
                 frames += body.findChildren(_TableFrame)        # corps sorti dans le volet
+            # Tableau REMPLACÉ (rebuild_group : encore là jusqu'au deleteLater) : il ne compte plus. Sinon sa copie
+            # prenait le rang suivant (« Bouton#1 ») et perdait la mise en page enregistrée — à chaque changement de
+            # variante dans fm_theme (signalé le 2026-11-11).
+            frames = [f for f in frames if not getattr(f, "_dims_retired", False)]
             rank = frames.index(self) if self in frames else 0
         return (f"{scope}|" if scope else "") + "/".join(reversed(titles)) + f"#{rank}"
 

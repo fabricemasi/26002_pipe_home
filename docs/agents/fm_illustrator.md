@@ -23,7 +23,12 @@ n'importent PAS Qt.
 | Aspect (SANS Qt) : effets d'un objet (un par type, ordre fixe), contours supplémentaires, géométrie des effets vectoriels (décalage, arrondis), marges, filtres SVG | `appearance.py` | `valid_effects`, `valid_strokes`, `render_subpaths`, `margin`, `svg_filter`, `ORDER`, `PARAMS` |
 | Effets tramés (Qt) : flou, contour progressif, ombre portée, lueur externe, image composée gardée pendant le zoom | `effects.py` | `paint_with_effects`, `soften`, `tinted` |
 | Menu Effets (curseurs en direct, couleur, activer, supprimer, contours supplémentaires, décomposer l'aspect) | `appearance_ui.py` | `effects_menu` |
-| Vectorisation d'une image (SANS Qt, numpy) : quantification (noir et blanc, gris, couleurs : k-moyennes), contours orientés des pixels, bruit, angles, courbes (Schneider) | `trace.py` | `trace`, `quantize`, `loops`, `smooth_loop`, `PRESETS`, `settings_for` |
+| Vectorisation d'une image (SANS Qt, numpy) : quantification, fond, annulation | `trace.py` | `trace`, `quantize`, `PRESETS`, `settings_for`, `DEFAULTS`, `FINE_KEYS` |
+| Vectorisation, contours SUBPIXEL : champ continu (luminance anticrénelée, masque flouté), marching squares, source binaire détectée | `trace_contours.py` | `fields`, `iso_loops`, `area`, `antialiased`, `gaussian_blur` |
+| Vectorisation, reconstruction : angles concentrés + sommet, droites (croissance, flèche), extrema, cubiques à tangentes partagées, programmation dynamique | `trace_fit.py` | `fit_loop`, `fit_cubic_fixed`, `_corners`, `_straight_runs`, `_extrema`, `_fit_piece`, `_subdivide` |
+| Banc de la vectorisation (formes de référence, mesures, planches) | `tools/bench_trace.py` | `shapes`, `measure`, `plate` |
+| Convertir en tracés CAD (menu Objet, demande 2026-11-13 : passer une vectorisation dans le CAD puis AutoCAD) : sous-tracés -> `cad_pline` (courbes -> arcs à 0,05 unité près, Y retourné), calque CAD courant, couleur du fond sinon du contour ; objets REMPLACÉS, une étape d'annulation ; `fm_cad` importé ici seulement (pur) | `to_cad.py` ; `ctl_commands.convert_to_cad` | `subpath_to_pline`, `plines`, `cad_color`, `TOLERANCE` ; test `test_illustrator_to_cad.py` |
+| Inverse : « Convertir en tracés Illustrator » (clic droit du CAD, 2026-11-13) : traits (ligne, arc, cercle, polyligne) -> contour (couleur / épaisseur EFFECTIVES, trait fin = `THIN`, tirets du type de ligne, bouts ronds), arcs -> cubiques ; hachures -> REMPLISSAGE (plein = fond, opacité `hatch_alpha`, pair / impair ; dégradé ; masque = blanc ; motif = ses traits) ; cotes, textes, blocs… restent dans le CAD ; une étape d'annulation, puis module Illustrator avec les tracés choisis | `from_cad.py` ; `fm_cad/cad.py` `to_illustrator`, `cad_ui.context_menu` | `entity_to_path`, `subpaths_of`, `KINDS` ; même test |
 | Export PDF : une page par plan de travail à sa taille exacte, objets peints un à un (vectoriel), images en pleine résolution | `pdf.py` | `export_pdf`, `DPI` ; `controller.export_pdf` |
 | Texte (Qt) : mise en page point / captif / curviligne (police de base 100 px), chemin des lettres, créer les contours, SVG `<text>` / `<textPath>`, éditeur sur place | `text.py` | `layout`, `base_font`, `outline_subpaths`, `svg_text`, `TextEditor` |
 | Calques : accès, bandes de hauteur, panneau | `layers.py` | `layers`, `layer_of`, `top_z`, `members`, `LayersPanel` |
@@ -189,17 +194,58 @@ Points de branchement dans la coque (MINIMAUX, Miro / CAD / Design inchangés) :
   le temps de l'export, au lieu de l'image réduite à 2 400 px de l'affichage). Mode Tracés ignoré, texte en édition
   terminé. Écriture atomique. Limites : pas de PDF/X, de fond perdu, de traits de coupe, de profils colorimétriques
   (RVB seulement), ni de PDF « modifiable dans Illustrator » (non annoncé).
-- **Vectorisation** (tranche 15) : menu Objet > Vectoriser l'image : préréglages aux noms d'Illustrator (Noir et
-  blanc, Niveaux de gris, 3 / 6 / 16 couleurs) et curseurs (seuil, couleurs, détail = grand côté de l'image tracée,
-  fidélité, bruit, angles), gardés pour la session. Algorithme propre au module (idée générale de potrace, aucun code
-  repris) : quantification numpy (k-moyennes, départ « k-means++ » à graine fixe : même image -> même résultat),
-  bords des pixels orientés (trous dans l'autre sens, vidés par la règle non nulle ; sommets ambigus : on tourne à
-  droite), bruit écarté, milieux des bords + Ramer-Douglas-Peucker, angles gardés au-delà du seuil, courbes de
-  Bézier entre les angles (`fm_font.shapes.fit_cubic`). Empilement : couleur la plus fréquente = rectangle de fond
-  (pas de jour entre zones voisines ; pas de fond si l'image a de la transparence). Calcul en FIL DE FOND (bulle
-  « Vectorisation… n / total »), puis l'image est remplacée par un GROUPE de tracés en une étape (annulable) ; rien
-  trouvé = image gardée. Limites : pas de vectorisation « en direct » (objet de vectorisation modifiable puis
-  « Décomposer » d'Illustrator), pas de mode « contour » (traits centraux), pas de palette imposée.
+- **Vectorisation** (tranche 15 ; moteur REFAIT le 2026-11-13, mission « qualité Illustrator », référence : un « m »
+  à empattements vectorisé par Illustrator) : clic droit / menu Objet > Vectoriser l'image : préréglages (Noir et blanc,
+  Niveaux de gris, 3 / 6 / 16 couleurs ; ils GARDENT les réglages fins `trace.FINE_KEYS`) et curseurs : Seuil,
+  Couleurs, Détail (grand côté de l'image tracée, défaut 1 000 px), Précision (écart maximal, défaut 1,0 px), Bruit
+  (px²), Angles (virage minimal d'un angle, défaut 30°), Lissage (flou du champ, 0 = la source telle quelle). Calcul
+  en FIL DE FOND (bulle « Vectorisation… n / total »), Échap l'ARRÊTE (`ctl.cancel_trace`, image gardée), sinon
+  l'image est remplacée par un GROUPE de tracés en une étape (annulable). Chaîne (aucun code repris, pas de potrace :
+  GPL) :
+  1. `trace.quantize` (inchangé : seuil, gris, k-moyennes « k-means++ » à graine fixe) ; couleur la plus fréquente
+     = rectangle de fond ;
+  2. `trace_contours` : contours SUBPIXEL = ligne de niveau d'un champ continu (noir et blanc : seuil − luminance
+     anticrénelée ; gris : distance à la bande ; couleur : masque flouté σ 0,7) par marching squares ; bord du disque
+     de banc à 0,14 px (bords de pixels : 0,74) ; source SANS anticrénelage détectée (`antialiased`) et floutée comme
+     un masque (ses marches devenaient des angles) ; trous dans l'autre sens (règle non nulle) ;
+  3. `trace_fit.fit_loop` : angles = virage ≥ seuil sur ±r (r = 3 px, 4 px à 1 000) ET concentré (≥ 70 % déjà fait
+     sur ±r/2 ; courbe serrée ≈ 0,5-0,66) ; sommet reconstruit à l'intersection des côtés (fenêtre qui s'allonge
+     tant que le côté est droit ; déplacement borné selon l'ouverture). Droites : germe vectorisé, CROISSANCE tant que
+     la droite des moindres carrés tient (écart ≤ 0,8 % de la longueur plafonné à 60 % de la précision, flèche de la
+     parabole ≤ 0,5 % : un fût à peine galbé reste droit, un flanc d'ellipse ou de feuille non), longueur ≥ 3 % du
+     contour, bouts ramenés là où le contour la quitte (`_trim_line`), rattachés à un angle à moins de 3 px ; bout de
+     droite sur un PLI brusque (≥ 10°, déjà ≥ 60 % du virage mesuré plus loin) = ANGLE (`_kink`) : drapeau d'un
+     « m », côté incliné droit -> petit plat -> fût, comme Illustrator. Extrema (tangente exactement horizontale /
+     verticale), fenêtre proportionnelle au contour, examen fermé sur la boucle : ANCRES OBLIGATOIRES (convention
+     d'Illustrator et des polices), sauf dans une LONGUE droite (≥ 3 × MIN_LINE : taille d'un fût) ; un angle n'est
+     jamais enjambé non plus. Puis programmation dynamique vers l'avant sur ces candidats
+     (tous FACULTATIFS : le moins d'ancres, à égalité la plus précise ; une droite peut être traversée par une
+     cubique qui tient) ; cubique à tangentes imposées (`fit_cubic_fixed` : moindres carrés de Schneider alternés
+     avec la projection, deux départs dont l'arc de conique par l'intersection des tangentes, contrôle inverse
+     courbe -> contour, rejet rapide, ~100 points) ; intervalle qu'aucune ne couvre : coupes récursives puis
+     regroupement. Tangentes calculées une fois par ancre et partagées : G1 partout sauf aux angles.
+  Banc (`python tools/bench_trace.py [--ancien trace.py] [--sortie dossier] [images]`, 600 px, Précision 0,8) :
+  cercle 4 ancres, 0,15 px du vrai cercle (ancien moteur : 22, 1,11) ; ellipse 4, 0,08 (8, 1,02) ; rectangle 4,
+  0,11 (4, 0,75) ; étoile aiguë 12 = ses sommets, 0,51 (40, 1,06) ; erreur de silhouette ÷ 3 à 5 partout ; aucune
+  rupture G1 ; 90 à 480 ms (ancien 10 à 450). « m » de l'utilisateur (736 × 1104) en résolution native : 36 ancres
+  (Illustrator ~50), même construction (drapeau droit / angle / plat / angle, angles aux creux des arches et aux
+  empattements, fûts droits, extrema au sommet des arches, une courbe par congé). RETOUR de l'utilisateur
+  (« intransigeant, exactement le même résultat qu'Illustrator ») : comparer à la RÉSOLUTION NATIVE (Illustrator
+  trace l'image telle quelle) ; au Détail 500 l'image est réduite avant tout calcul et les bouts d'empattement de
+  5 px perdent leurs angles (réglage de l'utilisateur resté à l'ancien défaut 500, fichier + preset actif).
+  Limites : pas d'objet de vectorisation « en direct », pas de mode « contour » (traits centraux), pas de palette
+  imposée ; G2 non imposé (G1 seulement) ; zones de couleur voisines tracées séparément (empilement sur le fond).
+  PIÈGES rencontrés : un seul départ de Schneider reste dans un minimum local quand les poignées sont inégales
+  (quart d'ellipse à 1,36 px au lieu de 0,15) ; une tangente nulle EXACTE sur un échantillon (forme symétrique)
+  perdait l'extremum (`pos[:-1] != pos[1:]`) ; tolérance de droite fixe = arcs découpés en cordes, relative seule =
+  flancs d'ellipse pris pour des droites (d'où la flèche de la parabole) ; mesurer aussi courbe -> contour (une
+  boucle échappe à la mesure points -> courbe). `fm_font.shapes._generate` borne aussi ses poignées (crayon,
+  calligraphie). Tests : `test_illustrator_trace` (11, dont cercle / ellipse / rectangle / étoile / stade G1,
+  annulation).
+- **Image collée (Ctrl+V) ou glissée d'un navigateur** (2026-11-13) : `fm_board/view._add_image` la confie au module
+  actif (`place_image` d'Illustrator, `add_image_asset` du Design) ; avant, elle devenait une image du board que
+  l'outil Sélection du module ignorait (« l'image n'est pas sélectionnable »). Test :
+  `test_illustrator_images.PlaceTest.test_paste_image_becomes_selectable_illustrator_image`.
 - **Images placées** (tranche 14, `ill_image`) : Importer (Ctrl+Maj+P, menu Exporter / importer, ou dépôt de
   fichiers PNG / JPEG / GIF / BMP / WebP / TIFF ; un SVG déposé ou importé devient des objets) : l'image est COPIÉE
   dans le dossier d'images du board (`serialization.import_asset`, comme les images de Miro : incorporée, jamais

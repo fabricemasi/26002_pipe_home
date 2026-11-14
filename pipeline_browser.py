@@ -548,6 +548,7 @@ class PipelineBrowser(
             btn.setFlat(True)
             btn.setStyleSheet("QPushButton { background: transparent; border: none; }"
                               f"QPushButton:hover {{ background: {C['hover']}; }}")
+        # Icones du catalogue des boutons de modules : preview_column.NAV_LIBRARY_ICONS (lu par IconButton).
         self.btn_browse.setToolTip("Parcourir…")
         self.btn_presets.setToolTip("Gérer les presets…")
         self.btn_settings.setToolTip("Parametres")

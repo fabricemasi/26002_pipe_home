@@ -1070,6 +1070,39 @@ class CadController(QObject):
         from . import cad_photoshop
         cad_photoshop.run(self, action)
 
+    def to_illustrator(self, switch: bool = True) -> list:
+        """Convertir en tracés Illustrator (clic droit) : traits -> tracés avec contour, hachures -> remplissages
+        (`fm_illustrator.from_cad`). Entités converties REMPLACÉES (une étape d'annulation), les autres (cotes,
+        textes, blocs…) restent dans le CAD ; puis module Illustrator, nouveaux tracés choisis (`switch`)."""
+        from fm_illustrator import from_cad
+        cad = self.cad_page()
+        unit = unit_of(self.scene, cad)
+        removed, added = [], []
+        for item in sorted(self.selection(), key=lambda i: i.zValue()):
+            if item.kind not in from_cad.KINDS:
+                continue
+            values = from_cad.entity_to_path(item.kind, item.data, cad_model.resolve(item.data, cad, unit),
+                                             item.doc_offset())
+            removed.append(item)
+            if values is not None:
+                data = model.new_item("ill_path", **values)
+                data["z"] = self.scene.next_z()
+                added.append(data)
+        if not removed:
+            return []
+        if self.command is not None:
+            self.end_command()
+        self.scene.clearSelection()
+        new = self.scene.replace_items(removed, added, "Convertir en tracés Illustrator")
+        if switch and new:
+            self.pane.set_module("illustrator")
+            ill = getattr(self.pane, "illustrator", None)
+            if ill is not None:
+                ill.select(new)
+        else:
+            self.refresh()
+        return new
+
     def open_snap_settings(self):
         self.ui.open_snap_settings()
 

@@ -42,6 +42,21 @@ class PlaceTest(ImageTestCase):
         self.scene.undo.undo()
         self.assertEqual(self.images(), [])
 
+    def test_paste_image_becomes_selectable_illustrator_image(self):
+        # Ctrl+V d'une image copiée ailleurs (2026-11-13) : un objet image du module (choisi au clic, vectorisable),
+        # jamais une image du board que l'outil Sélection ignore.
+        from PySide6.QtWidgets import QApplication
+        image = QImage(60, 90, QImage.Format_RGB32)
+        image.fill(QColor("#123456"))
+        QApplication.clipboard().setImage(image)
+        self.view.paste()
+        items = self.images()
+        self.assertEqual(len(items), 1)
+        self.assertEqual((items[0].data["w"], items[0].data["h"]), (60.0, 90.0))
+        self.ctl.select([])
+        self.click(items[0].geometry_rect().center())
+        self.assertIn(items[0], self.ctl.selection())
+
     def test_drop_files_and_transforms(self):
         self.assertTrue(self.ctl.drop_files([self.png()], QPointF(200, 200)))
         item = self.images()[0]

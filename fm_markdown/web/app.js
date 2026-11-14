@@ -362,6 +362,8 @@
         break;
       }
       case "toolbar": MD.toolbar.configure(message.data); MD.toolbar.sync(); break;
+      case "command": MD.toolbar.setColors(message.colors); MD.toolbar.run(message.id); break;
+      case "insets": MD.toolbar.setInsets(message.insets); break;
       case "open": open(message.info); break;
       case "names": if (S.current && message.path === S.current.path) { S.names = message.names; MD.editor.lp.invalidate(); MD.editor.requestImageSizes(); } break;
       case "mode": setMode(message.mode); break;
@@ -372,6 +374,8 @@
         break;
       case "saved": MD.editor.markSaved(message.path, message.text); break;
       case "find": if (S.mode === "edit") MD.editor.find(); break;
+      case "spellZone": if (MD.editor && S.current) MD.editor.setSpellZone(!!message.on); break;
+      case "spellReplace": if (S.mode === "edit") MD.editor.replaceWord(message.word, message.with, message.x, message.y); break;
       case "focus": if (S.mode === "edit") MD.editor.cm.focus(); else $("md-read").focus(); break;
       case "notice": MD.notice(message.text); break;
       case "anchor": MD.scrollToAnchor(message.anchor); break;
@@ -385,6 +389,14 @@
       ev.preventDefault(); flushText(); MD.call("save"); return;
     }
     if (ctrl && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === "e") { ev.preventDefault(); MD.toggleMode(); return; }
+    // Ctrl + / Ctrl - / Ctrl 0 : zoom de la page (reglage md_zoom, montre dans la barre d'etat de l'appli). « + » et « = »
+    // (meme touche sur un clavier QWERTY), pave numerique compris ; Maj toleree (« + » d'un clavier AZERTY).
+    if (ctrl && !ev.altKey) {
+      const zoom = ev.key === "+" || ev.key === "=" || ev.code === "NumpadAdd" ? 1
+        : ev.key === "-" || ev.code === "NumpadSubtract" ? -1
+        : (ev.key === "0" || ev.code === "Numpad0") && !ev.shiftKey ? 0 : null;
+      if (zoom !== null) { ev.preventDefault(); ev.stopPropagation(); MD.call("zoom", zoom); return; }
+    }
     if (ev.altKey && (ev.key === "ArrowLeft" || ev.key === "ArrowRight")) {
       ev.preventDefault(); flushText(); MD.call("go", ev.key === "ArrowLeft" ? -1 : 1); return;
     }
@@ -407,7 +419,6 @@
   function start() {
     document.body.classList.add("md-page", "theme-dark");
     document.body.innerHTML =
-      '<div id="md-toolbar" class="md-toolbar"></div>' +
       // Classes d'Obsidian en plus des notres (memes roles) : une feuille ecrite pour Obsidian s'applique ici.
       '<div id="md-edit" class="md-view md-edit markdown-source-view mod-cm6 is-live-preview"></div>' +
       '<div id="md-read" class="md-view md-read markdown-reading-view" tabindex="-1">' +
@@ -416,14 +427,13 @@
       '<div id="md-read-body" class="md-body md-rendered markdown-preview-sizer markdown-preview-section"></div></div></div>' +
       '<div id="md-notice" class="md-notice"></div>';
     MD.editor = new MD.Editor($("md-edit"), { textChanged });
-    MD.toolbar = new MD.Toolbar($("md-toolbar"));
+    MD.toolbar = new MD.Toolbar();
     $("md-read").addEventListener("click", onReadingClick);
     document.addEventListener("keydown", onKey, true);
     $("md-edit").addEventListener("wheel", onWheel, { passive: false });
     document.addEventListener("mouseup", (ev) => {
       if (ev.button === 3 || ev.button === 4) { ev.preventDefault(); flushText(); MD.call("go", ev.button === 3 ? -1 : 1); }
     });
-    window.addEventListener("resize", () => MD.toolbar.sync());
     new QWebChannel(qt.webChannelTransport, (channel) => {
       MD.bridge = channel.objects.bridge;
       MD.bridge.reply.connect(onReply);

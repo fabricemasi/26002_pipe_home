@@ -85,8 +85,14 @@ class PortedSectionsTest(unittest.TestCase):
         for group in groups:
             for spec in v2.CATALOG[group]:
                 keys.update(k for k in (spec.key, *spec.extra_keys) if k in expected)
-        keys |= {"colors", "preview_padding", "preview_radius"}
-        self.assertGreater(len(keys), 65)
+        # « colors » n'est plus comparé : la palette vient du preset fm_theme actif (neo…), plus des défauts figés
+        # pour la v1 (tests de la palette : test_theme_palette).
+        keys |= {"preview_padding", "preview_radius"}
+        # Paddings de Focus > Zone titre : la reference v1 a fige le BUG « lier les 4 » (cotes inegaux alignes sur le
+        # 1er, cotes caches perdus) ; corrige le 2026-11-12, verifie par tests.test_settings_round_trip.
+        keys -= {"preview_title_padding", "preview_status_padding",
+                 "preview_title_padding_linked", "preview_status_padding_linked"}
+        self.assertGreater(len(keys), 60)
         for key in sorted(keys):
             self.assertIn(key, values, key)
             self.assertEqual(values[key], expected[key], key)
@@ -133,6 +139,65 @@ class PortedSectionsTest(unittest.TestCase):
                     "button_bg_color", "button_border_enabled", "button_shadow_enabled",
                     "tabs_bg_color", "tabs_corner_radius", "input_bg_color", "input_corner_radius"}
         self.assertFalse(expected - keys, expected - keys)
+
+    def test_activation_toggle_of_border_radius_shadow_padding_rows(self):
+        """Demande de l'utilisateur (2026-11-11) : Bordures, Border radius, Ombres, Padding, Margin ont un toggle
+        juste à droite du titre (toggle 2 depuis le 2026-11-12) ; coupé = effet coupé (valeurs neutres), ligne grisée,
+        valeurs gardées."""
+        from PySide6.QtWidgets import QLabel
+        open_nodes(self.theme, 0, ("Bouton",))
+        border = field(self.theme, v2.THEME_TAB, "button_border_enabled")
+        toggle = border._v2_active
+        self.assertEqual(toggle._table_style, "toggle2")
+        self.assertTrue(toggle.isChecked())                       # bordure par défaut visible : actif
+        holder = toggle.parentWidget()
+        items = [holder.layout().itemAt(i).widget() for i in range(holder.layout().count())]
+        self.assertIsInstance(items[0], QLabel)                   # titre, PUIS le toggle juste à sa droite
+        self.assertIs(items[1], toggle)
+        radius = field(self.theme, v2.THEME_TAB, "button_corner_radius")
+        self.assertEqual(radius._v2_active.isChecked(), v2._effect_visible(
+            v2.Spec("button_corner_radius", "", "corners"), v2.FIELD_READERS["corners"](
+                v2.Spec("button_corner_radius", "", "corners"), radius)))
+        before = self.theme.wired_values()["button_border_enabled"]
+        toggle.setChecked(False)
+        values = self.theme.wired_values()
+        self.assertFalse(any(values["button_border_enabled"].values()))    # effet coupé pour toute l'appli
+        self.assertIs(values["button_border_enabled__on"], False)
+        self.assertEqual(values["button_border_enabled__kept"]["button_border_enabled"], before)
+        self.assertFalse(border.isEnabled())                      # ligne grisée
+        toggle.setChecked(True)
+        values = self.theme.wired_values()
+        self.assertEqual(values["button_border_enabled"], before)        # valeurs rendues
+        self.assertTrue(border.isEnabled())
+        # Effet RETIRÉ (pas laissé à 100 %) : sinon les toggles H, B, D grisés par « lier les 4 » (leur propre
+        # effet, dans celui-ci) disparaissaient (signalé, variante windows_95)
+        self.assertIsNone(border.graphicsEffect())
+        # Valeurs posées sur place (variante, preset) : la ligne coupée affiche ses valeurs gardées
+        spec = next(s for s, w in self.theme.stores[v2.THEME_TAB]["specs"] if w is border)
+        kept = dict(values, button_border_thickness=4)
+        self.assertTrue(v2.write_spec(spec, border, {"button_border_enabled__on": False,
+                                                     "button_border_enabled__kept": kept}))
+        self.assertFalse(toggle.isChecked())
+        self.assertEqual(border._v2_thickness.value(), 4)
+        self.assertTrue(v2.write_spec(spec, border, {"button_border_enabled": before,
+                                                     "button_border_thickness": 1}))   # sans état : déduit
+        self.assertTrue(toggle.isChecked())
+        # Fenêtre rouverte sur une ligne coupée : les valeurs gardées, grisées
+        settings = dict(_DEFAULTS, button_border_enabled__on=False,
+                        button_border_enabled__kept={"button_border_thickness": 3})
+        rebuilt = v2.make_field(spec, v2.ScopeValues(settings), {})
+        self.assertFalse(rebuilt._v2_active.isChecked())
+        self.assertEqual(rebuilt._v2_thickness.value(), 3)
+        for kind in ("sides_thick", "corners", "shadow", "padding"):
+            self.assertTrue(any(s.kind == kind and v2.has_activation(s) for specs in v2.CATALOG.values()
+                                for s in specs if not isinstance(s, str)))
+        self.assertTrue(v2.has_activation(v2.Spec("x", "Padding", "slider", 0, {"min": 0, "max": 9})))
+        self.assertFalse(v2.has_activation(v2.Spec("x", "Taille", "slider", 0, {"min": 0, "max": 9})))
+
+    def test_activation_keys_survive_loading(self):
+        import settings_store
+        self.assertTrue(settings_store._ACTIVATION_KEY.search("md_page_padding__kept"))
+        self.assertTrue(settings_store._ACTIVATION_KEY.search("md_page_padding__on"))
 
     def test_add_and_remove_a_software(self):
         logiciels = field(self.win, "General", "custom_softwares")

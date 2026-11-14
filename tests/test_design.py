@@ -1541,9 +1541,10 @@ class SettingsTest(DesignTestCase):
 
     def test_rows_declared_and_applied(self):
         import settings_store
+        import fm_board.settings  # noqa: F401 - inscrit les sections « Icônes » des modules (ICON_GROUPS_BY_MODULE)
         from fm_design.settings import DESIGN_TREE
         from settings_catalog import CATALOG
-        specs = [spec for node in DESIGN_TREE for spec in CATALOG[node.group]]
+        specs = [spec for node in DESIGN_TREE for spec in CATALOG[node.group] if spec.kind != "ui_icon"]  # lignes « Icônes » (ui_icon) : icônes perso, pas des réglages
         for spec in specs:                                     # déclarée (sinon ignorée), même défaut des deux côtés
             self.assertEqual(spec.default, settings_store.DEFAULT_SETTINGS[spec.key], spec.key)
         self.assertEqual({s.key for s in specs}, {k for k in settings_store.DEFAULT_SETTINGS

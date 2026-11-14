@@ -8,6 +8,8 @@ from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QAbstractButton, QHBoxLayout, QLineEdit, QSizePolicy, QWidget
 
 from fm_theme.placeholder import ink as _placeholder_ink
+from fm_theme import icon_library
+from fm_theme.icon_frame import framed as _framed
 from . import theme as th
 
 
@@ -52,7 +54,24 @@ def brighter(c: QColor, factor: float = 1.12) -> QColor:
                   min(255, round(c.blue() * factor)), c.alpha())
 
 
+_ICONES_CATALOGUE = {
+    "search": "general/recherche_02",
+    "plus": "general/ajouter_02",
+    "gear": "general/parametres_01",
+    "repeat": "modules/agenda/recurrence_03",
+}
+
+
 def draw_icon(p: QPainter, kind: str, rect: QRectF, color: QColor, width: float = 1.6) -> None:
+    identifiant = _ICONES_CATALOGUE.get(kind)
+    if identifiant and icon_library.peindre(p, rect, identifiant,
+                                            style=icon_library.MONOCHROME, teinte=color):
+        return
+    _draw_glyph(p, kind, rect, color, width)
+
+
+@_framed("agenda")
+def _draw_glyph(p: QPainter, kind: str, rect: QRectF, color: QColor, width: float = 1.6) -> None:
     """Icônes du design (viewBox 16 × 16) mises à l'échelle de `rect`."""
     color = _placeholder_ink(color)                     # icone dessinee par le code : magenta (provisoire)
     s = min(rect.width(), rect.height()) / 16.0
@@ -168,23 +187,23 @@ class AgendaButton(QAbstractButton):
         p.setRenderHint(QPainter.Antialiasing, True)
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         hover = self.underMouse() and self.isEnabled()
+        # Aspect : celui des boutons de fm_theme (`painted_button_look`, la même source que le QSS commun ; demande de
+        # l'utilisateur 2026-11-12). Seules la taille et la forme des groupes restent celles de l'agenda.
+        from fm_theme.style import painted_button_look
+        primary = self.kind == "primary" or self.isChecked() and self.isCheckable()
+        state = ("active" if self.isDown() else "checked" if self.isChecked() and self.isCheckable()
+                 else "hover" if hover else "standard")
+        look = painted_button_look(state)
+        bg, line, fg, r = look["bg"], look["line"], look["fg"], look["radius"]
         if self.kind == "nav":
             if hover or self.isDown():
                 p.setPen(Qt.NoPen)
-                p.setBrush(t.c("btn"))
-                p.drawRoundedRect(rect, 6, 6)
-            fg = t.c("strong") if hover else t.c("muted")
+                p.setBrush(bg)
+                p.drawRoundedRect(rect, r, r)
             draw_icon(p, self._icon or "prev", QRectF(self.rect()).adjusted(7, 7, -7, -7), fg)
             return
-        primary = self.kind == "primary" or self.isChecked() and self.isCheckable()
-        bg = t.c("accent") if primary else t.c("btn")
-        line = t.c("accent") if primary else t.c("btn_line")
-        fg = t.c("on_accent") if primary else t.c("btn_fg")
-        if hover:
-            bg, line, fg = brighter(bg), brighter(line), brighter(fg)
         if not self.isEnabled():
             fg = th.with_alpha(fg, 0.45)
-        r = t.m["btn_radius"]
         radii = {"first": (r, 0, 0, r), "mid": (0, 0, 0, 0), "last": (0, r, r, 0)}.get(self.group, (r, r, r, r))
         path = rounded_path(rect, radii)
         p.fillPath(path, bg)
@@ -200,12 +219,13 @@ class AgendaButton(QAbstractButton):
         p.setFont(f)
         fm = th.metrics(13, 600 if primary else 400)
         tw = fm.horizontalAdvance(text)
-        x = (self.width() - tw - (20 if self._icon else 0)) / 2
+        dx, dy = look["text_offset"]                     # Bouton : décalage du texte (fm_theme)
+        x = (self.width() - tw - (20 if self._icon else 0)) / 2 + dx
         if self._icon:
-            draw_icon(p, self._icon, QRectF(x, (self.height() - 14) / 2, 14, 14), fg, 1.8)
+            draw_icon(p, self._icon, QRectF(x, (self.height() - 14) / 2 + dy, 14, 14), fg, 1.8)
             x += 20
         p.setPen(fg)
-        p.drawText(QRectF(x, 0, tw + 2, self.height()), Qt.AlignVCenter | Qt.AlignLeft, text)
+        p.drawText(QRectF(x, dy, tw + 2, self.height()), Qt.AlignVCenter | Qt.AlignLeft, text)
 
 
 class ButtonGroup(QWidget):

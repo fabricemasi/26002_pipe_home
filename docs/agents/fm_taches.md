@@ -6,7 +6,7 @@ synchronisé avec **Google Tasks**, tâches datées montrées dans l'**Agenda**,
 construction. Suivi de mission : `FM_TACHES_PROGRESS.md`.
 
 **État : TERMINÉ (2026-11-11) : cœur, base, interface, réglages, synchronisation Google Tasks (testée contre
-un faux serveur ; connexion RÉELLE à valider par l'utilisateur), tâches datées dans l'Agenda, rappels. Apple
+un faux serveur, puis validée sur le compte de l'utilisateur le 2026-11-11), tâches datées dans l'Agenda, rappels. Apple
 Rappels abandonné (décision de l'utilisateur).**
 
 **Tests** (module `fm_taches` du lanceur de tests) ; par nom : `PYTHONPATH="tests;." python -m unittest

@@ -26,18 +26,24 @@ class SectionsTest(unittest.TestCase):
         # fermer, fm_browser le reste, meme hierarchie.
         self.assertIn("Barre de navigation", theme)
         self.assertIn("Barre de navigation", general)
-        self.assertEqual([c.title for c in theme["Barre de navigation"].children], ["Icônes"])
+        # + Boutons fenetre (punaise / reduire / agrandir / fermer, 2026-11-07)
+        self.assertEqual([c.title for c in theme["Barre de navigation"].children], ["Boutons fenêtre", "Icônes"])
         app = next(n for n in v2.tab_tree("General") if n.title == "Barre de navigation")
-        self.assertEqual([c.title for c in app.children], ["Icônes", "Cheminement", "Fenêtres additionnelles"])
+        # + Cadre des modules (habillage commun des cadres Visionneuse / Board / Video..., 2026-11-08)
+        self.assertEqual([c.title for c in app.children],
+                         ["Icônes", "Cheminement", "Cadre des modules", "Fenêtres additionnelles"])
         self.assertEqual([s.key for s in v2.CATALOG["Barre de navigation"]],
                          ["navbar_bg_color", "navbar_bottom_enabled", "navbar_title_font_family",
                           "navbar_height"])
         self.assertEqual([s.params["ui_key"] for s in v2.CATALOG["Barre de navigation : Icones"]],
-                         ["navbar_min", "navbar_max", "navbar_close"])
+                         ["navbar_min", "navbar_max", "navbar_close", "navbar_pin"])   # + punaise (2026-11-07)
         self.assertEqual([s.key for s in v2.CATALOG["Barre de navigation (appli)"]],
-                         ["navtool_extra_height", "navtool_bg_color",
+                         # overrides de fm_theme (bordure basse, police du titre, hauteur) et taille / padding
+                         # des icones (2026-11-07, docs/agents/fm_theme.md)
+                         ["navtool_bottom_enabled", "navtool_title_font_family", "navtool_height",
+                          "navtool_extra_height", "navtool_bg_color",
                           "navtool_border_enabled", "navtool_corner_radius", "navtool_hover_bg_color",
-                          "navtool_margin"])
+                          "navtool_icon_size", "navtool_padding", "navtool_margin"])
         for spec in v2.CATALOG["Barre de navigation (appli)"]:
             for key in (spec.key, *spec.extra_keys):
                 self.assertIn(key, settings_store.DEFAULT_SETTINGS, key)

@@ -19,6 +19,7 @@ import logging
 import os
 import shutil
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -124,13 +125,29 @@ def backup(conn: sqlite3.Connection, dest: Path) -> Path:
     """Copie cohérente de la base OUVERTE (API de sauvegarde de SQLite : jamais une copie de fichier pendant une
     écriture)."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(".tmp")
+    # Temporaire PROPRE à cette sauvegarde : le nom final est à la seconde près, deux sauvegardes dans la même seconde
+    # (agenda + tâches, deux fenêtres) écrivaient le même `.tmp` → WinError 32 sur os.replace (vu le 2026-11-12).
+    tmp = dest.with_name(f"{dest.stem}.{os.getpid()}-{threading.get_ident()}.tmp")
     target = sqlite3.connect(str(tmp))
     try:
         conn.backup(target)
     finally:
         target.close()
-    os.replace(tmp, dest)
+    # Même nom remplacé au même instant par une autre sauvegarde : Windows refuse l'un des deux (WinError 5 / 32).
+    # On réessaie un peu ; si la cible est là, une sauvegarde de la même seconde vient de l'écrire : elle vaut la nôtre.
+    for attempt in range(5):
+        try:
+            os.replace(tmp, dest)
+            return dest
+        except PermissionError:
+            if attempt < 4:
+                time.sleep(0.02)
+                continue
+            with contextlib.suppress(OSError):
+                tmp.unlink()
+            if dest.is_file():
+                return dest
+            raise
     return dest
 
 

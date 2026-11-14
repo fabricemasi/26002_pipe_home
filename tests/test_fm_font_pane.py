@@ -54,6 +54,14 @@ class PaneTest(WindowTestCase):
         self.pane.new_field.setText(text)
         self.pane.create_from_field()
 
+    def test_bars_take_the_standard_toolbar_look_of_fm_theme(self):
+        from fm_theme import palette as P
+        self.addCleanup(P.restyle_palettes_in, None, dict(self.pane.settings))
+        values = {**self.pane.settings, "palette_cell_radius": 7 if self.pane.settings.get("palette_cell_radius") != 7 else 9}
+        self.pane.apply_settings(values)
+        self.assertEqual(P.LOOK["key"], P.palette_look(values)["key"])
+        self.assertEqual(P.LOOK["cell_radius"], P.palette_look(values)["cell_radius"])
+
     def test_grid_create_search_filters_and_missing(self):
         p = self.pane
         self.create("A")

@@ -81,10 +81,10 @@ class NavigationBarTest(unittest.TestCase):
         self.assertIsNotNone(cell)
         captions = cell.capTexts()
         self.assertIn("Icône".upper(), [c.upper() for c in captions])
-        caption, avatar, widgets = holder._ui_icon_field.states()[0]
+        # (legende, apercu, boutons Changer / Reinitialiser, etat) : un seul conteneur de boutons par etat
+        caption, avatar, box, _state = holder._ui_icon_field.states()[0]
         from PySide6.QtWidgets import QPushButton
-        buttons = widgets[0].findChildren(QPushButton)
-        self.assertEqual(len(widgets), 1)
+        buttons = box.findChildren(QPushButton)
         self.assertEqual(len(buttons), 2)                               # changer / reinitialiser : plus de capture
         self.assertNotIn("Capturer", " ".join(b.text() for b in buttons))
         self.assertEqual(abs(buttons[0].y() - buttons[1].y()), 0)       # cote a cote
@@ -119,12 +119,14 @@ class NavigationBarTest(unittest.TestCase):
         settle(0.3)
 
         def select(column, name):
-            for i in range(column.list.count()):
-                item = column.list.item(i)
-                if Path(item.data(ROLE_PATH)).name == name:
-                    column.list.setCurrentItem(item)
-                    settle(0.3)
-                    return
+            for _attempt in range(30):                   # colonnes remplies en differe : 3 s au plus
+                for i in range(column.list.count()):
+                    item = column.list.item(i)
+                    if Path(item.data(ROLE_PATH)).name == name:
+                        column.list.setCurrentItem(item)
+                        settle(0.3)
+                        return
+                settle(0.1)
             self.fail(name)
         select(self.win.columns[0], "3d")
         select(self.win.columns[1], "projA")
@@ -132,8 +134,15 @@ class NavigationBarTest(unittest.TestCase):
         self.assertEqual(bar._crumb_names[:2], ["3d", "projA"])
         self.assertGreaterEqual(bar.crumbs.geometry().top(), bar.title_label.geometry().bottom())   # sous le titre
         first = bar._crumb_layout.itemAt(0).widget()                  # « Espacement a gauche » (10 par defaut)
+        # Reperes reconstruits (leur nombre change) : Qt les affiche au tour de boucle suivant (cachés jusque-là, donc
+        # pas encore places) — on attend qu'ils le soient (2026-11-12 : verifie trop tot, puce encore en (0, 0)).
+        for _attempt in range(30):
+            if not first.isHidden():
+                break
+            settle(0.1)
         self.assertEqual(bar.crumbs.x() + first.x(),
-                         app_style.scaled(int(__import__("ui_state").APPLIED_SETTINGS.get("crumb_left_spacing", 10)), 0))
+                         app_style.scaled(int((__import__("ui_state").APPLIED_SETTINGS or {})      # comme l'appli
+                                              .get("crumb_left_spacing", 10)), 0))
         self.win.prune_after(0)                                       # re-clic : les colonnes suivantes disparaissent
         settle(0.2)
         self.assertEqual(bar._crumb_names, ["3d", "projA"])           # le chemin parcouru reste (apres le focus)
@@ -194,12 +203,14 @@ class NavigationBarTest(unittest.TestCase):
         settle(0.3)
 
         def select(column, name):
-            for i in range(column.list.count()):
-                item = column.list.item(i)
-                if Path(item.data(ROLE_PATH)).name == name:
-                    column.list.setCurrentItem(item)
-                    settle(0.3)
-                    return
+            for _attempt in range(30):                   # colonnes remplies en differe : 3 s au plus
+                for i in range(column.list.count()):
+                    item = column.list.item(i)
+                    if Path(item.data(ROLE_PATH)).name == name:
+                        column.list.setCurrentItem(item)
+                        settle(0.3)
+                        return
+                settle(0.1)
             self.fail(name)
         select(self.win.columns[0], "3d")
         select(self.win.columns[1], "projA")

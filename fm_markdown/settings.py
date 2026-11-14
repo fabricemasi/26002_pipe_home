@@ -218,28 +218,15 @@ CATALOG["Markdown : Éditeur"] = [
     _md_color("md_code_file_bg", "Fichiers de code : fond"),
     _md_color("md_active_line_bg", "Fichiers de code : ligne en cours"),
     Spec("md_line_numbers", "Fichiers de code : numéros de ligne", "bool", _md("md_line_numbers")),
+    Spec("md_note_line_numbers", "Notes : numéros de ligne", "bool", _md("md_note_line_numbers")),
     _md_color("md_gutter_color", "Numéros de ligne : couleur"),
     _md_color("md_gutter_bg", "Numéros de ligne : fond"),
     Spec("md_code_wrap", "Fichiers de code : retour à la ligne", "bool", _md("md_code_wrap")),
     _md_slider("md_tab_size", "Largeur des tabulations", 1, 16, "esp."),
 ]
 CATALOG["Markdown : Barre d'outils"] = [
+    # Aspect : section « Barres d'outils » de fm_theme (barre flottante, fm_markdown/bars.py) ; ici l'affichage seul.
     Spec("md_toolbar_enabled", "Afficher la barre d'outils (édition des notes)", "bool", _md("md_toolbar_enabled")),
-    _md_color("md_toolbar_bg", "Couleur de fond"),
-    _md_color("md_toolbar_icon_color", "Couleur des icônes"),
-    _md_slider("md_toolbar_icon_size", "Taille des icônes", 8, 40),
-    _md_slider("md_toolbar_button_size", "Taille des boutons", 16, 60),
-    Spec("md_toolbar_radius", "Border radius de la barre", "corners", _md("md_toolbar_radius"), {"max": 30}),
-    _md_color("md_toolbar_hover_bg", "Fond au survol"),
-    _md_color("md_toolbar_active_bg", "Fond d'un outil actif (pinceau)"),
-    Spec("md_toolbar_button_radius", "Border radius des boutons", "corners", _md("md_toolbar_button_radius"),
-         {"max": 30}),
-    Spec("md_toolbar_padding", "Padding", "padding", _md("md_toolbar_padding")),
-    Spec("md_toolbar_margin", "Margin", "padding", _md("md_toolbar_margin")),
-    _md_slider("md_toolbar_gap", "Espace entre les boutons", 0, 24),
-    _shadow_spec("md_toolbar_shadow"),
-    _md_sides("md_toolbar_border_enabled"),
-    Spec("md_toolbar_centered", "Boutons centrés", "bool", _md("md_toolbar_centered")),
 ]
 del _n
 

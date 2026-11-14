@@ -418,6 +418,8 @@ class IllustratorController(ContentMixin, CommandMixin, QObject):
             self.refresh()
             return True
         if key == Qt.Key_Escape:
+            if self.cancel_trace():                          # vectorisation en cours : arrêtée, image gardée
+                return True
             if self.selection() or self.artboard_id:
                 self.clear_selection()
                 self.artboard_id = ""

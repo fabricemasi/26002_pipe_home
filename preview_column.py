@@ -62,6 +62,8 @@ from settings_store import (
 )
 from settings_widgets import _paint_bordered_rect, _radius_any, _radius_dict
 from fm_theme.placeholder import ink as placeholder_ink
+from fm_theme import icon_library
+from fm_theme.icon_frame import paint_framed                 # cadre des icones (Theme > General)
 from browser_core import (
     COLUMN_MAX_WIDTH,
     COLUMN_MIN_WIDTH,
@@ -1164,6 +1166,23 @@ def icon_tone_bg(color: str, value: int = 30) -> tuple | None:
     return tone(rest), tone(hover)
 
 
+# Icone du catalogue (fm_theme.icon_library) de chaque genre de bouton : UNE table, lue par les boutons ET par les
+# apercus de la liste ICONES des reglages (settings_v2_app._default_glyph). Icone perso toujours prioritaire.
+NAV_LIBRARY_ICONS = {
+    "browse": "modules/browser/repertoire_03",
+    "viewer": "modules/viewer/visionneuse_04",
+    "text_editor": "modules/markdown/markdown_03",
+    "board": "modules/miro/tableau_blanc_03",
+    "video": "modules/video/lecture_video_04",
+    "font": "modules/font/typographie_03",
+    "pdf": "modules/pdf/pdf_04",
+    "agenda": "modules/agenda/calendrier_01",
+    "gear": "general/parametres_01",
+    "nav_back": "general/retour_02",
+    "find": "general/recherche_02",          # « Rechercher (Ctrl+F) » du module Markdown
+}
+
+
 class IconButton(QPushButton):
     """Bouton dessine au QPainter (─ □ × pour TitleBar, engrenage pour les
     Parametres) plutot qu'avec un glyphe de police : quel que soit le
@@ -1193,6 +1212,7 @@ class IconButton(QPushButton):
         self._blend = None   # couleur FUSIONNEE (produit) sur l'icone active : modules de la barre, bouton fm_theme
         self._disabled_color = None   # icone grisee (bouton desactive) de cette couleur ; None = rien de propre
         self._icon_key = None   # icone perso PROPRE au bouton (bouton fm_theme), essayee avant celle de son glyphe
+        self._library_icon = NAV_LIBRARY_ICONS.get(kind)
         self._tinted = None  # (cle du pixmap source, mode, couleur, pixmap) : rien de refait a chaque peinture
 
     def set_icon_tint(self, color: str | None):
@@ -1224,6 +1244,40 @@ class IconButton(QPushButton):
         """Icone perso propre a ce bouton (cle UI_ICON_*) ; absente = celle de son glyphe (`_custom_icon_pixmap`)."""
         self._icon_key = key
         self.update()
+
+    def set_library_icon(self, identifiant: str):
+        if self._library_icon != identifiant:
+            self._library_icon = identifiant
+            self.update()
+
+    _disabled_opacity = None        # bouton inutilisable : cadre (fond, bordures) a cette opacite ; None = non
+    _disabled_icon_opacity = None   # ... et son icone a celle-ci (None = celle du cadre)
+
+    def set_disabled_opacity(self, value: float | None, icon: float | None = None):
+        """« Valeurs du grise » (fm_theme > General) du bouton inutilisable : fond et bordures a `value` (elements
+        d'interface), icone a `icon` (icones), sans effet graphique (jamais d'effet dans un effet) ; None = seule la
+        couleur d'icone change."""
+        if (value, icon) != (self._disabled_opacity, self._disabled_icon_opacity):
+            self._disabled_opacity, self._disabled_icon_opacity = value, icon
+            self.update()
+
+    def _paint_dimmed_frame(self, opacity: float) -> QPainter:
+        """Cadre du QSS (fond, bordures, etat :disabled) peint hors ecran puis pose a `opacity` ; le painter rendu
+        garde cette opacite pour l'icone. Seulement pour un bouton inutilisable (rien de plus a chaque peinture sinon)."""
+        from PySide6.QtWidgets import QStyle, QStyleOptionButton
+        dpr = self.devicePixelRatioF()
+        pix = QPixmap(max(1, round(self.width() * dpr)), max(1, round(self.height() * dpr)))
+        pix.setDevicePixelRatio(dpr)
+        pix.fill(Qt.transparent)
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        offscreen = QPainter(pix)
+        self.style().drawControl(QStyle.CE_PushButton, option, offscreen, self)
+        offscreen.end()
+        painter = QPainter(self)
+        painter.setOpacity(opacity)
+        painter.drawPixmap(0, 0, pix)
+        return painter
 
     def set_disabled_color(self, color: str | None):
         """Couleur de l'icone du bouton desactive (glyphe, ou forme de l'icone perso) ; None = icone normale."""
@@ -1320,8 +1374,11 @@ class IconButton(QPushButton):
         return self._inner_rect().adjusted(left, top, -right, -bottom)
 
     def paintEvent(self, event):
+        dim = None if self.isEnabled() else self._disabled_opacity
         if self._frame is not None:
             painter = QPainter(self)
+            if dim is not None:
+                painter.setOpacity(dim)                 # inutilisable : cadre et icone a la valeur du grise
             bg, enabled, colors, thickness, radius = self._frame
             hover_bg = getattr(self, "_hover_bg", None)
             alert = self._alert
@@ -1332,9 +1389,13 @@ class IconButton(QPushButton):
                 bg = hover_bg
             painter.setRenderHint(QPainter.Antialiasing, _radius_any(radius))
             _paint_bordered_rect(painter, self._inner_rect(), radius, enabled, thickness, colors, alert or bg)
+        elif dim is not None:
+            painter = self._paint_dimmed_frame(dim)
         else:
             super().paintEvent(event)
             painter = QPainter(self)
+        if dim is not None and self._disabled_icon_opacity is not None:
+            painter.setOpacity(self._disabled_icon_opacity)          # icone : sa propre valeur du grise
         painter.setRenderHint(QPainter.Antialiasing, True)
         rect = self._icon_rect()
         if self._kind == "text":
@@ -1354,11 +1415,34 @@ class IconButton(QPushButton):
             painter.end()
             return
         color = self._hover_color if (self.underMouse() or self._alert) else self._color
-        if self._disabled_color and not self.isEnabled():
+        desactive = bool(self._disabled_color and not self.isEnabled())
+        if desactive:
             color = self._disabled_color                        # desactive : glyphe de la couleur reglee
-        elif recolor is not None and recolor[0] == "mul":
+        if self._library_icon:
+            normal = self.isEnabled() and not self._tint
+            # Board et PDF ont chacun une couleur de navigation et une autre dans le Board.
+            couleur_nav = self._blend if self._kind in ("board", "pdf") else None
+            style = icon_library.style_affiche(normal)
+            if style == icon_library.COULEUR:
+                teinte = None
+            elif normal:                # interface en flat monochrome : couleur du glyphe (fusion du module comprise)
+                teinte = multiply_color(color, recolor[1]) if recolor is not None and recolor[0] == "mul" else color
+            else:
+                teinte = self._tint if self.isEnabled() else color
+            if icon_library.peindre(painter, QRectF(rect), self._library_icon, style=style, teinte=teinte,
+                                    couleur_module=couleur_nav if style == icon_library.COULEUR else None):
+                painter.end()
+                return
+        if not desactive and recolor is not None and recolor[0] == "mul":
             color = multiply_color(color, recolor[1])
         color = placeholder_ink(color)                          # glyphe dessine par le code : magenta (provisoire)
+        # Cadre des icones (fm_theme > General > Marge des icones) : glyphe ramene au bord de son dessin, recentre.
+        paint_framed(painter, QRectF(rect), lambda p, r: self._paint_kind_glyph(p, r, color),
+                     key=("iconbutton", self._kind, QColor(color).rgba()))
+        painter.end()
+
+    def _paint_kind_glyph(self, painter: QPainter, rect: QRectF, color) -> None:
+        """Glyphe de `self._kind` dessine dans `rect` (couleur deja passee par `placeholder_ink`)."""
         pen = QPen(QColor(color))
         pen.setWidthF(1.3)
         pen.setCapStyle(Qt.FlatCap)
@@ -1679,7 +1763,6 @@ class IconButton(QPushButton):
                 ox = cx + offset
                 painter.drawLine(QPointF(ox + sign * ss * 0.5, cy - ss), QPointF(ox - sign * ss * 0.5, cy))
                 painter.drawLine(QPointF(ox - sign * ss * 0.5, cy), QPointF(ox + sign * ss * 0.5, cy + ss))
-        painter.end()
 
     def _custom_icon_pixmap(self, rect: QRect) -> QPixmap | None:
         """Icone perso (voir Settings > ICONES > General) pour ce bouton,
@@ -1689,7 +1772,7 @@ class IconButton(QPushButton):
         (dchevron_left/right) ne la remplacent que si COLLAPSE_TOGGLE_MODE
         vaut "icone" (voir Settings > Colonnes > Focus > Bouton repliement >
         "Icone")."""
-        size = int(min(rect.width(), rect.height()) * 0.9)
+        size = int(min(rect.width(), rect.height()))      # marge : celle du theme (cadre des icones)
         if size <= 0:
             return None
         if self._icon_key:

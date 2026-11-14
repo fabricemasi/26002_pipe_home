@@ -122,8 +122,10 @@ class TablesTest(WindowTestCase):
 
     def test_corners_rows_are_called_border_radius(self):
         labels = {sp.label for specs in v2.CATALOG.values() for sp in specs if sp.kind == "corners"}
-        # « Border radius », ou precise par ce qu'il arrondit (Visionneuse : « Border radius de l'image »).
-        self.assertEqual({label for label in labels if not label.startswith("Border radius")}, set())
+        # « Border radius », ou precise par ce qu'il arrondit (Visionneuse : « Border radius de l'image ») ; etats du
+        # bouton : « <Etat> : border radius » (2026-11-12, comme les autres lignes des etats).
+        self.assertEqual({label for label in labels if not label.startswith("Border radius")
+                          and not label.endswith(" : border radius")}, set())
         self.assertIn("Border radius", labels)
 
     def test_padding_borders_and_radius_are_split_cells(self):
@@ -407,27 +409,30 @@ class GapsTableTest(WindowTestCase):
     def test_title_padding_lives_in_the_paragraph_tables(self):
         """Plus de sous-section « Padding (titre seulement) » ni « Retraits » : le padding du titre (avec
         avant / apres) est la ligne « Padding (titre) » de Paragraphes > Niveau N."""
-        win = build()
+        win = build("theme")
         keys = [f.dimsKey() for f in win.findChildren(_TableFrame)]
         self.assertFalse([k for k in keys if k.startswith(("TITRES/Padding", "TITRES/Retraits"))])
         self.assertNotIn("Titre : Espacements", v2.CATALOG)
-        field = next(w for sp, w in win.stores["General"]["specs"]
+        field = next(w for sp, w in win.stores[v2.THEME_TAB]["specs"]
                      if not isinstance(sp, str) and sp.key == "title_level3_text_padding")
         captions = [c.text() for c in cells.split_of(field)._cap_labels]
         self.assertEqual(captions, ["LIER LES 4", "G", "H", "B", "D", "AVANT", "APRÈS"])
 
     @lent
     def test_background_tables_one_per_level(self):
-        win = build()
+        win = build("theme")
         frames = [f for f in win.findChildren(_TableFrame) if f.dimsKey() == "TITRES/Paragraphes#0"]
         self.assertEqual(len(frames), 5)
         for frame in frames:
             rows = frame.findChildren(_TableRow)
-            self.assertEqual(len(rows), 7)
+            self.assertEqual(len(rows), 12)
         for n in range(1, 6):   # margin AU-DESSUS du padding ; padding (titre) puis (paragraphe) dessous
             labels = [spec.label for spec in v2.CATALOG[f"Titre : Fond {n}"]]
+            # + lignes du titre DÉPLOYÉ (demande de l'utilisateur, 2026-11-08 ; docs/agents/fm_theme.md)
             self.assertEqual(labels, ["Couleur de fond", "Margin", "Padding", "Padding (titre)",
-                                      "Padding (paragraphe)", "Bordures", "Border radius"])
+                                      "Padding (paragraphe)", "Bordures", "Border radius",
+                                      "Déployé : couleur de fond", "Déployé : override couleur de texte",
+                                      "Déployé : bordures", "Déployé : override gras", "Déployé : override italique"])
 
 
 class ToggleStylesTest(WindowTestCase):
@@ -705,7 +710,7 @@ class RoundTripTest(WindowTestCase):
             mock.patch.object(v2, "save_settings", lambda s: disk.update(copy.deepcopy(s))),
             mock.patch.object(v2, "_save_window_geometry", lambda b64, key: geometry.update({key: b64})),
         ]
-        first = v2.SettingsWindowV2()
+        first = v2.SettingsWindowV2(module="theme")
         disk.update(copy.deepcopy(first.settings))
         patches.append(mock.patch.object(v2, "load_settings", lambda: copy.deepcopy(disk)))
         for p in patches:
@@ -732,11 +737,11 @@ class RoundTripTest(WindowTestCase):
         expected_cols = list(frame._flat_head._widths)
         first._persist_now()
         first.close()
-        self.assertIn(v2.GEOMETRY_KEY, geometry)
+        self.assertIn(f"{v2.GEOMETRY_KEY}:theme", geometry)              # fenetre du theme : sa geometrie
         self.assertEqual(disk["slider_ranges"]["item_column_width"], [50, 777])
 
         v2._set_table_dims(disk["table_dims"])
-        second = v2.SettingsWindowV2()
+        second = v2.SettingsWindowV2(module="theme")
         second.resize(1200, 880)
         second.show()
         v2.expand_all(second.stack.currentWidget())
@@ -755,10 +760,12 @@ class RoundTripTest(WindowTestCase):
         key = split_frame.dimsKey()
         same = next(f for f in second.findChildren(_TableFrame) if f.dimsKey() == key)
         self.assertEqual(same.findChildren(cells.SplitCell)[0].aligns()[1], ("right", "top"))
-        field = next(w for sp, w in second.stores["General"]["specs"]
+        second.close()
+        general = build()                                # le curseur Colonnes est dans la fenetre generale
+        self.addCleanup(general.close)
+        field = next(w for sp, w in general.stores["General"]["specs"]
                      if not isinstance(sp, str) and sp.key == "item_column_width")
         self.assertEqual((field.slider._min, field.slider._max), (50, 777))
-        second.close()
 
 
 class SliderRangeTest(WindowTestCase):
@@ -804,7 +811,7 @@ class SliderRangeTest(WindowTestCase):
 class AutosaveTest(WindowTestCase):
     def setUp(self):
         v2.AUTOSAVE = True
-        self.win = build()
+        self.win = build("theme")
         self.win.resize(1200, 900)
         self.win.show()
         for _ in range(5):
@@ -827,7 +834,7 @@ class AutosaveTest(WindowTestCase):
     def test_window_size_is_saved(self):
         self.win._persist_now()
         self.assertTrue(self.geometry)
-        self.assertEqual(self.geometry[-1][0], v2.GEOMETRY_KEY)
+        self.assertEqual(self.geometry[-1][0], f"{v2.GEOMETRY_KEY}:theme")     # fenetre du theme : sa geometrie
 
     @lent
     def test_table_dims_are_saved_without_validating(self):
@@ -883,7 +890,7 @@ class LinkedParagraphTablesTest(WindowTestCase):
     dimensions, et toute modification se reporte sur les autres niveaux."""
 
     def setUp(self):
-        self.win = build()
+        self.win = build("theme")
         self.win.resize(1300, 900)
         self.win.show()
         for _ in range(5):
@@ -923,7 +930,7 @@ class SpaceAboveTest(WindowTestCase):
     curseur en direct ; l'espace est retenu (element_spaces) et reapplique a la reouverture."""
 
     def setUp(self):
-        self.win = build()
+        self.win = build("theme")
         self.win.resize(1300, 900)
         self.win.show()
         for _ in range(5):
@@ -1018,7 +1025,7 @@ class SpaceAboveTest(WindowTestCase):
         saved = copy.deepcopy(_DEFAULTS)
         saved["element_spaces"] = {key: 44}
         with mock.patch.object(v2, "load_settings", lambda: copy.deepcopy(saved)):
-            again = build()
+            again = build("theme")
         self.addCleanup(again.close)
         twin = next(f for f in again.findChildren(_TableFrame) if f.dimsKey() == "TITRES/Polices#0")
         self.assertEqual(twin._space_above_px, 44)
@@ -1028,7 +1035,7 @@ class FreeColumnsTest(WindowTestCase):
     """Colonnes libres : aucune colonne n'est contrainte par une autre ; le TABLEAU change de largeur."""
 
     def setUp(self):
-        self.win = build()
+        self.win = build("theme")
         self.win.resize(1300, 900)
         self.win.show()
         for _ in range(5):
@@ -1146,7 +1153,13 @@ class FreeColumnsTest(WindowTestCase):
     @lent
     def test_last_sub_cell_has_a_right_border_when_it_stops_short(self):
         """Derniere sous-cellule reglee, plus etroite que la colonne : son bord droit a un filet et se tire."""
+        without_row_templates(self, self.frame)          # largeurs PROPRES (le gabarit les remettrait en differe)
         split = next(sp for sp in self.frame.findChildren(cells.SplitCell) if len(sp._cells) == 5)
+        owner = split                    # ligne coupée par son toggle « activer » (2026-11-11) : l'allumer d'abord
+        while owner is not None and getattr(owner, "_v2_active", None) is None:
+            owner = owner.parentWidget()
+        if owner is not None:
+            owner._v2_active.setChecked(True)
         split.setWidths([0, 0, 0, 0, 150])
         self.head._set_width(1, self.head._widths[1] + 150)
         for _ in range(3):
@@ -1448,12 +1461,100 @@ class TabScopedDimsKeyTest(WindowTestCase):
         self.assertFalse([f.dimsKey() for f in general.findChildren(_TableFrame) if "|" in f.dimsKey()])
 
 
+class SeparatorRowsTest(WindowTestCase):
+    """RÈGLE (demande de l'utilisateur, 2026-11-11) : une coupe (« Split au-dessus ») et un texte au-dessus sont des
+    éléments à part entière de la suite des lignes ; déplacer une ligne ne les emmène pas."""
+
+    def setUp(self):
+        self.win = build()
+        self.win.resize(1300, 900)
+        self.win.show()
+        for _ in range(5):
+            app.processEvents()
+        self.addCleanup(self.win.close)
+        self.frame = next(f for f in self.win.findChildren(_TableFrame)
+                          if getattr(getattr(f, "_extra_dims", None), "rows", None) is not None
+                          and len(f._extra_dims.rows.rows) >= 4)
+        self.state = self.frame._extra_dims
+        self.mover = self.state.rows
+        self.state.splits.clear()
+        self.state.above_texts.clear()
+        self.state.set_split(2, True, 20, notify=False)
+        self.state.set_above_text(2, "Titre", notify=False)
+
+    def test_moving_a_row_across_a_split_leaves_the_split_in_place(self):
+        seq = self.mover.sequence()
+        self.assertEqual(seq[:4], [("row", 0), ("row", 1), ("sep", 20, "Titre", False), ("row", 2)])
+        self.mover.move_in_sequence(0, len(seq))          # 1re ligne tout en bas
+        self.assertEqual(self.mover.order[-1], 0)
+        self.assertEqual(self.state.splits, {2: 20})      # la coupe reste entre 1 et 2
+        self.assertEqual(self.state.above_texts, {2: "Titre"})
+
+    def test_moving_the_row_under_a_split_does_not_take_it(self):
+        self.mover.move_in_sequence(2, len(self.mover.sequence()))
+        self.assertEqual(self.mover.order[-1], 2)
+        self.assertEqual(self.state.splits, {3: 20})      # la ligne suivante ouvre maintenant la partie
+        self.assertEqual(self.state.above_texts, {3: "Titre"})
+
+    def test_a_visible_split_offers_both_sides(self):
+        seq = self.mover.sequence()
+        places = [b for _y, b in self.mover.slots(seq, 0)]
+        self.assertIn(2, places)                          # avant la coupe : fin de la partie du dessus
+        self.assertIn(3, places)                          # après : début de la partie du dessous
+        self.mover.move_in_sequence(0, 2)                 # fin de la partie du dessus
+        self.assertEqual(self.mover.order[:3], [1, 0, 2])
+        self.assertEqual(self.state.splits, {2: 20})
+
+    def test_the_ctrl_drag_gesture_leaves_the_split_in_place(self):
+        self.mover.set_order(list(range(len(self.mover.rows))), notify=False)
+        overlay = RowMoveTest._drag(self, 0, 3)           # 1re ligne lâchée en bas de la ligne 3
+        self.assertIsNotNone(overlay)
+        self.assertNotEqual(self.mover.order[0], 0)
+        self.assertEqual(self.state.splits, {2: 20})
+        self.assertEqual(self.state.above_texts, {2: "Titre"})
+
+    def test_the_chevron_folds_the_part_under_its_title(self):
+        """Demande de l'utilisateur (2026-11-12) : un chevron sur le texte au-dessus replie la partie qu'il ouvre (jusqu'à
+        la coupe suivante) ; l'état est gardé avec la mise en page et suit le texte quand une ligne bouge."""
+        rows = self.mover.rows
+        app.processEvents()
+        label = self.state._above_labels[2]
+        QTest.mouseClick(label, Qt.LeftButton, Qt.NoModifier, QPoint(5, label.height() // 2))
+        self.assertTrue(all(rows[r].isHidden() for r in range(2, len(rows))))
+        self.assertFalse(rows[0].isHidden() or rows[1].isHidden())
+        self.assertFalse(label.isHidden())                               # le titre reste, pour déplier
+        # Clignotement signalé (2026-11-12) : rien ne doit encore bouger APRÈS le clic (images intermédiaires).
+        before = [r.geometry() for r in rows] + [label.geometry()] + [self.frame.size()]
+        for _ in range(5):
+            app.processEvents()
+        self.assertEqual([r.geometry() for r in rows] + [label.geometry()] + [self.frame.size()], before)
+        dims = self.state.collect()
+        self.assertEqual(dims["collapsed"], [2])
+        QTest.mouseClick(label, Qt.LeftButton, Qt.NoModifier, QPoint(5, label.height() // 2))
+        self.assertFalse(any(row.isHidden() for row in rows))
+        self.state.apply(dims)                                           # rechargé : replié
+        self.assertTrue(rows[2].isHidden())
+        self.mover.move_in_sequence(0, 1)                                # ligne 0 en bas de la partie du dessus
+        self.mover.move_in_sequence(2, len(self.mover.sequence()))      # 1re ligne de la partie : tout en bas
+        self.assertEqual(self.state.collapsed, set(self.state.above_texts))   # repliée avec son texte
+        self.state.set_above_text(next(iter(self.state.above_texts)), "")   # plus de titre : tout déplié
+        self.assertFalse(any(row.isHidden() for row in rows))
+
+    def test_ctrl_click_on_a_title_does_not_fold(self):
+        label = self.state._above_labels[2]
+        QTest.mouseClick(label, Qt.LeftButton, Qt.ControlModifier, QPoint(5, label.height() // 2))
+        self.assertEqual(self.state.collapsed, set())
+
+    def _first_label(self, r):
+        return RowMoveTest._first_label(self, r)
+
+
 class RowMoveTest(WindowTestCase):
     """Tableaux > « Permettre le deplacement des lignes » : Ctrl + glisser la 1re cellule d'une ligne la
     deplace ; l'ordre est enregistre (row_order) et retrouve."""
 
     def setUp(self):
-        self.win = build()
+        self.win = build("theme")
         self.win.resize(1300, 900)
         self.win.show()
         for _ in range(5):

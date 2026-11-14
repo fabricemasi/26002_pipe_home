@@ -161,7 +161,12 @@ def _save_icon(parent: QWidget, key: str, pix: QPixmap) -> bool:
     top = _config.CUSTOM_SOFTWARE_ICON_MAX_DIM
     if max(pix.width(), pix.height()) > top:
         pix = pix.scaled(top, top, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-    dest = pb_previews.custom_software_icon_path(key)
+    svg, dest = _icon_files(key)                        # une image remplace un SVG choisi avant
+    try:
+        svg.unlink(missing_ok=True)
+    except OSError:
+        pass
+    pb_previews.forget_mtime(svg)
     pb_previews.forget_mtime(dest)
     try:
         was_new = not dest.parent.is_dir()
@@ -178,16 +183,49 @@ def _save_icon(parent: QWidget, key: str, pix: QPixmap) -> bool:
     return True
 
 
-def _pick_image(parent: QWidget) -> QPixmap | None:
-    chosen, _ = QFileDialog.getOpenFileName(parent, "Choisir une image", "",
-                                            "Images (*.png *.jpg *.jpeg *.bmp *.webp *.gif *.tif *.tiff)")
+def _icon_files(key: str):
+    """(SVG, PNG) de l'icone perso de `key`, voisins du chemin donne par previews (redirige par les tests)."""
+    import previews as pb_previews
+    path = pb_previews.custom_software_icon_path(key)
+    return path.with_suffix(".svg"), path.with_suffix(".png")
+
+
+def _pick_icon(parent: QWidget, key: str) -> bool:
+    """Choisit une icone perso pour `key` : SVG (garde vectoriel, copie en <cle>.svg ; demande de l'utilisateur
+    2026-11-13) ou image (PNG reduit, comme une capture). Dialogue ouvert dans les icones officielles de la
+    bibliotheque d'iconographie (icones/module <id>/<nom>_<nn>_m|c.svg). Vrai si l'icone a change."""
+    import shutil
+    import previews as pb_previews
+
+    start = _config.ICON_LIBRARY_ROOT / "icones"
+    chosen, _ = QFileDialog.getOpenFileName(
+        parent, "Choisir une icône", str(start) if start.is_dir() else "",
+        "Icônes (*.svg *.png *.jpg *.jpeg *.bmp *.webp *.gif *.tif *.tiff);;SVG (*.svg);;"
+        "Images (*.png *.jpg *.jpeg *.bmp *.webp *.gif *.tif *.tiff)")
     if not chosen:
-        return None
-    pix = QPixmap(chosen)
-    if pix.isNull():
-        QMessageBox.warning(parent, "Icone", "Impossible de charger cette image.")
-        return None
-    return pix
+        return False
+    if not chosen.lower().endswith(".svg"):
+        pix = QPixmap(chosen)
+        if pix.isNull():
+            QMessageBox.warning(parent, "Icone", "Impossible de charger cette image.")
+            return False
+        return _save_icon(parent, key, pix)
+    from PySide6.QtSvg import QSvgRenderer
+    if not QSvgRenderer(chosen).isValid():
+        QMessageBox.warning(parent, "Icone", "Impossible de lire ce SVG.")
+        return False
+    svg, png = _icon_files(key)
+    try:
+        svg.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(chosen, svg)
+        png.unlink(missing_ok=True)
+    except OSError as exc:
+        QMessageBox.warning(parent, "Icone", f"Impossible d'enregistrer l'icone :\n{exc}")
+        return False
+    for path in (svg, png):
+        pb_previews.forget_mtime(path)
+    pb_previews._set_hidden(svg)
+    return True
 
 
 def _capture(parent: QWidget, on_pixmap):
@@ -255,12 +293,19 @@ def _default_glyph(key: str, size: int) -> QPixmap | None:
     if isinstance(key, str) and key.startswith("ui_board_"):    # Reglages > Module MRO > Icones : glyphe du board
         from fm_board.ui import paint_glyph
         from PySide6.QtCore import QRectF
+        from fm_board.bars import library_icon_for
+        from fm_theme import icon_library
         kind = key[len("ui_board_"):]
         glyph = QPixmap(size, size)
         glyph.fill(Qt.transparent)
         painter = QPainter(glyph)
         painter.setRenderHint(QPainter.Antialiasing, True)
-        paint_glyph(painter, kind, QRectF(0, 0, size, size), QColor("#c4cacf"))
+        identifiant = library_icon_for(kind)                # icone du catalogue branchee : la meme qu'en barre
+        style = icon_library.style_affiche()
+        if not (identifiant and icon_library.peindre(
+                painter, QRectF(0, 0, size, size), identifiant, style=style,
+                teinte=None if style == icon_library.COULEUR else QColor("#c4cacf"))):
+            paint_glyph(painter, kind, QRectF(0, 0, size, size), QColor("#c4cacf"))
         painter.end()
         return glyph
     if key == pb_previews.UI_ICON_APP_LOGO:                 # le carre neutre d'origine
@@ -342,7 +387,7 @@ class UiIconField(QWidget):
     def _replaced(key: str) -> bool:
         import previews as pb_previews
 
-        return pb_previews.custom_software_icon_path(key).is_file()
+        return any(path.is_file() for path in _icon_files(key))          # SVG ou PNG choisi
 
     @classmethod
     def _refresh(cls, key: str, avatar: QLabel, state: QLabel, reset):
@@ -367,20 +412,19 @@ class UiIconField(QWidget):
             avatar.setPixmap(pix if pix is not None else QPixmap())
 
     def _change(self, key: str, avatar: QLabel, state: QLabel, reset):
-        pix = _pick_image(self)
-        if pix is not None and _save_icon(self, key, pix):
+        if _pick_icon(self, key):
             self._refresh(key, avatar, state, reset)
             self._refresh_app_icons()
 
     def _reset(self, key: str, avatar: QLabel, state: QLabel, reset):
         import previews as pb_previews
 
-        path = pb_previews.custom_software_icon_path(key)
-        try:
-            path.unlink(missing_ok=True)
-        except OSError:
-            pass
-        pb_previews.forget_mtime(path)
+        for path in _icon_files(key):                       # SVG et PNG : l'icone par defaut revient
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            pb_previews.forget_mtime(path)
         self._refresh(key, avatar, state, reset)
         self._refresh_app_icons()
 
@@ -487,8 +531,7 @@ class LogicielsField(QWidget):
         self.updateGeometry()
 
     def _change(self, key: str, avatar: QLabel):
-        pix = _pick_image(self)
-        if pix is not None and _save_icon(self, key, pix):
+        if _pick_icon(self, key):
             self._refresh(avatar, key)
 
     def _capture(self, key: str, avatar: QLabel):

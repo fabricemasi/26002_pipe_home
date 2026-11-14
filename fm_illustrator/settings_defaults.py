@@ -20,7 +20,7 @@ ILL_DEFAULTS: dict[str, Any] = {
     "board_ill_nudge": 1,                     # flèches : déplacement (unités du board)
     "board_ill_nudge_big": 10,                # flèches avec Maj
     "board_ill_pencil_fidelity": 25,          # crayon et pinceau : écart toléré à la main, en dixièmes de pixel
-    "board_ill_trace_detail": 500,            # vectorisation : grand côté de l'image tracée (px)
+    "board_ill_trace_detail": 1000,           # vectorisation : grand côté de l'image tracée (px ; contours subpixel, 2026-11-13)
     # Export.
     "board_ill_pdf_dpi": 300,                 # résolution des parties tramées du PDF (effets, masques d'opacité)
 }

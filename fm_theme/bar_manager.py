@@ -442,6 +442,11 @@ class BarManager(QObject):
     def eventFilter(self, obj, event):
         if obj is self.ws and event.type() in (QEvent.Resize, QEvent.Show):
             self.relayout()                        # (montré : les contacts se mesurent sur les barres visibles)
+        elif obj is self.ws and event.type() == QEvent.Hide:
+            # Les pièces posées sur la bordure du voisin vivent hors de l'espace (souvent sur la fenêtre, contre la
+            # barre de navigation) : l'espace caché (module fermé), elles restaient et coupaient sa bordure
+            # (signalé 2026-11-12). Retirées ici, reposées au retour (Show -> relayout -> measure).
+            self._sync_patches([])
         return False
 
     # -- Éléments et barres -------------------------------------------------------------------------------------------

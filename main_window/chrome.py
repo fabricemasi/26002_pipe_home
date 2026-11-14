@@ -4,10 +4,9 @@ Découpé de pipeline_browser.py (2026-10-28) ; carte : docs/agents/fm_browser.m
 from pathlib import Path
 
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QGraphicsDropShadowEffect, QGraphicsOpacityEffect, QPushButton
+from PySide6.QtWidgets import QGraphicsOpacityEffect, QPushButton
 
 from app_style import C, resolve_color_ref, build_stylesheet, role_color, role_font, scaled
-from settings_widgets import shadow_look
 from browser_core import TITLEBAR_HEIGHT
 import ui_state
 
@@ -58,8 +57,10 @@ class ChromeMixin:
         button.setEnabled(usable)
         button.setGraphicsEffect(None)
         if dim:
+            from fm_theme.widgets import dimmed_opacity
             effect = QGraphicsOpacityEffect(button)
-            effect.setOpacity(0.35)
+            effect.setOpacity(dimmed_opacity())              # Valeur du grise (fm_theme > General), avant 0.35
+            button._unusable_veil = True                     # suivi en direct quand la valeur change
             button.setGraphicsEffect(effect)
 
     def _selected_path(self) -> tuple:
@@ -209,7 +210,13 @@ class ChromeMixin:
             return
         settings = ui_state.APPLIED_SETTINGS or {}
         base = resolve_color_ref(settings.get("navtool_icon_base_color"), role_color("buttons", "#c4cacf"))
-        disabled = resolve_color_ref(settings.get("navtool_icon_disabled_color"), "#59c4cacf")
+        # Bouton inutilisable : la couleur de base a l'opacite de la « Valeur du grise » (fm_theme > General,
+        # `dimmed_opacity`), comme tout objet non utilisable (demande de l'utilisateur, 2026-11-12 ; remplace la
+        # « Couleur desactivee » de fm_browser > ICONES).
+        # Bouton inutilisable : fond et bordures a la valeur du grise « elements d'interface », icone (couleur de
+        # base) a celle des « icones » (fm_theme > General).
+        from fm_theme.widgets import dimmed_icon_opacity, dimmed_opacity
+        grey, grey_icon = dimmed_opacity(), dimmed_icon_opacity()
         theme = getattr(self, "btn_theme", None)
         for btn in (self.btn_browse, self.btn_presets, self.btn_settings, self.btn_style, self.btn_collapse,
                     self.btn_columns, self.btn_viewer, self.btn_text_editor, self.btn_board, self.btn_video,
@@ -218,7 +225,8 @@ class ChromeMixin:
             if btn is None:
                 continue
             btn.set_colors(base, C["text"])
-            btn.set_disabled_color(disabled)
+            btn.set_disabled_color(base)                        # inutilisable : icone de la couleur de base...
+            btn.set_disabled_opacity(grey, grey_icon)           # ...cadre et icone, chacun a sa valeur du grise
             if btn.graphicsEffect() is not None and not btn.isEnabled():
                 btn.setGraphicsEffect(None)                     # ancien voile d'opacite : la couleur le remplace
         from settings_store import DEFAULT_SETTINGS
@@ -306,36 +314,9 @@ class ChromeMixin:
         self.refresh_chrome_fonts()
 
     def _refresh_button_shadows(self):
-        """Ombre du groupe Bouton sur les boutons de la fenêtre principale."""
-        look = shadow_look(ui_state.APPLIED_SETTINGS or {}, "button_shadow", resolve_color_ref)
-        # Meme ombre que la derniere fois : seuls les boutons NOUVEAUX en ont besoin (chaque tick d'un glisser
-        # de couleur reposait l'effet sur tous les boutons : effets graphiques recalcules, lent).
-        sig = repr(look)
-        unchanged = sig == getattr(self, "_button_shadow_sig", None)
-        self._button_shadow_sig = sig
+        """Ombre du groupe Bouton : posée sur TOUS les boutons de l'appli par le style commun
+        (fm_theme.style._AppStyle, à la création) et reposée quand le réglage change (set_control_look) ;
+        ici seulement le filet de sécurité (rien n'est refait si l'ombre est déjà la bonne)."""
+        from fm_theme.style import apply_button_shadow
         for button in self.findChildren(QPushButton):
-            own = getattr(button, "_app_shadow_effect", None)
-            if unchanged and (own is not None or look is None):
-                continue
-            if look is None:
-                if own is not None:
-                    button.setGraphicsEffect(None)
-                    button._app_shadow_effect = None
-                continue
-            if own is None and button.graphicsEffect() is not None:
-                continue
-            if own is None:
-                own = QGraphicsDropShadowEffect(button)
-                button._app_shadow_effect = own
-                button.setGraphicsEffect(own)
-            sides = look["on"]
-            size = look["size"]
-            own.setBlurRadius(max(1, size * 2))
-            own.setOffset((int(sides["right"]) - int(sides["left"])) * size / 3,
-                          (int(sides["bottom"]) - int(sides["top"])) * size / 3)
-            color = next((look["colors"][side] for side in ("bottom", "right", "top", "left") if sides[side]), None)
-            if color is None:                      # aucun cote allume : pas d'ombre (jamais d'exception ici)
-                button.setGraphicsEffect(None)
-                button._app_shadow_effect = None
-                continue
-            own.setColor(QColor(color))
+            apply_button_shadow(button)

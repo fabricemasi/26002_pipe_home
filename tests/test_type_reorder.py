@@ -141,6 +141,56 @@ class TypeReorderTest(unittest.TestCase):
         self.assertEqual(again.list.item(1).data(browser_core.ROLE_SPACE_ABOVE), 25)
 
 
+class SeparatorItemsTest(unittest.TestCase):
+    """RÈGLE (demande de l'utilisateur, 2026-11-11, la même que les lignes des tableaux) : l'espace au-dessus, son
+    titre et l'espace en dessous sont des éléments à part entière ; déplacer une ligne ne les emmène pas."""
+
+    setUp = TypeReorderTest.setUp
+    _column = TypeReorderTest._column
+    _names = staticmethod(TypeReorderTest._names)
+
+    def _with_section(self):
+        column = self._column()
+        item = column.list.item(2)                              # Charlie
+        column.set_item_space(item, 25)
+        column._space_timer.stop()
+        column._save_item_spaces()
+        column.set_item_title(column._item_key(item), {"text": "Section", "style": {}})
+        app.processEvents()
+        return column
+
+    def _saved(self):
+        return json.loads((self.root / ".pipeline_layout.json").read_text(encoding="utf-8"))
+
+    def test_moving_a_row_across_a_space_leaves_it_in_place(self):
+        column = self._with_section()
+        column.list.move_in_sequence(0, len(column.list.reorder_sequence()))     # Alpha tout en bas
+        self.assertEqual(self._names(column), ["Bravo", "Charlie", "Delta", "Alpha"])
+        self.assertEqual(self._saved()["item_spaces"], {"Charlie": 25})
+        self.assertEqual(self._saved()["item_titles"]["Charlie"]["text"], "Section")
+
+    def test_moving_the_row_under_a_space_does_not_take_it(self):
+        column = self._with_section()
+        column.list.move_in_sequence(2, len(column.list.reorder_sequence()))     # Charlie tout en bas
+        self.assertEqual(self._names(column), ["Alpha", "Bravo", "Delta", "Charlie"])
+        saved = self._saved()
+        self.assertEqual(saved["item_spaces"], {"Delta": 25})               # Delta ouvre la section
+        self.assertEqual(saved["item_titles"]["Delta"]["text"], "Section")
+        self.assertNotIn("Charlie", saved["item_titles"])
+        self.assertEqual(self._names(self._column()), ["Alpha", "Bravo", "Delta", "Charlie"])
+
+    def test_a_space_offers_both_sides(self):
+        column = self._with_section()
+        seq = column.list.reorder_sequence()
+        self.assertEqual(seq[2][0], "above")
+        places = [b for b, _y in column.list.reorder_slots(0)]
+        self.assertIn(2, places)                                # au-dessus de l'espace : fin de la partie
+        self.assertIn(3, places)                                # en dessous : début de la section
+        column.list.move_in_sequence(0, 2)
+        self.assertEqual(self._names(column), ["Bravo", "Alpha", "Charlie", "Delta"])
+        self.assertEqual(self._saved()["item_spaces"], {"Charlie": 25})
+
+
 class SpaceInThumbnailColumnTest(unittest.TestCase):
     """Colonne a vignettes (Projets) : l'espace au-dessus d'une ligne s'ajoute a sa hauteur, il n'est
     pas pris sur la ligne (hauteurs uniformes de Qt coupees des qu'une ligne a un espace)."""

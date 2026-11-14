@@ -80,6 +80,10 @@ class ThemeStore:
         for key in drop:
             settings.pop(key, None)
         save_settings(settings)
+        # Le preset ACTIF de l'appli les retient aussi (comme AppSettingsStore) : sinon load_settings rejouait
+        # sa valeur par-dessus le fichier au prochain chargement, et le réglage « ne s'enregistrait pas » (fond
+        # du cadre de sélection des variantes, signalé deux fois le 2026-11-11).
+        settings_store.update_active_preset(settings)
 
     def save_partial(self, partial: dict, drop: tuple = ()) -> None:
         theme, rest = self._split(partial)
@@ -219,7 +223,7 @@ def _line(vertical: bool = False, color: str | None = None) -> QFrame:
 def _button_states(values: dict) -> tuple[QWidget, list]:
     """Aperçus d'une variante du bouton : État standard | État survol | État focus, séparés par un filet ; chaque bouton
     est FIGÉ dans son état (`button_state_css`), sans réaction à la souris."""
-    from fm_theme.style import BUTTON_STATES, button_state_css
+    from fm_theme.style import BUTTON_STATES, button_state_css, set_own_button_shadow
     holder = QWidget()
     holder.setObjectName("variantStates")
     row = QHBoxLayout(holder)
@@ -240,6 +244,7 @@ def _button_states(values: dict) -> tuple[QWidget, list]:
         button.setFocusPolicy(Qt.NoFocus)
         button.setFixedHeight(26)
         button.setStyleSheet(button_state_css(values, state))
+        set_own_button_shadow(button, values)              # l'ombre de CETTE variante
         button._state = state
         buttons.append(button)
         column.addWidget(button, 0, Qt.AlignHCenter)
@@ -317,9 +322,10 @@ class _VariantBlock(QWidget):
         painter.end()
 
     def set_values(self, values: dict) -> None:
-        from fm_theme.style import button_state_css
+        from fm_theme.style import button_state_css, set_own_button_shadow
         for button in self.buttons:
             button.setStyleSheet(button_state_css(values, button._state))
+            set_own_button_shadow(button, values)          # l'ombre de CETTE variante
 
     def eventFilter(self, obj, event):
         if obj is self.name_field and event.type() == QEvent.FocusIn:
@@ -656,8 +662,12 @@ class ThemeEditor:
             self._refresh_variant_bar()
             return
         window = self.window
-        values = {k: v for k, v in self.store.load().items() if tp.theme_key(k)
+        # Clé absente de la variante = sa valeur d'origine (DEFAULT_SETTINGS), comme son aperçu non sélectionné
+        # (`type_flat`) ; avant : celle des réglages de l'appli, et les états changeaient complètement à la
+        # sélection (signalé le 2026-11-11).
+        values = {k: v for k, v in settings_store.DEFAULT_SETTINGS.items() if tp.theme_key(k)
                   and tp.theme_key(k)[0] == type_name}
+        values.update(tp.type_flat(tp.load_preset(tp.find_preset(self.store.name)), type_name, variant))
         window.external_values(values)
         window._apply_look(window.settings, values)          # fenetre et apercu : la variante editee
         window._last_live_snapshot = None

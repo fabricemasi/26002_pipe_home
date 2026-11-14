@@ -132,7 +132,8 @@ class WindowBorderTest(unittest.TestCase):
 
     def test_setting_lives_in_the_theme(self):
         import fm_theme.presets as tp
-        self.assertEqual([s.key for s in v2.CATALOG["Thème : Général"]][-1], "window_border_enabled")
+        # (suivie des lignes « Variantes » de l'editeur, 2026-11-10)
+        self.assertIn("window_border_enabled", [s.key for s in v2.CATALOG["Thème : Général"]])
         for key in ("window_border_enabled", "window_border", "window_border_thickness"):
             self.assertIn(key, DEFAULT_SETTINGS)
             self.assertEqual(tp.theme_key(key)[0], "general")

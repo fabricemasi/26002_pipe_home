@@ -480,6 +480,12 @@ class _CtlButton(QWidget):
         color = QColor(self.color)
         if not self.enabled_:
             color.setAlphaF(0.3)
+        if self.kind == "play":
+            from fm_theme import icon_library
+            if icon_library.peindre(p, r.adjusted(3, 3, -3, -3), "modules/video/lecture_video_04",
+                                    style=icon_library.MONOCHROME, teinte=color):
+                p.end()
+                return
         pen = QPen(color, 1.4)
         pen.setCapStyle(Qt.RoundCap)
         pen.setJoinStyle(Qt.RoundJoin)

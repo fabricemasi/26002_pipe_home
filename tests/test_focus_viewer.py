@@ -16,7 +16,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from PySide6.QtCore import QPoint, QPointF, QRect, QSize, QSizeF, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QPointF, QRect, QSize, QSizeF, Qt
 from PySide6.QtGui import QColor, QImage, QImageIOHandler, QImageWriter, QPixmap, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
@@ -268,7 +268,11 @@ class GalleryTest(unittest.TestCase):
         self.host = QWidget()
         self.host.resize(1200, 800)
         self.host.show()
-        self.addCleanup(self.host.deleteLater)
+        # Detruite POUR DE BON a la fin (processEvents ne traite pas les deleteLater) : sinon les planches de
+        # 120 vignettes s'accumulent, leurs minuteries chargent la boucle et les animations des tests suivants
+        # (OverlayViewerTest, ripple) n'aboutissent plus dans leur delai.
+        self.addCleanup(lambda: (self.host.deleteLater(),
+                                 QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)))
         self._size = focus.FocusGallery.tile_size
         self.addCleanup(setattr, focus.FocusGallery, "tile_size", self._size)
         focus.FocusGallery.tile_size = 200
@@ -289,7 +293,10 @@ class GalleryTest(unittest.TestCase):
         self._ctrl_wheel(120)
         self.assertGreater(gallery.TILE, 200)
         self.assertEqual(focus.FocusGallery.tile_size, gallery.TILE)       # retenue pour la prochaine fois
-        self._ctrl_wheel(-240)
+        # Deux crans separes (une vraie molette) : chaque cran passe au decoupage en colonnes suivant
+        # (`set_tile_size`, colonnes entieres) ; un seul evenement de -240 ne recule que d'un decoupage.
+        self._ctrl_wheel(-120)
+        self._ctrl_wheel(-120)
         self.assertLess(gallery.TILE, 200)
         opened = []
         gallery.zoomed_into.connect(opened.append)

@@ -148,6 +148,7 @@ from row_delegates import (
 )
 
 
+from fm_theme.style import theme_button
 from column_parts.shared import opens_in_viewer, _MediaCountSignals, _MediaCountTask, _MEDIA_COUNT_POOL, _shortcut_present
 from column_parts.geometry import ColumnGeometryMixin
 from column_parts.loading import ColumnLoadingMixin
@@ -520,18 +521,11 @@ class Column(ColumnGeometryMixin, ColumnLoadingMixin, ColumnRowsMixin, ColumnApp
         if self._group_kind is not None:
             def _group_header_btn(text: str, tooltip: str, handler) -> QPushButton:
                 btn = QPushButton(text)
-                btn.setFlat(True)
                 btn.setCursor(Qt.PointingHandCursor)
                 btn.setFocusPolicy(Qt.NoFocus)
                 btn.setFixedSize(18, 18)
-                btn.setFont(font(11, 700))
                 btn.setToolTip(tooltip)
-                btn.setStyleSheet(
-                    "QPushButton { background: transparent; border: none; padding: 0; "
-                    f"color: {C['label']}; }}"
-                    "QPushButton:hover { background: rgba(255,255,255,0.12); border-radius: 3px; "
-                    f"color: {C['text']}; }}"
-                )
+                theme_button(btn, compact=True)         # aspect : fm_theme seul (2026-11-12)
                 btn.clicked.connect(handler)
                 header_layout.addWidget(btn)
                 return btn
@@ -565,15 +559,11 @@ class Column(ColumnGeometryMixin, ColumnLoadingMixin, ColumnRowsMixin, ColumnApp
         self._launch_click = None
         if title != "Type":
             pin_btn = QPushButton()
-            pin_btn.setFlat(True)
             pin_btn.setCursor(Qt.PointingHandCursor)
             pin_btn.setFocusPolicy(Qt.NoFocus)
             pin_btn.setFixedSize(18, 18)
             pin_btn.setIconSize(QSize(14, 14))
-            pin_btn.setStyleSheet(
-                "QPushButton { background: transparent; border: none; padding: 0; }"
-                "QPushButton:hover { background: rgba(255,255,255,0.12); border-radius: 3px; }"
-            )
+            theme_button(pin_btn, compact=True)         # aspect : fm_theme seul (2026-11-12)
             pin_btn.setToolTip("Fige la largeur/hauteur de ligne de ce dossier (voir Parametres)")
             pin_btn.clicked.connect(self._toggle_pin)
             self._pin_btn = pin_btn

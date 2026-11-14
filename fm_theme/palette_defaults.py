@@ -23,6 +23,11 @@ PALETTE_DEFAULTS: dict = {
     "palette_shadow_enabled": {s: True for s in SIDES}, "palette_shadow": {s: "#59000000" for s in SIDES},
     "palette_shadow_size": 14,
     "palette_drag_border_color": TRANSPARENT,
+    # « lier les 4 » des lignes Bordures / Border radius / Ombres (Palette : Barre, Icones, Controleur) : sans clé
+    # déclarée, load_settings l'ignorait et le toggle ne s'enregistrait pas (tests.test_navigation_bar, 2026-11-12)
+    "palette_border_enabled_linked": True, "palette_corner_radius_linked": True,
+    "palette_shadow_enabled_linked": True, "palette_cell_border_enabled_linked": True,
+    "palette_bar_border_enabled_linked": True,
     # Barre clipsée (demande de l'utilisateur, 2026-11-03) : pas de bordure du côté collé ; en-tête / fond de la
     # couleur de l'élément contre lequel elle est collée
     # « Clipsée : comportement du côté collé » (2026-11-08, remplace le toggle `palette_snap_border_off`) : « none »

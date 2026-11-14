@@ -190,6 +190,35 @@ class SeriesTest(AgendaCase):
 
 
 class StorageTest(AgendaCase):
+    def test_backups_in_the_same_second_do_not_collide(self):
+        """Nom de sauvegarde à la seconde près : deux sauvegardes simultanées (agenda + tâches, deux fenêtres)
+        écrivaient le même temporaire → WinError 32 (vu le 2026-11-12). Chacune a désormais le sien."""
+        import threading
+        from fm_agenda.store import database as db
+        dest = self.tmp / "backups" / "agenda-20261112-000000.sqlite3"
+        errors, barrier = [], threading.Barrier(4)
+
+        def run():
+            conn = sqlite3.connect(":memory:")
+            conn.execute("CREATE TABLE t (x)")
+            barrier.wait()
+            try:
+                for _ in range(5):
+                    db.backup(conn, dest)
+            except OSError as exc:
+                errors.append(exc)
+            finally:
+                conn.close()
+
+        threads = [threading.Thread(target=run) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(errors, [])
+        self.assertTrue(dest.is_file())
+        self.assertEqual(list(dest.parent.glob("*.tmp")), [])
+
     def test_schema_is_at_latest_version(self):
         conn = sqlite3.connect(str(self.path))
         self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], schema.LATEST)

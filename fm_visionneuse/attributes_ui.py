@@ -185,7 +185,8 @@ class _StatusFlags(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         from PySide6.QtGui import QIcon
-        from PySide6.QtWidgets import QButtonGroup, QHBoxLayout, QToolButton
+        from PySide6.QtWidgets import QButtonGroup, QHBoxLayout, QPushButton
+        from fm_theme.style import theme_button
 
         self._buttons = {}
         self._group = QButtonGroup(self)
@@ -194,20 +195,17 @@ class _StatusFlags(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(scaled(5))
         for value, (path, label) in self.ICONS.items():
-            button = QToolButton(self)
+            button = QPushButton(self)                # coché = `QPushButton:checked` du thème (2026-11-12)
             button.setCheckable(True)
-            button.setAutoRaise(True)
             button.setToolTip(label)
             custom = {"keep": previews.UI_ICON_VIEWER_FLAG_KEEP,
                       "delete": previews.UI_ICON_VIEWER_FLAG_DELETE}.get(value)
             custom_pix = previews.custom_ui_icon_pixmap(custom, scaled(48)) if custom else None
-            button.setIcon(QIcon(custom_pix) if custom_pix is not None else QIcon(path))
+            from fm_theme.icon_frame import framed_icon            # cadre des icones (Theme > General)
+            button.setIcon(QIcon(custom_pix) if custom_pix is not None else framed_icon(path))
             button.setIconSize(QSize(scaled(24), scaled(24)))
             button.setFixedSize(scaled(32), scaled(30))
-            button.setStyleSheet(
-                "QToolButton { border: 1px solid transparent; border-radius: 3px; padding: 2px; }"
-                "QToolButton:checked { border-color: #55aaff; background: rgba(85,170,255,45); }"
-            )
+            theme_button(button, compact=True)        # aspect : fm_theme seul
             button.clicked.connect(lambda _checked=False, status=value: self.changed.emit(status))
             self._group.addButton(button)
             self._buttons[value] = button

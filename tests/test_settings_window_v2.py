@@ -35,9 +35,11 @@ track_class(v2.SettingsWindowV2)
 ALL_EQUIVALENT = ("Colonnes", "TITRES", "Tableaux", "Toggles", "Sliders")
 
 
-def build(wired=v2.WIRED_SECTIONS):
+def build(wired=v2.WIRED_SECTIONS, module=None):
+    """Fenetre generale, ou celle d'un module (`module="theme"` : TITRES, Tableaux, Toggles, Sliders... vivent dans
+    l'editeur fm_theme depuis l'etape 6, 2026-10-29)."""
     with mock.patch.object(v2, "WIRED_SECTIONS", wired):
-        win = v2.SettingsWindowV2()
+        win = v2.SettingsWindowV2(module=module) if module else v2.SettingsWindowV2()
         v2.expand_all(win.stack.currentWidget())
         # les sections racines ne sont pas enfants d'un _LazyNode : on les deplie aussi
         for node in win.stack.currentWidget().findChildren(v2._LazyNode):
@@ -68,10 +70,13 @@ class EquivalenceTest(WindowTestCase):
         self.assertEqual(mismatches, {}, f"{len(mismatches)} cle(s) differente(s) : {list(mismatches)[:8]}")
 
     def test_wired_keys_exist_in_the_settings(self):
-        from settings_store import DEFAULT_SETTINGS
+        from settings_store import DEFAULT_SETTINGS, _ACTIVATION_KEY
         # Quelques cles (ex. item_selection_<etat>_padding_linked) ne sont pas dans DEFAULT_SETTINGS
         # mais l'ancienne fenetre les ecrit aussi : on ne reproche a la v2 que ce que l'ancienne n'ecrit pas.
-        unknown = sorted(set(self.new_values) - set(DEFAULT_SETTINGS) - set(self.old_values))
+        # `<cle>__on` / `<cle>__kept` du toggle « activer » (2026-11-11) : acceptees sans declaration par
+        # settings_store (`_ACTIVATION_KEY`).
+        unknown = sorted(k for k in set(self.new_values) - set(DEFAULT_SETTINGS) - set(self.old_values)
+                         if not _ACTIVATION_KEY.search(k))
         self.assertEqual(unknown, [])
 
 
@@ -102,7 +107,7 @@ class ModuleWindowTest(WindowTestCase):
 
 class SaveTest(WindowTestCase):
     def setUp(self):
-        self.win = build(("Sliders",))
+        self.win = build(("Sliders",), module="theme")
         self.disk = copy.deepcopy(self.win._original_settings)
         self.written = []
         self.presets = {}
@@ -120,7 +125,7 @@ class SaveTest(WindowTestCase):
             self.addCleanup(p.stop)
 
     def _slider(self, key):
-        spec_widget = {sp.key: w for sp, w in self.win.stores["General"]["specs"]}
+        spec_widget = {sp.key: w for sp, w in self.win.stores[v2.THEME_TAB]["specs"]}
         return spec_widget[key]
 
     @lent
@@ -142,11 +147,18 @@ class SaveTest(WindowTestCase):
 
     @lent
     def test_active_preset_is_updated_too(self):
-        self.disk["default_preset"] = self.disk["active_preset"] = "Mon preset"
-        self.presets["Mon preset"] = {"old": True}
-        self._slider("slider_track_height").setValue(9)
-        self.win._on_save()
-        self.assertEqual(self.presets["Mon preset"]["slider_track_height"], 9)
+        """Le preset a l'ecran retient l'enregistrement. Depuis fm_theme (etape 6, 2026-10-29) un preset est un preset
+        fm_theme existant : l'aspect generique (rail des sliders) va dans le preset fm_theme lie
+        (`update_theme_preset`), la couche de l'appli dans les presets de reglages."""
+        self.disk["default_preset"] = self.disk["active_preset"] = "neo"
+        themed = []
+        with mock.patch.object(settings_store, "update_theme_preset",
+                               lambda s: themed.append(copy.deepcopy(s)) or True):
+            self._slider("slider_track_height").setValue(9)
+            self.win._on_save()
+        self.assertEqual(themed[-1]["slider_track_height"], 9)
+        self.assertEqual(themed[-1]["theme_preset"], "neo")
+        self.assertIn("neo", self.presets)                       # couche de l'appli du preset, enregistree aussi
 
     @lent
     def test_live_change_emits_settings_changed(self):
@@ -190,17 +202,21 @@ class SaveTest(WindowTestCase):
 class WiringTest(WindowTestCase):
     @lent
     def test_every_general_section_is_editable_when_wired(self):
-        win = build()
-        page = win.stack.currentWidget()
-        by_title = {n.node.title: n for n in page.findChildren(v2._LazyNode) if n.level == 1}
-        for title in v2.WIRED_SECTIONS:
+        by_title = {}
+        for win in (build(), build(module="theme")):           # generale + fm_theme (aspect)
+            page = win.stack.currentWidget()
+            by_title.update({n.node.title: n for n in page.findChildren(v2._LazyNode) if n.level == 1})
+        present = [title for title in v2.WIRED_SECTIONS if title in by_title]
+        self.assertGreater(len(present), 10)
+        for title in present:
             self.assertTrue(by_title[title]._head._body.isEnabled(), title)
 
     @lent
     def test_unwired_section_is_greyed(self):
-        win = build(("Sliders",))
-        page = win.stack.currentWidget()
-        by_title = {n.node.title: n for n in page.findChildren(v2._LazyNode) if n.level == 1}
+        by_title = {}
+        for win in (build(("Sliders",)), build(("Sliders",), module="theme")):
+            page = win.stack.currentWidget()
+            by_title.update({n.node.title: n for n in page.findChildren(v2._LazyNode) if n.level == 1})
         self.assertTrue(by_title["Sliders"]._head._body.isEnabled())
         for title in ("Colonnes", "Tableaux", "Toggles", "TITRES"):
             self.assertFalse(by_title[title]._head._body.isEnabled(), title)
@@ -293,8 +309,17 @@ class LiveLookTest(WindowTestCase):
         wait = mock.patch.object(v2, "toggle_animation_left_ms", lambda: 0)
         wait.start()
         self.addCleanup(wait.stop)
-        self.win = build()
-        self.fields = {sp.key: w for sp, w in self.win.stores["General"]["specs"] if not isinstance(sp, str)}
+        self.win = build(module="theme")                 # aspect de la fenetre : editeur fm_theme (etape 6)
+        self.fields = {sp.key: w for sp, w in self.win.stores[v2.THEME_TAB]["specs"] if not isinstance(sp, str)}
+
+    def _active(self, key):
+        """Champ `key`, sa ligne ALLUMEE d'abord (toggle « activer » des Padding / Margin / Bordures..., 2026-11-11 :
+        coupée, la ligne écrit des valeurs neutres, comme pour l'utilisateur qui ne peut rien y saisir)."""
+        field = self.fields[key]
+        active = getattr(field, "_v2_active", None)
+        if active is not None and not active.isChecked():
+            active.setChecked(True)
+        return field
         self.addCleanup(self.win.reject)
 
     def _change(self, key, value):
@@ -341,7 +366,7 @@ class LiveLookTest(WindowTestCase):
             title = self._titles(level)[0]
             for collapsed in (False, True):
                 title.set_collapsed(collapsed)
-                self.fields[f"title_level{level}_text_padding"].setValue(
+                self._active(f"title_level{level}_text_padding").setValue(
                     False, {"left": 5 + level, "top": 7, "right": 2, "bottom": 9 + level})
                 self.win._flush_live()
                 m = title._head_layout.contentsMargins()
@@ -357,7 +382,7 @@ class LiveLookTest(WindowTestCase):
         """Titre > Fond : padding + bordure decalent le contenu du paragraphe ; les titres enfants
         commencent au debut de ce contenu."""
         fields = self.fields
-        fields["title_level1_bg_padding"].setValue(False, {"left": 4, "top": 3, "right": 2, "bottom": 5})
+        self._active("title_level1_bg_padding").setValue(False, {"left": 4, "top": 3, "right": 2, "bottom": 5})
         fields["title_level1_bg_enabled"]._v2_parts["enabled"].setChecked(True)
         self.win._flush_live()
         section = next(t for t in self._titles(1) if t._title_text == "TITRES")
@@ -373,8 +398,8 @@ class LiveLookTest(WindowTestCase):
         """Titre > Fond > Margin : espace HORS de la boite (decale le bord, s'ajoute avant la bordure)."""
         section = next(t for t in self._titles(1) if t._title_text == "TITRES")
         off0 = section._box_off
-        self.fields["title_level1_bg_margin"].setValue(False, {"left": 6, "top": 3, "right": 2, "bottom": 5})
-        self.fields["title_level1_bg_padding"].setValue(False, {"left": 4, "top": 1, "right": 1, "bottom": 1})
+        self._active("title_level1_bg_margin").setValue(False, {"left": 6, "top": 3, "right": 2, "bottom": 5})
+        self._active("title_level1_bg_padding").setValue(False, {"left": 4, "top": 1, "right": 1, "bottom": 1})
         self.win._flush_live()
         self.assertEqual(section._box_off, off0 + 6)
         m = section.layout().contentsMargins()
@@ -416,7 +441,7 @@ class LiveLookTest(WindowTestCase):
     def test_paragraph_padding_wraps_everything_under_the_title(self):
         """Paragraphes > Padding (paragraphe) : padding autour de tout ce que contient le titre
         (tableaux et sous-titres), pas de la ligne du titre."""
-        self.fields["title_level1_body_padding"].setValue(False, {"left": 9, "top": 5, "right": 3, "bottom": 7})
+        self._active("title_level1_body_padding").setValue(False, {"left": 9, "top": 5, "right": 3, "bottom": 7})
         self.win._flush_live()
         section = next(t for t in self._titles(1) if t._title_text == "TITRES")
         m = section._body_layout.contentsMargins()
@@ -447,14 +472,17 @@ class LiveLookTest(WindowTestCase):
     @lent
     def test_table_padding_is_replayed(self):
         with mock.patch.object(v2, "_set_flat_tables_style") as style:
-            self.fields["table_cell_padding"].setValue(False, {"left": 20, "top": 3, "right": 20, "bottom": 3})
+            self._active("table_cell_padding").setValue(False, {"left": 20, "top": 3, "right": 20, "bottom": 3})
             self._change("table_radius", self.fields["table_radius"].value() + 1)
         self.assertIn("padding", style.call_args.kwargs)
 
     @lent
     def test_toggle_style_is_replayed_on_toggles(self):
         with mock.patch.object(v2, "_sync_toggle_style") as sync:
-            self._change("toggle1_outer_width", self.fields["toggle1_outer_width"].value() + 3)
+            pair = self.fields["toggle1_off_bg_width"]          # ex toggle1_outer_width : ligne Fond | Coche par état
+            width = pair.field("toggle1_off_bg_width")
+            width.setValue(width.value() + 3)
+            self.win._flush_live()
         self.assertTrue(sync.called)
 
     @lent
@@ -475,7 +503,7 @@ class LiveLookTest(WindowTestCase):
     def test_cancel_restores_the_original_look(self):
         section = self.win.findChildren(v2._Section)[0]
         before = section._head_layout.contentsMargins().top()
-        self.fields["title_level1_text_padding"].setValue(False, {"left": 0, "top": before + 25, "right": 0, "bottom": 0})
+        self._active("title_level1_text_padding").setValue(False, {"left": 0, "top": before + 25, "right": 0, "bottom": 0})
         self.win._flush_live()
         self.assertEqual(section._head_layout.contentsMargins().top(), before + 25)
         self.win.reject()
@@ -677,11 +705,20 @@ class CadTabAndIconTablesTest(WindowTestCase):
                 self.assertEqual(read[spec.key], spec.default, spec.key)
         for module in ("miro", "cad", "design", "tableur", "illustrator"):
             self.assertIn(f"board_modulebar_color_{module}", keys)
+        # Marge de chaque icone de module : colonne « Marge » du tableau Barre de selection > Icones (2026-11-13)
+        from fm_board import modulebar
+        for module in modulebar.MODULE_NAMES:
+            self.assertIn(f"board_modulebar_icon_pad_{module}", keys)
+            self.assertIn(f"board_modulebar_icon_tint_{module}", keys)              # toggle « Couleur du module »
+        self.assertTrue(modulebar.modulebar_look(dict(settings, board_modulebar_icon_tint_cad=True))["tints"]["cad"])
+        self.assertFalse(modulebar.modulebar_look(settings)["tints"]["cad"])
+        look = modulebar.modulebar_look(dict(settings, board_modulebar_icon_pad_pdf=40))
+        self.assertEqual((look["pads"]["miro"], look["pads"]["pdf"]), (3, 16))         # borne haute 16
 
     def test_every_cad_toolbar_icon_is_in_the_icon_table(self):
         from fm_cad import cad_ui
         from fm_board.model import CAD_ICON_ROWS
-        listed = {kind for kind, _label in CAD_ICON_ROWS}
+        listed = {kind for kind, _label in CAD_ICON_ROWS} | {"cad"}    # « cad » : Barre de sélection > Icônes
         used = {kind for _s, tools in cad_ui.SECTIONS for kind, *_rest in tools}
         used |= {"cad", "cad_layers", "cad_properties", "cad_settings", "cad_history"}
         self.assertLessEqual(used, listed)
@@ -691,7 +728,7 @@ class CadTabAndIconTablesTest(WindowTestCase):
         self.assertIn("CAD : Icônes", v2.ICON_GROUPS)
         self.assertIn("Icones : General", v2.ICON_GROUPS)
         self.assertIn("MRO : Icones", v2.ICON_GROUPS)
-        self.assertIn("Board : Icônes", v2.ICON_GROUPS)
+        self.assertIn("Board : Barre de sélection : Icônes", v2.ICON_GROUPS)
         self.assertIn("Visionneuse : Icones", v2.ICON_GROUPS)
         values = v2.ScopeValues(copy.deepcopy(settings_store.DEFAULT_SETTINGS), "General", None)
         for group in ("CAD : Icônes", "Icones : General"):
@@ -717,14 +754,24 @@ class CadTabAndIconTablesTest(WindowTestCase):
             self.assertEqual(state.text(), "Par défaut")
             pix = QPixmap(24, 24)
             pix.fill(QColor("red"))
+            image = folder / "choisie.png"
+            pix.save(str(image), "PNG")
             reset_button = _row.layout().itemAt(1).widget()
-            with mock.patch.object(app_fields, "_pick_image", lambda _w: pix):
+            with mock.patch.object(app_fields.QFileDialog, "getOpenFileName", lambda *_a, **_k: (str(image), "")):
                 field._change("ui_board_cad_line", _avatar, state, reset_button)
             self.assertTrue((folder / "ui_board_cad_line.png").is_file())
+            svg = folder / "choisie.svg"                         # SVG choisi : copié tel quel, le PNG remplacé
+            svg.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">'
+                           '<rect x="64" y="64" width="384" height="384" fill="#FFFFFF"/></svg>', encoding="utf-8")
+            with mock.patch.object(app_fields.QFileDialog, "getOpenFileName", lambda *_a, **_k: (str(svg), "")):
+                field._change("ui_board_cad_line", _avatar, state, reset_button)
+            self.assertEqual((folder / "ui_board_cad_line.svg").read_bytes(), svg.read_bytes())
+            self.assertFalse((folder / "ui_board_cad_line.png").exists())
             self.assertEqual(state.text(), "Remplacée")
             self.assertTrue(reset_button.isEnabled())
             field._reset("ui_board_cad_line", _avatar, state, reset_button)
             self.assertFalse((folder / "ui_board_cad_line.png").exists())
+            self.assertFalse((folder / "ui_board_cad_line.svg").exists())
             self.assertEqual(state.text(), "Par défaut")
             self.assertFalse(reset_button.isEnabled())
 

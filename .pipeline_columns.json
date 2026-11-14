@@ -7,7 +7,7 @@
     "omit_dirs": [],
     "omit_files": []
   },
-  "set_enabled": true,
-  "focus_enabled": true,
-  "in_over_out_enabled": true
+  "set_enabled": false,
+  "focus_enabled": false,
+  "in_over_out_enabled": false
 }

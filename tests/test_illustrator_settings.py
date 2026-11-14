@@ -28,7 +28,7 @@ class SettingsTest(IllTestCase):
         from fm_illustrator.settings import ILL_TAB, ILL_TREE
         from settings_catalog import CATALOG
         self.assertIn(ILL_TAB, [label for label, _t in v2.MODULE_SCOPES["board"]])
-        specs = [spec for node in ILL_TREE for spec in CATALOG[node.group]]
+        specs = [spec for node in ILL_TREE for spec in CATALOG[node.group] if spec.kind != "ui_icon"]  # lignes « Icônes » (ui_icon) : icônes perso, pas des réglages
         for spec in specs:
             self.assertEqual(spec.default, settings_store.DEFAULT_SETTINGS[spec.key], spec.key)
         self.assertEqual({s.key for s in specs}, {k for k in settings_store.DEFAULT_SETTINGS
@@ -38,6 +38,8 @@ class SettingsTest(IllTestCase):
             fields, record = {}, []
             v2.build_group(node.group, v2.ScopeValues(settings, None), settings["colors"], fields, {}, [], record,
                            lambda: None)
+            if all(spec.kind == "ui_icon" for spec in CATALOG[node.group]):
+                continue                          # section « Icônes » : icônes perso, rien d'enregistré
             self.assertTrue(record, node.group)
 
     def test_live_application(self):

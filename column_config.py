@@ -25,6 +25,7 @@ from app_style import (
     resize_hit_test,
     start_native_move,
 )
+from fm_theme.style import theme_button
 import ui_state
 from browser_core import (
     DEFAULT_WORK_DIR_TYPE,
@@ -134,12 +135,7 @@ class _OmitListField(QWidget):
             # discrete pour une si petite case) : grasse, bien plus
             # grande que le texte courant, pour que +/- restent lisibles
             # a cette taille de bouton.
-            b.setFont(font(13, 700))
-            b.setStyleSheet(
-                f"QPushButton {{ background: {C['btn']}; color: {C['text']}; "
-                f"border: 1px solid {C['btn_border']}; border-radius: 3px; padding: 0px; }}"
-                f"QPushButton:hover {{ background: {C['btn_hover']}; }}"
-            )
+            theme_button(b, compact=True)    # aspect : fm_theme seul (2026-11-12)
         add_btn.clicked.connect(self._add)
         remove_btn.clicked.connect(self._remove_selected)
         btn_row.addWidget(add_btn)
@@ -342,11 +338,7 @@ class ColumnConfigDialog(QDialog):
         # Police EXPLICITE (voir _OmitListField, MEME correctif/MEME
         # raison — le glyphe restait quasi invisible sans elle, voir la
         # remarque de l'utilisateur, "je ne vois pas le x").
-        close_btn.setFont(font(12, 700))
-        close_btn.setStyleSheet(
-            f"QPushButton {{ color: {C['label']}; background: transparent; border: none; padding: 0px; }}"
-            f"QPushButton:hover {{ background: {C['hover']}; color: {C['text']}; }}"
-        )
+        theme_button(close_btn, compact=True)   # aspect : fm_theme seul (2026-11-12)
         close_btn.clicked.connect(self.reject)
         head_l.addWidget(close_btn)
         head.mousePressEvent = self._head_mouse_press
@@ -578,16 +570,7 @@ class ColumnConfigDialog(QDialog):
         for b in (cancel_btn, save_btn):
             b.setFixedHeight(28)
             b.setCursor(Qt.PointingHandCursor)
-        cancel_btn.setStyleSheet(
-            f"QPushButton {{ background: {C['btn']}; color: {C['text']}; "
-            f"border: 1px solid {C['btn_border']}; border-radius: 4px; padding: 4px 14px; }}"
-            f"QPushButton:hover {{ background: {C['btn_hover']}; }}"
-        )
-        save_btn.setStyleSheet(
-            f"QPushButton {{ background: {C['accent']}; color: {C['accent_text']}; "
-            f"border: none; border-radius: 4px; padding: 4px 14px; }}"
-            f"QPushButton:hover {{ background: {C['accent']}; }}"
-        )
+            theme_button(b)                  # aspect : fm_theme seul (2026-11-12)
         cancel_btn.clicked.connect(self.reject)
         save_btn.clicked.connect(self._on_save)
         btn_row.addWidget(cancel_btn)

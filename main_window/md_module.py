@@ -56,7 +56,17 @@ class MdModuleMixin:
             pane.stateChanged.connect(self._layout_md_buttons)
             pane.pathChanged.connect(lambda path: self.path_label.setText(path))
             pane.closeRequested.connect(self._close_md_editor)
+            pane.marginDragged.connect(self.md_margin_slider.setValue)   # tranche de la page tiree : le slider suit et enregistre
+            pane.zoomChanged.connect(self._show_md_zoom)
         return pane
+
+    def _show_md_zoom(self, zoom: int):
+        """Zoom de la page Markdown / texte dans la barre d'etat (libelle d'information de la barre, son style)."""
+        if not getattr(self, "_md_open", False):
+            return
+        self.status_right.setText(f"Zoom : {int(zoom)} %")
+        self.status_right.setToolTip("Ctrl + / Ctrl - : zoomer ; Ctrl 0 : 100 %")
+        self.status_right.show()
 
     def _save_md_state(self, key: str, value):
         """Etat temps reel du module (dernier mode, taille du texte des fichiers de code) : fichier de reglages."""
@@ -162,7 +172,8 @@ class MdModuleMixin:
         pane.open(Path(path))
         if not getattr(self, "_md_open", False):
             self._md_open = True
-            self.status_right.hide()
+            self._md_status_text = self.status_right.text()        # rendu a la fermeture
+            self._show_md_zoom(pane.zoom_percent())                # barre d'etat : zoom de la page (Ctrl + / -)
             self.md_margin_slider.show()
             self.titlebar.refresh_look()
             pane.fade_in()
@@ -184,6 +195,8 @@ class MdModuleMixin:
             return False
         self._md_open = False
         self.md_margin_slider.hide()
+        self.status_right.setText(getattr(self, "_md_status_text", "read-only"))
+        self.status_right.setToolTip("")
         self.status_right.show()
         self.titlebar.refresh_look()
         self.titlebar.editor_group().hide()

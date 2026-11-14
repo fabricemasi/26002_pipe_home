@@ -14,6 +14,7 @@ from PySide6.QtGui import (QColor, QFont, QFontDatabase, QFontMetricsF, QImage, 
 from PySide6.QtWidgets import QApplication, QComboBox, QWidget
 
 from fm_theme.placeholder import ink as _placeholder_ink
+from fm_theme import icon_frame as _icon_frame
 from fm_video.analysis_look import LOOK
 
 _WEIGHTS = {400: QFont.Weight.Normal, 500: QFont.Weight.Medium, 600: QFont.Weight.DemiBold}
@@ -80,6 +81,7 @@ _ICONS = {
     "eye": '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
 }
 _ICON_CACHE: dict = {}
+_icon_frame.on_change(_ICON_CACHE.clear)              # marge des icônes changée : refaites
 
 
 def icon(name: str, color: str, size: int, dpr: float) -> QPixmap:
@@ -95,6 +97,7 @@ def icon(name: str, color: str, size: int, dpr: float) -> QPixmap:
         p = QPainter(pm)
         QSvgRenderer(svg.encode()).render(p)
         p.end()
+        pm = _icon_frame.frame_pixmap(pm)                                   # cadre des icônes (Thème > Général)
         pm.setDevicePixelRatio(dpr)
         _ICON_CACHE[key] = pm
     return pm

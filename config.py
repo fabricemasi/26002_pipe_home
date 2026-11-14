@@ -199,6 +199,9 @@ SOFTWARE_ICON_SIZE = 128
 DATA_DIR = Path(__file__).resolve().parent / "data"
 CUSTOM_SOFTWARE_ICON_DIR = DATA_DIR / "software_icons"
 ICONS_DIR = Path(__file__).resolve().parent / "icons"
+# Bibliothèque d'iconographie (hors dépôt : chartes flat monochrome / flat couleur, manifeste) ; lue par
+# fm_theme.icon_library seulement à la première icône demandée.
+ICON_LIBRARY_ROOT = Path(r"F:\SYNC\Sync\IMAGES\ico\SVG\pipeline browser")
 CUSTOM_SOFTWARE_ICON_MAX_DIM = 128
 
 _FILE_ATTRIBUTE_HIDDEN = 0x2

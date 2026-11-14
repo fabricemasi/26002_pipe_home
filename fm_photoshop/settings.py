@@ -49,5 +49,4 @@ PS_TREE = (
     Node("Navigation", "Photoshop : Navigation"),
     Node("Mémoire", "Photoshop : Mémoire"),
     Node("Documents", "Photoshop : Documents"),
-    Node("Icônes", "Photoshop : Icônes"),          # lignes : fm_board/settings.py (ICON_GROUPS_BY_MODULE)
 )

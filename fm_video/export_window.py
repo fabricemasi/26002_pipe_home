@@ -25,14 +25,11 @@ CODEC_LABELS = {"h264": "H.264", "h265": "H.265 / HEVC", "prores": "ProRes", "dn
 
 
 def _button(text: str, accent: bool = False) -> QPushButton:
+    """Bouton de la fenêtre d'export : aspect = fm_theme seul (2026-11-12 ; `accent` gardé pour les appelants)."""
+    from fm_theme.style import theme_button
     button = QPushButton(text)
     button.setCursor(Qt.ArrowCursor)
-    bg = M["accent"] if accent else M.get("field_bg", "#2a2d31")
-    fg = M["accent_fg"] if accent else M.get("value_fg", "#d6d9dc")
-    button.setStyleSheet(f"QPushButton {{ background: {bg}; color: {fg}; border: 1px solid {M['field_border']}; "
-                         f"border-radius: 4px; padding: 4px 14px; }}"
-                         f"QPushButton:disabled {{ color: {M.get('dim', '#666')}; }}")
-    return button
+    return theme_button(button)
 
 
 class ExportWindow(QuickStyleWindow):

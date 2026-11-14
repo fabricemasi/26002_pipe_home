@@ -8,6 +8,7 @@ from config import ICONS_DIR, THUMBNAIL_FILENAME
 from previews import cached_mtime as _previews_mtime
 from previews import SOFTWARE_ICONS, UI_ICON_FILE_DEFAULT, UI_ICON_FOLDER_DEFAULT, UI_ICON_PIN_ACTIVE, UI_ICON_PIN_INACTIVE, _FALLBACK_SOFTWARE_BADGE_PALETTE, _bounded_cache_set, _contain_square, _software_icon_cache, custom_software_icon_path, custom_ui_icon_pixmap
 from fm_theme.placeholder import MAGENTA
+from fm_theme import icon_library
 from . import scan as _scan
 
 def _fallback_software_badge_style(key: str) -> tuple[str, str, str]:
@@ -36,7 +37,8 @@ def _generate_software_badge(key: str, size: int) -> QPixmap:
     painter.setPen(QColor(fg))
     painter.drawText(QRect(0, 0, size, size), Qt.AlignCenter, label)
     painter.end()
-    return pix
+    from fm_theme.icon_frame import frame_pixmap
+    return frame_pixmap(pix)                             # cadre des icones (Theme > General > Marge des icones)
 
 def software_choices() -> list[tuple[str, str, str]]:
     """Logiciels de la liste des reglages (General > ICONES > Logiciels), dans son ordre : ceux
@@ -63,7 +65,8 @@ def software_icon_pixmap(key: str, size: int) -> QPixmap:
 
     pix = None
     if mtime is not None:
-        loaded = QPixmap(str(custom))
+        from preview_services.icons import load_icon_image
+        loaded = load_icon_image(custom, size)              # SVG choisi : rendu a la taille, sinon l'image
         if not loaded.isNull():
             pix = _contain_square(loaded, size)
     if pix is None:
@@ -81,6 +84,15 @@ def _row_icon_pixmap(is_dir: bool, icon_key: str | None, size: int) -> QPixmap |
     if icon_key is not None:
         return software_icon_pixmap(icon_key, size)
     return custom_ui_icon_pixmap(UI_ICON_FOLDER_DEFAULT if is_dir else UI_ICON_FILE_DEFAULT, size)
+
+
+def _default_row_icon(is_dir: bool, size: int, dpr: float, folder_tint=None) -> QPixmap | None:
+    """Icône de catalogue quand la ligne ne possède aucune icône choisie ou de logiciel."""
+    identifiant = "modules/browser/repertoire_03" if is_dir else "general/fichier_01"
+    if folder_tint is None and icon_library.interface_monochrome():
+        folder_tint = icon_library.encre_defaut()       # flat monochrome : couleur des icônes (Thème > Général)
+    style = icon_library.MONOCHROME if folder_tint is not None else icon_library.COULEUR
+    return icon_library.pixmap_cadre(identifiant, size, dpr, style=style, teinte=folder_tint)
 
 _TINT_CACHE: dict[tuple[int, int], QPixmap] = {}
 

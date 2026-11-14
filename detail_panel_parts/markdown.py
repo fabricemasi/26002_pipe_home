@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from app_style import C, font, role_color, scaled
+from fm_theme.style import theme_button
 from fm_markdown import preview as markdown_preview
 
 
@@ -65,10 +66,7 @@ class MarkdownMixin:
         button.setCursor(Qt.PointingHandCursor)
         button.setFixedHeight(scaled(24))
         button.setToolTip("Basculer lecture / edition (Ctrl+E) ; enregistrement automatique (Ctrl+S pour forcer)")
-        button.setStyleSheet(
-            f"QPushButton {{ background: {C['btn']}; color: {C['text']}; padding: 0 10px; "
-            f"border: 1px solid {C['btn_border']}; border-radius: 3px; }}"
-            f"QPushButton:hover {{ background: {C['btn_hover']}; border-color: {C['btn_hover_bd']}; }}")
+        theme_button(button)                                # aspect : fm_theme seul (2026-11-12)
         button.clicked.connect(self._toggle_markdown_mode)
         status = self.markdown_status = QLabel("")
         status.setStyleSheet(f"color: {role_color('info', '#aab1b6')}; background: transparent;")

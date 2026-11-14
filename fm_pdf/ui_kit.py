@@ -20,13 +20,12 @@ def title(text: str) -> QLabel:
 
 
 def button(text: str, tip: str, slot=None, parent=None, checkable: bool = False) -> QPushButton:
-    """Bouton plat habillé par la feuille de style de l'appli (comme les barres du Board, du Tableur, de fm_font)."""
-    b = QPushButton(text, parent)
+    """Bouton d'action : aspect = fm_theme seul (`theme_button`, 2026-11-12)."""
+    from fm_theme.style import theme_button
+    b = theme_button(QPushButton(text, parent))
     b.setToolTip(tip)
-    b.setFlat(True)
     b.setCursor(Qt.ArrowCursor)
     b.setFixedHeight(26)
-    b.setStyleSheet("QPushButton { padding: 0px 8px; }")
     b.setMinimumWidth(b.sizeHint().width())
     b.setCheckable(checkable)
     b.setFocusPolicy(Qt.NoFocus)                   # le clavier reste à la vue (champs de formulaire)

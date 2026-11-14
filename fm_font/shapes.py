@@ -128,7 +128,11 @@ def _generate(points, params, t1, t2):
         alpha2 = (c00 * x1 - c01 * x0) / det
     else:
         alpha1 = alpha2 = seg / 3
-    if alpha1 < 1e-6 * seg or alpha2 < 1e-6 * seg:
+    # Poignée nulle, négative OU démesurée : repli de Wu / Barsky (corde / 3). Démesurée = plus longue que le tracé
+    # approché lui-même (impossible pour une courbe fidèle ; un demi-cercle donne ~0,42 de sa longueur) : points
+    # presque alignés, système mal conditionné -> poignées de milliers de px (jambage d'un « m » vectorisé, 2026-11-13).
+    arc = sum(math.dist(a, b) for a, b in zip(points, points[1:]))
+    if alpha1 < 1e-6 * seg or alpha2 < 1e-6 * seg or alpha1 > arc or alpha2 > arc:
         alpha1 = alpha2 = seg / 3
     return (first, _add(first, _mul(t1, alpha1)), _add(last, _mul(t2, alpha2)), last)
 

@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from fm_theme.placeholder import ink as _placeholder_ink
+from fm_theme.icon_frame import framed as _framed
 from fm_cad import cad_aliases, cad_items, cad_model
 from . import export, model, serialization
 from fm_miro import miro_io
@@ -94,6 +95,7 @@ def custom_icon(kind: str, size: int):
 TEXT_KINDS = ("sticky", "text", "shape")
 
 
+@_framed("board")                                     # cadre des icones (fm_theme > General > Marge des icones)
 def paint_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor):
     """Icones des outils et commandes (traits, comme les glyphes des boutons de l'appli)."""
     color = _placeholder_ink(color)                     # icone dessinee par le code : magenta (provisoire)
@@ -440,6 +442,13 @@ class _GlyphButton(QAbstractButton):
         self._on = False
         self._swatch = None
         self._ring = None
+        self._library_icon = None
+
+    def set_library_icon(self, identifiant: str | None):
+        """Icône du catalogue (fm_theme.icon_library) peinte à la place du glyphe ; une icône perso garde la priorité."""
+        if identifiant != self._library_icon:
+            self._library_icon = identifiant
+            self.update()
 
     def set_on(self, on: bool):
         if on != self._on:
@@ -482,7 +491,13 @@ class _GlyphButton(QAbstractButton):
 
     def paint_key(self) -> tuple:
         """Ce dont depend le dessin, en plus de la taille, du survol et de l'etat actif (voir paintEvent)."""
-        return (self.kind, self._on, self._swatch, self._ring, look_key(getattr(self.parentWidget(), "look", None)))
+        if self._library_icon:                          # icône du catalogue : cadre commun (marge des icônes)
+            from fm_theme import icon_frame, icon_library
+            library = (self._library_icon, icon_frame.margin(), icon_library.style_affiche())
+        else:
+            library = None
+        return (self.kind, self._on, self._swatch, self._ring, library,
+                look_key(getattr(self.parentWidget(), "look", None)))
 
     def paint_content(self, painter):
         from app_style import C
@@ -527,8 +542,15 @@ class _GlyphButton(QAbstractButton):
                             pixmap.height() / max(1.0, pixmap.devicePixelRatio()))
             target.moveCenter(rect.center())
             painter.drawPixmap(target, pixmap, QRectF(pixmap.rect()))
-        else:
-            paint_glyph(painter, self.kind, rect, QColor(self.glyph_ink(invert)))
+            return
+        ink = QColor(self.glyph_ink(invert))
+        if self._library_icon:
+            from fm_theme import icon_library
+            style = icon_library.style_affiche(self.isEnabled() and not invert)   # case entière : marge du cadre
+            if icon_library.peindre(painter, rect, self._library_icon, style=style,
+                                    teinte=None if style == icon_library.COULEUR else ink):
+                return
+        paint_glyph(painter, self.kind, rect, ink)
 
     def glyph_ink(self, invert: bool) -> str:
         """Couleur du glyphe peint (sans icone choisie) : texte de l'appli, en negatif si la barre l'est."""
@@ -537,16 +559,18 @@ class _GlyphButton(QAbstractButton):
 
 
 class _TextButton(QPushButton):
-    """Bouton texte de la barre contextuelle (police, taille) : habillage de la feuille de style de l'appli."""
+    """Bouton texte (barres du Board, Tableur, Photoshop, Design…) : aspect = fm_theme seul (`theme_button`, ombre
+    comprise ; 2026-11-12)."""
 
     def __init__(self, text: str, tip: str, parent=None, width: int = 0):
         super().__init__(text, parent)
         self.setToolTip(tip)
         self.setCursor(Qt.ArrowCursor)
-        self.setFlat(True)
         self.setFixedHeight(30)
         if width:
             self.setFixedWidth(width)
+        from fm_theme.style import theme_button
+        theme_button(self)
 
 
 class RenderBadge(QWidget):
@@ -1456,23 +1480,8 @@ class BoardPane(QWidget):
         look = getattr(self, "toolbar_style", None)
         if look is None:
             return
-        for bar in (self._title,):
-            font = look["font"]
-            size = font.pixelSize() if font.pixelSize() > 0 else round(font.pointSizeF() * 4 / 3)
-            # Dans la feuille de style (celle de l'appli fixe la police des boutons, setFont seul serait ignore).
-            css = (f"QPushButton {{ color: {look['text']}; font-family: '{font.family()}'; font-size: {size}px;"
-                   f" font-weight: {700 if font.bold() else 400}; font-style: {'italic' if font.italic() else 'normal'};")
-            if look.get("invert"):
-                # Negatif : le fond sombre des boutons de l'appli rendait le texte (devenu sombre) illisible ;
-                # le bouton prend le fond de la barre, cerne d'un filet de la couleur du texte.
-                edge = QColor(look["text"])
-                edge.setAlpha(90)
-                css += (f" background: transparent; border: 1px solid {edge.name(QColor.HexArgb)};"
-                        " border-radius: 4px;")
-            css += " }"
-            for button in bar.findChildren(_TextButton):
-                button.setFont(font)
-                button.setStyleSheet(css)
+        # Les BOUTONS de la barre gardent l'aspect de fm_theme (`_TextButton`, 2026-11-12) : seul le texte (nom du
+        # board) suit la police et la couleur des barres.
         self._name.setFont(look["font"])
         self._name.setStyleSheet(f"color: {look['text']}; background: transparent;" if look.get("invert") else "")
         self._zoom_label.update()

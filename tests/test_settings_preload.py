@@ -53,6 +53,10 @@ class PreloadTest(unittest.TestCase):
             win._start_settings_idle_watch()
         # Les taches automatiques (tests/test_automatic_tasks.py) prennent la main sur ce releve : coupees ici
         # pour tester le chargement sur inactivite lui-meme.
+        tasks = win._automatic_tasks
+        if tasks is not None:            # sa minuterie tourne encore sans la reference : _tick arretait le chargement
+            tasks.closed.set()
+            self.addCleanup(tasks.closed.clear)
         win._automatic_tasks = None
         self.addCleanup(win._settings_idle_timer.stop)
         self.addCleanup(win._stop_settings_idle_load)

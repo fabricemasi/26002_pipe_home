@@ -817,6 +817,16 @@ class NavbarNeighbourTest(unittest.TestCase):
         image = root.grab().toImage()
         self.assertEqual(image.pixelColor(top.x() + top.width() // 2, 39).name(), "#ff0000")    # ôtée le long
         self.assertEqual(image.pixelColor(top.x() + top.width() + 20, 39).name(), "#0000ff")   # gardée ailleurs
+        # Signalé (2026-11-12, capture) : module FERMÉ (son panneau caché), la pièce restait sur la fenêtre et coupait
+        # la bordure de la barre de navigation. Elle part avec l'espace, et revient avec lui.
+        pane.hide()
+        APP.processEvents()
+        self.assertEqual(mgr._patches, {})
+        image = root.grab().toImage()
+        self.assertEqual(image.pixelColor(top.x() + top.width() // 2, 39).name(), "#0000ff")   # bordure entière
+        pane.show()
+        APP.processEvents()
+        self.assertIn((top, "top"), mgr._patches)
 
 
 class SnapSideColorTest(BarCase):

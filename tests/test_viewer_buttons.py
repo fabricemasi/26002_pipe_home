@@ -33,13 +33,19 @@ from settings_layout import _ReorderOverlay
 
 
 def select(column, name):
-    for i in range(column.list.count()):
-        item = column.list.item(i)
-        if Path(item.data(ROLE_PATH)).name == name:
-            column.list.setCurrentItem(item)
-            APP.processEvents()
-            return
-    raise AssertionError(f"{name} absent de {column.column_title}")
+    # Colonnes remplies en differe (chargement asynchrone) : on attend l'element, 3 s au plus.
+    end = time.monotonic() + 3
+    while True:
+        for i in range(column.list.count()):
+            item = column.list.item(i)
+            if Path(item.data(ROLE_PATH)).name == name:
+                column.list.setCurrentItem(item)
+                APP.processEvents()
+                return
+        if time.monotonic() > end:
+            raise AssertionError(f"{name} absent de {column.column_title}")
+        APP.processEvents()
+        time.sleep(0.01)
 
 
 def settle(seconds=0.6):
@@ -86,12 +92,15 @@ class ButtonRowTest(unittest.TestCase):
 
     def test_navigation_bar_height_keeps_title_and_buttons_at_top(self):
         ui_state.APPLIED_SETTINGS["navbar_height"] = 90
+        ui_state.APPLIED_SETTINGS["navtool_ovr_height"] = False          # hauteur de fm_theme, sans override
         win = pb.PipelineBrowser(self.root)
         win._idle_preview_scheduler.timer.stop()
         self.addCleanup(win.deleteLater)
         win.show()
         APP.processEvents()
-        self.assertEqual(win.titlebar.height(), app_style.scaled(90))
+        # Deux etages (2026-11-07) : 1re ligne = navbar_height, puis l'etage du cheminement (navtool_extra_height).
+        self.assertEqual(win.titlebar._row_height(), app_style.scaled(90))
+        self.assertGreaterEqual(win.titlebar.height(), app_style.scaled(90))
         self.assertEqual(win.titlebar.title_label.y(), 0)
         self.assertEqual(win.titlebar.btn_min.y(), 0)
         self.assertEqual(win.titlebar.btn_close.y(), 0)
@@ -115,7 +124,8 @@ class ButtonRowTest(unittest.TestCase):
         win._open_focus_gallery()
         settle()
         # Plus de bouton image / planche (demande de l'utilisateur) ; « Récursif » est une icone.
-        self.assertEqual(self.order(win), ["filter", "recursive"])
+        # + engrenage des reglages du module (cadre « Visionneuse » de la barre, 2026-10-29)
+        self.assertEqual(self.order(win), ["filter", "recursive", "settings"])
         self.assertIsNone(win.image_preview_columns[0].gallery_btn)
         self.assertEqual(win._recursive_btn._kind, "recursive")
         xs = self.xs(win)
@@ -136,8 +146,8 @@ class ButtonRowTest(unittest.TestCase):
             QTest.mouseRelease(button, Qt.LeftButton, Qt.ControlModifier, target)
         settle(0.1)
         self.assertEqual(clicked, [])                                      # Ctrl + glisser : pas de clic
-        self.assertEqual(self.order(win), ["recursive", "filter"])
-        self.assertEqual(self.saved[-1], ("viewer_button_order", ["recursive", "filter"]))
+        self.assertEqual(self.order(win), ["recursive", "filter", "settings"])
+        self.assertEqual(self.saved[-1], ("viewer_button_order", ["recursive", "filter", "settings"]))
         xs = self.xs(win)
         self.assertEqual(xs, sorted(xs))
         # Tous les boutons sont dans le cadre « Visionneuse » de la barre de navigation (demande de l'utilisateur).

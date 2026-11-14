@@ -996,10 +996,11 @@
           hide(closing[0], closing[1], pair);
           revealOnEnter(pair);
         }
-        const attr = font ? { style: "color: " + value + " !important" }
-          : { style: "background-color: " + value + " !important" };
+        // Option `css` de markText : CodeMirror IGNORE `style` (et `class`) passés par `attributes` (vendor/codemirror.js,
+        // buildToken) — la couleur ne s'appliquait pas (signalé par tests.test_md_live_preview, 2026-11-12).
+        const css = (font ? "color: " : "background-color: ") + value + " !important";
         marks.push(doc.markText({ line: i, ch: start + openEnd }, { line: i, ch: closeStart },
-          { className: font ? "md-inline-font-color" : "md-inline-background-color", attributes: attr,
+          { className: font ? "md-inline-font-color" : "md-inline-background-color", css,
             inclusiveLeft: false, inclusiveRight: false }));
       }
       this.decorateLinks(text, tokens, touched, widget);
@@ -1161,7 +1162,10 @@
           "Ctrl-Z": "undo", "Ctrl-Y": "redo", "Shift-Ctrl-Z": "redo", "Ctrl-D": "deleteLine", "Ctrl-A": "selectAll"
         }
       });
-      cm.on("renderLine", (c, line, elt) => this.decorateLine(line, elt));
+      cm.on("renderLine", (c, line, elt) => {
+        this.decorateLine(line, elt);
+        if (this._knownOverlay) for (const el of elt.querySelectorAll(".cm-md-known-word")) el.setAttribute("spellcheck", "false");
+      });
       cm.on("update", () => this.rememberHeights());
       // Redimensionnement : la ligne en haut de la vue y reste. Le texte se replie autrement des le changement de
       // taille, CodeMirror ne remesure que 100 ms apres le dernier evenement (« refresh » de son setSize) : la ligne
@@ -1506,6 +1510,7 @@
     /** Ouvre (ou retrouve) le document d'un fichier. */
     open(info, options) {
       const t0 = performance.now();
+      if (this._spellZone) this.setSpellZone(false, true);   // zone de la selection : propre au document quitte
       let entry = this.docs.get(info.path);
       if (!entry || (entry.text !== info.text && !entry.dirty)) {
         const mode = info.kind === "markdown" ? "pfm" : MD.modeForExtension(info.ext);
@@ -1528,6 +1533,7 @@
         this._loading = false;
         this.path = info.path;
         this.kind = info.kind;
+        this.spell = !!info.spell;     // notes et fichiers de texte : orthographe verifiee (jamais le code)
         // L'etat de l'edition visuelle suit le document AVANT les options (qui peuvent l'allumer / l'eteindre).
         this.lp.useDoc(entry.doc);
         this.applyOptions(options);
@@ -1543,6 +1549,87 @@
       MD.metrics.add("editor_open", performance.now() - t0);
     }
 
+    /** Dictionnaire personnel (spell.py, « Ajouter au dictionnaire ») : un calque marque ces mots (classe
+     *  cm-md-known-word), `renderLine` leur pose spellcheck="false" : Chromium ne les souligne plus. Rien n'est refait
+     *  si la liste n'a pas change ; aucun calque sans mot ou sans orthographe. */
+    setKnownWords(words) {
+      const list = Array.isArray(words) ? words.filter(Boolean) : [];
+      const key = list.join("\n");
+      if (key === (this._knownKey || "")) return;
+      this._knownKey = key;
+      if (this._knownOverlay) this.cm.removeOverlay(this._knownOverlay);
+      this._knownOverlay = null;
+      if (!list.length) return;
+      const known = new Set();
+      for (const w of list) { known.add(w); known.add(w.toLowerCase()); }
+      const has = (w) => known.has(w) || known.has(w.toLowerCase());
+      const WORD = /^[\p{L}\p{M}\p{N}]+(?:['’-][\p{L}\p{M}\p{N}]+)*/u, PART = /^[\p{L}\p{M}\p{N}]+/u;
+      this._knownOverlay = {
+        token(stream) {
+          const m = stream.match(WORD, false);
+          if (!m) {
+            stream.next();
+            while (!stream.eol() && !stream.match(PART, false)) stream.next();
+            return null;
+          }
+          if (has(m[0])) { stream.pos += m[0].length; return "md-known-word"; }
+          const part = m[0].match(PART)[0];      // mot compose (l'ecole, peut-etre) : chaque morceau a part
+          stream.pos += part.length;
+          return has(part) ? "md-known-word" : null;
+        }
+      };
+      this.cm.addOverlay(this._knownOverlay);
+    }
+
+    /** Orthographe de la SELECTION seulement (bouton « Orthographe » avec du texte selectionne, pane.toggle_spell) :
+     *  le correcteur reste allume sur l'editeur (Chromium ne verifie rien sous un element coupe) et tout le texte
+     *  HORS de la zone est marque spellcheck="false" (deux marques, avant / apres). Zone etendue aux mots entiers ;
+     *  le texte tape dedans ou a ses bords est verifie. Rend vrai si la zone est posee. */
+    setSpellZone(on, quiet) {
+      const cm = this.cm, doc = cm.getDoc(), cmp = CodeMirror.cmpPos, Pos = CodeMirror.Pos;
+      for (const m of this._zoneMarks || []) m.clear();
+      this._zoneMarks = [];
+      this._spellZone = false;
+      if (on && this.spell && cm.somethingSelected()) {
+        let from = null, to = null;
+        for (const s of doc.listSelections()) {
+          if (!from || cmp(s.from(), from) < 0) from = s.from();
+          if (!to || cmp(s.to(), to) > 0) to = s.to();
+        }
+        const inside = (p) => { const w = cm.findWordAt(p); return cmp(w.from(), p) < 0 && cmp(w.to(), p) > 0 ? w : null; };
+        const a = inside(from), b = inside(to);
+        if (a) from = a.from();
+        if (b) to = b.to();
+        const first = Pos(doc.firstLine(), 0), last = Pos(doc.lastLine(), doc.getLine(doc.lastLine()).length);
+        const off = { attributes: { spellcheck: "false" }, clearWhenEmpty: false };
+        if (cmp(from, first) > 0) this._zoneMarks.push(doc.markText(first, from, { ...off, inclusiveLeft: true }));
+        if (cmp(to, last) < 0) this._zoneMarks.push(doc.markText(to, last, { ...off, inclusiveRight: true }));
+        this._spellZone = true;
+      }
+      if (!quiet) this.applyOptions();
+      return this._spellZone;
+    }
+
+    /** Correction choisie au clic droit (pane.py) : l'occurrence du mot fautif la plus proche du point (x, y) de la
+     *  fenetre, mot entier, est remplacee (une etape d'annulation). */
+    replaceWord(word, replacement, x, y) {
+      const cm = this.cm;
+      if (!word) return false;
+      const pos = cm.coordsChar({ left: x, top: y }, "window");
+      const text = cm.getLine(pos.line) || "";
+      const letter = /[\p{L}\p{M}\p{N}_]/u;
+      let best = -1;
+      for (let i = text.indexOf(word); i >= 0; i = text.indexOf(word, i + 1)) {
+        if (letter.test(text.charAt(i - 1)) || letter.test(text.charAt(i + word.length))) continue;
+        const d = Math.abs(i + word.length / 2 - pos.ch);
+        if (best < 0 || d < Math.abs(best + word.length / 2 - pos.ch)) best = i;
+      }
+      if (best < 0) return false;
+      cm.replaceRange(replacement, { line: pos.line, ch: best }, { line: pos.line, ch: best + word.length }, "+spell");
+      cm.focus();
+      return true;
+    }
+
     firstBodyLine() {
       const doc = this.cm.getDoc();
       if (doc.lineCount() > 1 && /^---\s*$/.test(doc.getLine(0))) {
@@ -1556,8 +1643,12 @@
       const o = options || MD.state.options || {};
       this.host.classList.toggle("is-code", !md);
       for (const cls of ["markdown-source-view", "mod-cm6", "is-live-preview"]) this.host.classList.toggle(cls, md);
-      this.cm.setOption("lineNumbers", !md && !!o.lineNumbers);
+      this.cm.setOption("lineNumbers", md ? !!o.noteLineNumbers : !!o.lineNumbers);   // icone des barres d'outils
       this.cm.setOption("lineWrapping", md || !!o.wrapCode);
+      // Correcteur de Chromium (spell.py) : tout le document (reglage) ou la zone de la selection (setSpellZone).
+      const spell = (!!o.spellcheck || !!this._spellZone) && !!this.spell;
+      this.cm.setOption("spellcheck", spell);
+      this.setKnownWords(spell ? o.spellWords : null);
       this.cm.setOption("styleActiveLine", !md);
       this.cm.setOption("tabSize", o.tabSize || 4);
       this.cm.setOption("indentUnit", o.tabSize || 4);

@@ -242,6 +242,12 @@ class SpreadsheetWidget(QWidget):
         bar.setContentsMargins(4, 2, 4, 2)
         bar.setSpacing(4)
         self.name_box = QLineEdit(self)
+        from fm_theme import icon_library
+        adresse = icon_library.icone_cadree("modules/tableur/reference_cellule_03", 16, self.devicePixelRatioF(),
+                                            style=icon_library.MONOCHROME,
+                                            teinte=self.name_box.palette().text().color())
+        if not adresse.isNull():
+            self.name_box.addAction(adresse, QLineEdit.LeadingPosition)
         self.name_box.setFixedWidth(96)
         self.name_box.setToolTip("Adresse de la cellule active ; tapez une adresse (B12, A1:C4, Feuil2!A1) ou "
                                  "un nom défini puis Entrée")

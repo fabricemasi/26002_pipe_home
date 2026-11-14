@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fm_theme.style import theme_button
 from app_style import C
 from settings_store import HOOKS, M
 from settings_theme import _set_text_role
@@ -196,11 +197,7 @@ class LutTestImagesField(QWidget):
         for button in self.findChildren(QPushButton):
             if isinstance(button, (_Btn, _SelectField)):
                 continue
-            button.setStyleSheet(
-                f"QPushButton {{ background: {C['btn']}; color: {C['text']}; "
-                f"border: 1px solid {C['btn_border']}; border-radius: 3px; padding: 0px; }}"
-                f"QPushButton:hover {{ background: {C['btn_hover']}; }}"
-            )
+            theme_button(button, compact=True)              # aspect : fm_theme seul (2026-11-12)
         self.thumb.setStyleSheet(f"background: {C['well']}; border: 1px solid {C['border']};")
 
     # -- liste ---------------------------------------------------------

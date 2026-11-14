@@ -34,7 +34,7 @@ def _groups() -> dict:
         Spec("board_ill_nudge_big", "Flèches avec Maj tenu", "slider", 10, {"min": 1, "max": 500, "unit": ""}),
         Spec("board_ill_pencil_fidelity", "Crayon et pinceau : fidélité (dixièmes de pixel)", "slider", 25,
              {"min": 5, "max": 100, "unit": ""}),
-        Spec("board_ill_trace_detail", "Vectorisation : détail par défaut (px)", "slider", 500,
+        Spec("board_ill_trace_detail", "Vectorisation : détail par défaut (px)", "slider", 1000,
              {"min": 100, "max": 1500, "unit": "px", "box": 68}),
     ]
     export = [

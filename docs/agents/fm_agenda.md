@@ -210,6 +210,7 @@ du panneau, pas par la palette. L'éditeur est une fenêtre SANS parent (comme l
 
 - Ouvrir : bouton calendrier de la barre. Base : `%LOCALAPPDATA%\PIPE_FMZ\fm_agenda\` (sauvegardes dans
   `backups\`, une par jour, 14 gardées).
+- Sauvegardes simultanées (2026-11-12) : le nom est à la seconde près ; chaque sauvegarde écrit son PROPRE temporaire (`<nom>.<pid>-<fil>.tmp`) et réessaie `os.replace` (Windows refuse deux remplacements du même fichier au même instant) ; cible déjà écrite par une sauvegarde de la même seconde = gardée. Avant : WinError 32 « écriture de l'agenda échouée » (agenda + tâches, deux fenêtres). Test : `tests.test_agenda_service.StorageTest.test_backups_in_the_same_second_do_not_collide`.
 - Ajouter un réglage : défaut dans `settings_defaults.py` + `Spec` dans `settings.py` ; il arrive EN DIRECT par
   `AgendaPane.apply_settings` (préfixe `agenda_` de `settings_link`).
 - Changer l'aspect : `ui/theme.py` seulement (jetons, couleurs, métriques).

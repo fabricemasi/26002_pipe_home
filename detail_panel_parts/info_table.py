@@ -51,12 +51,6 @@ class InfoTableMixin:
         self._update_card_mask()
         set_qss(self.well, self._well_qss())
         self._apply_preview_table_style()
-        set_qss(
-            self.open_render_log_button,
-            f"QPushButton {{ background: {C['btn']}; color: {C['text']}; border: 1px solid {C['btn_border']}; "
-            f"border-radius: 3px; padding: 0 7px; font-size: 10px; }}"
-            f"QPushButton:hover {{ background: {C['btn_hover']}; border-color: {C['btn_hover_bd']}; }}"
-        )
         self.refresh_fonts(True if not self.values["kind"].text() else self.values["kind"].text() == "Dossier")
 
     INFO_TABLE_DIMS = "Inspecteur/Informations#0"

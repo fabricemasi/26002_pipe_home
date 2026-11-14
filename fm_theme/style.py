@@ -484,6 +484,480 @@ def set_control_look(settings: dict) -> None:
     """Valeurs des sections Bouton et Zone de saisie pour le QSS commun."""
     global _CONTROL_LOOK
     _CONTROL_LOOK = settings
+    _sync_button_shadows()
+
+
+# -- Ombre et décalage des boutons (Thème > Bouton > Ombres ; Survol / Focus / Enfoncé : décalage, ombres) : le QSS
+# n'a ni ombre ni déplacement, c'est un effet graphique (`_ButtonEffect`, un QGraphicsDropShadowEffect) posé sur
+# CHAQUE vrai bouton de l'appli (`is_theme_button`) par le style Qt commun (`_AppStyle.polish`, appelé une fois à la
+# création de chaque widget). À chaque peinture il lit l'état du bouton (enfoncé > survol > focus, l'ordre du QSS)
+# et prend l'ombre de cet état (override coupé = celle de l'état standard ; allumé sans côté = aucune) et son décalage (-3..+3 px, ombre comprise ;
+# demande de l'utilisateur, 2026-11-11). Un bouton qui a déjà un autre effet le garde ; `button._own_shadow = True`
+# = effet propre (aperçu d'une variante, figé dans `button._state`), jamais remplacé. --
+_BUTTON_SHADOW = None            # button_effect_look() courant, ou None (ni ombre ni décalage)
+_BUTTON_SHADOW_SIG = None        # repr de l'effet courant ; None = à recalculer
+_EFFECT_STATES = ("hover", "focus", "active")
+_FROZEN_STATES = {"standard": "standard", "survol": "hover", "focus": "focus", "enfonce": "active"}
+_OFFSET_MAX = 3
+
+# -- Survol / Focus / Enfoncé = OVERRIDES de l'état standard (demande de l'utilisateur, 2026-11-12 : « je n'arrive pas
+# à désactiver l'ombre de l'état enfoncé » ; aucun côté valait « celle de l'état standard »). Chaque ligne d'un état
+# (fond, bordures, police, border radius, ombres) a son toggle `button_<état>_ovr_<ligne>` : coupé = la ligne de
+# l'état standard telle quelle ; allumé = celle de l'état, ENTIÈRE (aucune ombre = pas d'ombre). Toggle absent / None
+# (réglages, presets, variantes d'avant) : déduit des valeurs (`_legacy_override`), l'aspect d'avant est gardé.
+# Valeur d'état None (police, rayon neufs) = celle de l'état standard. --
+BUTTON_STATE_ROWS = {
+    "color": {"color": "button_bg_color"},
+    "border": {"border_enabled": "button_border_enabled", "border": "button_border",
+               "border_thickness": "button_border_thickness"},
+    "font": {"font_family": "button_font_family", "font_size": "button_font_size", "font_bold": "button_font_bold",
+             "font_italic": "button_font_italic", "font_smoothing_enabled": "button_font_smoothing_enabled",
+             "font_smoothing": "button_font_smoothing", "text_color": "button_font_color"},
+    "radius": {"corner_radius": "button_corner_radius"},
+    "shadow": {"shadow_enabled": "button_shadow_enabled", "shadow": "button_shadow", "shadow_size": "button_shadow_size"},
+}
+# {clé d'un état: (état, ligne, clé de l'état standard)} ; « lier les 4 » et toggle « activer » compris.
+BUTTON_STATE_FOLLOW = {f"button_{state}_{suffix}{tail}": (state, row, f"{main}{tail}")
+                       for state in _EFFECT_STATES for row, keys in BUTTON_STATE_ROWS.items()
+                       for suffix, main in keys.items() for tail in ("", "_linked", "__on", "__kept")}
+
+
+def _legacy_override(look: dict, state: str, row: str) -> bool:
+    """Toggle d'override jamais enregistré : allumé si l'ancienne règle donnait à l'état un aspect à lui."""
+    if row == "color":                      # transparent = le thème (survol, enfoncé) ; le même (focus)
+        return state != "focus" or _set_or_none(look.get("button_focus_color")) is not None
+    if row == "border":                     # couleur transparente = le thème (survol, enfoncé)
+        return state != "focus" or bool(_border_state_css(_state_border(look, "focus", None)))
+    if row == "font":                       # enfoncé : texte sur accent du thème
+        return (state == "active" or _set_or_none(look.get(f"button_{state}_text_color")) is not None
+                or bool(look.get(f"button_{state}_font_bold")))
+    if row == "shadow":                     # aucun côté = celle de l'état standard (« activer » coupé aussi : la
+        # fenêtre l'enregistre d'office pour une ligne sans côté, ce n'est pas un choix)
+        sides = look.get(f"button_{state}_shadow_enabled")
+        return any(sides.values()) if isinstance(sides, dict) else bool(sides)
+    return False
+
+
+def button_state_override(look: dict, state: str, row: str) -> bool:
+    """La ligne `row` de l'état `state` (hover, focus, active) a-t-elle ses propres valeurs ?"""
+    flag = look.get(f"button_{state}_ovr_{row}")
+    return _legacy_override(look, state, row) if flag is None else bool(flag)
+
+
+# « Suit » (demande de l'utilisateur, 2026-11-12) : un état dont une ligne n'est pas surchargée prend celle de l'état
+# qu'il suit (`button_<état>_follow`, une liste par état ; défaut l'état standard), de proche en proche.
+BUTTON_FOLLOW_CHOICES = (("standard", "Standard"), ("hover", "Survol"), ("focus", "Focus"), ("active", "Enfoncé"))
+
+
+def button_row_source(look: dict, state: str, row: str) -> str:
+    """État dont la ligne `row` de `state` prend ses valeurs : lui-même s'il la surcharge, sinon celui qu'il suit,
+    de proche en proche ; « standard » au bout de la chaîne ou sur une boucle."""
+    seen = set()
+    while state in _EFFECT_STATES and state not in seen:
+        if button_state_override(look, state, row):
+            return state
+        seen.add(state)
+        state = look.get(f"button_{state}_follow") or "standard"
+    return "standard"
+
+
+def button_state_value(look: dict, key: str, default=None):
+    """Valeur EFFECTIVE d'une clé d'état (`BUTTON_STATE_FOLLOW`) : celle de l'état d'où la ligne vient
+    (`button_row_source` : lui-même, l'état suivi ou l'état standard), ou celle du standard si elle est None ; ce
+    que le champ des réglages affiche."""
+    state, row, main = BUTTON_STATE_FOLLOW[key]
+    source = button_row_source(look, state, row)
+    if source == "standard":
+        return look.get(main, default)
+    key, state = f"button_{source}{key[len(f'button_{state}'):]}", source
+    value = look.get(key)
+    if value is None:                       # toggle « activer » jamais enregistré : déduit des valeurs DE L'ÉTAT
+        return default if key.endswith(("__on", "__kept")) else look.get(main, default)
+    if key == f"button_{state}_font_bold" and look.get(f"button_{state}_ovr_font") is None:
+        return bool(value) or bool(look.get("button_font_bold"))      # ancien gras coupé = celui du standard
+    return value
+
+
+def button_shadow_look(values: dict | None = None, prefix: str = "button_shadow"):
+    """Ombre réglée par `<prefix>*` dans `values` (défaut : les réglages courants), ou None."""
+    from fm_theme.widgets import shadow_look           # import tardif : widgets importe ce module
+    return shadow_look(_CONTROL_LOOK if values is None else values, prefix, resolve_color_ref)
+
+
+def _offset(values: dict, key: str) -> int:
+    try:
+        return max(-_OFFSET_MAX, min(_OFFSET_MAX, int(values.get(key) or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def button_effect_look(values: dict | None = None) -> dict | None:
+    """{état: (ombre ou None, (dx, dy))} pour standard, hover, focus, active ; None = ni ombre ni décalage."""
+    values = _CONTROL_LOOK if values is None else values
+    standard = button_shadow_look(values)
+    looks = {"standard": (standard, (0, 0))}
+    for state in _EFFECT_STATES:
+        source = button_row_source(values, state, "shadow")       # surchargée sans aucun côté = PAS d'ombre
+        shadow = standard if source == "standard" else button_shadow_look(values, f"button_{source}_shadow")
+        looks[state] = (shadow, (_offset(values, f"button_{state}_offset_x"),
+                                 _offset(values, f"button_{state}_offset_y")))
+    if all(shadow is None and offset == (0, 0) for shadow, offset in looks.values()):
+        return None
+    return looks
+
+
+def _current_button_shadow():
+    global _BUTTON_SHADOW, _BUTTON_SHADOW_SIG
+    if _BUTTON_SHADOW_SIG is None:
+        _BUTTON_SHADOW = button_effect_look()
+        _BUTTON_SHADOW_SIG = repr(_BUTTON_SHADOW)
+    return _BUTTON_SHADOW, _BUTTON_SHADOW_SIG
+
+
+def _sync_button_shadows() -> None:
+    """Réglages appliqués : si l'effet a changé, le reposer sur tous les boutons existants (rien à faire sinon,
+    donc rien pendant le glisser d'un autre réglage)."""
+    global _BUTTON_SHADOW_SIG
+    from PySide6.QtWidgets import QApplication
+    old = _BUTTON_SHADOW_SIG
+    _BUTTON_SHADOW_SIG = None
+    if QApplication.instance() is None:
+        return                                           # avant la QApplication : calcul à la 1re création
+    if _current_button_shadow()[1] != old:
+        refresh_button_shadows()
+
+
+def refresh_button_shadows() -> None:
+    """Repose l'effet courant sur tous les QPushButton de toutes les fenêtres (changement du réglage seulement)."""
+    from PySide6.QtWidgets import QApplication, QPushButton
+    for window in QApplication.topLevelWidgets():
+        if isinstance(window, QPushButton):
+            apply_button_shadow(window)
+        for button in window.findChildren(QPushButton):
+            apply_button_shadow(button)
+
+
+def apply_button_shadow(button, look=..., sig=None) -> None:
+    """Pose (ou retire) l'effet `look` (défaut : le courant) sur `button` ; ne refait rien s'il y est déjà."""
+    if getattr(button, "_own_shadow", False):
+        return
+    if not is_theme_button(button):
+        look, sig = None, "None"                         # retire seulement un effet posé par erreur avant
+    elif look is ...:
+        look, sig = _current_button_shadow()
+    _put_shadow(button, look, repr(look) if sig is None else sig)
+
+
+def is_theme_button(button) -> bool:
+    """Bouton qui porte l'aspect « Bouton » du thème (ombre) : un QPushButton SIMPLE, ou une sous-classe qui le
+    demande (`_theme_button = True`). Les widgets maison qui héritent de QPushButton (champ de choix `_SelectField`,
+    pastilles de couleur, boutons des réglages…) ont leur propre dessin : halo sombre autour d'eux (signalé le
+    2026-11-11)."""
+    from PySide6.QtWidgets import QPushButton
+    return type(button) is QPushButton or bool(getattr(button, "_theme_button", False))
+
+
+def painted_button_look(state: str = "standard") -> dict:
+    """Aspect d'un bouton DESSINÉ à la main (pas de QSS possible : `AgendaButton`…), pris de la MÊME source que le QSS
+    commun (variante du type « bouton » que l'appli utilise) : {"bg", "line", "fg": QColor, "radius": px} pour
+    `state` = standard, hover, active (enfoncé) ou checked (2026-11-12, « tout doit venir de fm_theme »)."""
+    look = _CONTROL_LOOK
+    bg = resolve_color_ref(look.get("button_bg_color"), C["btn"])
+    border = look.get("button_border")
+    line = resolve_color_ref((border.get("top") if isinstance(border, dict) else border), C["btn_border"])
+    fg = resolve_color_ref(look.get("button_font_color"), "#c4cacf")
+    radius = look.get("button_corner_radius")
+    if radius is None:
+        radius = look.get("button_radius", _BUTTON_RADIUS)
+    if isinstance(radius, dict):
+        radius = radius.get("top_left", 0)
+    states = button_state_look(look)
+    key = {"hover": "hover", "active": "active", "checked": "active"}.get(state)
+    if key:
+        bg = states[key] or (C["accent"] if state == "checked" else bg)
+        fg = states[f"{key}_text"] or (C["accent_text"] if state == "checked" and not states[key] else fg)
+        border = states[f"{key}_border"]
+        if border and border["on"].get("top") and border["colors"].get("top"):
+            line = border["colors"]["top"]
+    try:
+        radius = max(0, int(radius))
+    except (TypeError, ValueError):
+        radius = 0
+    return {"bg": QColor(bg), "line": QColor(line), "fg": QColor(fg), "radius": radius,
+            "text_offset": button_text_offset(look)}
+
+
+_TEXT_OFFSET_MAX = 10      # Bouton : décalage du texte, -10..+10 px
+
+
+def button_text_offset(look: dict | None = None) -> tuple[int, int]:
+    """(dx, dy) du texte DANS le bouton (ligne « Décalage du texte » de Bouton ; demande de l'utilisateur, 2026-11-12),
+    tous les états ; le bouton ne bouge pas (contrairement au décalage d'un état, qui le déplace en entier)."""
+    look = _CONTROL_LOOK if look is None else look
+    out = []
+    for key in ("button_text_offset_x", "button_text_offset_y"):
+        try:
+            out.append(max(-_TEXT_OFFSET_MAX, min(_TEXT_OFFSET_MAX, int(look.get(key) or 0))))
+        except (TypeError, ValueError):
+            out.append(0)
+    return out[0], out[1]
+
+
+def button_padding_css(look: dict | None = None, base_x: int = 12) -> str:
+    """Marge intérieure d'un bouton, décalage du texte compris : le texte centré glisse de (dx, dy) par une marge
+    asymétrique (largeur du bouton inchangée tant que `base_x` >= |dx|) ; sans décalage = « padding: 0 <base_x>px; »."""
+    dx, dy = button_text_offset(look)
+    if not dx and not dy:
+        return f"padding: 0px {base_x}px;" if base_x else "padding: 0px;"
+    left, right = base_x + dx, base_x - dx
+    if right < 0:
+        left, right = left - right, 0
+    if left < 0:
+        left, right = 0, right - left
+    return f"padding: {max(0, 2 * dy)}px {right}px {max(0, -2 * dy)}px {left}px;"
+
+
+_THEMED_BUTTONS: set = set()        # boutons passés par theme_button (retirés à leur destruction)
+_THEMED_CSS = None                  # QSS du thème posé sur ces boutons ; None = à calculer
+
+
+def _themed_button_css() -> str:
+    global _THEMED_CSS
+    if _THEMED_CSS is None:
+        _THEMED_CSS = variant_button_css(_CONTROL_LOOK)
+    return _THEMED_CSS
+
+
+def _sync_themed_buttons() -> None:
+    """Thème changé (QSS commun reconstruit) : si l'aspect des boutons a changé, le reposer sur chaque bouton de
+    `theme_button` (rien sinon : rien pendant le glisser d'un autre réglage)."""
+    global _THEMED_CSS
+    css = variant_button_css(_CONTROL_LOOK)
+    if css == _THEMED_CSS:
+        return
+    _THEMED_CSS = css
+    import shiboken6
+    for button in list(_THEMED_BUTTONS):
+        if not shiboken6.isValid(button):
+            _THEMED_BUTTONS.discard(button)
+            continue
+        flags = getattr(button, "_fm_theme_flags", None)
+        if flags:                                        # marge « compact » : décalage du texte recalculé
+            button._fm_theme_geometry = _geometry_css(*flags)
+        button.setStyleSheet(css + getattr(button, "_fm_theme_geometry", ""))
+
+
+def _geometry_css(compact: bool, align_left: bool) -> str:
+    rules = (button_padding_css(base_x=0) + " " if compact else "") + ("text-align: left; " if align_left else "")
+    return f"\nQPushButton {{ {rules}}}" if rules else ""
+
+
+def theme_button(button, *, compact: bool = False, align_left: bool = False):
+    """SEULE porte d'un bouton de l'appli vers son aspect (demande de l'utilisateur, 2026-11-12 : « pas un seul bouton
+    avec des styles orphelins, tout doit venir de fm_theme ») : fond, bordures, rayon, police, couleurs, survol,
+    enfoncé, coché, désactivé et ombre = la variante du type « bouton » que l'appli utilise (QSS commun +
+    `_ButtonEffect`). Le bouton ne porte que de la GÉOMÉTRIE : `compact` = sans marge intérieure (petits boutons à
+    glyphe : « + », « ✕ », punaise…), `align_left` = texte à gauche. Retourne le bouton."""
+    button._fm_theme_flags = (compact, align_left)
+    button._fm_theme_geometry = _geometry_css(compact, align_left)
+    # Le QSS du thème est posé SUR le bouton (pas seulement dans le QSS commun) : un conteneur à feuille de style sans
+    # sélecteur (« background: transparent; », barres du bas des dialogues…) l'emporterait sinon sur le QSS commun et
+    # imposerait son fond à ses boutons (vu le 2026-11-12). Reposé à chaque changement du thème (`_sync_themed_buttons`).
+    button.setStyleSheet(_themed_button_css() + button._fm_theme_geometry)
+    if button not in _THEMED_BUTTONS:
+        _THEMED_BUTTONS.add(button)
+        button.destroyed.connect(lambda _o=None, b=button: _THEMED_BUTTONS.discard(b))
+    if hasattr(button, "setFlat"):
+        button.setFlat(False)
+    button._fm_theme_button = True
+    if not is_theme_button(button):
+        button._theme_button = True                      # sous-classe : l'ombre du thème aussi
+        apply_button_shadow(button)
+    return button
+
+
+def set_own_button_shadow(button, values: dict) -> None:
+    """Effet PROPRE d'un bouton (aperçu d'une variante : ses valeurs `button_*`, état figé par `button._state`),
+    jamais remplacé par l'effet courant du thème."""
+    button._own_shadow = True
+    look = button_effect_look(values)
+    _put_shadow(button, look, repr(look))
+
+
+_EFFECT_CLASS = None
+
+
+def _shadow_extent(shadow) -> int:
+    """Débord d'une ombre de `_ButtonEffect._show` hors du bouton : flou (taille × 2) + décalage (taille / 3)."""
+    if shadow is None or not any(shadow["on"].values()):
+        return 0
+    size = shadow["size"]
+    return max(1, size * 2) + (size + 2) // 3 + 1
+
+
+def _button_effect_class():
+    """`_ButtonEffect`, créé à la 1re demande (QtWidgets importé tard, comme `_app_style_class`)."""
+    global _EFFECT_CLASS
+    if _EFFECT_CLASS is not None:
+        return _EFFECT_CLASS
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtWidgets import QGraphicsDropShadowEffect
+
+    class _ButtonEffect(QGraphicsDropShadowEffect):
+        """Ombre native de Qt + décalage, réglés pour l'état du bouton au moment de peindre. Rien n'est dessiné
+        après `super().draw` (piège : le painter n'est plus utilisable à l'écran après drawSource)."""
+
+        def __init__(self, button):
+            super().__init__(button)
+            self._button = button
+            self._looks = {}
+            self._shown = None
+            self._margin = 0
+            self._has_shadow = False
+            self._nested_checked = False
+
+        def set_looks(self, looks: dict) -> None:
+            self._looks = looks
+            # Marge FIXE = la plus grande ombre + décalage de TOUS les états (signalé 2026-11-12 : ombre de l'état
+            # enfoncé sans effet). L'état change pendant la peinture : une zone calculée sur l'état courant
+            # (standard sans ombre) rognait l'ombre de l'enfoncé et ne la redessinait jamais (ni ne l'effaçait).
+            self._margin = max(max(abs(dx), abs(dy)) + _shadow_extent(shadow)
+                               for shadow, (dx, dy) in looks.values())
+            self._shown = None
+            self._show(self._state())
+            self.updateBoundingRect()
+
+        def _state(self) -> str:
+            button = self._button
+            frozen = getattr(button, "_state", None)
+            if frozen is not None:
+                return _FROZEN_STATES.get(frozen, "standard")
+            if not button.isEnabled():
+                return "disabled"                       # ombre de l'état standard, à la valeur du grisé
+            if button.isDown():
+                return "active"
+            if button.underMouse() and button.isEnabled():
+                return "hover"
+            if button.hasFocus():
+                return "focus"
+            return "standard"
+
+        def _show(self, state: str) -> None:
+            if state == self._shown:
+                return
+            self._shown = state
+            shadow = self._looks.get("standard" if state == "disabled" else state, (None, (0, 0)))[0]
+            color = None
+            if shadow is not None:
+                color = next((shadow["colors"][s] for s in ("bottom", "right", "top", "left") if shadow["on"][s]),
+                             None)
+            self._has_shadow = color is not None
+            if color is None:                            # pas d'ombre dans cet état : seulement le décalage
+                self.setColor(QColor(0, 0, 0, 0))
+                self.setBlurRadius(0)
+                self.setOffset(0, 0)
+                return
+            sides, size = shadow["on"], shadow["size"]
+            self.setBlurRadius(max(1, size * 2))
+            self.setOffset((int(sides["right"]) - int(sides["left"])) * size / 3,
+                           (int(sides["bottom"]) - int(sides["top"])) * size / 3)
+            color = QColor(color)
+            if state == "disabled":
+                color.setAlphaF(color.alphaF() * _DISABLED_ALPHA)
+            self.setColor(color)
+
+        def boundingRectFor(self, rect):
+            m = self._margin
+            return rect.adjusted(-m, -m, m, m) if m else rect
+
+        def draw(self, painter):
+            if not self._nested_checked:                 # une fois : le bouton est alors à sa place définitive
+                self._nested_checked = True
+                if inside_effect(self._button):
+                    from PySide6.QtCore import QTimer
+                    QTimer.singleShot(0, lambda b=self._button, e=self: _drop_nested_shadow(b, e))
+            state = self._state()
+            self._show(state)
+            dx, dy = self._looks.get("standard" if state == "disabled" else state, (None, (0, 0)))[1]
+            if (dx or dy) and not self._has_shadow:
+                # Sans ombre, Qt dessine la source DIRECTEMENT (drawSource → drawWidget) en ignorant la translation
+                # du painter : le décalage était perdu (signalé 2026-11-12 : « ombre standard coupée = plus de
+                # décalage de l'enfoncé »). On pose donc nous-mêmes l'image du bouton, décalée.
+                offset = QPoint()
+                pixmap = self.sourcePixmap(Qt.LogicalCoordinates, offset)
+                if not pixmap.isNull():
+                    painter.drawPixmap(offset + QPoint(dx, dy), pixmap)
+                return
+            if dx or dy:
+                painter.translate(dx, dy)
+            super().draw(painter)
+
+    _EFFECT_CLASS = _ButtonEffect
+    return _EFFECT_CLASS
+
+
+def inside_effect(widget) -> bool:
+    """Un parent porte déjà un effet graphique (coins arrondis des colonnes `_RoundedCornersEffect`, opacité…)."""
+    w = widget.parentWidget()
+    while w is not None:
+        if w.graphicsEffect() is not None:
+            return True
+        w = w.parentWidget()
+    return False
+
+
+def _drop_nested_shadow(button, effect) -> None:
+    """Retire l'ombre d'un bouton posé DANS un widget à effet (hors de la peinture, d'où la minuterie)."""
+    try:
+        if button.graphicsEffect() is effect:
+            button.setGraphicsEffect(None)
+        button._app_shadow_effect = None
+        button._app_shadow_sig = None
+    except RuntimeError:                                 # bouton déjà détruit
+        pass
+
+
+def _put_shadow(button, look, sig) -> None:
+    # PIÈGE (signalé 2026-11-12, « les icônes de l'entête des colonnes disparaissent ») : Qt ne sait pas peindre un
+    # effet graphique DANS un widget qui en a déjà un (ici les coins arrondis de la carte des colonnes) : le bouton
+    # entier devenait blanc / invisible, même en ne peignant que sa source. Pas d'ombre de thème dans ce cas.
+    if look is not None and inside_effect(button):
+        look, sig = None, "None"
+    own = getattr(button, "_app_shadow_effect", None)
+    if own is not None and button.graphicsEffect() is not own:
+        own = button._app_shadow_effect = None           # effet remplacé ou détruit ailleurs
+    if own is not None and getattr(button, "_app_shadow_sig", None) == sig:
+        return
+    if look is None:                                     # ni ombre ni décalage
+        if own is not None:
+            button.setGraphicsEffect(None)
+            button._app_shadow_effect = None
+        return
+    if own is None:
+        if button.graphicsEffect() is not None:          # un autre effet (opacité…) : le garder
+            return
+        own = _button_effect_class()(button)
+        button._app_shadow_effect = own
+        button.setGraphicsEffect(own)
+    own.set_looks(look)
+    button._app_shadow_sig = sig
+
+
+def _app_style_class():
+    from PySide6.QtWidgets import QProxyStyle, QPushButton
+
+    class _AppStyle(QProxyStyle):
+        """Fusion + ombre réglée sur chaque vrai bouton à sa création (seule méthode surchargée)."""
+
+        def polish(self, target):
+            result = super().polish(target)
+            if isinstance(target, QPushButton) and is_theme_button(target):
+                look, sig = _current_button_shadow()
+                if look is not None or getattr(target, "_app_shadow_effect", None) is not None:
+                    apply_button_shadow(target, look, sig)
+            return result
+
+    return _AppStyle
 
 
 def _control_border(prefix: str, default_color: str, old_enabled: bool) -> str:
@@ -500,8 +974,8 @@ def _control_border(prefix: str, default_color: str, old_enabled: bool) -> str:
                     for side in ("top", "right", "bottom", "left"))
 
 
-def _control_radius(prefix: str, old_radius: int) -> str:
-    value = _CONTROL_LOOK.get(f"{prefix}_corner_radius")
+def _control_radius(prefix: str, old_radius: int, look: dict | None = None) -> str:
+    value = (_CONTROL_LOOK if look is None else look).get(f"{prefix}_corner_radius")
     if value is None:
         value = old_radius
     if not isinstance(value, dict):
@@ -511,16 +985,16 @@ def _control_radius(prefix: str, old_radius: int) -> str:
                                      ("bottom_right", "bottom-right"), ("bottom_left", "bottom-left")))
 
 
-def _control_font(prefix: str) -> str:
-    look = _CONTROL_LOOK
+def _control_font(prefix: str, look: dict | None = None) -> str:
+    look = _CONTROL_LOOK if look is None else look
     family = look.get(f"{prefix}_font_family") or ""
     family_css = ""
     if family:
-        resolved = _resolve_font_family(family, int(look.get(f"{prefix}_font_size", 11)),
+        resolved = _resolve_font_family(family, int(look.get(f"{prefix}_font_size") or 11),
                                         700 if look.get(f"{prefix}_font_bold") else 400)
         family_css = f'font-family: "{resolved.replace(chr(34), "")}";'
     return (family_css +
-            f"font-size: {scaled(max(6, int(look.get(f'{prefix}_font_size', 11))))}px; "
+            f"font-size: {scaled(max(6, int(look.get(f'{prefix}_font_size') or 11)))}px; "
             f"font-weight: {'bold' if look.get(f'{prefix}_font_bold') else 'normal'}; "
             f"font-style: {'italic' if look.get(f'{prefix}_font_italic') else 'normal'};")
 
@@ -532,28 +1006,263 @@ def _set_or(value, fallback: str) -> str:
     return resolved if color.isValid() and color.alpha() else fallback
 
 
-def button_state_look(look: dict) -> dict:
-    """Survol et état actif (enfoncé / focus) d'un bouton (`look` : clés `button_*`) : fond au survol, fond, bordure et
-    épaisseur à l'état actif ; transparent = le thème (`C`), épaisseur 0 = celle de l'état standard (variante
-    « toolbar », demande de l'utilisateur, 2026-11-10)."""
+def _thickness(look: dict, key: str) -> int:
     try:
-        width = max(0, int(look.get("button_active_border_thickness") or 0))
+        return max(0, int(look.get(key) or 0))
     except (TypeError, ValueError):
-        width = 0
-    return {"hover": _set_or(look.get("button_hover_color"), C["btn_hover"]),
-            "active": _set_or(look.get("button_active_color"), C["accent"]),
-            "active_border": _set_or(look.get("button_active_border_color"), C["accent"]),
-            "active_width": width}
+        return 0
 
 
-def _active_border_css(states: dict) -> str:
-    color = states["active_border"]
-    if states["active_width"]:
-        return f"border: {states['active_width']}px solid {color};"
-    return f"border-color: {color};"
+def _set_or_none(value) -> str | None:
+    """Couleur réglée, ou None si vide / transparente (= ne rien changer)."""
+    if not value:
+        return None
+    resolved = resolve_color_ref(value, "")
+    color = QColor(resolved)
+    return resolved if color.isValid() and color.alpha() else None
 
 
-BUTTON_STATES = (("standard", "État standard"), ("survol", "État survol"), ("focus", "État focus (clic si Entrée)"))
+_SIDES = ("top", "right", "bottom", "left")
+
+
+def _state_border(look: dict, state: str, fallback: str | None) -> dict:
+    """Ligne Bordures d'un état (`button_<state>_border*`) : côtés allumés, couleur par côté (transparente =
+    `fallback`, le thème ; None = celle de l'état standard), épaisseur (0 = celle de l'état standard)."""
+    enabled = look.get(f"button_{state}_border_enabled", True)
+    if not isinstance(enabled, dict):
+        enabled = dict.fromkeys(_SIDES, bool(enabled))
+    colors = look.get(f"button_{state}_border")
+    if not isinstance(colors, dict):
+        colors = dict.fromkeys(_SIDES, colors)
+    standard = look.get("button_border")
+    if not isinstance(standard, dict):
+        standard = dict.fromkeys(_SIDES, standard)
+    return {"on": {s: enabled.get(s, True) is not False for s in _SIDES},
+            "colors": {s: _set_or(colors.get(s), fallback) if fallback else _set_or_none(colors.get(s))
+                       for s in _SIDES},
+            "standard": {s: resolve_color_ref(standard.get(s), C["btn_border"]) for s in _SIDES},
+            "width": _thickness(look, f"button_{state}_border_thickness")}
+
+
+def _state_font_css(look: dict, state: str) -> str:
+    """Police d'un état surchargé : sa ligne Polices entière (valeur None = celle de l'état standard)."""
+    sub = {main: button_state_value(look, f"button_{state}_{suffix}")
+           for suffix, main in BUTTON_STATE_ROWS["font"].items() if suffix != "text_color"}
+    return _control_font("button", sub)
+
+
+def _state_radius_css(look: dict, state: str) -> str:
+    value = button_state_value(look, f"button_{state}_corner_radius")
+    return _control_radius("button", int(look.get("button_radius") or _BUTTON_RADIUS),
+                           {"button_corner_radius": value})
+
+
+# État : (fond, bordures, texte) quand la ligne est surchargée et laissée transparente ; None = celui de l'état standard.
+_STATE_FALLBACKS = {"hover": ("btn_hover", "btn_hover_bd", None), "focus": (None, None, None),
+                    "active": ("accent", "accent", "accent_text")}
+
+
+def button_state_look(look: dict) -> dict:
+    """États d'un bouton (`look` : clés `button_*`) : survol, focus (le bouton qui a le focus clavier, celui que
+    déclenche Entrée) et enfoncé (« active »). Chaque ligne d'un état vient de l'état `button_row_source` : lui-même
+    (surchargée), l'état qu'il suit, ou l'état standard (rien à déclarer : None / "", le QSS standard s'applique).
+    Ligne d'un état : fond (transparent = le thème pour le survol et l'enfoncé, le même pour le focus), bordures
+    (`_state_border`), police entière, couleur du texte (transparente = le même ; enfoncé : texte sur accent),
+    border radius."""
+    out = {}
+    for state in _STATE_FALLBACKS:
+        def src(row, state=state):
+            return button_row_source(look, state, row)
+        color = src("color")
+        if color == "standard":
+            out[state] = None
+        else:
+            value, slot = look.get(f"button_{color}_color"), _STATE_FALLBACKS[color][0]
+            out[state] = _set_or(value, C[slot]) if slot else _set_or_none(value)
+        border = src("border")
+        slot = _STATE_FALLBACKS.get(border, (None, None, None))[1]
+        out[f"{state}_border"] = (None if border == "standard"
+                                  else _state_border(look, border, C[slot] if slot else None))
+        font = src("font")
+        if font == "standard":
+            out[f"{state}_text"], out[f"{state}_font"] = None, ""
+        else:
+            slot = _STATE_FALLBACKS[font][2]
+            text = _set_or_none(look.get(f"button_{font}_text_color"))
+            out[f"{state}_text"] = text or (C[slot] if slot else None)
+            out[f"{state}_font"] = _state_font_css(look, font)
+        radius = src("radius")
+        out[f"{state}_radius"] = "" if radius == "standard" else _state_radius_css(look, radius)
+    return out
+
+
+def button_state_copy(look: dict, source: str, target: str) -> dict:
+    """Valeurs qui donnent à l'état `target` EXACTEMENT l'aspect de `source` (« standard » ou un état ; bouton
+    « Réinitialiser » à côté de la liste « suit », demande de l'utilisateur 2026-11-12) : toutes ses lignes, chacune
+    surchargée (modifiable ensuite), couleurs transparentes remplacées par celles réellement affichées (« le thème »
+    n'est pas le même d'un état à l'autre), décalage compris ; « activer » à déduire des valeurs copiées."""
+    import copy as _copy
+    out = {}
+    standard_border = look.get("button_border")
+    if not isinstance(standard_border, dict):
+        standard_border = dict.fromkeys(_SIDES, standard_border)
+    for row, keys in BUTTON_STATE_ROWS.items():
+        origin = source if source == "standard" else button_row_source(look, source, row)
+        for suffix, main in keys.items():
+            for tail in ("", "_linked"):
+                key = f"{main}{tail}" if origin == "standard" else f"button_{origin}_{suffix}{tail}"
+                if key in look:
+                    value = look[key]
+                    if value is None and origin != "standard":          # None = celle du standard
+                        value = look.get(f"{main}{tail}")
+                    out[f"button_{target}_{suffix}{tail}"] = _copy.deepcopy(value)
+            for tail in ("__on", "__kept"):
+                out[f"button_{target}_{suffix}{tail}"] = None
+        out[f"button_{target}_ovr_{row}"] = True
+        slots = _STATE_FALLBACKS.get(origin, (None, None, None))
+        if row == "color":
+            if origin == "standard":
+                out[f"button_{target}_color"] = resolve_color_ref(look.get("button_bg_color"), C["btn"])
+            else:
+                value = look.get(f"button_{origin}_color")
+                out[f"button_{target}_color"] = (_set_or(value, C[slots[0]]) if slots[0] else
+                                                 _set_or_none(value) or resolve_color_ref(look.get("button_bg_color"),
+                                                                                          C["btn"]))
+        elif row == "border":
+            standard = {s: resolve_color_ref(standard_border.get(s), C["btn_border"]) for s in _SIDES}
+            if origin == "standard":
+                colors = standard
+            else:
+                border = _state_border(look, origin, C[slots[1]] if slots[1] else None)
+                colors = {s: border["colors"][s] or standard[s] for s in _SIDES}
+            out[f"button_{target}_border"] = colors
+        elif row == "font":
+            text = (resolve_color_ref(look.get("button_font_color"), "#c4cacf") if origin == "standard" else
+                    _set_or_none(look.get(f"button_{origin}_text_color"))
+                    or (C[slots[2]] if slots[2] else resolve_color_ref(look.get("button_font_color"), "#c4cacf")))
+            out[f"button_{target}_text_color"] = text
+            out[f"button_{target}_font_bold"] = bool(button_state_value(look, f"button_{origin}_font_bold")
+                                                     if origin != "standard" else look.get("button_font_bold"))
+    for axis in ("x", "y"):
+        out[f"button_{target}_offset_{axis}"] = 0 if source == "standard" else _offset(look, f"button_{source}_offset_{axis}")
+    return out
+
+
+# Valeur du grisé (fm_theme > Général, `dimmed_opacity`, demande de l'utilisateur 2026-11-12) : un bouton
+# désactivé = fond, bordures et texte de son aspect standard, leur opacité multipliée par cette valeur (avant : texte
+# seul en `C['dim']`). Gardée ICI (fm_theme.widgets importe ce module : pas l'inverse) ; posée par
+# `widgets.set_dimmed_opacity`.
+_DISABLED_ALPHA = 0.2              # « éléments d'interface » : fond, bordures, ombre
+_DISABLED_TEXT_ALPHA = 0.2         # « textes »
+
+
+def disabled_alpha() -> float:
+    return _DISABLED_ALPHA
+
+
+def disabled_text_alpha() -> float:
+    return _DISABLED_TEXT_ALPHA
+
+
+def set_disabled_alpha(value: float, text: float | None = None) -> bool:
+    """Valeurs du grisé des boutons (éléments, textes) ; faux si rien n'a changé (aucun QSS à refaire)."""
+    global _DISABLED_ALPHA, _DISABLED_TEXT_ALPHA
+    text = _DISABLED_TEXT_ALPHA if text is None else float(text)
+    if abs(float(value) - _DISABLED_ALPHA) < 1e-6 and abs(text - _DISABLED_TEXT_ALPHA) < 1e-6:
+        return False
+    _DISABLED_ALPHA, _DISABLED_TEXT_ALPHA = float(value), text
+    return True
+
+
+def _dimmed_css_color(value, default: str, alpha: float | None = None) -> str:
+    color = QColor(resolve_color_ref(value, default))
+    if not color.isValid():
+        color = QColor(default)
+    alpha = _DISABLED_ALPHA if alpha is None else alpha
+    return f"rgba({color.red()}, {color.green()}, {color.blue()}, {round(color.alpha() * alpha)})"
+
+
+def disabled_button_css(look: dict) -> str:
+    """Corps de la règle `QPushButton:disabled` : fond, couleur des bordures (côtés tels quels) à la valeur du grisé
+    « éléments d'interface », texte à celle des « textes » (couleurs de l'état standard)."""
+    look = look or {}
+    colors = look.get("button_border") or {}
+    if not isinstance(colors, dict):
+        colors = dict.fromkeys(_SIDES, colors)
+    borders = " ".join(f"border-{side}-color: {_dimmed_css_color(colors.get(side), C['btn_border'])};" for side in _SIDES)
+    return (f"background: {_dimmed_css_color(look.get('button_bg_color'), C['btn'])}; {borders} "
+            f"color: {_dimmed_css_color(look.get('button_font_color'), '#c4cacf', _DISABLED_TEXT_ALPHA)};")
+
+
+def variant_button_css(values: dict) -> str:
+    """QSS d'un bouton qui porte une variante du type « bouton » (`values` : clés `button_*`), qui RÉAGIT à la souris
+    (mêmes règles que le QSS commun, sur ce seul bouton)."""
+    states = button_state_look(values)
+    css = button_state_css(values, "standard")
+    for selector, state in ((":focus", "focus"), (":hover", "hover"), (":pressed", "active")):
+        rule = _state_css(states, state)
+        if rule:
+            css += f"\nQPushButton{selector} {{ {rule} }}"
+    return css + f"\nQPushButton:checked {{ {_checked_css(states)} }}\nQPushButton:disabled {{ {disabled_button_css(values)} }}"
+
+
+def style_variant_button(button, values: dict) -> None:
+    """Pose une variante du type « bouton » sur UN bouton : son QSS et son ombre (jamais remplacés par le thème)."""
+    button.setStyleSheet(variant_button_css(values))
+    set_own_button_shadow(button, values)
+
+
+def button_shown_color(key: str, look: dict | None = None) -> str | None:
+    """Couleur AFFICHÉE par un réglage d'état du bouton laissé transparent (« le thème » / « le même ») :
+    point de départ du sélecteur de couleur (demande de l'utilisateur, 2026-11-11). None = clé inconnue."""
+    look = _CONTROL_LOOK if look is None else look
+    bg = resolve_color_ref(look.get("button_bg_color"), C["btn"])
+    text = resolve_color_ref(look.get("button_font_color"), "#c4cacf")
+    return {"button_hover_color": _set_or(look.get("button_hover_color"), C["btn_hover"]),
+            "button_hover_text_color": text, "button_focus_color": bg, "button_focus_text_color": text,
+            "button_active_color": _set_or(look.get("button_active_color"), C["accent"]),
+            "button_active_text_color": _set_or(look.get("button_active_text_color"), C["accent_text"])}.get(key)
+
+
+def _border_state_css(border: dict) -> str:
+    """Bordures d'un état, côté par côté : coupé = aucune ; épaisseur 0 = la couleur seule (largeur et style de
+    l'état standard) ; sinon épaisseur + couleur (transparente sans thème = celle de l'état standard)."""
+    parts = []
+    for side in _SIDES:
+        color = border["colors"][side]
+        if not border["on"][side]:
+            parts.append(f"border-{side}: none;")
+        elif border["width"]:
+            parts.append(f"border-{side}: {border['width']}px solid {color or border['standard'][side]};")
+        elif color:
+            parts.append(f"border-{side}-color: {color};")
+    return " ".join(parts)
+
+
+def _checked_css(states: dict) -> str:
+    """Bouton à bascule COCHÉ (Image / Turntable de l'inspecteur…) : l'aspect de l'état enfoncé ; enfoncé identique au
+    standard = l'accent du thème (sinon on ne verrait pas lequel est choisi) ; un enfoncé SANS fond (police seule, ou qui
+    suit le standard) garde l'accent pour le fond, ses propres déclarations par-dessus."""
+    accent = "" if states["active"] else f"background: {C['accent']}; color: {C['accent_text']}; "
+    return (accent + _state_css(states, "active")).strip()
+
+
+def _state_css(states: dict, state: str) -> str:
+    """Déclarations d'un état (hover, focus, active) : seulement ses lignes surchargées ; vide = l'état standard."""
+    parts = []
+    if states[state]:
+        parts.append(f"background: {states[state]};")
+    border = _border_state_css(states[f"{state}_border"]) if states[f"{state}_border"] else ""
+    for part in (border, states[f"{state}_radius"], states[f"{state}_font"]):
+        if part:
+            parts.append(part.strip())
+    if states[f"{state}_text"]:
+        parts.append(f"color: {states[f'{state}_text']};")
+    return " ".join(parts)
+
+
+BUTTON_STATES = (("standard", "État standard"), ("survol", "État survol"), ("focus", "État focus (clic si Entrée)"),
+                 ("enfonce", "État enfoncé"))
 
 
 def button_state_css(look: dict, state: str = "standard") -> str:
@@ -564,19 +1273,18 @@ def button_state_css(look: dict, state: str = "standard") -> str:
     saved, _CONTROL_LOOK = _CONTROL_LOOK, look
     try:
         border = _control_border("button", C["btn_border"], _BUTTON_FRAME)
-        radius = _control_radius("button", _BUTTON_RADIUS)
-        font = _control_font("button")
     finally:
         _CONTROL_LOOK = saved
+    radius = _control_radius("button", _BUTTON_RADIUS, look)
+    font = _control_font("button", look)
     bg = resolve_color_ref(look.get("button_bg_color"), C["btn"])
     color = resolve_color_ref(look.get("button_font_color"), "#c4cacf")
     extra = ""
-    states = button_state_look(look)
-    if state == "survol":
-        bg, extra = states["hover"], f"border-color: {C['btn_hover_bd']};"
-    elif state == "focus":
-        bg, color, extra = states["active"], C["accent_text"], _active_border_css(states)
-    return f"QPushButton {{ background: {bg}; {border} {radius} {font} color: {color}; padding: 0 12px; {extra} }}"
+    key = _FROZEN_STATES.get(state, "standard")
+    if key != "standard":
+        extra = _state_css(button_state_look(look), key)
+    return (f"QPushButton {{ background: {bg}; {border} {radius} {font} color: {color}; "
+            f"{button_padding_css(look)} {extra} }}")
 
 
 def set_button_radius(px: int) -> None:
@@ -1252,6 +1960,7 @@ def build_stylesheet() -> str:
     rayon de bordure des boutons — appelee a chaque changement de couleur
     (voir refresh_style) plutot qu'une seule fois au demarrage, pour que la
     previsualisation en direct de la fenetre de parametres fonctionne."""
+    _sync_themed_buttons()                         # boutons de theme_button : le meme aspect, pose sur eux
     input_border = _control_border("input", C["border_soft"], _INPUT_FRAME)
     button_border = _control_border("button", C["btn_border"], _BUTTON_FRAME)
     input_radius = _control_radius("input", _INPUT_RADIUS)
@@ -1263,6 +1972,8 @@ def build_stylesheet() -> str:
     input_font = _control_font("input")
     button_font = _control_font("button")
     button_states = button_state_look(_CONTROL_LOOK)
+    focus_css = _state_css(button_states, "focus")          # rien de réglé = pas de règle (aspect standard)
+    focus_rule = f"QPushButton:focus {{ {focus_css} }}\n" if focus_css else ""
     # QListWidget (Skin principale niveau 2 / void), PAS Fond (window) : le
     # vide propre a chaque colonne de l'appli principale (QListWidget, seul
     # usage de cette classe hors fenetre de parametres, voir Column) suit
@@ -1290,14 +2001,12 @@ QPushButton {{
     {button_radius}
     {button_font}
     color: {button_color};
-    padding: 0 12px;
+    {button_padding_css()}
 }}
-QPushButton:hover {{ background: {button_states['hover']}; border-color: {C['btn_hover_bd']}; }}
-QPushButton:pressed {{
-    background: {button_states['active']};
-    {_active_border_css(button_states)}
-    color: {C['accent_text']};
-}}
+{focus_rule}QPushButton:hover {{ {_state_css(button_states, 'hover')} }}
+QPushButton:pressed {{ {_state_css(button_states, 'active')} }}
+QPushButton:checked {{ {_checked_css(button_states)} }}
+QPushButton:disabled {{ {disabled_button_css(_CONTROL_LOOK)} }}
 
 QTableWidget, QTableView {{
     border: 1px solid {C['border']};
@@ -1336,9 +2045,14 @@ STYLESHEET_COLOR_KEYS = (
 
 
 def apply_style(app) -> None:
-    """Applique le style commun (style Fusion + QSS) a une QApplication."""
-    app.setStyle("Fusion")
+    """Applique le style commun (style Fusion + ombre des boutons + QSS) a une QApplication."""
+    global _APP_STYLE
+    _APP_STYLE = _app_style_class()("Fusion")          # garde une reference Python (l'appli en devient proprietaire)
+    app.setStyle(_APP_STYLE)
     app.setStyleSheet(build_stylesheet())
+
+
+_APP_STYLE = None
 
 
 # ==========================================================================

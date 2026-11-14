@@ -182,6 +182,15 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Encodage de chaque image de test : {chemin: "srgb"|"slog3"|"flog"|"flog2"} (voir previews.LUT_IMAGE_CURVES).
     "lut_image_curves": {},
     "ui_scale": 100,
+    # Valeur du grise (fm_theme > General) : opacite (%) de tout objet non utilisable (reglage inactif, bouton
+    # desactive de la barre de navigation...) ; avant, constante 0.2 (et 0.35 pour la barre). Demande 2026-11-12.
+    "dimmed_opacity": 20,
+    "dimmed_text_opacity": 20,          # textes non utilisables (boutons desactives...)
+    "dimmed_icon_opacity": 20,          # icones non utilisables (boutons de la barre de navigation...)
+    "icon_margin": 20,                  # marge des icones chargees, % de chaque cote (preview_services/pixmaps.py)
+    # Style des icones du catalogue dans l'interface (fm_theme.icon_library) : "monochrome" (teinte = couleur du
+    # glyphe du bouton) ou "couleur" (camaieu du module). Demande de l'utilisateur, 2026-11-13.
+    "icon_library_style": "monochrome",
     # Section "Application" (voir SettingsWindow._section_application) :
     # repli automatique des colonnes de set (Type/Projets/niveaux
     # configures) des que la chaine de navigation atteint le repertoire de
@@ -319,7 +328,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "preview_title_font_italic": False,
     "preview_title_font_smoothing_enabled": False,
     "preview_title_font_smoothing": "current",
-    "preview_title_padding_linked": True,
+    # Côtés INÉGAUX : jamais liés par défaut (lié, le champ alignait tout sur le 1er côté et l'enregistrait, 2026-11-12)
+    "preview_title_padding_linked": False,
     "preview_title_padding": {"left": 14, "top": 0, "right": 14, "bottom": 8},
     "preview_status_font_size": 10,
     "preview_status_font_color": "#d6d9dc",
@@ -331,7 +341,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "preview_status_font_italic": False,
     "preview_status_font_smoothing_enabled": False,
     "preview_status_font_smoothing": "current",
-    "preview_status_padding_linked": True,
+    "preview_status_padding_linked": False,
     "preview_status_padding": {"left": 14, "top": 0, "right": 14, "bottom": 0},
     "preview_toggle_width": 22,
     "preview_toggle_height": 22,
@@ -641,7 +651,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "last_save_dir": "",  # dernier dossier d'enregistrement / d'export de l'appli (save_dialog_memory)
     "last_open_dir": "",  # dernier dossier d'ouverture / de chargement de l'appli (save_dialog_memory)
     "navtool_icon_tone_value": 30,  # module ouvert a l'icone coloree : valeur du fond (% de celle de l'icone)
-    "navtool_icon_disabled_color": "#59c4cacf",  # bouton desactive (ex voile d'opacite 35 %)
     # Colonne Couleur du tableau d'icones de la barre (settings_window_v2.NAVBAR_ICON_COLORS) : fusion produit.
     "navtool_icon_color_theme": "#f28c28", "navtool_icon_color_viewer": "#ffffff",
     "navtool_icon_color_text_editor": "#ffffff", "navtool_icon_color_board": "#ffffff",
@@ -710,10 +719,31 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "button_font_color": "#c4cacf",
     "button_font_smoothing_enabled": False,
     "button_font_smoothing": "current",
+    # Décalage du texte dans le bouton, tous les états (-10..+10 px ; fm_theme.style.button_text_offset, 2026-11-12)
+    "button_text_offset_x": 0, "button_text_offset_y": 0,
     # Survol et état actif (enfoncé / focus) ; transparent = le thème, épaisseur 0 = celle de l'état standard
     # (variante « toolbar » tirée des barres d'outils, 2026-11-10)
     "button_hover_color": "#00000000", "button_active_color": "#00000000",
-    "button_active_border_color": "#00000000", "button_active_border_thickness": 0,
+    # Survol et focus complets (2026-11-11) ; transparent = inchangé, focus = le bouton qui a le focus clavier.
+    # Bordures de chaque état = une ligne Bordures standard (côtés, couleur par côté, épaisseur) et police = gras
+    # + couleur du texte (demande de l'utilisateur, 2026-11-11)
+    **{key: value for state in ("hover", "focus", "active") for key, value in (
+        (f"button_{state}_border_enabled", {"top": True, "right": True, "bottom": True, "left": True}),
+        (f"button_{state}_border_enabled_linked", True),
+        (f"button_{state}_border", {"top": "#00000000", "right": "#00000000", "bottom": "#00000000",
+                                    "left": "#00000000"}),
+        (f"button_{state}_border_thickness", 0),
+        (f"button_{state}_text_color", "#00000000"),   # enfoncé : transparent = « Texte sur accent » du thème
+        (f"button_{state}_font_bold", False),
+        (f"button_{state}_offset_x", 0), (f"button_{state}_offset_y", 0),     # Décalage : -3..+3 px
+        # Chaque ligne d'un état = override de l'état standard (2026-11-12, fm_theme.style.button_state_override) :
+        # toggle None = déduit des valeurs (réglages d'avant) ; police entière et rayon None = ceux du standard.
+        *((f"button_{state}_ovr_{row}", None) for row in ("color", "border", "font", "radius", "shadow")),
+        *((f"button_{state}_font_{name}", None)
+          for name in ("family", "size", "italic", "smoothing_enabled", "smoothing")),
+        (f"button_{state}_corner_radius", None), (f"button_{state}_corner_radius_linked", None),
+        (f"button_{state}_follow", "standard"))},           # lignes non surchargées : l'état suivi (2026-11-12)
+    "button_focus_color": "#00000000",
     "input_bg_color": "@saisie",                # fm_theme > Couleurs > Zone de saisie (C["well"])
     "input_border_enabled": True,
     "input_border": {side: "#303539" for side in ("top", "right", "bottom", "left")},
@@ -1023,7 +1053,7 @@ for _title_level, _title_defaults in _TITLE_LEVEL_DEFAULTS.items():
 del _title_level, _title_defaults, _title_key, _title_val
 
 # Lignes « Ombres » (settings_widgets.shadow_look) : cotes, couleur par cote (opacite comprise), taille.
-SHADOW_PREFIXES = ("button_shadow", "item_image_shadow", "preview_shadow", "viewer_film_image_shadow", "viewer_focus_image_shadow",
+SHADOW_PREFIXES = ("button_shadow", "button_hover_shadow", "button_focus_shadow", "button_active_shadow", "item_image_shadow", "preview_shadow", "viewer_film_image_shadow", "viewer_focus_image_shadow",
                    "table_shadow", "viewer_film_table_shadow", "ctx_menu_shadow", "extra_window_shadow",
                    "video_frame_shadow")
 for _shadow in SHADOW_PREFIXES:
@@ -1074,6 +1104,10 @@ del _sides_key
 # Cles creees a l'execution (reglages des styles de toggle ajoutes : toggle3_*, toggle4_*...) : pas dans
 # DEFAULT_SETTINGS, mais a conserver au chargement.
 _DYNAMIC_KEY = re.compile(r"^toggle(?:[3-9]\d*|[1-9]\d+)_")
+# Toggle « activer » d'une ligne Bordures / Border radius / Ombres / Padding / Margin (settings_window_v2,
+# `activation_keys`, 2026-11-11) : `<clé>__on` (état) et `<clé>__kept` (valeurs gardées quand il est coupé) ;
+# acceptées sans être déclarées (une paire par ligne de toutes les fenêtres), retenues par les presets.
+_ACTIVATION_KEY = re.compile(r"__(?:on|kept)$")
 
 
 # Board (MRO) et CAD : défauts dans leur paquet (fm_board/settings_defaults.py, fm_cad/settings_defaults.py).
@@ -1155,13 +1189,13 @@ DEFAULT_SETTINGS.update(TACHES_DEFAULTS)
 from fm_video.settings_defaults import VIDEO_DEFAULTS  # noqa: E402
 DEFAULT_SETTINGS.update(VIDEO_DEFAULTS)
 
-_LIVE_STATE_KEYS = ("md_toolbar_font_color", "md_toolbar_background_color",
+_LIVE_STATE_KEYS = ("md_toolbar_font_color", "md_toolbar_background_color", "md_bars",
                     "table_dims", "slider_ranges", "toggle_custom_styles", "toggle_styles",
                     "toggle_style_overrides", "element_spaces", "ui_spaces",
                     "element_spaces_below", "ui_spaces_below", "title_order", "element_style_overrides",
                     "viewer_film_text_ratio", "viewer_gallery_text_height", "context_menu_layouts",
                     "viewer_button_order", "viewer_recursive", "md_last_mode", "md_code_font_zoom",
-                    "board_pen_presets", "board_design_brand", "board_modulebar_folded", "board_bars", "typo_bars", "window_always_on_top",
+                    "md_spell_words", "board_pen_presets", "board_design_brand", "board_modulebar_folded", "board_bars", "typo_bars", "window_always_on_top",
                     "quick_style_positions", "interface_move_positions",
                     "interface_edit_appearance", "video_grade", "video_grade_presets", "video_export_last",
                     "video_info_enabled", "video_loop", "video_volume", "video_last_zoom",
@@ -1200,7 +1234,7 @@ def load_settings(startup: bool = False) -> dict[str, Any]:
 
     def _merge(data: dict):
         for key, value in data.items():
-            if key not in DEFAULT_SETTINGS and not _DYNAMIC_KEY.match(key):
+            if key not in DEFAULT_SETTINGS and not _DYNAMIC_KEY.match(key) and not _ACTIVATION_KEY.search(key):
                 continue
             if isinstance(value, dict) and isinstance(settings.get(key), dict):
                 for sub_key, sub_val in value.items():
@@ -1223,6 +1257,11 @@ def load_settings(startup: bool = False) -> dict[str, Any]:
             # config de bordure d'entete au chargement.
             if "header_border_enabled" not in raw and "header_edges" in raw:
                 raw["header_border_enabled"] = raw["header_edges"]
+            # Bordure d'un état du bouton : une couleur -> la ligne Bordures standard (couleur par côté), 2026-11-11
+            for state in ("hover", "focus", "active"):
+                old = raw.get(f"button_{state}_border_color")
+                if old and f"button_{state}_border" not in raw:
+                    raw[f"button_{state}_border"] = dict.fromkeys(("top", "right", "bottom", "left"), old)
             # copie : _merge partage les sous-dicts, le preset les modifierait ; anciennes cles des toggles reprises
             _merge(_toggle_states.fill_toggle_states(json.loads(json.dumps(raw))))
     except (OSError, ValueError):
@@ -1272,7 +1311,143 @@ def load_settings(startup: bool = False) -> dict[str, Any]:
         if settings.get(new_key) is None:
             settings[new_key] = settings.get(old_key, 0)
     _prune_column_overrides(settings, raw)
+    for name, dims in (settings.get("table_dims") or {}).items():
+        if name.endswith("Bouton#0") and isinstance(dims, dict):
+            _migrate_button_dims(dims)
     return settings
+
+
+# Tableau Thème > Bouton : mises en page enregistrées converties à chaque changement de ses lignes (2026-11-11).
+# Étape 1 (17 -> 14) : les 4 lignes de chaque état (fond, texte, couleur de bordure, épaisseur) deviennent 3 (fond,
+# Bordures standard, police) ; les lignes Bordures reprennent la mise en page de la ligne Bordures standard (1).
+# Étape 2 (14 -> 20) : chaque état gagne Décalage et Ombres après sa police ; ses Ombres reprennent la mise en page
+# de la ligne Ombres standard (13). Tout nouveau changement des lignes de Bouton = une étape de plus ici.
+def _sort_state_groups(order: list) -> list:
+    for group in ((2, 3, 4), (5, 6, 7), (8, 9, 10)):     # chaque état : fond, bordures, police dans ses emplacements
+        slots = [i for i, r in enumerate(order) if r in group]
+        for i, r in zip(slots, sorted(order[i] for i in slots)):
+            order[i] = r
+    return order
+
+
+def _after_state_borders(order: list) -> list:
+    out = []
+    for r in order:
+        out.append(r)
+        if r in (3, 9, 15):                               # bordures d'un état : puis sa police et son border radius
+            out += [r + 1, r + 2]
+    return out
+
+
+def _before_state_colors(order: list) -> list:
+    out = []
+    for r in order:
+        if r in (3, 10, 17):                              # couleur de fond d'un état : sa ligne « suit » juste avant
+            out.append(r - 1)
+        out.append(r)
+    return out
+
+
+def _onto_follow_rows(dims: dict, remap: dict) -> None:
+    """Coupe, texte au-dessus et repli de la couleur de fond d'un état -> sa ligne « suit » (qui ouvre la partie)."""
+    for key in ("row_splits", "above_texts"):
+        value = dims.get(key)
+        if isinstance(value, dict):
+            dims[key] = {str(int(k) - 1) if k.isdigit() and int(k) in (3, 10, 17) else k: v for k, v in value.items()}
+    if isinstance(dims.get("collapsed"), list):
+        rows = [remap.get(r, r) for r in dims["collapsed"] if isinstance(r, int)]
+        dims["collapsed"] = [r - 1 if r in (3, 10, 17) else r for r in rows]
+
+
+def _after_state_fonts(order: list) -> list:
+    out = []
+    for r in order:
+        out.append(r)
+        if r in (4, 9, 14):                               # police d'un état : puis son décalage et ses ombres
+            out += [r + 1, r + 2]
+    return out
+
+
+def _remap_collapsed(dims: dict, remap: dict) -> None:
+    if isinstance(dims.get("collapsed"), list):
+        dims["collapsed"] = [remap[r] for r in dims["collapsed"] if isinstance(r, int) and r in remap]
+
+
+def _after_standard_font(order: list) -> list:
+    out = []
+    for r in order:
+        out.append(r)
+        if r == 23:                                       # Polices standard : puis le décalage du texte
+            out.append(24)
+    return out
+
+
+_BUTTON_DIMS_STEPS = (
+    (17, 14, {0: 0, 1: 1, 2: 2, 3: 4, 4: 3, 6: 5, 7: 7, 8: 6, 10: 8, 11: 10, 12: 9, 14: 11, 15: 12, 16: 13},
+     {3: 1, 6: 1, 9: 1}, _sort_state_groups),
+    (14, 20, {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 7, 6: 8, 7: 9, 8: 12, 9: 13, 10: 14, 11: 17, 12: 18, 13: 19},
+     {6: 13, 11: 13, 16: 13}, _after_state_fonts),
+    # Étape 3 (20 -> 23, 2026-11-12) : chaque état = overrides des lignes standard ; sa police (gras + couleur) devient
+    # la ligne Polices standard entière et il gagne Border radius : elles reprennent la mise en page des lignes
+    # standard (Polices 17, Border radius 18).
+    (20, 23, {0: 0, 1: 1, 2: 2, 3: 3, 5: 6, 6: 7, 7: 8, 8: 9, 10: 12, 11: 13, 12: 14, 13: 15, 15: 18, 16: 19,
+              17: 20, 18: 21, 19: 22},
+     {4: 17, 10: 17, 16: 17, 5: 18, 11: 18, 17: 18}, _after_state_borders),
+    # Étape 4 (23 -> 26, 2026-11-12) : chaque état s'ouvre sur une ligne « suit » (liste + « Réinitialiser ») ; sa coupe,
+    # son texte au-dessus et son repli passent de sa couleur de fond à cette ligne (`_onto_follow_rows`).
+    (26 - 3, 26, {**{r: r for r in (0, 1)}, **{r: r + 1 for r in range(2, 8)}, **{r: r + 2 for r in range(8, 14)},
+                  **{r: r + 3 for r in range(14, 23)}},
+     {}, _before_state_colors, _onto_follow_rows),
+    # Étape 5 (26 -> 27, 2026-11-12) : « Décalage du texte » sous Polices standard (23) ; il reprend la mise en page
+    # de la ligne Décalage de l'état survol (7).
+    (26, 27, {**{r: r for r in range(24)}, 24: 25, 25: 26}, {24: 7}, _after_standard_font, _remap_collapsed),
+)
+
+
+def _migrate_button_dims(dims: dict) -> None:
+    """Mise en page enregistrée d'un ancien tableau Bouton convertie sur place, étape par étape ; rien sinon."""
+    for old_rows, new_rows, remap, copies, fix_order, *after in _BUTTON_DIMS_STEPS:
+        if any(isinstance(dims.get(k), list) and len(dims[k]) == old_rows for k in ("row_order", "row_heights")):
+            _remap_dims(dims, old_rows, new_rows, remap, copies, fix_order)
+            for step in after:                            # ce que le renumérotage seul ne sait pas faire
+                step(dims, remap)
+
+
+def _remap_dims(dims: dict, old_rows: int, new_rows: int, remap: dict, copies: dict, fix_order) -> None:
+    """Lignes logiques `remap` (ancienne -> nouvelle ; absente = supprimée) ; `copies` {nouvelle: ancienne dont
+    elle reprend hauteur et sous-cellules}."""
+    order = [remap[r] for r in dims.get("row_order") or () if r in remap]
+    if order:
+        order = fix_order(order)
+        order += [r for r in range(new_rows) if r not in order]
+        dims["row_order"] = order
+    heights = dims.get("row_heights")
+    if isinstance(heights, list) and len(heights) == old_rows:
+        new = [0] * new_rows
+        for old, row in remap.items():
+            new[row] = heights[old]
+        for row, source in copies.items():
+            new[row] = heights[source]
+        dims["row_heights"] = new
+    cell = re.compile(r"r(\d+)c(\d+)$")
+    for key, value in list(dims.items()):
+        if not isinstance(value, dict) or key == "cols":
+            continue
+        out = {}
+        for sub, item in value.items():
+            match = cell.match(str(sub))
+            if match:
+                old, col = int(match.group(1)), match.group(2)
+                if old in remap:
+                    out[f"r{remap[old]}c{col}"] = item
+                out.update({f"r{row}c{col}": json.loads(json.dumps(item))
+                            for row, source in copies.items() if source == old})
+            elif str(sub).isdigit():
+                if int(sub) in remap:
+                    out[str(remap[int(sub)])] = item
+            else:
+                out[sub] = item
+        dims[key] = out
 
 
 # Seules cles de surcharge de colonne encore lues : celles que le glisser des bordures enregistre.
@@ -1400,6 +1575,19 @@ def update_theme_preset(settings: dict) -> bool:
         return False
     _theme_presets.update_preset(name, theme, editing=used)
     return True
+
+
+def theme_variant_values(settings: dict, type_name: str, variant: str) -> dict:
+    """Cles a plat (`button_*`...) d'une variante NOMMEE du preset lie (sa variante par defaut si elle n'existe pas) :
+    pour un element de l'appli qui porte cette variante (ex. bouton « Reinitialiser » des reglages : windows_95)."""
+    try:
+        preset = _theme_presets.load_preset(_theme_presets.find_preset(theme_in_use(settings)))
+    except (OSError, ValueError, TypeError):
+        return {}
+    entry = (preset.get("types") or {}).get(type_name) or {}
+    prefix = _theme_presets.TYPE_PREFIXES.get(type_name, "")
+    used = _theme_presets.used_variant(entry, variant)
+    return {f"{prefix}{f}": v for f, v in _theme_presets.variant_fields(entry, used).items()}
 
 
 def app_variant(settings: dict, type_name: str) -> str:

@@ -460,14 +460,38 @@ class IconTintTest(unittest.TestCase):
         self.assertNotEqual(button.grab().toImage().pixelColor(1, 1).name(), QColor(rest).name())
         button.deleteLater()
 
+    def test_unusable_button_frame_takes_the_grey_value(self):
+        """Bouton inutilisable de la barre : fond et bordures aussi à la « Valeur du grisé » (2026-11-12)."""
+        from PySide6.QtWidgets import QWidget
+        host = QWidget()
+        host.setStyleSheet("background: #000000;")
+        host.resize(60, 60)
+        button = IconButton("gear", "#ffffff", "#ffffff", host)
+        button.setStyleSheet("QPushButton { background: #ff0000; border: 2px solid #0000ff; }"
+                             "QPushButton:disabled { background: #ff0000; border: 2px solid #0000ff; }")
+        button.setGeometry(10, 10, 40, 40)
+        host.show()
+        self.addCleanup(host.deleteLater)
+        button.setEnabled(False)
+        full = button.grab().toImage().pixelColor(4, 4)                           # fond, dans le coin (hors icône)
+        self.assertEqual(full.name(), "#ff0000")                                   # sans valeur : inchangé
+        button.set_disabled_opacity(0.4)
+        image = host.grab().toImage()
+        self.assertAlmostEqual(image.pixelColor(14, 14).red(), 0.4 * 255, delta=4) # fond à 40 % sur le noir
+        self.assertAlmostEqual(image.pixelColor(11, 11).blue(), 0.4 * 255, delta=4) # bordure aussi
+        button.setEnabled(True)
+        self.assertEqual(host.grab().toImage().pixelColor(14, 14).name(), "#ff0000")   # utilisable : plein
+
     def test_navbar_icons_take_their_colors(self):
         """fm_browser > ICONES > Couleur des icones ; colonne Couleur du tableau d'icones de la barre, jamais les
         couleurs des modules du board (2026-11-08)."""
         from types import SimpleNamespace
         from main_window.chrome import ChromeMixin
         saved = ui_state.APPLIED_SETTINGS
+        from fm_theme.widgets import set_dimmed_values
+        set_dimmed_values(40, 20, 70)                          # Valeurs du grise : elements, textes, icones
+        self.addCleanup(set_dimmed_values, 20, 20, 20)
         ui_state.APPLIED_SETTINGS = dict(DEFAULT_SETTINGS, navtool_icon_base_color="#ffffff",
-                                         navtool_icon_disabled_color="#202020",
                                          board_modulebar_color_pdf="#e0604f", navtool_icon_color_pdf="#00ff00")
         try:
             names = ("btn_browse", "btn_presets", "btn_settings", "btn_style", "btn_collapse", "btn_columns",
@@ -477,7 +501,9 @@ class IconTintTest(unittest.TestCase):
             host._NAV_ICON_COLORS = ChromeMixin._NAV_ICON_COLORS
             ChromeMixin._refresh_navbar_icons(host)
             self.assertEqual(host.btn_browse._color, "#ffffff")
-            self.assertEqual(host.btn_browse._disabled_color, "#202020")
+            self.assertEqual(host.btn_browse._disabled_color, "#ffffff")            # icone : couleur de base...
+            self.assertAlmostEqual(host.btn_browse._disabled_opacity, 0.4)          # ...cadre : elements (40 %)
+            self.assertAlmostEqual(host.btn_browse._disabled_icon_opacity, 0.7)     # ...icone : icones (70 %)
             self.assertIsNone(host.btn_browse._blend)                                # sans colonne Couleur
             self.assertIsNone(host.btn_columns._blend)
             self.assertEqual(host.btn_pdf._blend, "#00ff00")                         # pas celle du board
@@ -485,7 +511,7 @@ class IconTintTest(unittest.TestCase):
             self.assertEqual((host.btn_theme._blend, host.btn_theme._tint), ("#f28c28", None))
             ChromeMixin._set_button_usable(host.btn_pdf, False)
             self.assertIsNone(host.btn_pdf.graphicsEffect())                       # plus de voile d'opacite
-            self.assertEqual(host.btn_pdf._icon_recolor(), ("in", "#202020"))
+            self.assertEqual(host.btn_pdf._icon_recolor(), ("in", "#ffffff"))
             for n in names:
                 getattr(host, n).deleteLater()
         finally:

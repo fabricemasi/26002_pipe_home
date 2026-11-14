@@ -459,6 +459,22 @@ class SettingsLinkMixin:
         # `changed_keys` (apercu en direct de la v2) : les cles que le geste a vraiment changees.
         changed = set(changed_keys) if changed_keys else (
             {k for k, v in settings.items() if previous.get(k) != v} | (previous.keys() - settings.keys()))
+        from browser_core_parts.settings import MODULE_ICON_COLOR_SETTINGS, apply_module_icon_colors
+        if not MODULE_ICON_COLOR_SETTINGS.isdisjoint(changed):
+            # Couleur d'un module (board, barre de navigation, dossiers) : icônes de CE module seules refaites
+            # (fm_theme.icon_library, abonnés prévenus), puis le chemin habituel de ces réglages ci-dessous.
+            apply_module_icon_colors(settings)
+        if changed & {"icon_library_style", "navtool_icon_base_color"}:
+            # Style des icones du catalogue / couleur des icones (fm_theme > General) : abonnes prevenus, fenetres
+            # repeintes ; chaque icone vient du cache des rendus (les deux styles y restent).
+            from browser_core_parts.settings import apply_icon_style
+            if apply_icon_style(settings):
+                for window in QApplication.topLevelWidgets():
+                    window.update()
+            if changed == {"icon_library_style"}:
+                if isinstance(ui_state.APPLIED_SETTINGS, dict):
+                    ui_state.APPLIED_SETTINGS["icon_library_style"] = settings.get("icon_library_style")
+                return
         if changed == {"row_templates"}:
             # Gabarits des lignes des fenetres de reglages (preset fm_theme relu) : rien a refaire ici, les
             # fenetres de reglages ouvertes les reprennent (external_values).
@@ -582,6 +598,26 @@ class SettingsLinkMixin:
             apply_folder_icon_colors(settings)
             for column in self.columns:
                 column.list.viewport().update()
+            return
+        if changed and changed <= {"icon_margin"}:
+            # Marge des icones (fm_theme > General) : icones cadrees oubliees (une fois par changement), les fenetres
+            # sont seulement repeintes (enfants compris) ; chaque icone est refaite a sa prochaine peinture.
+            if isinstance(ui_state.APPLIED_SETTINGS, dict):
+                ui_state.APPLIED_SETTINGS["icon_margin"] = settings.get("icon_margin", 20)
+            from browser_core_parts.settings import apply_icon_margin
+            if apply_icon_margin(settings):
+                for window in QApplication.topLevelWidgets():
+                    window.update()
+            return
+        if changed and changed <= {"dimmed_opacity", "dimmed_text_opacity", "dimmed_icon_opacity"}:
+            # Valeurs du grise (fm_theme > General) : objets grises, boutons desactives, barre ; rien d'autre.
+            if isinstance(ui_state.APPLIED_SETTINGS, dict):
+                ui_state.APPLIED_SETTINGS.update({k: settings.get(k, 20) for k in changed})
+            from fm_theme.widgets import set_dimmed_values
+            if set_dimmed_values(settings.get("dimmed_opacity", 20), settings.get("dimmed_text_opacity", 20),
+                                 settings.get("dimmed_icon_opacity", 20)):
+                self._apply_global_stylesheet()             # boutons desactives (~0,05 s, fenetre principale seule)
+            self._refresh_navbar_icons()
             return
         if changed and all(k.startswith(("navbar_", "navtool_", "statusbar_", "viewer_group_")) for k in changed):
             # fm_theme > Barre de navigation / Barre d'etat (+ icones de la barre et cadre des modules, reglages de

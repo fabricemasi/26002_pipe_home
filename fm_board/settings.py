@@ -24,15 +24,26 @@ def _board_icon_rows(rows_name: str = "ICON_ROWS"):
         rows = getattr(model, rows_name)
     except Exception:                                   # noqa: BLE001 - paquet absent : pas de lignes
         return []
-    return [Spec(f"ui_icon:ui_board_{kind}", label, "ui_icon", None, {"ui_key": f"ui_board_{kind}"})
-            for kind, label in rows]
+    specs = [Spec(f"ui_icon:ui_board_{kind}", label, "ui_icon", None, {"ui_key": f"ui_board_{kind}"})
+             for kind, label in rows]
+    if rows_name == "BOARD_ICON_ROWS":              # barre des modules : espace autour de l'icone de chaque module
+        names = ("miro", "cad", "design", "tableur", "illustrator", "photoshop", "pdf")    # = modulebar.MODULE_NAMES
+        specs += [Spec(f"board_modulebar_icon_pad_{m}", "Marge", "slider", 3,
+                       {"min": 0, "max": 16, "icon_color_of": f"ui_board_{m}", "icon_column": "Marge"})
+                  for m in names]
+        # Toggle : icone teintee de la couleur du module (Barre de selection > Couleurs des modules), quelle qu'elle
+        # soit (icone choisie, bibliotheque en couleur) ; demande du 2026-11-13.
+        specs += [Spec(f"board_modulebar_icon_tint_{m}", "Couleur du module", "bool", False,
+                       {"icon_color_of": f"ui_board_{m}", "icon_column": "Couleur du module"})
+                  for m in names]
+    return specs
 
 
 # Une section « Icônes » par onglet de la fenetre « Réglages : Board » (CAD : fm_cad/settings.py, « CAD : Icônes »).
 # Les noeuds de Design / Tableur / Illustrator / Photoshop sont dans leur arbre (`<paquet>/settings.py`).
-ICON_GROUPS_BY_MODULE = {"Board : Icônes": "BOARD_ICON_ROWS", "MRO : Icones": "MRO_ICON_ROWS",
-                         "Design : Icônes": "DESIGN_ICON_ROWS", "Tableur : Icônes": "TABLEUR_ICON_ROWS",
-                         "Illustrator : Icônes": "ILL_ICON_ROWS", "Photoshop : Icônes": "PS_ICON_ROWS"}
+ICON_GROUPS_BY_MODULE = {"Board : Barre de sélection : Icônes": "BOARD_ICON_ROWS", "MRO : Icones": "MRO_ICON_ROWS",
+                         "Design : Icônes": "DESIGN_ICON_ROWS", "Illustrator : Icônes": "ILL_ICON_ROWS"}
+# Tableur et Photoshop : plus de section (leur seule icone, celle du module, est dans la barre de selection).
 for _group, _rows in ICON_GROUPS_BY_MODULE.items():
     CATALOG[_group] = _board_icon_rows(_rows)
 
@@ -185,6 +196,9 @@ CATALOG[f"{_SEL} : Aspect"] = [
          {"title": "Ligne visible"}),
     Spec("board_modulebar_active_alpha", "Fond du module actif (opacité de sa couleur)", "slider", 18,
          {"min": 0, "max": 100, "unit": "%"}),
+    # Bordure de la couleur du module autour de l'icone du module ACTIF (demande du 2026-11-13 ; 0 = aucune).
+    Spec("board_modulebar_active_border", "Bordure du module actif (couleur du module)", "slider", 1,
+         {"min": 0, "max": 6, "unit": "px"}),
     Spec("board_modulebar_hover_color", "Couleur de fond survol", "color_app", "#232729", {"title": "Survol"}),
     Spec("board_modulebar_ink_color", "Icônes des boutons (éléments affichés)", "color_app", "#d7d9de",
          {"title": "Icônes des boutons"}),
@@ -227,13 +241,13 @@ BOARD_TREE = (
         Node("Aspect", f"{_SEL} : Aspect"),
         Node("Couleurs des modules", f"{_SEL} : Couleurs des modules"),
         Node("Languette et pastille", f"{_SEL} : Languette et pastille"),
+        Node("Icônes", f"{_SEL} : Icônes"),
     )),
     # Ouverture, Navigation, Grille : venues de l'onglet MRO (demande de l'utilisateur 2026-11-05 ; memes cles) :
     # elles valent pour tout le board, quel que soit le module.
     Node("Ouverture", "Board : Ouverture"),
     Node("Navigation", "Board : Navigation"),
     Node("Grille", "Board : Grille"),
-    Node("Icônes", "Board : Icônes"),
 )
 
 

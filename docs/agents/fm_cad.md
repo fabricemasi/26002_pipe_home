@@ -37,6 +37,7 @@ Branché sur la coque fm_board (`docs/agents/fm_board.md`) ; `cad_items` hérite
 | Interface : barre de commande, panneau Propriétés, calques, menus | `cad_ui.py`, `cad_linetype_ui.py` | INTERFACE, LISIBILITÉ, RÉGLAGES DU DESSIN |
 | Export / ouverture DXF / DWG, cache des dessins convertis | `cad_export.py`, `cad_import.py`, `cad_cache.py` | EXPORT DXF / DWG, OUVRIR UN DXF / DWG, ODA |
 | Fluidité : pan, latence, grille | `cad_gpu.py`, `fm_board/view.py`, `fm_board/scene.py` | LATENCE SOURIS / ZOOM, PAN FLUIDE, GRILLE RAPIDE |
+| Tracés venus d'Illustrator (menu Objet > « Convertir en tracés CAD » : polylignes d'arcs, exportables en DXF / DWG) | `fm_illustrator/to_cad.py` ; inverse (clic droit > « Convertir en tracés Illustrator », traits + hachures) : `fm_illustrator/from_cad.py`, `cad.CadController.to_illustrator` | voir `fm_illustrator.md` |
 | Réglages (onglet « CAD » de la fenêtre « Réglages : Board ») | `settings.py` (`_cad_groups`, `CAD_TREE`, `CAD_GROUPS` aussi lus par la fenêtre « accrochages et suivi » de `cad_ui.py`), `settings_defaults.py` (`CAD_DEFAULTS`) | ONGLET « Module CAD » |
 
 Tests : `test_cad.py`, `test_cad_text.py`, `test_cad_aliases.py`, `test_cad_commands_more.py`, `test_cad_assoc.py`, `test_cad_import_more.py`, `test_cad_hatch_import.py`, `test_cad_commands_extra.py`, `test_cad_commands_tools.py`, `test_cad_blocks.py`, `test_cad_attribs.py`, `test_cad_dynamic.py`, `test_cad_images.py`, `test_cad_xline.py`, `test_cad_plot.py`. Sondes : `tests/_probe_cad*.py`, `_probe_gpu_*.py`.

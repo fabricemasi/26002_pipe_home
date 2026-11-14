@@ -22,7 +22,7 @@ import weakref
 from contextlib import contextmanager
 from typing import Callable
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer, Signal
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPoint, QPointF, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QActionGroup, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractButton, QAbstractSpinBox, QApplication, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout,
@@ -1129,6 +1129,13 @@ def apply_row_splits(frame: QWidget, restyle: bool = True) -> None:
     for r, label in state._above_labels.items():
         if r not in shown:
             label.hide()
+    # Parties repliées (chevron du texte au-dessus, demande de l'utilisateur 2026-11-12) : toutes leurs lignes
+    # cachées, jusqu'à la coupe suivante ; le texte et son espace restent.
+    start = None
+    for pos, r in enumerate(order):
+        if pos == 0 or state.split_of_row(r)[0]:
+            start = r
+        mover.rows[r].setVisible(not (start in state.collapsed and start in shown))
     frame._above_slots = slots
     frame._split_spacers = spacers
     frame._refresh_style()
@@ -1166,13 +1173,47 @@ def seed_above_text_look(settings: dict) -> None:
             _ABOVE_FRAMES.remove(frame)
 
 
+ABOVE_CHEVRON_W = 14                # chevron de repli a gauche du texte au-dessus
+
+
 class _AboveText(QLabel):
-    """Texte pose au-dessus d'une ligne, hors de la bordure du tableau ; clic droit = modifier / supprimer."""
+    """Texte pose au-dessus d'une ligne, hors de la bordure du tableau ; clic droit = modifier / supprimer ;
+    clic sur le chevron ou le texte = replier / deplier la partie qu'il ouvre (2026-11-12)."""
 
     def __init__(self, state: "_CellsState", row: int):
         super().__init__(state.frame)
         self._state, self._row = state, row
         self.setObjectName("TableAboveText")
+        self.setContentsMargins(ABOVE_CHEVRON_W, 0, 0, 0)
+        self.setMouseTracking(True)
+
+    def _on_title(self, x: float) -> bool:
+        return x <= ABOVE_CHEVRON_W + self.fontMetrics().horizontalAdvance(self.text()) + 4
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QPen(QColor(_ABOVE_TEXT_LOOK["color"]), 1.4, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        cx, cy, s = ABOVE_CHEVRON_W / 2 - 1, self.height() / 2, 3.0
+        if self._row in self._state.collapsed:          # replie : chevron vers la droite
+            points = [QPointF(cx - s / 2, cy - s), QPointF(cx + s / 2, cy), QPointF(cx - s / 2, cy + s)]
+        else:                                           # deplie : vers le bas
+            points = [QPointF(cx - s, cy - s / 2), QPointF(cx, cy + s / 2), QPointF(cx + s, cy - s / 2)]
+        painter.drawPolyline(points)
+        painter.end()
+
+    def mouseMoveEvent(self, event):
+        self.setCursor(Qt.PointingHandCursor if self._on_title(event.position().x()) else Qt.ArrowCursor)
+        super().mouseMoveEvent(event)
+
+    def mousePressEvent(self, event):
+        if (event.button() == Qt.LeftButton and not event.modifiers() & Qt.ControlModifier
+                and self._on_title(event.position().x())):
+            self._state.toggle_collapsed(self._row)
+            event.accept()
+            return
+        event.ignore()                                  # Ctrl + glisser, clic ailleurs : comme avant
 
     def restyle(self):
         if _ABOVE_TEXT_LOOK["font"] is None:
@@ -1196,7 +1237,7 @@ def _place_above_texts(frame: QWidget) -> None:
         if not slots:
             return
         frame.layout().activate()
-        x = 15
+        x = 15 - ABOVE_CHEVRON_W + 2             # chevron dans la marge : le texte reste cale sur les cellules
         for item, label in slots:
             geo = item.geometry()
             height = label.sizeHint().height()
@@ -1247,6 +1288,20 @@ def add_split_menu(widget: QWidget, menu: QMenu) -> None:
     # explicitement sa largeur avant le toggle, qui ne peut plus le recouvrir.
     action = menu_row(menu, "", box)
     action.defaultWidget().text = SPLIT_TEXT    # identifiant stable de la ligne (menus personnalisables, tests)
+
+
+def _follow_slots(overlay, y: int) -> None:
+    """Suivi du curseur sur des emplacements explicites (`overlay.slots` : (y, indice ou None)) : le plus proche ;
+    `target` = son indice d'insertion (None = l'élément resterait à sa place)."""
+    overlay.cursor_x = y
+    slots = overlay.slots
+    if slots:
+        nearest = min(range(len(slots)), key=lambda k: abs(slots[k][0] - overlay._center()))
+        overlay.target = slots[nearest][1]
+        overlay._shown_gap = slots[nearest][0]
+    else:
+        overlay.target = None
+    overlay.update()
 
 
 class _RowMover:
@@ -1304,8 +1359,84 @@ class _RowMover:
             ghost = self.frame.grab(QRect(0, top, self.frame.width(), row.height()))
             self._overlay = _ReorderOverlay(self.frame, self, r, ghost, 0,
                                             self.frame.mapFromGlobal(start).y() - top, axis="y")
+            # Emplacements : ceux de la suite lignes + séparateurs (coupes, textes au-dessus).
+            self._sequence = self.sequence()
+            slots = self.slots(self._sequence, r)
+            self._overlay.gaps = [y for y, _b in slots]
+            self._overlay.slots = slots
+            self._overlay.follow = lambda y, o=self._overlay: _follow_slots(o, y)
         self._overlay.follow(self.frame.mapFromGlobal(gpos).y())
         return True
+
+    # -- RÈGLE (demande de l'utilisateur, 2026-11-11) : une coupe (« Split au-dessus ») et un texte au-dessus sont des
+    # éléments À PART ENTIÈRE de la suite des lignes ; déplacer une ligne ne les emmène pas. Ils restent rangés par
+    # ligne LOGIQUE (`splits`, `above_texts`), réattribués après le déplacement à la ligne qui les suit. --
+
+    def sequence(self) -> list:
+        """Suite affichée : `("row", r)` et, avant une ligne qui en porte, `("sep", coupe, texte)`."""
+        state = getattr(self.frame, "_extra_dims", None)
+        out = []
+        for r in self.order:
+            split = state.splits.get(r) if state is not None else None
+            text = state.above_texts.get(r) if state is not None else None
+            if split is not None or text:
+                out.append(("sep", split, text, state is not None and r in state.collapsed))
+            out.append(("row", r))
+        return out
+
+    def slots(self, seq: list, source: int) -> list:
+        """Emplacements de dépôt `(y, indice d'insertion dans seq ou None = sans effet)` : avant chaque ligne, et
+        AVANT une coupe visible (fin de la partie du dessus) ; jamais avant le séparateur de tête."""
+        spans = self._column_spans()
+        at = seq.index(("row", source))
+        out = []
+        for b in range(len(seq) + 1):
+            if b == len(seq):
+                y = spans[seq[-1][1]][1] if seq[-1][0] == "row" and not self.rows[seq[-1][1]].isHidden() else None
+            elif seq[b][0] == "row":
+                y = None if self.rows[seq[b][1]].isHidden() else spans[seq[b][1]][0]   # partie repliee
+            else:
+                visible = b > 0 and seq[b][1] is not None and seq[b][1] >= 0
+                y = (spans[seq[b - 1][1]][1] if visible and seq[b - 1][0] == "row"
+                     and not self.rows[seq[b - 1][1]].isHidden() else None)
+            if y is not None:
+                out.append((y, None if b in (at, at + 1) else b))
+        return out
+
+    def move_in_sequence(self, source: int, b: int, seq: list | None = None) -> None:
+        """Pose la ligne `source` à l'indice `b` de la suite ; les séparateurs restent où ils sont."""
+        seq = list(self.sequence() if seq is None else seq)
+        at = seq.index(("row", source))
+        token = seq.pop(at)
+        seq.insert(b - (1 if b > at else 0), token)
+        order, splits, texts, pending, collapsed = [], {}, {}, None, set()
+        for tok in seq:
+            if tok[0] == "sep":
+                # Deux séparateurs collés (la seule ligne d'une partie est partie) : la coupe la plus proche de la
+                # ligne suivante, le texte de l'un ou de l'autre.
+                pending = tok if pending is None else ("sep", tok[1] if tok[1] is not None else pending[1],
+                                                       tok[2] or pending[2], tok[3] if tok[2] else pending[3])
+                continue
+            r = tok[1]
+            if pending is not None:
+                if pending[1] is not None:
+                    splits[r] = pending[1]
+                if pending[2]:
+                    texts[r] = pending[2]
+                    if pending[3]:
+                        collapsed.add(r)          # la partie repliee suit son texte
+                pending = None
+            order.append(r)
+        state = getattr(self.frame, "_extra_dims", None)
+        changed = False
+        if state is not None and (splits != state.splits or texts != state.above_texts
+                                  or collapsed != state.collapsed):
+            state.splits, state.above_texts, state.collapsed, changed = splits, texts, collapsed, True
+        if order != self.order:
+            self.set_order(order)
+        elif changed:
+            apply_row_splits(self.frame)
+            self.frame.dimsChanged.emit()
 
     def release(self) -> bool:
         if self._press is None:
@@ -1315,13 +1446,11 @@ class _RowMover:
         overlay, self._overlay = self._overlay, None
         if overlay is None:
             return True
-        gap = overlay.target
+        target = overlay.target
         overlay.hide()
         overlay.deleteLater()
-        if gap is not None:
-            order = [i for i in self.order if i != overlay.source]
-            order.insert(gap - (1 if gap > self.order.index(overlay.source) else 0), overlay.source)
-            self.set_order(order)
+        if target is not None:
+            self.move_in_sequence(overlay.source, target, getattr(self, "_sequence", None))
         return True
 
     def set_order(self, order: list[int], notify: bool = True):
@@ -2010,6 +2139,10 @@ class _CellsState:
         self.objects: dict[str, list[int]] = {}
         self.head_hidden = False                   # clic droit > « Supprimer l'entete »
         self.above_texts: dict[int, str] = {}      # ligne LOGIQUE -> texte pose au-dessus
+        self.collapsed: set[int] = set()           # textes au-dessus dont la partie est repliee (chevron)
+        # Accordeon (2026-11-12) : lignes LOGIQUES d'une partie -> groupe (ou None) ; deplier une partie replie les
+        # autres parties du meme groupe (etats Survol / Focus / Enfonce du bouton).
+        self.accordion: Callable | None = None
         # Textes des cellules modifies (option fantome « Modifier le texte… ») : « r<l>c<c>:<n> » -> texte, n = rang
         # du QLabel dans la cellule ; seulement ce qui differe de l'origine (`_cell_text_orig` du QLabel).
         self.cell_texts: dict[str, str] = {}
@@ -2164,10 +2297,51 @@ class _CellsState:
             self.above_texts[int(row)] = text
         else:
             self.above_texts.pop(int(row), None)
+            self.collapsed.discard(int(row))      # plus de texte : plus de chevron, partie depliee
         if self.frame is not None:
             apply_row_splits(self.frame)
             if notify:
                 self.frame.dimsChanged.emit()
+
+    def toggle_collapsed(self, row: int) -> None:
+        """Replie / deplie la partie ouverte par le texte au-dessus de `row` (enregistre avec la mise en page)."""
+        self.collapsed ^= {int(row)}
+        if int(row) not in self.collapsed:
+            self.collapsed |= self._accordion_others(int(row))
+        if self.frame is not None:
+            apply_row_splits(self.frame, restyle=False)
+            # Clignotement signalé (2026-11-12) : lignes cachées tout de suite, mais lignes du dessous, textes et
+            # sections parentes replacés aux événements SUIVANTS (LayoutRequest en chaîne, placement différé des
+            # textes) : une ou plusieurs images intermédiaires. Tout est recalé ICI, avant la prochaine peinture.
+            for _ in range(8):
+                QCoreApplication.sendPostedEvents(None, QEvent.LayoutRequest)
+            _place_above_texts(self.frame)
+            label = self._above_labels.get(int(row))
+            if label is not None:
+                label.update()
+            self.frame.dimsChanged.emit()
+
+    def _parts(self) -> dict[int, list[int]]:
+        """Texte au-dessus (ligne LOGIQUE) -> lignes de sa partie, jusqu'a la coupe suivante (ordre affiche)."""
+        mover = getattr(self, "rows", None)
+        order = getattr(mover, "order", None) or sorted(self.above_texts)
+        parts, start = {}, None
+        for pos, r in enumerate(order):
+            if pos == 0 or self.split_of_row(r)[0]:      # meme decoupe que apply_row_splits
+                start = r if r in self.above_texts else None
+            if start is not None:
+                parts.setdefault(start, []).append(r)
+        return parts
+
+    def _accordion_others(self, row: int) -> set[int]:
+        """Parties du meme groupe que celle de `row`, a replier quand elle se deplie."""
+        if self.accordion is None:
+            return set()
+        parts = self._parts()
+        group = self.accordion(parts.get(row, [row]))
+        if group is None:
+            return set()
+        return {r for r, part in parts.items() if r != row and self.accordion(part) == group}
 
     def edit_above_text(self, row: int) -> None:
         """Saisie SUR PLACE du texte (zone de saisie des reglages) ; vide = texte retire."""
@@ -2266,6 +2440,9 @@ class _CellsState:
             out["head_hidden"] = True
         if self.above_texts:
             out["above_texts"] = {str(r): t for r, t in sorted(self.above_texts.items())}
+        collapsed = sorted(r for r in self.collapsed if r in self.above_texts)
+        if collapsed:
+            out["collapsed"] = collapsed
         return out
 
     def head_aligns(self) -> list[str]:
@@ -2336,7 +2513,14 @@ class _CellsState:
                     texts[int(key)] = str(value).strip()
             except (TypeError, ValueError):
                 pass
-        relayout = head_hidden != self.head_hidden or texts != self.above_texts
+        collapsed = set()
+        for value in dims.get("collapsed") or ():
+            try:
+                collapsed.add(int(value))
+            except (TypeError, ValueError):
+                pass
+        relayout = head_hidden != self.head_hidden or texts != self.above_texts or collapsed != self.collapsed
+        self.collapsed = collapsed
         if head_hidden != self.head_hidden and self.head is not None:
             self.head.setVisible(not head_hidden)
         self.head_hidden, self.above_texts = head_hidden, texts

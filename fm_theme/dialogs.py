@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QSizePolicy, QVBoxLa
 
 from fm_theme.tokens import M
 from fm_theme.theme import _set_text_role
-from fm_theme.widgets import _Btn, _PickerCloseButton, _PopupHeader
+from fm_theme.widgets import _Btn, _PickerCloseButton, _PopupHeader, _theme_glyph_button
 
 MAX_LISTED = 8          # elements nommes dans la fenetre, au-dela : « ... et N autres »
 
@@ -45,7 +45,7 @@ class ConfirmDialog(QDialog):
         head_l.addWidget(title_label, 1)
         close_btn = _PickerCloseButton(M["label_dim"])
         close_btn.setFixedSize(16, 16)
-        close_btn.setFlat(True)
+        _theme_glyph_button(close_btn)
         close_btn.clicked.connect(self.reject)
         head_l.addWidget(close_btn)
         outer.addWidget(head)

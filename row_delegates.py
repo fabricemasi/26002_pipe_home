@@ -59,6 +59,7 @@ from browser_core import (
     _resolve_row_font_color,
     _resolve_shortcut_font,
     _row_icon_pixmap,
+    _default_row_icon,
     tinted_icon,
     _step_badge_color,
     _step_badge_rect,
@@ -186,6 +187,8 @@ class RowDelegate(QStyledItemDelegate):
                 folder_icon = True
         if folder_icon:
             icon_pixmap = _tint_folder_icon(icon_pixmap, index, is_shortcut)
+        if icon_pixmap is None:
+            icon_pixmap = _catalogue_row_icon(painter, index, is_dir, is_shortcut)
 
         # Apercu personnalise (voir Column._on_context_menu, "Ajouter un
         # apercu.../Capturer une zone d'ecran...") : deja generalise a
@@ -778,6 +781,12 @@ def _tint_folder_icon(pixmap, index, is_shortcut: bool):
                                                  or "#ffffff"))
 
 
+def _catalogue_row_icon(painter, index, is_dir: bool, is_shortcut: bool):
+    sorte = _folder_kind(index, is_shortcut) if is_dir else "standard"
+    teinte = resolve_color_ref(ui_state.FOLDER_ICON_COLORS.get(sorte) or "#ffffff") if sorte != "standard" else None
+    return _default_row_icon(is_dir, SOFTWARE_ICON_SIZE, painter.device().devicePixelRatioF(), teinte)
+
+
 def _folder_text_color(index, is_shortcut: bool, default):
     """Couleur du texte d'un dossier selon sa sorte (toggle de la colonne Texte allume), sinon `default`."""
     color = ui_state.FOLDER_TEXT_COLORS.get(_folder_kind(index, is_shortcut))
@@ -859,6 +868,8 @@ class ProjectTileDelegate(QStyledItemDelegate):
                 folder_icon = True
         if folder_icon:
             icon_pixmap = _tint_folder_icon(icon_pixmap, index, is_shortcut)
+        if icon_pixmap is None:
+            icon_pixmap = _catalogue_row_icon(painter, index, is_dir_entry, is_shortcut)
         row_font = _resolve_shortcut_font() if is_shortcut else self.font_name
         row_color = _folder_text_color(index, is_shortcut, self.color_name) if is_dir_entry else self.color_name
         text_look = _row_text_look(self.column, index, row_font, row_color)

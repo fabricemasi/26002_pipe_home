@@ -546,12 +546,10 @@ class EditScopeTest(unittest.TestCase):
                    self.mode.reset_all_button, self.mode.debug_button]
         self.assertEqual(len({button.width() for button in buttons}), 1)
         self.assertEqual([button.y() for button in buttons], sorted(button.y() for button in buttons))
-        for button in (self.mode.reset_button, self.mode.reset_all_button):
-            self.assertIn("background: rgba(255,0,0,128)", button.styleSheet())
-            self.assertIn("background: rgba(255,0,0,175)", button.styleSheet())
-            self.assertIn("background: rgba(255,0,0,96)", button.styleSheet())
-        self.assertIn("background: rgba(180,125,20,230)", self.mode.debug_button.styleSheet())
-        self.assertIn("background: rgba(180,125,20,255)", self.mode.debug_button.styleSheet())
+        for button in buttons:                          # aspect : fm_theme seul (demande de l'utilisateur, 2026-11-12)
+            self.assertTrue(getattr(button, "_fm_theme_button", False))
+            from fm_theme.style import _themed_button_css
+            self.assertTrue(button.styleSheet().startswith(_themed_button_css()))    # le QSS du thème, rien d'autre
         QTest.mouseClick(self.mode.reset_button, Qt.LeftButton)
         self.assertEqual(text.pos(), QPoint(15, 4))
         self.assertNotIn("text", col.list._edit_offsets["exemple"])
@@ -731,15 +729,14 @@ class EditScopeTest(unittest.TestCase):
         for button in (self.mode.edit_button, self.mode.reset_button, self.mode.reset_all_button,
                        self.mode.debug_button, self.mode.secondary_windows_button):
             self.assertEqual(button.width(), scaled(220))
-            self.assertIn("color: black", button.styleSheet())
+            self.assertTrue(getattr(button, "_fm_theme_button", False))     # aspect : fm_theme seul (2026-11-12)
         self.assertEqual(self.mode.scope_button.width(), scaled(220))
         self.assertGreater(self.mode.scope_button.height(), scaled(22))
-        self.assertIn("rgba(64,67,71,255)", self.mode.scope_button.styleSheet())
-        self.assertIn("color: black", self.mode.scope_button.styleSheet())
+        self.assertTrue(getattr(self.mode.scope_button, "_fm_theme_button", False))
         style = self.mode.style_buttons[self.main]
         self.assertEqual(style.height(), scaled(16))
         self.assertEqual(style.y(), label.y())
-        self.assertIn("color: black", style.styleSheet())
+        self.assertTrue(getattr(style, "_fm_theme_button", False))    # aspect : fm_theme seul (2026-11-12)
         self.mode._sync_selection_tools()
         self.assertTrue(style.isVisible())
         with patch("settings_element_style.open_override") as open_override:

@@ -4,11 +4,12 @@ Découpé de pipeline_browser.py (2026-10-28) ; carte : docs/agents/fm_browser.m
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import QActionGroup, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
-    QApplication, QAbstractItemView, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QToolButton, QSlider,
+    QApplication, QAbstractItemView, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QSlider,
     QVBoxLayout, QWidget,
 )
 
-from app_style import resolve_color_ref, role_font, scaled
+from app_style import resolve_color_ref, scaled
+from fm_theme.style import theme_button
 from settings_store import load_settings, save_live_state
 from settings_widgets import widget_at_path, widget_path
 from browser_core import ROLE_MEDIA_COUNTS, ROLE_PATH
@@ -348,18 +349,14 @@ class _InterfaceMoveMode(QObject):
             })
         save_live_state("interface_edit_appearance", appearance)
 
-    def _button(self, text: str, background: str, radius: int = 2) -> QPushButton:
+    def _button(self, text: str) -> QPushButton:
+        """Bouton de la barre du mode édition : aspect = fm_theme seul (2026-11-12 ; avant : rouges / orange / gris
+        codés ici)."""
         button = QPushButton(text, self.edit_toolbar)
-        button.setFont(role_font("code", 9, 500))
         button.setCursor(Qt.ArrowCursor)
         button.setFixedHeight(scaled(22))
         button.setFixedWidth(scaled(220))
-        button.setStyleSheet(
-            f"QPushButton {{ color: black; background: {background}; border: none; "
-            f"border-radius: {scaled(radius)}px; padding: 0 {scaled(5)}px; }}"
-            f"QPushButton:hover {{ background: rgba(255,255,255,45); }}"
-        )
-        return button
+        return theme_button(button)
 
     def _build_toolbar(self):
         toolbar = QWidget(self.browser)
@@ -370,17 +367,8 @@ class _InterfaceMoveMode(QObject):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(scaled(3))
 
-        main = self._button("paramètres d'édition", "rgba(255, 0, 0, 128)", radius=2)
+        main = self._button("paramètres d'édition")
         main.setObjectName("EditModeButton")
-        main.setFont(role_font("code", 8, 500))
-        main.setFixedWidth(scaled(220))
-        main.setStyleSheet(
-            f"QPushButton {{ color: black; background: rgba(255,0,0,128); border: none; "
-            f"border-top-left-radius: 0px; border-top-right-radius: 0px; "
-            f"border-bottom-left-radius: {scaled(2)}px; border-bottom-right-radius: {scaled(2)}px; "
-            f"padding: 0 {scaled(7)}px; }}"
-            "QPushButton:hover { background: rgba(255,0,0,175); }"
-        )
         self.edit_button = main
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
@@ -390,58 +378,28 @@ class _InterfaceMoveMode(QObject):
         close.setObjectName("CloseEditModeButton")
         close.setAccessibleName("Fermer le mode édition")
         close.setFixedSize(scaled(22), scaled(22))
-        close.setFont(role_font("code", 18, 700))
         close.setCursor(Qt.ArrowCursor)
-        close.setStyleSheet(
-            f"QPushButton {{ color: white; background: rgba(255,0,0,128); border: none; "
-            f"border-radius: {scaled(2)}px; padding: 0px; }}"
-            "QPushButton:hover { background: rgba(255,0,0,175); }"
-        )
+        theme_button(close, compact=True)
         close.clicked.connect(self._deactivate)
         self.close_edit_button = close
         title_row.addWidget(close)
         layout.addLayout(title_row)
 
-        self.reset_button = self._button("reset objets", "rgba(190, 25, 25, 220)")
-        self.reset_all_button = self._button("reset tous", "rgba(190, 25, 25, 220)")
-        reset_qss = (
-            f"QPushButton {{ color: black; background: rgba(255,0,0,128); border: none; "
-            f"border-radius: {scaled(2)}px; padding: 0 {scaled(5)}px; }}"
-            "QPushButton:hover { background: rgba(255,0,0,175); }"
-            "QPushButton:pressed { background: rgba(255,0,0,96); }"
-        )
-        self.reset_button.setStyleSheet(reset_qss)
-        self.reset_all_button.setStyleSheet(reset_qss)
-        self.debug_button = self._button("debug", "rgba(180, 125, 20, 230)")
-        self.debug_button.setStyleSheet(
-            f"QPushButton {{ color: black; background: rgba(180,125,20,230); border: none; "
-            f"border-radius: {scaled(2)}px; padding: 0 {scaled(5)}px; }}"
-            "QPushButton:hover { background: rgba(180,125,20,255); }"
-            "QPushButton:pressed { background: rgba(180,125,20,190); }"
-        )
+        self.reset_button = self._button("reset objets")
+        self.reset_all_button = self._button("reset tous")
+        self.debug_button = self._button("debug")
         self.reset_button.clicked.connect(self._reset_current)
         self.reset_all_button.clicked.connect(self._reset_all)
         self.debug_button.clicked.connect(self._toggle_debug)
         layout.addWidget(self.reset_button)
         layout.addWidget(self.reset_all_button)
         layout.addWidget(self.debug_button)
-        self.secondary_windows_button = self._button(
-            "fenêtres sup. modifiables", "rgba(64,67,71,255)")
-        self.secondary_windows_button.setStyleSheet(
-            f"QPushButton {{ color: black; background: rgba(64,67,71,255); border: none; "
-            f"border-radius: {scaled(2)}px; padding: 0 {scaled(5)}px; }}"
-            "QPushButton:hover { background: rgba(78,81,85,255); }"
-        )
+        self.secondary_windows_button = self._button("fenêtres sup. modifiables")
         self.secondary_windows_button.clicked.connect(self._include_open_windows)
         layout.addWidget(self.secondary_windows_button)
-        self.scope_button = QToolButton(toolbar)
-        self.scope_button.setPopupMode(QToolButton.InstantPopup)
+        self.scope_button = QPushButton(toolbar)      # menu ouvert au clic (setMenu), aspect = fm_theme seul
         self.scope_button.setFixedSize(scaled(220), scaled(30))
-        self.scope_button.setStyleSheet(
-            f"QToolButton {{ color: black; background: rgba(64,67,71,255); border: none; "
-            f"border-radius: {scaled(2)}px; padding: 2px; }}"
-            "QToolButton:hover { background: rgba(78,81,85,255); }"
-        )
+        theme_button(self.scope_button)
         self.scope_button.hide()
         layout.addWidget(self.scope_button)
         self.style_buttons = {}
@@ -456,14 +414,9 @@ class _InterfaceMoveMode(QObject):
 
     def _make_style_button(self, parent):
         button = QPushButton("style", parent)
-        button.setFont(role_font("code", 8, 500))
         button.setCursor(Qt.ArrowCursor)
         button.setFixedHeight(scaled(16))
-        button.setStyleSheet(
-            f"QPushButton {{ color: black; background: rgba(255,0,0,180); border: none; "
-            f"border-radius: {scaled(2)}px; padding: 0 {scaled(5)}px; }}"
-            "QPushButton:hover { background: rgba(255,0,0,230); }"
-        )
+        theme_button(button, compact=True)
         button.clicked.connect(self._open_selected_text_style)
         return button
 

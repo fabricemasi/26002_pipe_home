@@ -56,9 +56,43 @@ def software_icon_key(name: str) -> str | None:
     return None
 
 def custom_software_icon_path(key: str) -> Path:
-    """Emplacement de l'icone perso d'un logiciel (globale, pas liee a un
-    projet en particulier)."""
+    """Emplacement de l'icone perso d'un logiciel ou d'une icone d'interface (globale, pas liee a un projet) : le SVG
+    choisi (garde vectoriel, demande de l'utilisateur 2026-11-13) s'il existe, sinon le PNG. Date lue par le cache
+    des mtimes : aucun acces disque de plus a la peinture."""
+    svg = CUSTOM_SOFTWARE_ICON_DIR / f"{key}.svg"
+    if _mtime.cached_mtime(svg) is not None:
+        return svg
     return CUSTOM_SOFTWARE_ICON_DIR / f"{key}.png"
+
+
+def custom_icon_files(key: str) -> tuple[Path, Path]:
+    """Les deux fichiers possibles d'une icone perso (SVG, PNG) : a oublier ensemble (enregistrement, effacement)."""
+    return CUSTOM_SOFTWARE_ICON_DIR / f"{key}.svg", CUSTOM_SOFTWARE_ICON_DIR / f"{key}.png"
+
+
+def load_icon_image(path, size: int) -> QPixmap:
+    """Image d'une icone perso : un SVG est rendu a 4 x la taille demandee (traits nets apres recadrage et reduction),
+    une image est lue telle quelle. Pixmap nulle si le fichier est illisible."""
+    path = str(path)
+    if not path.lower().endswith(".svg"):
+        return QPixmap(path)
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QImage, QPainter
+    from PySide6.QtSvg import QSvgRenderer
+    renderer = QSvgRenderer(path)
+    if not renderer.isValid():
+        return QPixmap()
+    side = max(64, int(size) * 4)
+    view = renderer.viewBoxF()
+    ratio = view.width() / view.height() if view.height() > 0 and view.width() > 0 else 1.0
+    w, h = (side, max(1, round(side / ratio))) if ratio >= 1 else (max(1, round(side * ratio)), side)
+    image = QImage(w, h, QImage.Format_ARGB32_Premultiplied)
+    image.fill(0)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    renderer.render(painter, QRectF(0, 0, w, h))
+    painter.end()
+    return QPixmap.fromImage(image)
 
 # Cles d'icones d'INTERFACE personnalisables (voir Settings > ICONES >
 # General) — reutilisent TEL QUEL le meme mecanisme de stockage que les
@@ -151,6 +185,20 @@ VIEWER_ICON_KEYS = (UI_ICON_VIEWER_HIDE, UI_ICON_VIEWER_SHOW, UI_ICON_VIEWER_GAL
 
 _UI_ICON_CACHE: dict[tuple[str, int], tuple[float, QPixmap]] = {}
 
+
+def _forget_framed_icons() -> None:
+    _software_icon_cache.clear()
+    _UI_ICON_CACHE.clear()
+
+
+_pixmaps._icon_frame.on_change(_forget_framed_icons)
+
+
+def set_icon_margin(value) -> bool:
+    """Marge des icones (Theme > General, `icon_margin`, % de chaque cote) ; vrai si elle a change : toutes les
+    icones deja cadrees sont oubliees (caches inscrits dans fm_theme.icon_frame) et refaites a leur prochaine peinture."""
+    return _pixmaps._icon_frame.set_margin(value)
+
 def custom_ui_icon_pixmap(key: str, size: int) -> QPixmap | None:
     """Pixmap perso pour une icone d'INTERFACE (voir les UI_ICON_* ci-
     dessus) si l'utilisateur en a choisi une (Settings > ICONES >
@@ -166,7 +214,7 @@ def custom_ui_icon_pixmap(key: str, size: int) -> QPixmap | None:
     cached = _UI_ICON_CACHE.get(cache_key)
     if cached and cached[0] == mtime:
         return cached[1]
-    loaded = QPixmap(str(path))
+    loaded = load_icon_image(path, size)
     if loaded.isNull():
         return None
     pix = _pixmaps._contain_square(loaded, size)

@@ -47,7 +47,7 @@ class CriteriaTest(unittest.TestCase):
         self.a = write(self.dir / "a.jpg", 3 * ff.MB)
         self.b = write(self.dir / "b.png", 10, age_days=40)
         self.c = write(self.dir / "c.blend", 10)
-        fa.update(self.a, rating=4, color=2, like=True, keywords=["ciel bleu", "nuit"], status="keep")
+        fa.update(self.a, rating=4, color=2, keywords=["ciel bleu", "nuit"], status="keep")   # « J'aime » retiré (2026-10-16)
         fa.update(self.b, rating=2, status="delete")
 
     def names(self, spec):
@@ -65,7 +65,7 @@ class CriteriaTest(unittest.TestCase):
         self.assertEqual(self.names({"color": [1, 2]}), ["a.jpg"])                 # une des couleurs
         self.assertEqual(self.names({"color": [1, 3]}), [])
         self.assertFalse(ff.is_active({"rating_mode": "eq"}))                      # mode seul : rien
-        self.assertEqual(self.names({"like": True}), ["a.jpg"])
+        self.assertEqual(self.names({"status": "keep"}), ["a.jpg"])               # drapeau « marquée »
         self.assertEqual(self.names({"keywords": ["CIEL"]}), ["a.jpg"])           # partie d'un mot cle
         self.assertEqual(self.names({"keywords": ["ciel", "ville"]}), [])          # tous les mots
         self.assertEqual(self.names({"status": "delete"}), ["b.png"])
@@ -128,12 +128,12 @@ class CriteriaTest(unittest.TestCase):
         self.assertEqual(found, [images[1]])
 
     def test_description_written_next_to_the_button(self):
-        items = ff.describe({"scope": "level:1", "rating": 3, "color": 1, "like": True, "keywords": ["nuit"],
+        items = ff.describe({"scope": "level:1", "rating": 3, "color": 1, "keywords": ["nuit"],
                              "status": "keep", "extensions": ["jpg"], "size_min": 2, "period": "7d"},
                             ["Rouge"], "Projets : projA")
         self.assertEqual(ff.describe({"rating": 3, "rating_mode": "eq", "color": [1, 2]}, ["Rouge", "Vert"]),
                          ["= ★★★", "Rouge / Vert"])
-        self.assertEqual(items, ["Projets : projA", "★★★+", "Rouge", "♥ j'aime", "#nuit", "à retenir", ".jpg",
+        self.assertEqual(items, ["Projets : projA", "★★★+", "Rouge", "#nuit", "marquée", ".jpg",
                                  "≥ 2 Mo", "7 derniers jours"])
 
 
@@ -147,7 +147,7 @@ class WindowTest(unittest.TestCase):
             got = []
             window.styleChanged.connect(got.append)
             fields = window.filter_fields
-            self.assertEqual(list(fields), ["Portée", "Provenance", "Note", "Couleurs", "J'aime", "Mots clés", "Statut",
+            self.assertEqual(list(fields), ["Portée", "Provenance", "Note", "Couleurs", "Mots clés", "Drapeau",
                                             "Type de fichier", "Taille min (0 = aucune)", "Taille max (0 = aucune)",
                                             "Date", "Modifié depuis le", "Modifié jusqu'au"])
             self.assertEqual(fields["Note"].stars.value(), 2)
@@ -180,13 +180,13 @@ class WindowTest(unittest.TestCase):
             self.assertIsNotNone(mark("Mots clés"))
             self.assertIsNotNone(mark("Couleurs"))
             self.assertIsNotNone(mark("Portée"))
-            self.assertIsNone(mark("J'aime"))
+            self.assertIsNone(mark("Drapeau"))
             # Clic droit : « Style des filtres activés… » (seulement dans la fenetre des filtres).
             from settings_widgets import Menu, add_context_extras
             opened = []
             window.on_row_style = lambda: opened.append(True)
             menu = Menu(None)
-            add_context_extras(fields["J'aime"], menu)
+            add_context_extras(fields["Drapeau"], menu)
             action = next(a for a in menu.actions() if a.text() == "Style des filtres activés…")
             action.trigger()
             self.assertEqual(opened, [True])
@@ -239,13 +239,19 @@ class EmptyGalleryTest(unittest.TestCase):
 
 
 def select(column, name):
-    for i in range(column.list.count()):
-        item = column.list.item(i)
-        if Path(item.data(ROLE_PATH)).name == name:
-            column.list.setCurrentItem(item)
-            APP.processEvents()
-            return
-    raise AssertionError(f"{name} absent de {column.column_title}")
+    # Colonnes remplies en differe (chargement asynchrone) : on attend l'element, 3 s au plus.
+    end = time.monotonic() + 3
+    while True:
+        for i in range(column.list.count()):
+            item = column.list.item(i)
+            if Path(item.data(ROLE_PATH)).name == name:
+                column.list.setCurrentItem(item)
+                APP.processEvents()
+                return
+        if time.monotonic() > end:
+            raise AssertionError(f"{name} absent de {column.column_title}")
+        APP.processEvents()
+        time.sleep(0.01)
 
 
 class PlancheTest(unittest.TestCase):
@@ -339,7 +345,11 @@ class PlancheTest(unittest.TestCase):
         self.assertEqual([p.name for p in win._viewer_paths], ["a.png", "d.png"])
         self.assertEqual(win._viewer_index, 1)
         win._flush_viewer_sync()
-        APP.processEvents()
+        deadline = time.monotonic() + 3                 # colonnes remplies en differe : on les laisse arriver
+        while (not any(c.current_path() == self.far for c in [*win.columns, *win.group_columns])
+               and time.monotonic() < deadline):
+            APP.processEvents()
+            time.sleep(0.01)
         self.assertTrue(any(c.current_path() == self.far for c in [*win.columns, *win.group_columns]))
         win._open_focus_gallery()                    # retour a la planche filtree
         APP.processEvents()

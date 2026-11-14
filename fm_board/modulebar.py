@@ -18,14 +18,29 @@ fait qu'émettre des signaux et se recaler sur cet état (`sync`). HABILLAGE : R
 sélection (clés `board_modulebar_*`, défauts = la maquette), lu par `modulebar_look` et posé par `set_look` (un seul
 habillage pour tous les boards, comme les réglages). Rien n'est repeint si l'état ni l'habillage n'ont changé (les
 panneaux sont repeints à chaque image du board)."""
+from weakref import WeakSet
+
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from shiboken6 import isValid
+
+from fm_theme import icon_frame, icon_library
 
 from .settings_defaults import BOARD_DEFAULTS
 from .ui import _GlyphButton, custom_icon, negative_pixmap, paint_glyph
 
 MODULE_NAMES = ("miro", "cad", "design", "tableur", "illustrator", "photoshop", "pdf")
+MODULE_EMBLEMS = {
+    "miro": "modules/miro/tableau_blanc_03",
+    "cad": "modules/cad/cad_04",
+    "design": "modules/design/design_03",
+    "tableur": "modules/tableur/tableur_04",
+    "illustrator": "modules/illustrator/vectoriel_03",
+    "photoshop": "modules/photoshop/retouche_03",
+    "pdf": "modules/pdf/pdf_04",
+}
+_EMBLEMES_VISIBLES = WeakSet()
 DARK = "#121316"                       # glyphe sur un bouton allume (fond de sa couleur)
 PREFIX = "board_modulebar_"
 
@@ -64,7 +79,8 @@ def modulebar_look(settings: dict | None) -> dict:
         "icon": _int(s, "icon_size", 20, 64), "button": _int(s, "button_size", 14, 40),
         "spacing": _int(s, "spacing", 0, 20), "padding": _int(s, "padding", 0, 24),
         "radius": _int(s, "row_radius", 0, 20), "row": _color(s, "row_color"),
-        "active": _int(s, "active_alpha", 0, 100), "hover": _color(s, "hover_color"),
+        "active": _int(s, "active_alpha", 0, 100), "active_border": _int(s, "active_border", 0, 6),
+        "hover": _color(s, "hover_color"),
         "ink": _color(s, "ink_color"), "dim_ink": _color(s, "dim_color"), "off_ink": _color(s, "off_color"),
         "fade": _color(s, "fade_color"), "solo": _color(s, "solo_color"), "tool": _color(s, "tool_color"),
         "tool_hover": _int(s, "tool_hover_alpha", 0, 100),
@@ -72,6 +88,8 @@ def modulebar_look(settings: dict | None) -> dict:
         "tab_bg": _color(s, "tab_color"), "tab_ink": _color(s, "tab_ink"),
         "pill_bg": _color(s, "pill_color"), "pill_size": _int(s, "pill_font_size", 8, 24),
         "colors": {m: _color(s, f"color_{m}") for m in MODULE_NAMES},
+        "pads": {m: _int(s, f"icon_pad_{m}", 0, 16) for m in MODULE_NAMES},
+        "tints": {m: bool(_value(s, f"icon_tint_{m}")) for m in MODULE_NAMES},
     }
     look["key"] = repr(sorted((k, v if not isinstance(v, dict) else sorted(v.items())) for k, v in look.items()))
     return look
@@ -116,8 +134,32 @@ def _draw_glyph(painter, kind: str, rect: QRectF, ink: str):
         paint_glyph(painter, kind, rect, QColor(ink))
 
 
+def _rafraichir_emblemes(modules=None):
+    for bouton in _EMBLEMES_VISIBLES:
+        if isValid(bouton) and (modules is None or bouton.kind in modules):
+            bouton._painted = None
+            bouton.update()
+
+
+icon_library.on_change(_rafraichir_emblemes)
+icon_frame.on_change(_rafraichir_emblemes)
+
+
+def _tinted(pixmap, ink: str):
+    """Copie de `pixmap` dont toute la forme prend la couleur `ink` (anticrénelage gardé)."""
+    image = pixmap.toImage().convertToFormat(QImage.Format_ARGB32_Premultiplied)
+    p = QPainter(image)
+    p.setCompositionMode(QPainter.CompositionMode_SourceIn)
+    p.fillRect(image.rect(), QColor(ink))
+    p.end()
+    out = QPixmap.fromImage(image)
+    out.setDevicePixelRatio(pixmap.devicePixelRatio())
+    return out
+
+
 class _ModuleIcon(_GlyphButton):
-    """Icone d'un module : glyphe de sa couleur, trait dessous, fond du module actif. APPUI LONG (reglage
+    """Icone d'un module : glyphe de sa couleur (plus de trait dessous : demande du 2026-11-13), centre dans sa case
+    avec l'espace regle par module (`pads`), fond du module actif. APPUI LONG (reglage
     `board_modulebar_long_press_ms`, 500 ms) : `longPressed(tous)` (ses boutons se deploient a cote ; Ctrl tenu a
     l'appui ou au declenchement : ceux de TOUS les modules) et pas de clic."""
 
@@ -131,6 +173,7 @@ class _ModuleIcon(_GlyphButton):
         self._long = QTimer(self)
         self._long.setSingleShot(True)
         self._long.timeout.connect(self._long_press)
+        _EMBLEMES_VISIBLES.add(self)
 
     def mousePressEvent(self, event):
         super().mousePressEvent(event)
@@ -169,6 +212,31 @@ class _ModuleIcon(_GlyphButton):
     def paint_key(self) -> tuple:
         return (self.kind, self.state, self.active, self.solo_mark, LOOK["key"])
 
+    def _draw_emblem(self, painter, rect, ink, tint: bool = False):
+        """L'icône choisie garde la priorité ; elle prend TOUTE la place, comme celles de la bibliothèque (avant : 62 %,
+        les icônes choisies paraissaient toutes petites ; demande du 2026-11-13). `tint` (toggle « Couleur du module »,
+        Barre de sélection > Icônes) : icône de la bibliothèque en MONOCHROME teinté de `ink`, icône choisie peinte de
+        `ink` sur toute sa forme. Le dessin entier du bouton est déjà mis en cache (`paint_key`)."""
+        side = int(min(rect.width(), rect.height()))
+        pixmap = custom_icon(self.kind, side)
+        if pixmap is not None and not pixmap.isNull():
+            if tint:
+                pixmap = _tinted(pixmap, ink)
+            elif QColor(ink).lightness() < 60:
+                pixmap = negative_pixmap(pixmap)
+        else:
+            identifiant = MODULE_EMBLEMS.get(self.kind)
+            if identifiant is not None:
+                style = icon_library.MONOCHROME if tint else icon_library.style_affiche(self.state == "on")
+                if icon_library.peindre(painter, rect, identifiant, style=style,
+                                        teinte=None if style == icon_library.COULEUR else ink):
+                    return
+            paint_glyph(painter, self.kind, rect, QColor(ink))
+            return
+        target = QRectF(0, 0, *pixmap.deviceIndependentSize().toTuple())
+        target.moveCenter(rect.center())
+        painter.drawPixmap(target, pixmap, QRectF(pixmap.rect()))
+
     def paint_content(self, painter):
         look = LOOK
         color = look["colors"].get(self.kind, look["ink"])
@@ -180,15 +248,16 @@ class _ModuleIcon(_GlyphButton):
             painter.setPen(Qt.NoPen)
             painter.setBrush(fill)
             painter.drawRoundedRect(rect, radius, radius)
+        if self.active and look["active_border"] > 0:            # module actif : bordure de sa couleur
+            width = look["active_border"]
+            painter.setPen(QPen(QColor(color), width))
+            painter.setBrush(Qt.NoBrush)
+            edge = rect.adjusted(width / 2, width / 2, -width / 2, -width / 2)
+            painter.drawRoundedRect(edge, max(0.0, radius - width / 2), max(0.0, radius - width / 2))
         ink = color if self.state == "on" else look["dim_ink"] if self.state == "dim" else look["off_ink"]
         unit = rect.width() / 36
-        _draw_glyph(painter, self.kind, rect.adjusted(3 * unit, 2 * unit, -3 * unit, -4 * unit), ink)
-        bar = {"on": color, "dim": look["dim_ink"]}.get(self.state)
-        if bar is not None:
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(_alpha(bar, 255 if self.state == "on" else 170))
-            painter.drawRoundedRect(QRectF(rect.center().x() - 6 * unit, rect.bottom() - 6 * unit, 12 * unit,
-                                           3 * unit), 1.5 * unit, 1.5 * unit)
+        pad = min(look["pads"].get(self.kind, 3) * unit, rect.width() / 2 - 2)
+        self._draw_emblem(painter, rect.adjusted(pad, pad, -pad, -pad), ink, look["tints"].get(self.kind, False))
         if self.solo_mark:
             painter.setPen(Qt.NoPen)
             painter.setBrush(QColor(look["solo"]))
@@ -690,12 +759,9 @@ class SoloPill(QWidget):
         look = LOOK
         solo = QColor(look["solo"])
         size = look["pill_size"]
-        rgb = f"{solo.red()},{solo.green()},{solo.blue()}"
         self.text.setStyleSheet(f"color: {solo.name()}; background: transparent; font-size: {size}px;")
-        self.button.setStyleSheet(f"QPushButton {{ border: 0; background: rgba({rgb},0.18); color: {solo.name()};"
-                                  f" font-size: {max(8, size - 1)}px; border-radius: 6px; padding: 3px 6px;"
-                                  f" min-height: 0; }}"
-                                  f"QPushButton:hover {{ background: rgba({rgb},0.30); }}")
+        from fm_theme.style import theme_button
+        theme_button(self.button)                         # aspect : fm_theme seul (2026-11-12)
         self.adjustSize()
         self.update()
 

@@ -435,7 +435,10 @@ class FontPane(QWidget):
         """Outils de l'éditeur : barre FLOTTANTE de fm_theme (aspect : section « Palette » ; disposition retenue dans
         `typo_bars`), posée sur la page de l'éditeur, visible seulement sur elle."""
         from fm_theme.bar_manager import BarManager
-        from fm_theme.palette import PaletteTextButton
+        from fm_theme.palette import PaletteTextButton, restyle_palettes_in
+        # Aspect STANDARD des barres de fm_theme (clés `palette_*`) : sans cet appel, ouvert avant le Board, le module
+        # gardait les dimensions du prototype (piège noté dans docs/agents/fm_theme.md).
+        restyle_palettes_in(None, self.settings)
         self.tool_bars = BarManager(self.pages)
         self.tool_bars.default_state = default_bars_state()
         self.tool_buttons = {}
@@ -829,6 +832,8 @@ class FontPane(QWidget):
     # -- fenêtre --
 
     def apply_settings(self, settings: dict) -> None:
+        from fm_theme.palette import restyle_palettes_in
+        restyle_palettes_in(None, {**self.settings, **settings})     # barres : aspect standard (rien refait s'il est le même)
         self.settings.update({k: v for k, v in settings.items() if k.startswith("typo_")})
         self.canvas.apply_settings(self.settings)
         self.grid.colors = self.settings

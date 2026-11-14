@@ -114,12 +114,15 @@ class ContentMixin:
         relay = Relay(self)
         self._trace_relay = relay                           # gardé : le fil lui envoie le résultat
         relay.step.connect(lambda n, total: self._trace_tip(image, f"Vectorisation… {n} / {total}"))
-        relay.done.connect(lambda result: self._finish_trace(image, result, to_item))
+        relay.done.connect(lambda result: self._finish_trace(image, result, to_item, relay))
         self._trace_tip(image, "Vectorisation…")
+
+        relay.cancelled = False
 
         def work():
             try:
-                result = tr.trace(pixels, settings, progress=lambda n, total: relay.step.emit(n, total))
+                result = tr.trace(pixels, settings, progress=lambda n, total: relay.step.emit(n, total),
+                                  cancelled=lambda: relay.cancelled)
             except Exception as exc:                        # noqa: BLE001 - montré dans la bulle
                 result = exc
             relay.done.emit(result)
@@ -133,10 +136,24 @@ class ContentMixin:
             self.refresh()
 
 
-    def _finish_trace(self, image, result, to_item):
+    def cancel_trace(self) -> bool:
+        """Échap pendant une vectorisation : le calcul s'arrête, l'image reste telle quelle ; vrai s'il y en avait un."""
+        relay = getattr(self, "_trace_relay", None)
+        if relay is None:
+            return False
+        relay.cancelled = True
+        self._trace_relay = None
+        self.tip = None
+        self.refresh()
+        return True
+
+
+    def _finish_trace(self, image, result, to_item, relay=None):
+        if relay is not None and relay.cancelled:          # annulé (Échap) : rien n'est remplacé
+            return None
         self.tip = None
         self._trace_relay = None
-        if isinstance(result, Exception) or image.scene() is None:
+        if result is None or isinstance(result, Exception) or image.scene() is None:
             self.refresh()
             return None
         return self._apply_trace(image, result, to_item)

@@ -398,7 +398,8 @@ class FilmSettingsTest(unittest.TestCase):
     def test_visionneuse_hides_text_cell_settings(self):
         self.assertEqual(v2.VIEWER_TREE[0].group, "Visionneuse")
         self.assertEqual([c.title for c in v2.VIEWER_TREE],
-                         ["Affichage", "Tableau", "Cellules", "Focus", "Regroupement", "Filtres", "Icônes"])
+                         ["Affichage", "Tableau", "Cellules", "Focus", "Filtres", "Icônes"])
+        # (Regroupement : déplacé dans Barre de navigation > Cadre des modules, 2026-11-08)
         self.assertNotIn("Visionneuse : Cellule texte", [group for _title, group in viewer_settings.VIEWER_FILM_GROUPS])
         self.assertEqual([sp.label for sp in v2.CATALOG["Visionneuse : Focus"]],
                          ["Bordures de l'image", "Border radius de l'image", "Ombres de l'image"])

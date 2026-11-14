@@ -572,12 +572,9 @@ class _OmitListField(QWidget):
             "QListWidget::item { padding: 2px 4px; }"
             f"QListWidget::item:selected {{ background: {C['sel_idle']}; }}"
         )
+        from fm_theme.style import theme_button
         for button in self.findChildren(QPushButton):
-            button.setStyleSheet(
-                f"QPushButton {{ background: {C['btn']}; color: {C['text']}; "
-                f"border: 1px solid {C['btn_border']}; border-radius: 3px; padding: 0px; }}"
-                f"QPushButton:hover {{ background: {C['btn_hover']}; }}"
-            )
+            theme_button(button, compact=True)              # aspect : fm_theme seul (2026-11-12)
 
     def _add(self):
         name, ok = self._ask()

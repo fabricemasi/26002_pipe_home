@@ -126,6 +126,7 @@ class IllustratorChrome(QObject):
         row.setContentsMargins(0, 0, 0, 0)
         row.addWidget(_text_label("Calques", "card_title"), 1)
         add = _GlyphButton("plus", "Nouveau calque", head, 26)
+        add.set_library_icon("general/ajouter_02")
         add.clicked.connect(ctl.new_layer)
         row.addWidget(add)
         layers.addWidget(head)

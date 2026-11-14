@@ -26,13 +26,12 @@ def _title(text: str) -> QLabel:
 
 
 def button(text: str, tip: str, slot, parent=None) -> QPushButton:
-    """Bouton plat habillé par la feuille de style de l'appli (comme les barres du Board et du Tableur)."""
-    b = QPushButton(text, parent)
+    """Bouton d'action : aspect = fm_theme seul (`theme_button`, 2026-11-12)."""
+    from fm_theme.style import theme_button
+    b = theme_button(QPushButton(text, parent))
     b.setToolTip(tip)
-    b.setFlat(True)
     b.setCursor(Qt.ArrowCursor)
     b.setFixedHeight(26)
-    b.setStyleSheet("QPushButton { padding: 0px 8px; }")
     b.setMinimumWidth(b.sizeHint().width())
     if slot is not None:
         b.clicked.connect(lambda _c=False: slot())

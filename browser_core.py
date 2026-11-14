@@ -201,6 +201,7 @@ from browser_core_parts.icons import (
     software_choices,
     software_icon_pixmap,
     _row_icon_pixmap,
+    _default_row_icon,
     tinted_icon,
     _PIN_ICON_CACHE,
     _pin_icon_pixmap,

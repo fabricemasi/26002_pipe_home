@@ -31,10 +31,12 @@ import weakref
 from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPointF, QPropertyAnimation, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QAbstractButton, QApplication, QGraphicsOpacityEffect, QWidget
+from shiboken6 import isValid
 
 from fm_theme.palette_defaults import (CONTROL_MAX_WIDTH, CONTROL_MIN_WIDTH, PALETTE_DEFAULTS, SIDES, SLIDER_STYLES,
                                        TITLE_ALIGNS, TOGGLE_STYLES, TRANSPARENT)
 from fm_theme.placeholder import ink as _placeholder_ink
+from fm_theme import icon_frame as _icon_frame, icon_library
 from fm_theme.style import font as _font, scaled
 from fm_theme.tokens import M, _resolve_color_value
 from fm_theme.widgets import (DRAG_GHOST_OPACITY, _MiniSlider, _paint_bordered_vector, _rounded_rect_path, attach_shadow,
@@ -60,8 +62,20 @@ def _int(settings: dict, key: str, low: int, high: int) -> int:
         return max(low, min(high, int(PALETTE_DEFAULTS[key])))
 
 
+_TRANSPARENT_TOKENS: dict[str, str] = {}      # clé -> jeton M affiché quand la couleur est transparente
+
+
+def shown_color(key: str) -> str | None:
+    """Couleur AFFICHÉE par un réglage `palette_*` laissé transparent (point de départ du sélecteur de couleur,
+    2026-11-11) ; None = transparent veut dire « aucun » ou clé pas encore rencontrée."""
+    token = _TRANSPARENT_TOKENS.get(key)
+    return M.get(token) if token else None
+
+
 def _color(settings: dict, key: str, token: str | None, colors: dict) -> str:
     """Couleur réglée (hex, « @pastille ») ; transparente = le jeton `token` du thème (M)."""
+    if token:
+        _TRANSPARENT_TOKENS[key] = token
     value = _setting(settings, key)
     resolved = _resolve_color_value(value, colors) if isinstance(value, str) else ""
     if QColor(resolved).isValid() and (QColor(resolved).alpha() or token is None):
@@ -142,7 +156,8 @@ def toolbar_button_fields(settings: dict | None) -> dict:
         "shadow_enabled": dict.fromkeys(SIDES, False), "shadow_enabled_linked": True,
         "hover_color": _color(s, "palette_cell_hover_color", "btn_hover", colors),
         "active_color": _color(s, "palette_cell_active_color", None, colors),
-        "active_border_color": _color(s, "palette_cell_active_border_color", None, colors),
+        "active_border": dict.fromkeys(SIDES, _color(s, "palette_cell_active_border_color", None, colors)),
+        "active_border_enabled": dict.fromkeys(SIDES, True), "active_border_enabled_linked": True,
         "active_border_thickness": _int(s, "palette_cell_active_border_thickness", 0, 6),
     }
 
@@ -487,6 +502,18 @@ class _ItemMixin:
         return True
 
 
+_BOUTONS_SVG = weakref.WeakKeyDictionary()
+
+
+def _actualiser_boutons_svg(modules):
+    for bouton, module in _BOUTONS_SVG.items():
+        if module in modules and isValid(bouton):
+            bouton.restyle()
+
+
+icon_library.on_change(_actualiser_boutons_svg)
+
+
 class PaletteButton(_ItemMixin, QAbstractButton):
     """Une icône : `glyph(painter, rect, color)` peint l'icône ; `active` = l'outil en cours (fond accent à 20 %,
     bordure accent). Image gardée tant que ni la taille, ni l'habillage, ni l'état ne changent."""
@@ -500,9 +527,16 @@ class PaletteButton(_ItemMixin, QAbstractButton):
         self.label = tip
         self._pix = None
         self._pix_key = None
+        self._svg_id = None
         self.setToolTip(tip)
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.NoFocus)
+
+    def set_library_icon(self, identifiant: str) -> None:
+        """Choisit le SVG de ce bouton. Le glyphe d'origine reste disponible comme secours."""
+        self._svg_id = identifiant
+        _BOUTONS_SVG[self] = identifiant.split("/")[1]
+        self.restyle()
 
     def set_active(self, active: bool) -> None:
         if bool(active) != self.active:
@@ -547,7 +581,8 @@ class PaletteButton(_ItemMixin, QAbstractButton):
             return
         look = LOOK
         dpr = self.devicePixelRatioF()
-        key = (self.width(), self.height(), dpr, self.active, self.underMouse(), self.ink, look["key"], self.extra_key())
+        key = (self.width(), self.height(), dpr, self.active, self.underMouse(), self.ink, look["key"], self.extra_key(),
+               _icon_frame.MARGIN)
         if key != self._pix_key:
             self._pix_key = key
             self._pix = _render(self.size(), dpr, self._paint_content)
@@ -587,7 +622,17 @@ class PaletteButton(_ItemMixin, QAbstractButton):
         side = min(rect.width(), rect.height()) * look["icon_ratio"] / 100
         target = QRectF(0, 0, side, side)
         target.moveCenter(rect.center())
-        self.glyph(painter, target, QColor(self.ink or look["icon_ink"]))
+        color = QColor(self.ink or look["icon_ink"])
+        if self._svg_id and self._paint_library_icon(painter, target, color):
+            return
+        # Cadre des icones (Theme > General > Marge des icones) : sans cache ici, l'image du bouton est deja gardee.
+        _icon_frame.paint_framed(painter, target, lambda p, r: self.glyph(p, r, color))
+
+    def _paint_library_icon(self, painter, rect, color):
+        normal = self.isEnabled() and color.lightness() >= 60
+        style = icon_library.style_affiche(normal)          # flat monochrome : couleur de l'icône du bouton
+        return icon_library.peindre(painter, rect, self._svg_id, style=style,
+                                     teinte=None if style == icon_library.COULEUR else color)
 
 
 class PaletteTextButton(PaletteButton):
@@ -619,8 +664,18 @@ class PaletteTextButton(PaletteButton):
         super()._paint_content(painter)            # fond actif / survol (le glyphe vide ne peint rien)
         painter.setFont(look_font("bar"))
         painter.setPen(QColor(self.ink or look["bar_value"]))
-        painter.drawText(QRectF(self.rect()).adjusted(4, 0, -4, 0), Qt.AlignCenter,
-                         painter.fontMetrics().elidedText(self._text, Qt.ElideRight, max(1, self.width() - 8)))
+        texte = QRectF(self.rect()).adjusted(4, 0, -4, 0)
+        if self._svg_id:
+            cote = min(texte.height(), texte.width() / 3) * look["icon_ratio"] / 100
+            cadre = QRectF(texte.left(), texte.center().y() - cote / 2, cote, cote)
+            if super()._paint_library_icon(painter, cadre, painter.pen().color()):
+                texte.setLeft(cadre.right() + 2)
+        painter.drawText(texte, Qt.AlignCenter,
+                         painter.fontMetrics().elidedText(self._text, Qt.ElideRight, max(1, int(texte.width()))))
+
+    def _paint_library_icon(self, painter, rect, color):
+        # L'icône d'un bouton à texte se peint à gauche du libellé.
+        return True
 
     def min_cells(self) -> int:
         return self.cells

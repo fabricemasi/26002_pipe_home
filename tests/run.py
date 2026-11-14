@@ -49,7 +49,7 @@ MODULES = {
                  "test_navigation_loading.py", "test_pin_per_preset.py", "test_project_config_defaults.py",
                  "test_software_launch.py", "test_software_menu.py", "test_type_reorder.py",
                  "test_inspector_resize.py", "test_folder_icon_colors.py"],
-    "fm_theme": ["test_theme_*.py"],
+    "fm_theme": ["test_theme_*.py", "test_button_theme.py", "test_icon_library.py"],
     "fm_font": ["test_fm_font*.py"],
     "fm_pdf": ["test_pdf_*.py"],
     "fm_agenda": ["test_agenda_*.py"],

@@ -63,6 +63,19 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(settings_store.load_settings()["table_dims"].get("x#0"), {"width": 1})
         tp.delete_preset(name)
 
+    def test_app_value_survives_the_active_app_preset(self):
+        """Signalé deux fois le 2026-11-11 : le fond du cadre de sélection (réglage de l'appli, pas du thème) ne
+        s'enregistrait pas depuis l'éditeur fm_theme : le preset ACTIF de l'appli le rejouait au chargement."""
+        saved = settings_store.load_settings()
+        self.addCleanup(settings_store.save_settings, saved)
+        settings = dict(saved, variant_sel_bg_color="#1a005ab3", active_preset="Appli active", theme_preset="")
+        settings_store.save_preset("Appli active", settings)
+        settings_store.save_settings(settings)
+        name = fresh_preset("Fond")
+        self.addCleanup(tp.delete_preset, name)
+        theme_editor.ThemeStore(name).save_changes({"variant_sel_bg_color": "#ff336699"})
+        self.assertEqual(settings_store.load_settings()["variant_sel_bg_color"], "#ff336699")
+
 
 class ManagementTest(unittest.TestCase):
     def test_rename_keeps_the_old_name_as_alias(self):
@@ -434,7 +447,7 @@ class EditorVariantTest(WindowTestCase):
             standard = pane.blocks["standard"]
             self.assertTrue(standard.default.isChecked())
             self.assertFalse(pane.blocks[compact].default.isChecked())
-            self.assertEqual([b._state for b in standard.buttons], ["standard", "survol", "focus"])
+            self.assertEqual([b._state for b in standard.buttons], ["standard", "survol", "focus", "enfonce"])
             APP.processEvents()
             other = pane.blocks[compact]                                      # collées : pas de trou entre elles
             self.assertLess(other.geometry().top() - standard.geometry().bottom(), 30)
@@ -506,6 +519,78 @@ class EditorVariantTest(WindowTestCase):
         self.assertEqual(sent, [{"bouton": compact}])               # la variante éditée voyage : l'appli filtre
         editor.window.hide()
         tp.delete_preset(name)
+
+
+class VariantLayoutTest(WindowTestCase):
+    """RÈGLE (demande de l'utilisateur, 2026-11-11) : toutes les variantes d'un type montrent le MÊME tableau, avec la
+    mise en page enregistrée (largeurs, splits) ; changer de variante ne la perd jamais."""
+
+    def setUp(self):
+        from fm_theme.widgets import _TableFrame
+        self.Frame = _TableFrame
+        self.name = fresh_preset("Mise en page")
+        self.editor = theme_editor.ThemeEditor(self.name)
+        self.window = self.editor.window
+        self.window.resize(1500, 940)
+        self.window.show()
+        self.section = next(n for n in self.window.stack.findChildren(v2._LazyNode)
+                            if n.level == 1 and n.node.title == "Bouton")
+        self.section._head.head.clicked.emit()
+        for _ in range(20):
+            APP.processEvents()
+
+    def tearDown(self):
+        self.window.hide()
+        tp.delete_preset(self.name)
+
+    def frames(self):
+        return {f.dimsKey(): f for f in self.window.findChildren(self.Frame)
+                if f.isVisible() and not getattr(f, "_dims_retired", False)}
+
+    def test_rebuilt_table_keeps_its_key_and_layout(self):
+        before = self.frames()
+        self.assertIn("Bouton#0", before)
+        cols = before["Bouton#0"].collectDims()["cols"]
+        self.section.rebuild_group()                     # l'ancien tableau est encore là (deleteLater)
+        for _ in range(10):
+            APP.processEvents()
+        after = self.frames()
+        self.assertEqual(list(after), ["Bouton#0"])      # avant : la copie prenait « Bouton#1 »
+        self.assertIsNot(after["Bouton#0"], before["Bouton#0"])
+        self.assertEqual(after["Bouton#0"].collectDims()["cols"], cols)
+
+    def test_other_variant_is_poured_in_place(self):
+        flat = self.editor.store.load()
+        other = tp.add_variant(self.name, "bouton", "autre")
+        tp.update_preset(self.name, {"button_shadow_enabled_linked": not flat.get("button_shadow_enabled_linked"),
+                                     "button_border_enabled_linked": not flat.get("button_border_enabled_linked")},
+                         editing={"bouton": other})
+        frame = self.frames()["Bouton#0"]
+        rebuilt = []
+        self.section.rebuild_group = lambda: rebuilt.append(1)
+        self.editor.edit_variant("bouton", other, save=False)
+        self.assertEqual(rebuilt, [])                    # « lier les 4 » différent : posé sur place
+        self.assertIs(self.frames()["Bouton#0"], frame)
+
+    def test_selected_variant_shows_its_own_states(self):
+        """Signalé le 2026-11-11 : sélectionner une variante changeait complètement ses états (clés absentes prises
+        dans les réglages de l'appli, ancienne couleur de bordure d'état perdue)."""
+        preset = tp.load_preset(tp.find_preset(self.name))
+        preset["types"]["bouton"]["variantes"]["partielle"] = {"hover_color": "#123456",
+                                                               "active_border_color": "#654321"}
+        tp.save_preset(preset)
+        settings = self.window.wired_values()
+        settings["button_hover_text_color"] = "#abcdef"         # réglage de l'appli, étranger à la variante
+        self.window.external_values({"button_hover_text_color": "#abcdef"})
+        self.editor.edit_variant("bouton", "partielle", save=False)
+        values = self.window.wired_values()
+        self.assertEqual(values["button_hover_color"], "#123456")
+        # Absente de la variante : jamais celle de l'appli ; police du survol non surchargée (2026-11-12) = la ligne
+        # Polices standard de la variante.
+        self.assertNotEqual(values["button_hover_text_color"], "#abcdef")
+        self.assertFalse(values["button_hover_ovr_font"])
+        self.assertEqual(values["button_hover_text_color"], values["button_font_color"])
+        self.assertEqual(set(values["button_active_border"].values()), {"#654321"})
 
 
 class AppVariantTest(unittest.TestCase):

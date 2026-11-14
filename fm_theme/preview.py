@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from PySide6.QtCore import QPoint, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap, QRegion
 from PySide6.QtWidgets import QDialog, QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
@@ -255,23 +255,33 @@ class BarShot(QWidget):
             thick = self._int(f"{line}_thickness", 1)
             painter.fillRect(0, bar - thick if top else y0, w, thick, self._color(f"{line}_color", "#2c3034"))
         if top:
-            painter.setPen(QPen(ink(), 1.4))                      # icônes dessinées par le code : magenta
-            painter.setBrush(Qt.NoBrush)
-            painter.drawEllipse(QRectF(11, y0 + bar / 2 - 5, 10, 10))
+            from fm_theme.icon_frame import paint_framed          # cadre des icônes (Thème > Général)
+
+            def logo(p, r):
+                p.setPen(QPen(ink(), 1.4))                        # icônes dessinées par le code : magenta
+                p.setBrush(Qt.NoBrush)
+                p.drawEllipse(r.adjusted(r.width() / 4, r.height() / 4, -r.width() / 4, -r.height() / 4))
+            paint_framed(painter, QRectF(6, y0 + bar / 2 - 10, 20, 20), logo, key=("preview-logo",))
             painter.setFont(_font(v, "navbar_title", 11))
             painter.setPen(self._color("navbar_title_font_color", "#7d858b"))
             painter.drawText(QRectF(30, y0, max(0, w - 150), bar), Qt.AlignVCenter | Qt.AlignLeft, "Fenêtre d'exemple")
             size = self._int("navbar_winbtn_size", 30, 16)
-            painter.setPen(QPen(ink(), 1.2))
             for index in range(3):
                 cx, cy = w - size * (3 - index) + size / 2, y0 + bar / 2
-                if index == 0:
-                    painter.drawLine(QPoint(round(cx - 5), round(cy)), QPoint(round(cx + 5), round(cy)))
-                elif index == 1:
-                    painter.drawRect(QRectF(cx - 4.5, cy - 4.5, 9, 9))
-                else:
-                    painter.drawLine(QPoint(round(cx - 4), round(cy - 4)), QPoint(round(cx + 4), round(cy + 4)))
-                    painter.drawLine(QPoint(round(cx + 4), round(cy - 4)), QPoint(round(cx - 4), round(cy + 4)))
+                side = min(size, bar)
+
+                def glyph(p, r, index=index):
+                    p.setPen(QPen(ink(), 1.2))
+                    x, y, s = r.center().x(), r.center().y(), r.width() / 6       # proportionnel au cadre
+                    if index == 0:
+                        p.drawLine(QPointF(x - s, y), QPointF(x + s, y))
+                    elif index == 1:
+                        p.drawRect(QRectF(x - s, y - s, 2 * s, 2 * s))
+                    else:
+                        p.drawLine(QPointF(x - s, y - s), QPointF(x + s, y + s))
+                        p.drawLine(QPointF(x + s, y - s), QPointF(x - s, y + s))
+                paint_framed(painter, QRectF(cx - side / 2, cy - side / 2, side, side), glyph,
+                             key=("preview-winbtn", index))
         else:
             pad = self._int("statusbar_padding_x", 10)
             box = QRectF(pad, y0, max(0, w - 2 * pad), bar)

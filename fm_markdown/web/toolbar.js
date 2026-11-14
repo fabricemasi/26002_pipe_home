@@ -1,8 +1,9 @@
 /* Module Markdown : barre d'outils reprise du plugin Obsidian « Editing Toolbar » (meme ergonomie, memes commandes).
 
    Ses commandes, icones et couleurs viennent de fm_markdown/toolbar.json (instantane AUTONOME de la configuration de
-   l'utilisateur : plus rien n'est lu dans Obsidian) ; son habillage, des reglages (Markdown > Barre d'outils).
-   Sous-menus au survol ; menus deroulants et palettes de couleurs = menus contextuels de l'appli (pont « menu »).
+   l'utilisateur : plus rien n'est lu dans Obsidian). Les BOUTONS sont une barre flottante de fm_theme cote Qt
+   (fm_markdown/bars.py, aspect = section « Barres d'outils » de fm_theme) qui envoie les commandes (message
+   « command ») ; ici : les commandes et la place prise par les barres clipsees.
    Chaque commande agit sur la selection ou le curseur, dans l'historique d'annulation, avec la syntaxe du plugin
    (<u>, <center>, <p align>, <font color>, <mark style="background:…">…). */
 (function () {
@@ -18,200 +19,52 @@
     "editor:toggle-comments": ["%%", "%%"]
   };
 
-  const NAMES_FR = {
-    "Undo Edit": "Annuler", "Redo Edit": "Rétablir", "Format Brush": "Pinceau de format",
-    "Clear Text Formatting": "Effacer la mise en forme", "Bold": "Gras", "Italic": "Italique",
-    "Strikethrough": "Barré", "Underline": "Souligné", "Highlight": "Surligner", "Header 1": "Titre 1",
-    "Header 2": "Titre 2", "Header 3": "Titre 3", "Header 4": "Titre 4", "Header 5": "Titre 5", "Header 6": "Titre 6",
-    "submenu": "Titres", "Text Tools": "Outils de texte", "Get Plain Text": "Texte brut",
-    "Full Half Converter": "Pleine / demi-chasse", "Line Operations": "Lignes", "Text Processing": "Texte",
-    "Advanced Tools": "Avancé", "Insert Blank Lines": "Insérer des lignes vides",
-    "Remove Blank Lines": "Retirer les lignes vides", "Split Lines": "Couper les lignes",
-    "Merge Lines": "Fusionner les lignes", "Dedupe Lines": "Dédoublonner les lignes",
-    "Add Prefix/Suffix": "Préfixe / suffixe", "Number Lines (Custom)": "Numéroter les lignes",
-    "Trim Line Ends": "Rogner les fins de ligne", "Shrink Extra Spaces": "Compresser les espaces",
-    "Remove All Whitespace": "Retirer tous les espaces", "List to Table": "Liste vers tableau",
-    "Table to List": "Tableau vers liste", "Extract Between Strings": "Extraire entre deux chaînes",
-    "Cut": "Couper", "Copy": "Copier", "Paste": "Coller", "Swap Line Down": "Descendre la ligne",
-    "Swap Line Up": "Monter la ligne", "Attach File": "Joindre un fichier", "Insert Table": "Insérer un tableau",
-    "Cycle List and Checklist": "Liste / case à cocher", "Blockquote": "Citation", "Callout": "Callout",
-    "Superscript": "Exposant", "Subscript": "Indice", "Inline Code": "Code en ligne", "Code Block": "Bloc de code",
-    "Wikilink": "Lien interne", "Embed": "Intégration", "Link": "Lien", "Horizontal Divider": "Séparateur",
-    "Checklist": "Cocher / décocher", "Renumber Ordered List": "Renuméroter", "Ordered List": "Liste numérotée",
-    "Unordered List": "Liste à puces", "Unindent List": "Désindenter", "Indent list": "Indenter",
-    "Justify Text": "Justifier", "Align Text Left": "Gauche", "Center Text": "Centrer", "Align Text Right": "Droite",
-    "Change Font Color": "Couleur du texte",
-    "Change Background Color": "Couleur de fond"
-  };
-  const DIVIDER = "editingToolbar-Divider-Line";
-
   class Toolbar {
-    constructor(host) {
-      this.host = host;
+    // Les BOUTONS sont une barre flottante de fm_theme, cote Qt (fm_markdown/bars.py) : la page garde les commandes
+    // (`run`), les couleurs actives et la place que les barres clipsees prennent sur les bords (`setInsets`).
+    constructor() {
       this.data = null;
       this.brush = null;
       this.fontColor = null;
       this.backgroundColor = null;
-      this.colorButtons = {};
+      this.insets = { top: 0, left: 0, right: 0, bottom: 0 };
+      this._insetKey = "";
     }
 
     get cm() { return MD.editor && ((MD.editor.lp && MD.editor.lp.activeCell()) || MD.editor.cm); }   // cellule de tableau active : elle
 
     configure(data) {
-      this.data = data || { commands: [] };
+      this.data = data || {};
       this.fontColor = this.data.fontColor || "#D83931";
       this.backgroundColor = this.data.backgroundColor || "#FFB78B8C";
-      this.colorButtons = {};
-      this.build();
-      this.syncColorIcons();
     }
 
-    label(item) {
-      const name = (item.name || item.id || "").trim();
-      return NAMES_FR[name] || name;
+    setColors(colors) {
+      if (colors && colors.fontColor) this.fontColor = colors.fontColor;
+      if (colors && colors.backgroundColor) this.backgroundColor = colors.backgroundColor;
     }
 
-    iconHtml(item) {
-      if (item.icon && /^\s*<svg/.test(item.icon)) return item.icon;
-      const m = /header(\d)-text/.exec(item.id || "");
-      return m ? '<span style="font:600 12px var(--md-text-font)">H' + m[1] + "</span>" : MD.escapeHtml(this.label(item).slice(0, 2));
+    setInsets(insets) {
+      this.insets = Object.assign({ top: 0, left: 0, right: 0, bottom: 0 }, insets || {});
+      this.sync();
     }
 
-    button(item) {
-      const b = document.createElement("button");
-      b.className = "md-tool";
-      b.title = this.label(item);
-      b.innerHTML = this.iconHtml(item);
-      b.dataset.command = item.id;
-      b.addEventListener("mousedown", (ev) => ev.preventDefault());
-      return b;
-    }
-
-    build() {
-      const frag = document.createDocumentFragment();
-      const items = [...(this.data.commands || [])];
-      // H1 doit etre directement disponible et place juste avant H2.
-      const headings = items.find((item) => item && item.SubmenuCommands);
-      const h1 = items.find((item) => item && item.id === "editing-toolbar:header1-text") ||
-        (headings && headings.SubmenuCommands.find((item) => item.id === "editing-toolbar:header1-text"));
-      if (h1) {
-        const oldIndex = items.findIndex((item) => item && item.id === h1.id);
-        if (oldIndex >= 0) items.splice(oldIndex, 1);
-        const h2Index = items.findIndex((item) => item && item.id === "editing-toolbar:header2-text");
-        items.splice(h2Index >= 0 ? h2Index : items.length, 0, h1);
-      }
-      for (const item of items) {
-        if (item.id === DIVIDER) {
-          const sep = document.createElement("span");
-          sep.className = "md-sep";
-          frag.appendChild(sep);
-          continue;
-        }
-        const b = this.button(item);
-        if (/change-(font|background)-color$/.test(item.id)) {
-          const font = item.id.indexOf("font") >= 0;
-          const group = document.createElement("div");
-          group.className = "md-color-split";
-          group.title = this.label(item);
-          b.classList.add("md-color-main");
-          b.addEventListener("click", () => this.run(item.id));
-          const caret = document.createElement("button");
-          caret.type = "button";
-          caret.className = "md-color-caret";
-          caret.title = font ? "Choisir la couleur du texte" : "Choisir la couleur de fond";
-          caret.setAttribute("aria-label", caret.title);
-          caret.addEventListener("mousedown", (ev) => ev.preventDefault());
-          caret.addEventListener("click", (ev) => {
-            ev.preventDefault(); ev.stopPropagation(); this.colorMenu(item.id, caret);
-          });
-          group.append(b, caret);
-          this.colorButtons[item.id] = b;
-          frag.appendChild(group);
-          continue;
-        }
-        if (item.SubmenuCommands) {
-          if (item.menuType === "dropdown") {
-            b.insertAdjacentHTML("beforeend", '<span class="md-caret"></span>');
-            b.addEventListener("click", (ev) => this.dropdown(item, ev.currentTarget));
-          } else {
-            const sub = document.createElement("div");
-            sub.className = "md-sub";
-            for (const child of item.SubmenuCommands) {
-              if (child.id === DIVIDER) continue;
-              const c = this.button(child);
-              c.addEventListener("click", (ev) => { ev.stopPropagation(); this.run(child.id); });
-              sub.appendChild(c);
-            }
-            b.appendChild(sub);
-          }
-        } else {
-          b.addEventListener("click", () => this.run(item.id));
-        }
-        frag.appendChild(b);
-      }
-      this.host.replaceChildren(frag);
-    }
-
-    syncColorIcons() {
-      const values = {
-        "editing-toolbar:change-font-color": this.fontColor,
-        "editing-toolbar:change-background-color": this.backgroundColor
-      };
-      for (const [id, color] of Object.entries(values)) {
-        const iconId = id.indexOf("font") >= 0 ? "change-font-color-icon" : "change-background-color-icon";
-        const path = this.colorButtons[id]?.querySelector("svg #" + iconId);
-        if (path) {
-          const rgba = /^#([0-9a-f]{2})([0-9a-f]{6})$/i.exec(color || "");
-          path.style.fill = rgba
-            ? `rgba(${parseInt(rgba[2].slice(0, 2), 16)}, ${parseInt(rgba[2].slice(2, 4), 16)}, ${parseInt(rgba[2].slice(4, 6), 16)}, ${parseInt(rgba[1], 16) / 255})`
-            : color;
-        }
-      }
-    }
-
-    async dropdown(item, anchor) {
-      const entries = [], ids = [];
-      for (const child of item.SubmenuCommands) {
-        if (child.id === DIVIDER) { entries.push({ section: this.label(child) }); continue; }
-        entries.push({ title: this.label(child), svg: /^\s*<svg/.test(child.icon || "") ? child.icon : null });
-        ids.push(child.id);
-      }
-      anchor.classList.add("is-open");
-      const r = anchor.getBoundingClientRect();
-      const index = await MD.menu(entries, r.left, r.bottom + 2).finally(() => anchor.classList.remove("is-open"));
-      if (index >= 0 && ids[index]) this.run(ids[index]);
-    }
-
-    async colorMenu(id, anchor) {
-      const font = id.indexOf("font") >= 0;
-      const key = font ? "fontColor" : "backgroundColor";
-      try {
-        const color = await MD.call("pickColor", this[key], font ? "Couleur du texte" : "Couleur de fond");
-        if (!color) return;
-        this[key] = color;
-        this.syncColorIcons();
-        MD.call("saveToolbarColors", { fontColor: this.fontColor, backgroundColor: this.backgroundColor })
-          .catch(() => {});
-        this.run(id);
-      } catch (err) { MD.notice(err.message); }
-    }
-
-    visible() {
-      const s = MD.state;
-      return !!(s.options && s.options.toolbar && s.current && s.current.kind === "markdown" && s.mode === "edit");
-    }
-
+    // Place prise par les barres clipsees (px CSS) : la page de l'editeur et de la lecture commence apres elles.
     sync() {
-      const shown = this.visible();
-      this.host.classList.toggle("is-shown", shown);
-      const rect = shown ? this.host.getBoundingClientRect() : null;
-      const css = shown ? getComputedStyle(this.host) : null;
-      const height = shown ? rect.height + (parseFloat(css.marginTop) || 0) + (parseFloat(css.marginBottom) || 0) : 0;
-      if (height !== this._height) {
-        this._height = height;
-        document.documentElement.style.setProperty("--md-toolbar-height", height + "px");
-        if (MD.editor) MD.editor.cm.setSize(null, null);
-      }
+      const i = this.insets;
+      const key = [i.top, i.left, i.right, i.bottom].join(",");
+      if (key === this._insetKey) return;
+      this._insetKey = key;
+      const root = document.documentElement.style;
+      root.setProperty("--md-toolbar-height", (i.top || 0) + "px");
+      root.setProperty("--md-bars-left", (i.left || 0) + "px");
+      root.setProperty("--md-bars-right", (i.right || 0) + "px");
+      root.setProperty("--md-bars-bottom", (i.bottom || 0) + "px");
+      if (MD.editor) MD.editor.cm.setSize(null, null);
+    }
+
+    setActive(id, active) {
+      if (MD.call) MD.call("toolActive", id, !!active).catch(() => {});
     }
 
     // -- commandes ------------------------------------------------------------------------------------------------
@@ -499,10 +352,10 @@
     }
 
     formatBrush(cm) {
-      const button = this.host.querySelector('[data-command="editing-toolbar:toggle-format-brush"]');
+      const brushId = "editing-toolbar:toggle-format-brush";
       if (this.brush) {
         this.brush = null;
-        if (button) button.classList.remove("is-active");
+        this.setActive(brushId, false);
         return;
       }
       // Les balises qui entourent la selection deviennent le format a appliquer a la prochaine selection.
@@ -516,13 +369,13 @@
       }
       if (!marks.length) { MD.notice("Sélectionnez un texte mis en forme pour copier son format."); return; }
       this.brush = marks;
-      if (button) button.classList.add("is-active");
+      this.setActive(brushId, true);
       cm.getWrapperElement().addEventListener("mouseup", () => {
         setTimeout(() => {
           if (!this.brush || !cm.somethingSelected()) return;
           cm.operation(() => { for (const [o, c] of this.brush) this.toggleWrap(cm, o, c); });
           this.brush = null;
-          if (button) button.classList.remove("is-active");
+          this.setActive(brushId, false);
         }, 0);
       }, { once: true });
     }

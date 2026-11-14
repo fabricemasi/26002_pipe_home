@@ -511,6 +511,7 @@ class LayersPanel(QWidget):
         self.target_mask = text_button("target_mask", "Sur masque",
                                        "Cible : les outils peignent le masque (noir cache, blanc révèle)",
                                        lambda: self.set_target("mask"))
+        self.target_mask.set_library_icon("modules/photoshop/masque_calque_03")
         session.listeners.append(self._on_session)
         self.refresh()
 

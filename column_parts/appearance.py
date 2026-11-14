@@ -5,6 +5,7 @@ from PySide6.QtCore import QRect, QSize, Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QMessageBox, QPushButton
 from app_style import font, scaled, resolve_color_ref, column_frame_style, column_header_qss, column_padding_for, column_style_for, set_qss
+from fm_theme.style import theme_button
 import ui_state
 from previews import software_icon_key
 from settings_widgets import Menu, _radius_dict, _radius_shrink
@@ -242,15 +243,11 @@ class ColumnAppearanceMixin:
             return
         if self._launch_btn is None:
             btn = QPushButton()
-            btn.setFlat(True)
             btn.setCursor(Qt.PointingHandCursor)
             btn.setFocusPolicy(Qt.NoFocus)
             btn.setFixedSize(18, 18)
             btn.setIconSize(QSize(14, 14))
-            btn.setStyleSheet(
-                "QPushButton { background: transparent; border: none; padding: 0; }"
-                "QPushButton:hover { background: rgba(255,255,255,0.12); border-radius: 3px; }"
-            )
+            theme_button(btn, compact=True)             # aspect : fm_theme seul (2026-11-12)
             btn.clicked.connect(lambda: self._launch_click() if self._launch_click is not None else None)
             index = self._header_layout.indexOf(self._pin_btn) if self._pin_btn is not None else -1
             if index < 0:

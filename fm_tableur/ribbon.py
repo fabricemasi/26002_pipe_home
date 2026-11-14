@@ -22,7 +22,6 @@ def _button(text, tip, slot, parent, width=0, bold=False):
     from fm_board.ui import _TextButton
     button = _TextButton(text, tip, parent, 0)
     button.setFixedHeight(26)
-    button.setStyleSheet("QPushButton { padding: 0px 7px; }")   # le reste : feuille de style de l'appli
     # jamais écrasé sous sa taille utile (sinon le texte est rogné : un « G » devenait « : »)
     button.setMinimumWidth(max(width, button.sizeHint().width()))
     if bold:

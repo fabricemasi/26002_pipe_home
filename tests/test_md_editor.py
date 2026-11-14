@@ -28,6 +28,7 @@ APP = QApplication.instance() or QApplication([])
 
 import app_style
 import fm_markdown as mdeditor
+import fm_markdown.bars as md_bars
 import fm_markdown.pane as md_pane
 import fm_markdown.style as md_style
 import pipeline_browser as pb
@@ -55,12 +56,32 @@ class StyleTest(unittest.TestCase):
             self.assertIn("base.css", page)                     # l'habillage des reglages reste dessous
 
     def test_module_margin_is_equal_on_both_sides(self):
-        widget = QWidget()
         from PySide6.QtWidgets import QVBoxLayout
+
+        class Pane(QWidget):                       # la mécanique de marge du panneau, sans la page web
+            _module_padding = 0
+            _apply_module_padding = md_pane.MarkdownPane._apply_module_padding
+            _place_page = md_pane.MarkdownPane._place_page
+            place_grips = md_pane.MarkdownPane.place_grips      # sans poignées : ne fait rien
+        host = QWidget()
+        host.resize(1000, 600)
+        widget = Pane(host)
         QVBoxLayout(widget)
-        md_pane.MarkdownPane._apply_module_padding(widget, {"md_module_padding": 75})
+        widget.setGeometry(0, 0, 1000, 600)
+        widget._apply_module_padding({"md_module_padding": 75})
         margins = widget.layout().contentsMargins()
         self.assertEqual((margins.left(), margins.top(), margins.right(), margins.bottom()), (75, 0, 75, 0))
+        # Ouvert à côté d'une colonne (300 px) : la largeur de page reste celle « colonnes repliées » (1000 - 2 × 200),
+        # centrée dans la partie visible ; trop étroit : marges nulles, jamais négatives.
+        widget._apply_module_padding({"md_module_padding": 200})
+        widget.setGeometry(300, 0, 700, 600)
+        widget._place_page()
+        margins = widget.layout().contentsMargins()
+        self.assertEqual((margins.left(), margins.right()), (50, 50))
+        self.assertEqual(widget.width() - margins.left() - margins.right(), 1000 - 2 * 200)
+        widget.setGeometry(800, 0, 200, 600)
+        widget._place_page()
+        self.assertEqual(widget.layout().contentsMargins().left(), 0)
 
     def test_every_markdown_key_has_a_default_and_a_variable(self):
         values = dict(settings_store.MARKDOWN_DEFAULTS)
@@ -69,7 +90,7 @@ class StyleTest(unittest.TestCase):
         for key in values:
             self.assertIn(key, settings_store.DEFAULT_SETTINGS)
         names = md_style.variables(values)
-        for name in ("--md-h1-color", "--md-codeblock-bg", "--md-table-grid", "--md-toolbar-bg", "--md-syntax-keyword",
+        for name in ("--md-h1-color", "--md-codeblock-bg", "--md-table-grid", "--md-syntax-keyword",
                      "--md-quote-border-left", "--md-image-max-width", "--md-bullet-1-char"):
             self.assertIn(name, names)
         # Valeurs d'origine = CSS de l'utilisateur (fabrice.css) : texte #ffffffbf, H1 rgb(75, 175, 255)...
@@ -172,6 +193,16 @@ def _js(pane, code, timeout=3000):
     QTimer.singleShot(timeout, loop.quit)
     loop.exec()
     return out.get("v")
+
+
+def _until_py(test, timeout=5.0):
+    """Attend qu'une condition côté Python devienne vraie (réponse de la page par le pont)."""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if test():
+            return True
+        settle(0.02)
+    return False
 
 
 def _until(pane, code, timeout=10.0):
@@ -332,7 +363,120 @@ class PaneTest(unittest.TestCase):
         self.assertEqual(_js(self.pane, "MD.editor.getText()"), "## **mot**\n")
         _js(self.pane, "MD.editor.cm.undo(); MD.editor.cm.undo(); true")
         self.assertEqual(_js(self.pane, "MD.editor.getText()"), "mot\n")
-        self.assertGreater(_js(self.pane, "document.querySelectorAll('#md-toolbar .md-tool').length"), 10)
+        # Barre FLOTTANTE de fm_theme (Qt) : un clic envoie la commande à la page ; la page lui laisse sa place.
+        bars = self.pane.bars
+        self.assertGreater(sum(not b.isHidden() for b in bars.buttons.values()), 10)
+        self.assertTrue(bars.buttons[md_bars.TEXT_WRAP].isHidden())
+        _js(self.pane, "MD.editor.cm.setSelection({line:0,ch:0},{line:0,ch:3}); true")
+        bars.buttons["editing-toolbar:toggle-italics"].click()
+        self.assertTrue(_until(self.pane, "MD.editor.getText() === '*mot*\\n'"))
+        self.assertTrue(bars.manager.bar_of("editing-toolbar:toggle-bold").isVisible())
+        self.assertTrue(_until(self.pane, "parseFloat(getComputedStyle(document.documentElement)"
+                                          ".getPropertyValue('--md-toolbar-height')) > 0"))
+        self.assertTrue(_js(self.pane, "document.getElementById('md-toolbar') === null"))
+
+    def test_bars_take_the_standard_toolbar_look_of_fm_theme(self):
+        from fm_theme import palette as P
+        radius = 7 if int(self.settings.get("palette_cell_radius") or 0) != 7 else 9
+        values = {**self.settings, "palette_cell_radius": radius}
+        self.addCleanup(P.restyle_palettes_in, None, self.settings)
+        self.pane.bars.sync(values)
+        self.assertEqual(P.LOOK["key"], P.palette_look(values)["key"])
+        self.assertEqual(P.LOOK["cell_radius"], P.palette_look(values)["cell_radius"])
+
+    def test_page_edges_can_be_dragged_to_change_the_margin(self):
+        from fm_markdown.page_grips import GRIP_WIDTH
+        pane = self.pane
+        values = {**self.settings, "md_module_padding": 100,
+                  "md_page_margin": {"left": 0, "top": 0, "right": 0, "bottom": 0}, "md_zoom": 100}
+        self.addCleanup(pane.apply_settings, self.settings, {"md_module_padding", "md_page_margin", "md_zoom"})
+        pane.apply_settings(values, {"md_module_padding", "md_page_margin", "md_zoom"})
+        settle(0.05)
+        left, right = pane.grips["left"], pane.grips["right"]
+        self.assertEqual(left.x() + GRIP_WIDTH // 2, 100)
+        self.assertEqual(right.x() + GRIP_WIDTH // 2, pane.width() - 100)
+        self.assertEqual(left.cursor().shape(), Qt.SizeHorCursor)
+        emitted = []
+        pane.marginDragged.connect(emitted.append)
+        self.addCleanup(pane.marginDragged.disconnect, emitted.append)
+        left.drag_start(500)
+        left.drag_to(550)                          # bord gauche vers le centre : la page rétrécit des deux côtés
+        left.drag_end()
+        self.assertEqual(pane.layout().contentsMargins().left(), 150)
+        self.assertEqual(pane.layout().contentsMargins().right(), 150)
+        right.drag_start(500)
+        right.drag_to(600)                         # bord droit vers l'extérieur : la page s'élargit
+        right.drag_end()
+        self.assertEqual(pane.layout().contentsMargins().left(), 50)
+        self.assertEqual(emitted, [150, 50])
+        self.assertEqual(left.x() + GRIP_WIDTH // 2, 50)
+        right.drag_start(0)
+        right.drag_to(-5000)                       # jamais moins que la page minimale
+        self.assertGreaterEqual(pane.width() - 2 * pane.layout().contentsMargins().left(), 200 - 1)
+
+    def test_ctrl_plus_minus_zoom_the_page_and_report_it(self):
+        pane = self.pane
+        before = self.settings.get("md_zoom", 100)
+        self.addCleanup(pane.apply_settings, self.settings, {"md_zoom"})
+        self.addCleanup(self.settings.__setitem__, "md_zoom", before)
+        pane.apply_settings({**self.settings, "md_zoom": 105}, {"md_zoom"})
+        note = self.dir / "zoom.md"
+        note.write_text("Texte\n", encoding="utf-8")
+        self.open(note)
+        seen = []
+        pane.zoomChanged.connect(seen.append)
+        self.addCleanup(pane.zoomChanged.disconnect, seen.append)
+        key = ("document.dispatchEvent(new KeyboardEvent('keydown', {key: %r, code: %r, ctrlKey: true, "
+               "bubbles: true, cancelable: true})); true")
+        _js(pane, key % ("+", "Equal"))           # 105 -> palier suivant
+        self.assertTrue(_until_py(lambda: seen == [110]))
+        self.assertEqual(pane.zoom_percent(), 110)
+        self.assertEqual(self.settings["md_zoom"], 110)
+        _js(pane, key % ("-", "Minus"))
+        _js(pane, key % ("-", "NumpadSubtract"))
+        self.assertTrue(_until_py(lambda: seen[-1:] == [90]))
+        _js(pane, key % ("0", "Digit0"))
+        self.assertTrue(_until_py(lambda: seen[-1:] == [100]))
+        for _ in range(20):
+            pane.op_zoom(0, 1)
+        self.assertEqual(pane.zoom_percent(), pane.ZOOM_MAX)   # jamais au-delà du réglage
+
+    def test_line_numbers_and_wrap_icons_toggle_the_editor(self):
+        keys = ("md_line_numbers", "md_code_wrap", "md_note_line_numbers")
+        before = {k: self.settings.get(k) for k in keys}
+
+        def restore():
+            self.settings.update(before)
+            self.pane.apply_settings(self.settings, set(keys))
+        self.addCleanup(restore)
+        self.settings.update({"md_line_numbers": False, "md_code_wrap": False, "md_note_line_numbers": False})
+        self.pane.apply_settings(self.settings, set(keys))
+        code = self.dir / "texte.txt"
+        code.write_text("ligne " * 200 + "\nfin\n", encoding="utf-8")
+        self.open(code)
+        buttons = self.pane.bars.buttons
+        self.assertTrue(buttons[md_bars.TEXT_LINE_NUMBERS].isVisible())
+        self.assertTrue(buttons[md_bars.NOTE_LINE_NUMBERS].isHidden())
+        buttons[md_bars.TEXT_LINE_NUMBERS].click()
+        self.assertTrue(self.settings["md_line_numbers"])
+        self.assertTrue(buttons[md_bars.TEXT_LINE_NUMBERS].active)
+        self.assertTrue(_until(self.pane, "MD.editor.cm.getOption('lineNumbers') === true"))
+        # Numéros de ligne jamais pris dans une sélection (copier-coller).
+        self.assertEqual(_js(self.pane, "getComputedStyle(document.querySelector('.CodeMirror-linenumber')).userSelect"),
+                         "none")
+        buttons[md_bars.TEXT_WRAP].click()
+        self.assertTrue(_until(self.pane, "MD.editor.cm.getOption('lineWrapping') === true"))
+        buttons[md_bars.TEXT_WRAP].click()
+        self.assertTrue(_until(self.pane, "MD.editor.cm.getOption('lineWrapping') === false"))
+        note = self.dir / "note.md"
+        note.write_text("# Titre\n\nTexte\n", encoding="utf-8")
+        self.open(note)
+        _js(self.pane, "MD.setMode('edit'); true")
+        self.assertTrue(_until(self.pane, "MD.editor.cm.getOption('lineNumbers') === false"))
+        self.assertTrue(buttons[md_bars.TEXT_WRAP].isHidden())
+        buttons[md_bars.NOTE_LINE_NUMBERS].click()
+        self.assertTrue(self.settings["md_note_line_numbers"])
+        self.assertTrue(_until(self.pane, "MD.editor.cm.getOption('lineNumbers') === true"))
 
     def test_reading_mode_renders_images_and_highlighted_code(self):
         (self.dir / "img").mkdir()
@@ -359,7 +503,8 @@ class PaneTest(unittest.TestCase):
         self.assertEqual(_js(self.pane, "MD.editor.kind"), "code")
         self.assertEqual(_js(self.pane, "MD.editor.cm.getOption('mode')"), "text/x-python")
         self.assertTrue(_js(self.pane, "document.getElementById('md-edit').classList.contains('is-code')"))
-        self.assertFalse(_js(self.pane, "document.getElementById('md-toolbar').classList.contains('is-shown')"))
+        self.assertTrue(self.pane.bars.buttons["editing-toolbar:toggle-bold"].isHidden())
+        self.assertFalse(self.pane.bars.buttons[md_bars.TEXT_WRAP].isHidden())
         self.assertTrue(_until(self.pane, "document.querySelector('.md-edit .cm-keyword') !== null"))
         self.assertEqual(_js(self.pane, "MD.editor.getText()"), "def f(x):\n\treturn x  # note\n")   # tabulation gardee
         self.assertEqual(_js(self.pane, "MD.modeForExtension('vex')"), "text/x-csrc")

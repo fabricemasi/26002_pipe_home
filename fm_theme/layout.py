@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from fm_theme import icon_frame as _icon_frame
 from fm_theme.theme import _set_text_role
 from fm_theme.tokens import (
     M,
@@ -85,6 +86,7 @@ def _label_block_natural_width(label_block: QWidget) -> int:
 
 
 _SVG_PIXMAP_CACHE: dict[tuple[str, int, str], QPixmap] = {}
+_icon_frame.on_change(_SVG_PIXMAP_CACHE.clear)       # marge des icones changee : refaites
 
 def _tinted_svg_pixmap(name: str, size: int, color: str, dpr: float | None = None) -> QPixmap:
     """Charge icons/{name}.svg (trace uni, sans fill) et le recolore en
@@ -112,7 +114,7 @@ def _tinted_svg_pixmap(name: str, size: int, color: str, dpr: float | None = Non
     p.end()
     # Reduit ICI par moyenne de zone a la taille physique (affiche 1:1) : laisser drawPixmap
     # reduire un pixmap 4x (filtrage bilineaire) crenelait le trace.
-    pix = _hidpi_pixmap(image, size, size, dpr)
+    pix = _hidpi_pixmap(_icon_frame.frame_image(image), size, size, dpr)   # cadre des icones (Theme > General)
     _SVG_PIXMAP_CACHE[key] = pix
     return pix
 
@@ -1136,7 +1138,10 @@ class _ReorderOverlay(QWidget):
         p.fillRect(self._band(self.origin[0], self.origin[1] - self.origin[0]), veil)
         # Un seul emplacement : celui vise (aucun quand l'element resterait a sa place).
         if self.target is not None:
-            gap = self.gaps[self.target]
+            # Emplacements explicites (lignes des tableaux : coupes et textes = éléments à part, cells._follow_slots)
+            gap = getattr(self, "_shown_gap", None)
+            if gap is None:
+                gap = self.gaps[self.target]
             glow = QColor(accent)
             glow.setAlpha(60)
             p.fillRect(self._band(gap - 6, 12), glow)

@@ -30,6 +30,10 @@ STANDARD = "standard"                                         # nom de la varian
 # `row_templates` : gabarits des lignes des fenetres de reglages, un par type de ligne (fm_theme.cells,
 # ROW_TEMPLATES_KEY) — de l'aspect commun a toutes les applis du theme (choix de l'utilisateur, 2026-10-29).
 GENERAL_KEYS = ("colors", "ui_scale", "window_radius", "row_templates",
+                # Valeur du grise (elements, textes, icones) et couleur des icones (2026-11-12).
+                "dimmed_opacity", "dimmed_text_opacity", "dimmed_icon_opacity", "navtool_icon_base_color",
+                # Marge des icones chargees, recadrees sur leurs pixels visibles (2026-11-12).
+                "icon_margin", "icon_library_style",
                 # Bordure du pourtour de toutes les fenetres (2026-10-30).
                 "window_border_enabled", "window_border_enabled_linked", "window_border", "window_border_thickness")
 GENERAL_PREFIX = "font_"
@@ -147,7 +151,14 @@ def default_variant(entry: dict) -> str:
 
 def variant_fields(entry: dict, variant: str | None = None) -> dict:
     """Champs (sans préfixe) d'une variante d'un type (par défaut : sa variante par défaut)."""
-    return dict((entry.get("variantes") or {}).get(variant or default_variant(entry)) or {})
+    fields = dict((entry.get("variantes") or {}).get(variant or default_variant(entry)) or {})
+    # Bouton, 2026-11-11 : la bordure d'un état n'est plus UNE couleur mais une ligne Bordures (couleur par côté) ;
+    # l'ancienne couleur d'une variante enregistrée avant est reprise sur les 4 côtés (sinon elle était perdue).
+    for state in ("hover", "focus", "active"):
+        old = fields.get(f"{state}_border_color")
+        if old and f"{state}_border" not in fields:
+            fields[f"{state}_border"] = dict.fromkeys(("top", "right", "bottom", "left"), old)
+    return fields
 
 
 def preset_path(name: str, folder: Path | None = None) -> Path:

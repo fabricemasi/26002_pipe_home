@@ -528,6 +528,30 @@ class CommandMixin:
         return new
 
 
+    def convert_to_cad(self) -> list:
+        """Convertir en tracés CAD : chaque sous-tracé des tracés choisis devient une polyligne du module CAD
+        (courbes -> arcs, `to_cad`), sur le calque CAD courant, couleur du fond (sinon du contour). Les objets
+        Illustrator sont REMPLACÉS (une étape d'annulation) ; le résultat s'exporte en DXF / DWG depuis le CAD."""
+        from fm_cad import cad_model
+        from . import to_cad
+        items = self.shapes()
+        if not items:
+            return []
+        cad = cad_model.page_cad(getattr(self.scene, "page", None) or {})
+        added = []
+        for item in sorted(items, key=lambda i: i.zValue()):
+            color = to_cad.cad_color(item.data)
+            for geometry in to_cad.plines(self.scene_subpaths(item)):
+                values = cad_model.new_entity_values(cad, **geometry)
+                if color:
+                    values["color"] = color
+                data = board_model.new_item("cad_pline", **values)
+                data["z"] = self.scene.next_z()
+                added.append(data)
+        self.scene.clearSelection()
+        return self.scene.replace_items(items, added, "Convertir en tracés CAD")
+
+
     def lock_selection(self):
         items = self.selection()
         if items:

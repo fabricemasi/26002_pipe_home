@@ -26,14 +26,14 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import (QByteArray, QEasingCurve, QEventLoop, QFileSystemWatcher, QObject, QPoint,
+from PySide6.QtCore import (QEasingCurve, QEventLoop, QFileSystemWatcher, QObject, QPoint,
                             QPropertyAnimation, QTimer, QUrl, Qt, Signal, Slot)
-from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import QApplication, QFileDialog, QGraphicsOpacityEffect, QMessageBox, QVBoxLayout, QWidget
 
 from fm_markdown import preview as markdown_preview
 from config import DATA_DIR
-from fm_markdown import PACKAGE_DIR, css_sync, is_markdown, is_text_file, style, web_dir
+from fm_markdown import PACKAGE_DIR, css_sync, is_markdown, is_text_file, spell, style, web_dir
 
 MODULE_DIR = DATA_DIR / "mdeditor"
 AUTOSAVE_MS = 800
@@ -154,6 +154,8 @@ class MarkdownPane(QWidget):
     closeRequested = Signal()
     stateChanged = Signal()                  # fichier, modifications, historique, mode : la barre de l'appli suit
     pathChanged = Signal(str)                # chemin du fichier affiche
+    marginDragged = Signal(int)              # tranche de la page tiree : nouvelle marge (le slider de l'appli suit)
+    zoomChanged = Signal(int)                # zoom de la page (%) : la barre d'etat de l'appli l'affiche
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -162,6 +164,7 @@ class MarkdownPane(QWidget):
         self.path: Path | None = None
         self.kind = "markdown"
         self.mode = "edit"
+        self.spell_zone = False                  # orthographe limitee a la selection (toggle_spell), non enregistree
         self.buffers: dict[str, _Buffer] = {}
         self.history: list[Path] = []
         self.history_index = -1
@@ -191,7 +194,9 @@ class MarkdownPane(QWidget):
         from PySide6.QtWebEngineCore import QWebEngineSettings
         from PySide6.QtWebEngineWidgets import QWebEngineView
         self.view = QWebEngineView(self)
-        self.view.setContextMenuPolicy(Qt.NoContextMenu)
+        # Aucun menu de Chromium ; un mot souligne par le correcteur : ses corrections (spell.py).
+        self.view.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.view.customContextMenuRequested.connect(self._on_context_menu)
         page = _page_class()(self.view)
         self.view.setPage(page)
         settings = _settings()
@@ -209,6 +214,11 @@ class MarkdownPane(QWidget):
         self.channel.registerObject("bridge", self.bridge)
         page.setWebChannel(self.channel)
         layout.addWidget(self.view)
+        from fm_markdown.page_grips import PageGrip
+        self.grips = {side: PageGrip(self, side) for side in ("left", "right")}   # avant les barres : dessous
+        from fm_markdown.bars import MarkdownBars
+        self.bars = MarkdownBars(self, settings)            # barres flottantes de fm_theme, au-dessus de la page
+        self.stateChanged.connect(lambda: self.bars.sync())
         self._apply_zoom(settings.get("md_zoom", 100))
         self._load_shell(settings)
         app = QApplication.instance()
@@ -261,6 +271,7 @@ class MarkdownPane(QWidget):
         toolbar["backgroundColor"] = settings.get("md_toolbar_background_color",
                                                    toolbar.get("backgroundColor", "#FFB78B8C"))
         self._push({"type": "toolbar", "data": toolbar})
+        self.bars.push_insets(force=True)
         if self._pending_open is not None:
             info, self._pending_open = self._pending_open, None
             self._push({"type": "open", "info": info})
@@ -291,6 +302,11 @@ class MarkdownPane(QWidget):
         remis en page (aucune taille de ligne ne bouge)."""
         css = style.css_variables(settings)
         options = style.page_options(settings)
+        if options.get("spellcheck") and not spell.enable(self.view.page().profile()):
+            options["spellcheck"] = False
+            if self._page_ready:
+                self._push({"type": "notice", "text": "Orthographe : dictionnaire français introuvable "
+                                                      "(fm_markdown/dictionaries/fr-FR.bdic)"})
         key = (css, json.dumps(options, sort_keys=True))
         if key == self._style_key and not force:
             return
@@ -303,13 +319,53 @@ class MarkdownPane(QWidget):
             self.view.setZoomFactor(max(0.25, min(5.0, float(zoom or 100) / 100)))
         except (TypeError, ValueError):
             pass
+        if hasattr(self, "bars"):
+            self.bars._inset_timer.start()             # place des barres en px CSS : depend du zoom
+
+    _module_padding = 0
 
     def _apply_module_padding(self, settings):
         try:
-            margin = max(0, int(settings.get("md_module_padding", 0)))
+            self._module_padding = max(0, int(settings.get("md_module_padding", 0)))
         except (TypeError, ValueError):
-            margin = 0
-        self.layout().setContentsMargins(margin, 0, margin, 0)
+            self._module_padding = 0
+        self._place_page()
+
+    def _place_page(self):
+        """Marge du slider (bas à droite) comptée sur la largeur COLONNES REPLIÉES (toute la zone de l'hôte, demande de
+        l'utilisateur 2026-11-12) : la page garde la même largeur qu'en plein, centrée dans la partie visible ; ouvert
+        à côté d'une colonne, la marge rétrécit d'autant (jamais la page, sauf si elle ne tient plus)."""
+        host = self.parentWidget()
+        full = host.width() if host is not None else self.width()
+        margin = max(0, round(self._module_padding - max(0, full - self.width()) / 2))
+        layout = self.layout()
+        if layout.contentsMargins().left() != margin or layout.contentsMargins().right() != margin:
+            layout.setContentsMargins(margin, 0, margin, 0)
+            if hasattr(self, "bars"):
+                self.bars._inset_timer.start()
+        self.place_grips()
+
+    def place_grips(self):
+        """Tranches saisissables sur les bords visibles de la page (fm_markdown/page_grips.py)."""
+        grips = getattr(self, "grips", None)
+        if grips:
+            from fm_markdown.page_grips import place
+            bars = getattr(self, "bars", None)
+            place(grips, self, self.layout().contentsMargins().left(), _settings(),
+                  bars._insets if bars is not None else None, self.view.zoomFactor())
+
+    def set_module_padding(self, value: int):
+        """Marge tiree a la souris (tranche de la page) : appliquee aussitot ; l'appli (slider) enregistre."""
+        value = max(0, int(value))
+        if value == self._module_padding:
+            return
+        self._module_padding = value
+        self._place_page()
+        self.marginDragged.emit(value)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._place_page()                                    # ouvert à côté d'une colonne / fenêtre redimensionnée
 
     def _push_user_css(self, settings, force: bool = False):
         """Feuille choisie dans Reglages > Markdown > CSS (couche « md-user ») : posee sans recharger la page ; absente
@@ -349,8 +405,11 @@ class MarkdownPane(QWidget):
             self._push_user_css(settings)
         if changed is None or "md_zoom" in changed:
             self._apply_zoom(settings.get("md_zoom", 100))
+            self.zoomChanged.emit(self.zoom_percent())
         if changed is None or "md_bg_color" in changed:
             self.view.page().setBackgroundColor(QColor(style.css_color(settings.get("md_bg_color") or "#1b1c1d")[:7]))
+        self.bars.sync(settings)
+        self.place_grips()                                   # marge de la page, zoom : bords visibles deplaces
         if self._page_ready:
             colors_only = changed is not None and all(style.is_color_key(k) for k in changed)
             self._push_style(settings, layout=not colors_only)
@@ -385,6 +444,7 @@ class MarkdownPane(QWidget):
                 del self.history[:-100]
             self.history_index = len(self.history) - 1
         self.path = path
+        self.spell_zone = False                  # la page quitte aussi la zone de l'ancien document
         self.kind = "markdown" if is_markdown(path) else "code"
         settings = _settings()
         if self.kind == "markdown":
@@ -416,7 +476,7 @@ class MarkdownPane(QWidget):
             info = {"path": key, "title": path.stem if self.kind == "markdown" else path.name, "kind": self.kind,
                     "ext": path.suffix.lstrip(".").lower() or path.name.lower(), "text": value["text"],
                     "dirUrl": path.parent.resolve().as_uri().rstrip("/") + "/", "mode": self.mode,
-                    "names": self._cached_names(path), "anchor": anchor}
+                    "names": self._cached_names(path), "anchor": anchor, "spell": spell.checks(path)}
             self._metrics["read"] = time.perf_counter() - started
             if self._page_ready:
                 self._push({"type": "open", "info": info})
@@ -573,6 +633,34 @@ class MarkdownPane(QWidget):
         self.stateChanged.emit()
         return True
 
+    ZOOM_STEP, ZOOM_MIN, ZOOM_MAX = 10, 50, 200           # bornes du reglage « Zoom » (Reglages > Markdown)
+
+    def zoom_percent(self) -> int:
+        return int(round(self.view.zoomFactor() * 100))
+
+    def op_zoom(self, req_id, delta):
+        """Ctrl + / Ctrl - (pas de 10 %) / Ctrl 0 (100 %) : zoom de la page, applique aussitot et retenu (md_zoom)."""
+        delta = int(delta)
+        current = self.zoom_percent()
+        step = self.ZOOM_STEP
+        if delta == 0:
+            zoom = 100
+        elif delta > 0:                                       # palier suivant (105 -> 110)
+            zoom = (current // step + 1) * step
+        else:                                                 # palier precedent (105 -> 100, 100 -> 90)
+            zoom = (-(-current // step) - 1) * step
+        zoom = max(self.ZOOM_MIN, min(self.ZOOM_MAX, zoom))
+        if zoom != current:
+            self._apply_zoom(zoom)
+            settings = _settings()
+            if isinstance(settings, dict):
+                settings["md_zoom"] = zoom
+            saver = HOOKS.get("save_state")
+            if saver is not None:
+                saver("md_zoom", zoom)
+        self.zoomChanged.emit(zoom)
+        return zoom
+
     def op_zoomCode(self, req_id, delta):
         settings = _settings()
         zoom = max(-8, min(24, int(settings.get("md_code_font_zoom") or 0) + int(delta)))
@@ -614,26 +702,69 @@ class MarkdownPane(QWidget):
         return links
 
     def op_menu(self, req_id, entries, x, y):
-        """Menu deroulant de la barre d'outils : un menu contextuel de l'appli (habillage des reglages)."""
-        from settings_menu import Menu, _section_action
-        menu = Menu(self, key="mdeditor:toolbar", editable=False)
-        actions = []
-        for entry in entries or []:
-            if entry == "-":
-                menu.addSeparator()
-                continue
-            if isinstance(entry, dict) and entry.get("section"):
-                menu.addAction(_section_action(menu, entry["section"]))
-                continue
-            action = menu.addAction(str(entry.get("title", "")))
-            icon = _entry_icon(entry, self.devicePixelRatioF())
-            if icon is not None:
-                action.setIcon(icon)
-            actions.append(action)
+        """Menu de la page (tableaux) : un menu contextuel de l'appli (habillage des reglages)."""
+        from fm_markdown.bars import run_menu
         zoom = self.view.zoomFactor()
-        chosen = menu.exec(self.view.mapToGlobal(QPoint(int(float(x) * zoom), int(float(y) * zoom))))
-        menu.deleteLater()
-        return actions.index(chosen) if chosen in actions else -1
+        return run_menu(self, entries, self.view.mapToGlobal(QPoint(int(float(x) * zoom), int(float(y) * zoom))))
+
+    def toggle_spell(self):
+        """Bouton « Orthographe » : allume -> tout s'eteint ; eteint -> la SELECTION seulement s'il y en a une
+        (temporaire, propre au document), sinon tout le document (reglage `md_spellcheck`, retenu)."""
+        if bool(_settings().get("md_spellcheck")) or self.spell_zone:
+            self._set_spell(whole=False, zone=False)
+        elif not self._page_ready or self.mode != "edit":
+            self._set_spell(whole=True, zone=False)
+        else:
+            self.view.page().runJavaScript(
+                "!!(window.MD && MD.editor && MD.state.current && MD.editor.spell && MD.editor.cm.somethingSelected())",
+                lambda selected: self._set_spell(whole=not selected, zone=bool(selected)))
+
+    def _set_spell(self, whole: bool, zone: bool):
+        settings = _settings()
+        if zone and not spell.enable(self.view.page().profile()):
+            zone = False
+            self._push({"type": "notice", "text": "Orthographe : dictionnaire français introuvable"})
+        if bool(settings.get("md_spellcheck")) != whole:
+            if isinstance(settings, dict):
+                settings["md_spellcheck"] = whole
+            saver = HOOKS.get("save_state")
+            if saver is not None:
+                saver("md_spellcheck", whole)
+        self.spell_zone = zone
+        if self._page_ready:
+            self._push({"type": "spellZone", "on": zone})
+        self._push_style({**settings, "md_spellcheck": whole}, layout=False)
+        self.bars.set_spell_active(whole or zone)
+        if (whole or zone) and self._page_ready:
+            self._push({"type": "focus"})       # le correcteur parcourt le texte de l'editeur qui a le focus
+
+    def _on_context_menu(self, pos: QPoint):
+        """Clic droit : sur un mot souligne par le correcteur, ses suggestions ; le choix remplace le mot (page)."""
+        request = self.view.lastContextMenuRequest()
+        word = request.misspelledWord() if request is not None else ""
+        if not word or self.mode != "edit":
+            return
+        from fm_markdown.bars import run_menu
+        entries, choices = spell.menu_entries(word, list(request.spellCheckerSuggestions()))
+        index = run_menu(self, entries, self.view.mapToGlobal(pos))
+        if 0 <= index < len(choices):
+            zoom = self.view.zoomFactor() or 1.0
+            self._push({"type": "spellReplace", "word": word, "with": choices[index],
+                        "x": pos.x() / zoom, "y": pos.y() / zoom})
+        elif index == len(choices):                            # « Ajouter au dictionnaire »
+            settings = _settings()
+            words = spell.add_word(settings.get("md_spell_words"), word)
+            if isinstance(settings, dict):
+                settings["md_spell_words"] = words
+            saver = HOOKS.get("save_state")
+            if saver is not None:
+                saver("md_spell_words", words)
+            self._push_style({**settings, "md_spell_words": words}, layout=False)
+
+    def op_toolActive(self, req_id, command, active):
+        """Etat d'un outil de la barre (pinceau de format arme) : le bouton de la barre flottante le montre."""
+        self.bars.set_active(str(command), bool(active))
+        return True
 
     def op_pickColor(self, req_id, initial="#D83931", title="Couleur"):
         """Ouvre le selecteur de couleurs de l'interface et renvoie la couleur validee."""
@@ -886,44 +1017,6 @@ class MarkdownPane(QWidget):
         except RuntimeError:
             pass
         self._pool.shutdown(wait=False, cancel_futures=True)
-
-
-def _entry_icon(entry: dict, ratio: float) -> QIcon | None:
-    """Icone d'une ligne de menu : pastille de couleur, ou icone SVG de la barre d'outils."""
-    size = 16
-    if entry.get("color"):
-        pixmap = QPixmap(int(size * ratio), int(size * ratio))
-        pixmap.setDevicePixelRatio(ratio)
-        pixmap.fill(Qt.transparent)
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.Antialiasing)
-        value = str(entry["color"])
-        # Couleurs de la barre au format CSS « #rrggbbaa » ; QColor lit « #aarrggbb ».
-        color = QColor(f"#{value[7:9]}{value[1:7]}" if len(value) == 9 and value.startswith("#") else value)
-        painter.setBrush(color)
-        painter.setPen(Qt.NoPen)
-        painter.drawRoundedRect(1, 1, size - 2, size - 2, 3, 3)
-        painter.end()
-        return QIcon(pixmap)
-    svg = entry.get("svg")
-    if svg:
-        try:
-            from PySide6.QtSvg import QSvgRenderer
-        except ImportError:
-            return None
-        text = re.sub(r'stroke="currentColor"', 'stroke="#ff00ff"', svg)
-        text = re.sub(r'fill="currentColor"', 'fill="#ff00ff"', text)
-        renderer = QSvgRenderer(QByteArray(text.encode("utf-8")))
-        if not renderer.isValid():
-            return None
-        pixmap = QPixmap(int(size * ratio), int(size * ratio))
-        pixmap.setDevicePixelRatio(ratio)
-        pixmap.fill(Qt.transparent)
-        painter = QPainter(pixmap)
-        renderer.render(painter)
-        painter.end()
-        return QIcon(pixmap)
-    return None
 
 
 # -- Instance unique (prechargee) ----------------------------------------------------------------------------------------

@@ -177,6 +177,8 @@ class LivePreviewTest(unittest.TestCase):
         self.assertEqual(visible["color"], "rgb(51, 86, 189)")
         self.assertTrue(visible["tags"], "le code source doit rester visible sous le curseur")
         _js(self.pane, "MD.editor.cm.setCursor(0, 0); true")
+        # Decorations refaites en differe (~0,15 s) : on attend le masquage, comme l'apparition plus haut.
+        _until(self.pane, f"!{line}.textContent.includes('<font color=')")
         hidden = _json(self.pane, f"""(() => {{ const l = {line}, s = l.querySelector('.md-inline-font-color');
             return {{color: getComputedStyle(s).color, tags: l.textContent.includes('<font color=')}}; }})()""")
         self.assertEqual(hidden["color"], "rgb(51, 86, 189)")

@@ -309,6 +309,12 @@ class PdfPane(QWidget):
                   lambda k=kind: self.designer.set_place_kind(None if self.designer.overlay.place_kind == k else k),
                   checkable=True)
             self.kind_buttons[kind] = b
+            if kind == "text":
+                from fm_theme import icon_library
+                b.setIcon(icon_library.icone_cadree("modules/pdf/champ_formulaire_03", 16, self.devicePixelRatioF(),
+                                                    style=icon_library.MONOCHROME,
+                                                    teinte=b.palette().buttonText().color()))
+                b.setMinimumWidth(b.sizeHint().width())
             row.append(b)
         row.append(None)
         self.b_tab_order = B("Ordre de tabulation", "Cliquez les champs dans l'ordre de tabulation voulu",
