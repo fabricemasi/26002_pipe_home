@@ -657,6 +657,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "navtool_icon_color_video": "#ffffff", "navtool_icon_color_font": "#ffffff", "navtool_icon_color_pdf": "#ffffff",
     "navtool_icon_color_agenda": "#ffffff",
     "navtool_icon_color_taches": "#ffffff",
+    "navtool_icon_color_audio": "#ffffff", "navtool_icon_color_music": "#ffffff",   # FM Audio / FM Music
     "navtool_padding": {"left": 0, "top": 0, "right": 0, "bottom": 0},
     "navtool_padding_linked": True,
     # Boutons de la fenetre (punaise, reduire, agrandir, fermer ; fm_theme > Barre de navigation > Boutons fenetre,
@@ -1178,6 +1179,10 @@ DEFAULT_SETTINGS.update(TYPO_DEFAULTS)
 # Module PDF (fm_pdf/settings_defaults.py)
 from fm_pdf.settings_defaults import PDF_DEFAULTS  # noqa: E402
 DEFAULT_SETTINGS.update(PDF_DEFAULTS)
+from fm_audio.settings_defaults import AUDIO_DEFAULTS  # noqa: E402  (FM Audio / FM Music, moteur partagé)
+DEFAULT_SETTINGS.update(AUDIO_DEFAULTS)
+from fm_music.settings_defaults import MUSIC_DEFAULTS  # noqa: E402  (FM Music)
+DEFAULT_SETTINGS.update(MUSIC_DEFAULTS)
 # Agenda (fm_agenda/settings_defaults.py)
 from fm_agenda.settings_defaults import AGENDA_DEFAULTS  # noqa: E402
 DEFAULT_SETTINGS.update(AGENDA_DEFAULTS)

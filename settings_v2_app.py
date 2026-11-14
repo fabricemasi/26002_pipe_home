@@ -281,7 +281,10 @@ def _default_glyph(key: str, size: int) -> QPixmap | None:
                     pb_previews.UI_ICON_NAVBAR_PIN: "pin", pb_previews.UI_ICON_NAVBAR_COLUMNS: "fade_columns",
                     pb_previews.UI_ICON_NAVBAR_VIDEO: "video", pb_previews.UI_ICON_NAVBAR_PDF: "pdf",
                     pb_previews.UI_ICON_NAVBAR_AGENDA: "agenda",
-                    pb_previews.UI_ICON_NAVBAR_TACHES: "taches", pb_previews.UI_ICON_NAVBAR_THEME: "gear"}
+                    pb_previews.UI_ICON_NAVBAR_TACHES: "taches", pb_previews.UI_ICON_NAVBAR_THEME: "gear",
+                    pb_previews.UI_ICON_NAVBAR_AUDIO: "audio", pb_previews.UI_ICON_NAVBAR_MUSIC: "music"}
+    if isinstance(key, str) and key.startswith("ui_sound_"):   # outils du cadre FM Audio / FM Music (catalogue)
+        navbar_kinds[key] = key[len("ui_"):]
     if key in navbar_kinds:
         from preview_column import IconButton
 

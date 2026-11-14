@@ -16,6 +16,12 @@ sont lancés à chaque passage, sans ligne ici (liste `BANCS` de `tools/fluidite
 
 ## File
 
+- [ ] 2026-11-14 — FM Audio / FM Music dans la barre (`main_window/audio_module._layout_sound_buttons`, appelé à l'ouverture / fermeture et aux CHANGEMENTS du transport seulement, 9 boutons) : test lent `python -m unittest tests.test_fm_audio_module.NavbarAppTest` (avec `PIPELINE_TESTS_LENTS=1`, fenêtre entière) ; mesurer le clic sur le bouton FM Audio (construction du pane + cadre), cible < 100 ms de retour visuel.
+- [ ] 2026-11-14 — Moteur audio (fm_audio_engine) : coût DSP du graphe par bloc de 128 à 48 kHz, 32 pistes (clip + EQ + compresseur, send réverbe, limiteur). Profil de référence : i9-9900K, 64 Go, Windows 11 26100, Realtek HD Audio. Critère p99 ≤ 50 % de 2,67 ms, max < échéance (contrôle de 4 pistes à la main : p99 70 µs) — `python tools/bench_audio_engine.py 32 8000`
+- [ ] 2026-11-14 — Moteur audio, 64 pistes (même scène, même critère) — `python tools/bench_audio_engine.py 64 8000`
+- [ ] 2026-11-14 — FM Audio / FM Music : timeline 60 Hz (p95 ≤ 16,7 ms, p99 ≤ 33 ms, aucune pause ≥ 50 ms), zoom et défilement d'une prise de 30 min, piano roll de 5 000 notes — `python tools/bench_audio_ui.py`
+- [ ] 2026-11-14 — Moteur audio sur matériel réel : xruns, jitter du callback, latence aller-retour par boucle physique, endurance 30 min. MESURE HUMAINE (câble de bouclage, action explicite de l'utilisateur), pas de commande automatique ; résultat à confirmer par « VALIDE R-RT performance ».
+
 - [ ] 2026-11-13 — Vectorisation d'image refaite (fm_illustrator/trace_contours.py, trace_fit.py) : 70 à 460 ms par forme de 600 px, ~0,4 s pour un « m » au Détail 1 000 (fil de fond, Échap arrête). Surveiller une image en 16 couleurs au Détail 1 500 (nombreux contours) — `python tools/bench_trace.py`
 - [ ] 2026-11-13 — Icônes officielles, navigation et Board : hors écran, 30 changements de couleur CAD avec les widgets visibles, médiane ~2,2 ms ; une peinture stable ne demande aucun rendu SVG. Fenêtre complète (plateforme Windows, Board ouvert, 30 changements) : `_apply_settings` 3,4 ms, avec les peintures 7,6 ms en médiane (max 25,7), une icône refaite par changement. Confirmer sur la fenêtre complète, Board ouvert, pendant le glisser de couleur et un déplacement dans la vue — `python -m cProfile -o output/barre_modules.prof pipeline_browser.py`
 

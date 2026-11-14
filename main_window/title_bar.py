@@ -652,6 +652,22 @@ class TitleBar(QWidget):
             group.hide()
         return group
 
+    def audio_group(self) -> "_ViewerGroup":
+        """Cadre « FM Audio » (module fm_audio/) : memes habillage et place que « Visionneuse »."""
+        group = getattr(self, "_audio_group", None)
+        if group is None:
+            group = self._audio_group = _ViewerGroup(self, "FM Audio")
+            group.hide()
+        return group
+
+    def music_group(self) -> "_ViewerGroup":
+        """Cadre « FM Music » (module fm_music/) : memes habillage et place que « Visionneuse »."""
+        group = getattr(self, "_music_group", None)
+        if group is None:
+            group = self._music_group = _ViewerGroup(self, "FM Music")
+            group.hide()
+        return group
+
     def place_viewer_group(self):
         """Cadres « Visionneuse » / « Éditeur » / « Board » / « Vidéo » / « Typographie » / « PDF » / « Agenda » :
         a la suite des outils (apres le dernier bouton de la barre), centres dans la hauteur de la rangee des outils,
@@ -659,7 +675,8 @@ class TitleBar(QWidget):
         for group in (getattr(self, "_viewer_group", None), getattr(self, "_editor_group", None),
                       getattr(self, "_board_group", None), getattr(self, "_video_group", None),
                       getattr(self, "_font_group", None), getattr(self, "_pdf_group", None),
-                      getattr(self, "_agenda_group", None), getattr(self, "_taches_group", None)):
+                      getattr(self, "_agenda_group", None), getattr(self, "_taches_group", None),
+                      getattr(self, "_audio_group", None), getattr(self, "_music_group", None)):
             if group is not None and not group.isHidden():
                 self._place_group(group)
 
@@ -925,7 +942,8 @@ class TitleBar(QWidget):
                              ("_board_group", "_layout_board_buttons"), ("_video_group", "_layout_video_buttons"),
                              ("_font_group", "_layout_font_buttons"), ("_pdf_group", "_layout_pdf_buttons"),
                              ("_agenda_group", "_layout_agenda_buttons"),
-                             ("_taches_group", "_layout_taches_buttons")):
+                             ("_taches_group", "_layout_taches_buttons"),
+                             ("_audio_group", "_layout_sound_buttons"), ("_music_group", "_layout_sound_buttons")):
             group = getattr(self, attr, None)
             if group is None:
                 continue

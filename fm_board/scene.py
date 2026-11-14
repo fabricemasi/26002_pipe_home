@@ -33,6 +33,7 @@ from fm_tableur import board_item as tableur_items  # noqa: F401 - enregistre le
 from fm_illustrator import items as ill_items  # noqa: F401 - enregistre les types du module Illustrator
 from fm_photoshop import board_item as ps_item  # noqa: F401 - enregistre le type du module Photoshop
 from fm_pdf import board_item as pdf_item  # noqa: F401 - enregistre le type du module PDF
+from fm_audio import board_item as audio_item  # noqa: F401 - enregistre le type « audio_doc » (cartes audio)
 from . import model, serialization, snap_guides
 from .snap_guides import GuideLine
 from fm_cad.cad_items import unit_of

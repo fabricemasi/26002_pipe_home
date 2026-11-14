@@ -208,6 +208,9 @@ class AgendaModuleMixin:
         leave_pdf = getattr(self, "_leave_pdf", None)
         if leave_pdf is not None and not leave_pdf():
             return False
+        leave_audio = getattr(self, "_leave_audio", None)      # FM Audio / FM Music : fermés d'abord (prise en cours : masqués)
+        if leave_audio is not None and not leave_audio():
+            return False
         self._close_video()
         leave_taches = getattr(self, "_leave_taches", None)      # tâches ouvertes : rangées d'abord (fm_taches)
         if leave_taches is not None:

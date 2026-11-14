@@ -142,6 +142,10 @@ UI_ICON_NAVBAR_AGENDA = "ui_navbar_agenda"     # calendrier (fm_agenda)
 
 UI_ICON_NAVBAR_TACHES = "ui_navbar_taches"     # liste à cocher (fm_taches)
 
+UI_ICON_NAVBAR_AUDIO = "ui_navbar_audio"       # FM Audio (fm_audio)
+
+UI_ICON_NAVBAR_MUSIC = "ui_navbar_music"       # FM Music (fm_music)
+
 UI_ICON_NAVBAR_THEME = "ui_navbar_theme"       # bouton fm_theme (sans icone perso : celle de l'engrenage)
 
 UI_ICON_NAVBAR_PIN = "ui_navbar_pin"       # punaise : fenetre « toujours au-dessus » (clic droit sur sa barre)

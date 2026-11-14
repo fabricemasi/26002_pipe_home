@@ -187,6 +187,9 @@ class TasksModuleMixin:
         leave_pdf = getattr(self, "_leave_pdf", None)
         if leave_pdf is not None and not leave_pdf():
             return False
+        leave_audio = getattr(self, "_leave_audio", None)      # FM Audio / FM Music : fermés d'abord (prise en cours : masqués)
+        if leave_audio is not None and not leave_audio():
+            return False
         self._close_video()
         leave_agenda = getattr(self, "_leave_agenda", None)
         if leave_agenda is not None:

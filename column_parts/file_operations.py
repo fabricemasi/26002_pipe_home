@@ -201,6 +201,56 @@ class ColumnFileOperationsMixin:
             return None
         self._refresh_and_select(new_path)
         return new_path
+
+    def _create_sound_project(self, kind: str, name: str | None = None):
+        """« Créer un projet FM Audio / FM Music » (voir _on_context_menu) : un projet vide `.fmaudio`
+        (comme « Nouveau » de l'éditeur) ou le morceau de départ de FM Music `.fmmusic` (batterie + synthé),
+        même mécanique que _create_board_file (nom, caractères interdits, niveau d'une colonne fusionnée) ;
+        il est sélectionné, le double-clic l'ouvre dans son module."""
+        from fm_audio_engine.project import Project, ProjectError
+        title, ext = ("FM Music", ".fmmusic") if kind == "music" else ("FM Audio", ".fmaudio")
+        caption = f"Créer un projet {title}"
+        if name is None:
+            name, ok = QInputDialog.getText(self, caption, "Nom du projet :", QLineEdit.Normal, "Nouveau projet")
+            if not ok:
+                return None
+        name = (name or "").strip()
+        if name.lower().endswith(ext):
+            name = name[:-len(ext)].strip()
+        if not name:
+            return None
+        if any(ch in name for ch in '\\/:*?"<>|'):
+            QMessageBox.warning(self, caption, "Le nom contient des caracteres interdits.")
+            return None
+        target_dir = self.directory
+        sources, labels = getattr(self, "_source_dirs", None), getattr(self, "_source_labels", None)
+        if sources is not None and labels and len(sources) > 1:
+            choice, ok_level = QInputDialog.getItem(
+                self, caption, "A quel niveau enregistrer ce projet ?", labels, 0, False)
+            if not ok_level:
+                return None
+            target_dir = sources[labels.index(choice)]
+        new_path = Path(target_dir) / f"{name}{ext}"
+        if new_path.exists():
+            QMessageBox.warning(self, caption, f"« {new_path.name} » existe deja.")
+            return None
+        import ui_state
+        from fm_sound_ui.editor_base import new_sample_rate
+        settings = ui_state.APPLIED_SETTINGS or {}
+        if kind == "music":
+            from fm_music.pane import default_project
+            project = default_project(settings)
+            project.name = name
+        else:
+            project = Project("audio", name, sample_rate=new_sample_rate(settings))
+        try:
+            project.save(new_path)
+        except (OSError, ProjectError) as exc:
+            QMessageBox.warning(self, caption, f"Impossible de creer le projet :\n{exc}")
+            return None
+        self._refresh_and_select(new_path)
+        return new_path
+
     def _add_shortcut(self):
         """"Ajouter un raccourci" (voir _on_context_menu, ROLE_IS_SHORTCUT/
         load_shortcuts/add_shortcut) : va chercher un fichier ou un

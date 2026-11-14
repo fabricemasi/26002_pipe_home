@@ -1177,6 +1177,13 @@ NAV_LIBRARY_ICONS = {
     "font": "modules/font/typographie_03",
     "pdf": "modules/pdf/pdf_04",
     "agenda": "modules/agenda/calendrier_01",
+    "audio": "modules/audio/edition_audio_01",          # FM Audio (emblème) et outils de son cadre
+    "music": "modules/music/composition_01",            # FM Music
+    "sound_play": "modules/audio/lecture_transport_01",
+    "sound_record": "modules/audio/enregistrement_01",
+    "sound_loop": "modules/audio/boucle_lecture_01",
+    "sound_metronome": "modules/audio/metronome_01",
+    "sound_mixer": "modules/audio/mixage_01",
     "gear": "general/parametres_01",
     "nav_back": "general/retour_02",
     "find": "general/recherche_02",          # « Rechercher (Ctrl+F) » du module Markdown
@@ -1784,8 +1791,10 @@ class IconButton(QPushButton):
         if self._kind == "sliders":
             return custom_ui_icon_pixmap(UI_ICON_SETTINGS_STYLE, size)
         if self._kind in ("min", "max", "close", "browse", "presets", "viewer", "text_editor", "board", "video",
-                          "font", "pdf", "agenda", "taches", "pin"):
+                          "font", "pdf", "agenda", "taches", "audio", "music", "pin"):
             return custom_ui_icon_pixmap(f"ui_navbar_{self._kind}", size)
+        if self._kind.startswith("sound_"):                                  # outils du cadre FM Audio / FM Music
+            return custom_ui_icon_pixmap(f"ui_{self._kind}", size)
         if self._kind in ("fade_columns", "show_columns"):                   # masquer / montrer les colonnes
             return custom_ui_icon_pixmap("ui_navbar_columns", size)
         viewer_key = VIEWER_BUTTON_ICONS.get(self._kind)

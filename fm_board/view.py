@@ -1541,6 +1541,13 @@ class BoardView(QGraphicsView):
         """Depot d'images venues d'ailleurs ; True si quelque chose est pose (ou en cours de telechargement)."""
         from . import drop
         found = drop.image_sources(mime)
+        if found["files"]:                                # sons et projets audio : cartes liées (fm_audio)
+            from fm_audio import board_item as audio_cards
+            taken = audio_cards.drop_files(self.board, found["files"], at)
+            if taken:
+                found["files"] = [p for p in found["files"] if p not in taken]
+                if not found["files"]:
+                    return True
         if found["files"] and (ctl := self._module_ctl()) is not None and ctl.drop_files(found["files"], at):
             return True
         if found["files"] and self.add_image_files(found["files"], at):

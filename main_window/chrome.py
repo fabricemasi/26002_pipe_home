@@ -123,6 +123,12 @@ class ChromeMixin:
             on_taches = self._taches_open() if hasattr(self, "_taches_open") else False
             self._set_button_usable(btn_taches, True)
             btn_taches.set_alert(self._mode_on_color() if on_taches else None)
+        for name, kind in (("btn_audio", "audio"), ("btn_music", "music")):   # FM Audio / FM Music : toujours actifs
+            btn = getattr(self, name, None)
+            if btn is not None:
+                pane = getattr(self, "_audio_pane" if kind == "audio" else "_music_pane", None)
+                self._set_button_usable(btn, True)
+                btn.set_alert(self._mode_on_color() if pane is not None and pane.isVisible() else None)
 
     @staticmethod
     def _mode_on_color() -> str:
@@ -199,7 +205,8 @@ class ChromeMixin:
     # Bouton de la barre -> sa cle de la colonne Couleur (fm_browser > Barre de navigation > Icones).
     _NAV_ICON_COLORS = (("btn_theme", "theme"), ("btn_viewer", "viewer"), ("btn_text_editor", "text_editor"),
                         ("btn_board", "board"), ("btn_video", "video"), ("btn_font", "font"), ("btn_pdf", "pdf"),
-                        ("btn_agenda", "agenda"), ("btn_taches", "taches"))
+                        ("btn_agenda", "agenda"), ("btn_taches", "taches"), ("btn_audio", "audio"),
+                        ("btn_music", "music"))
 
     def _refresh_navbar_icons(self):
         """Icones de la barre : couleur de base et couleur desactivee (fm_browser > ICONES > Couleur des icones) ;
@@ -221,7 +228,8 @@ class ChromeMixin:
         for btn in (self.btn_browse, self.btn_presets, self.btn_settings, self.btn_style, self.btn_collapse,
                     self.btn_columns, self.btn_viewer, self.btn_text_editor, self.btn_board, self.btn_video,
                     self.btn_font, getattr(self, "btn_pdf", None), getattr(self, "btn_agenda", None),
-                    getattr(self, "btn_taches", None), theme):
+                    getattr(self, "btn_taches", None), getattr(self, "btn_audio", None),
+                    getattr(self, "btn_music", None), theme):
             if btn is None:
                 continue
             btn.set_colors(base, C["text"])

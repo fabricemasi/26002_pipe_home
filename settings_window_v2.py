@@ -97,6 +97,8 @@ from fm_illustrator.settings import ILL_TAB, ILL_TREE
 from fm_photoshop.settings import PS_TAB, PS_TREE
 from fm_font.settings import TYPO_TAB, TYPO_TREE
 from fm_pdf.settings import PDF_TAB, PDF_TREE
+from fm_audio.settings import AUDIO_TAB, AUDIO_TREE
+from fm_music.settings import MUSIC_TAB, MUSIC_TREE
 from fm_agenda.settings import AGENDA_TAB, AGENDA_TREE
 from fm_taches.settings import TACHES_TAB, TACHES_TREE
 from fm_visionneuse.settings import VIEWER_TAB, VIEWER_TREE
@@ -658,7 +660,8 @@ _NAVBAR_ICONS = (
     ("navbar_columns", "Icône masquer les colonnes"), ("navbar_viewer", "Icône visionneuse"),
     ("navbar_text_editor", "Icône éditeur Markdown / code"), ("navbar_board", "Icône board"),
     ("navbar_video", "Icône module vidéo"), ("navbar_font", "Icône typographie"), ("navbar_pdf", "Icône PDF"),
-    ("navbar_agenda", "Icône calendrier"), ("navbar_taches", "Icône tâches"), ("navbar_pin", "Icône « toujours au-dessus » (punaise)"))
+    ("navbar_agenda", "Icône calendrier"), ("navbar_taches", "Icône tâches"), ("navbar_audio", "Icône FM Audio"),
+    ("navbar_music", "Icône FM Music"), ("navbar_pin", "Icône « toujours au-dessus » (punaise)"))
 # Colonne « Couleur » du tableau d'icones de fm_browser (demande de l'utilisateur, 2026-11-08) : icone -> (cle, defaut).
 # Couleur FUSIONNEE (produit) sur l'icone du bouton tant qu'il est actif (main_window/chrome._refresh_navbar_icons) ;
 # blanc = l'icone telle quelle. fm_theme : son ancien orange (ex « Couleur de l'icone fm_theme »).
@@ -669,6 +672,7 @@ NAVBAR_ICON_COLORS = {
     "navbar_font": ("navtool_icon_color_font", "#ffffff"), "navbar_pdf": ("navtool_icon_color_pdf", "#ffffff"),
     "navbar_agenda": ("navtool_icon_color_agenda", "#ffffff"),
     "navbar_taches": ("navtool_icon_color_taches", "#ffffff"),
+    "navbar_audio": ("navtool_icon_color_audio", "#ffffff"), "navbar_music": ("navtool_icon_color_music", "#ffffff"),
 }
 _NAVBAR_THEME_ICONS = ("navbar_min", "navbar_max", "navbar_close", "navbar_pin")   # les boutons de la fenetre
 CATALOG["Barre de navigation : Icones"] = [            # fm_theme
@@ -1252,8 +1256,8 @@ def tab_tree(label: str, settings: dict | None = None) -> tuple:
 # Onglets de reglages generaux a part (pas une colonne) : leur arbre.
 STANDALONE_TABS = {MARKDOWN_TAB: MARKDOWN_TREE, VIDEO_TAB: VIDEO_TREE, BOARD_TAB: BOARD_TREE, MRO_TAB: MRO_TREE,
                    CAD_TAB: CAD_TREE, DESIGN_TAB: DESIGN_TREE, TABLEUR_TAB: TABLEUR_TREE, ILL_TAB: ILL_TREE, PS_TAB: PS_TREE, VIEWER_TAB: VIEWER_TREE,
-                   TYPO_TAB: TYPO_TREE, PDF_TAB: PDF_TREE, AGENDA_TAB: AGENDA_TREE,
-                   TACHES_TAB: TACHES_TREE}
+                   TYPO_TAB: TYPO_TREE, PDF_TAB: PDF_TREE, AUDIO_TAB: AUDIO_TREE, AGENDA_TAB: AGENDA_TREE,
+                   TACHES_TAB: TACHES_TREE, MUSIC_TAB: MUSIC_TREE}
 
 # Groupes repris de la v1 : leurs tableaux ont une cle de dimensions a eux (voir build_group).
 # Groupes dont la section porte le MEME titre qu'une section de l'autre fenetre (fm_theme / fm_browser) : la cle
@@ -1282,15 +1286,18 @@ MODULE_SCOPES: dict[str, list[tuple[str, str | None]]] = {
     "viewer": [(VIEWER_TAB, None)],
     "font": [(TYPO_TAB, None)],             # module typographique (fm_font)
     "pdf": [(PDF_TAB, None)],               # éditeur PDF (fm_pdf ; aussi onglet de « Réglages : Board »)
+    "audio": [(AUDIO_TAB, None)],           # FM Audio et moteur partagé (fm_audio)
+    "music": [(MUSIC_TAB, None)],           # FM Music (fm_music)
     "agenda": [(AGENDA_TAB, None)],         # agenda (fm_agenda)
     "taches": [(TACHES_TAB, None)],         # tâches (fm_taches)
     "theme": [(THEME_TAB, None)],          # editeur fm_theme (pas dans la rangee de la fenetre generale)
 }
 MODULE_TITLES = {"video": "Vidéo", "markdown": "Markdown", "board": "Board", "viewer": "Visionneuse",
-                 "font": "Typographie", "pdf": "PDF", "agenda": "Agenda", "taches": "Tâches"}
+                 "font": "Typographie", "pdf": "PDF", "agenda": "Agenda", "taches": "Tâches",
+                 "audio": "FM Audio", "music": "FM Music"}
 # Libelle AFFICHE d'un onglet quand il differe de son identifiant (cles retenues, tests).
 TAB_LABELS = {MARKDOWN_TAB: "Module Markdown", BOARD_TAB: "Board", MRO_TAB: "MRO", CAD_TAB: "CAD", DESIGN_TAB: "Design",
-              TABLEUR_TAB: "Tableur", ILL_TAB: "Illustrator", PS_TAB: "Photoshop", PDF_TAB: "PDF",
+              TABLEUR_TAB: "Tableur", ILL_TAB: "Illustrator", PS_TAB: "Photoshop", PDF_TAB: "PDF", AUDIO_TAB: "FM Audio", MUSIC_TAB: "FM Music",
               AGENDA_TAB: "Agenda", TACHES_TAB: "Tâches"}
 
 
@@ -3970,7 +3977,8 @@ def _markdown_reset_menu_extra(widget: QWidget, menu) -> None:
     while node is not None and not isinstance(node, _LazyNode):
         node = node.parentWidget()
     if node is None or node._values.name not in (MARKDOWN_TAB, VIDEO_TAB, BOARD_TAB, MRO_TAB, CAD_TAB, DESIGN_TAB,
-                                                         TABLEUR_TAB, ILL_TAB, PS_TAB, TYPO_TAB, PDF_TAB):
+                                                         TABLEUR_TAB, ILL_TAB, PS_TAB, TYPO_TAB, PDF_TAB, AUDIO_TAB,
+                                                         MUSIC_TAB):
         return
     title = node.node.title
     menu.addAction(f"Restaurer les valeurs d'origine de « {title} »").triggered.connect(

@@ -524,6 +524,16 @@ class SettingsLinkMixin:
             if getattr(self, "_font", None) is not None:
                 self._font.apply_settings(ui_state.APPLIED_SETTINGS or settings)
             return
+        if changed and all(k.startswith(("audio_", "music_")) for k in changed):
+            # Reglages : Audio : seuls FM Audio / FM Music ouverts appliquent ce qui a change (rien a reconstruire).
+            if isinstance(ui_state.APPLIED_SETTINGS, dict):
+                ui_state.APPLIED_SETTINGS.update({k: settings.get(k) for k in changed})
+            applied = ui_state.APPLIED_SETTINGS or settings
+            for name in ("_audio_pane", "_music_pane"):
+                pane = getattr(self, name, None)
+                if pane is not None:
+                    pane.apply_settings(applied)
+            return
         if changed and all(k.startswith("pdf_") for k in changed):
             # Reglages : PDF : seul l'editeur PDF ouvert (plein cadre ou dans le Board) applique ce qui a change.
             if isinstance(ui_state.APPLIED_SETTINGS, dict):

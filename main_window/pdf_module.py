@@ -60,6 +60,9 @@ class PdfModuleMixin:
         if leave_taches is not None:
             leave_taches()
         self._close_video()
+        leave_audio = getattr(self, "_leave_audio", None)      # FM Audio / FM Music : fermés d'abord (prise en cours : masqués)
+        if leave_audio is not None and not leave_audio():
+            return False
         self._install_pdf_hooks()
         pane = getattr(self, "_pdf", None)
         if pane is not None and path is not None and pane.session.path == Path(path):

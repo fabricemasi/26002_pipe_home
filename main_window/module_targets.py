@@ -18,10 +18,13 @@ MODULES = {
     "video": ("Ouvrir dans le module vidéo", "btn_video"),
     "font": ("Ouvrir dans le module typographique", "btn_font"),
     "pdf": ("Ouvrir dans l'éditeur PDF", "btn_pdf"),
+    "audio": ("Ouvrir dans FM Audio", "btn_audio"),
+    "music": ("Ouvrir dans FM Music", "btn_music"),
 }
 # Clé -> méthode de PipelineBrowser qui ouvre le fichier dans le module.
 OPENERS = {"md": "_open_md_editor", "board": "_open_board", "cad": "_open_cad_drawing", "sheet": "_open_spreadsheet",
-           "video": "_open_video", "font": "_open_font", "pdf": "_open_pdf"}
+           "video": "_open_video", "font": "_open_font", "pdf": "_open_pdf",
+           "audio": "_open_audio", "music": "_open_music"}
 SPREADSHEET_SUFFIXES = (".xlsx", ".xlsm", ".csv", ".tsv")
 
 
@@ -71,6 +74,11 @@ def module_targets(path, is_dir: bool) -> list:
     from .pdf_module import pdf_target
     if pdf_target(path, is_dir):
         keys.append("pdf")
+    from .audio_module import audio_target, music_target
+    if music_target(path, is_dir):
+        keys.append("music")
+    if audio_target(path, is_dir):
+        keys.append("audio")
     return keys
 
 

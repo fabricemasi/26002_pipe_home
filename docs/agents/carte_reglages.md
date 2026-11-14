@@ -46,7 +46,7 @@ Trouver en une recherche où vit un réglage : section affichée -> groupe du ca
 | General | Dossiers et fichiers à omettre | `Omettre` | appli | `application_omit_dir_names`, `application_omit_file_names` |
 | General | LUT | `LUT` | appli | `lut_test_images` |
 | General | Barre de navigation | `Barre de navigation (appli)` | appli | `navtool_bottom_enabled`, `navtool_title_font_family`, `navtool_height`, `navtool_extra_height`, `navtool_bg_color`, `navtool_border_enabled`, `navtool_corner_radius`, `navtool_hover_bg_color`, `… (+3)` |
-| General | Barre de navigation > Icônes | `Barre de navigation : Icones (appli)` | appli | `ui_icon:app_logo`, `ui_icon:navbar_browse`, `ui_icon:navbar_presets`, `ui_icon:settings_gear`, `ui_icon:navbar_theme`, `ui_icon:navbar_columns`, `ui_icon:navbar_viewer`, `ui_icon:navbar_text_editor`, `… (+16)` |
+| General | Barre de navigation > Icônes | `Barre de navigation : Icones (appli)` | appli | `ui_icon:app_logo`, `ui_icon:navbar_browse`, `ui_icon:navbar_presets`, `ui_icon:settings_gear`, `ui_icon:navbar_theme`, `ui_icon:navbar_columns`, `ui_icon:navbar_viewer`, `ui_icon:navbar_text_editor`, `… (+20)` |
 | General | Barre de navigation > Cheminement | `Barre de navigation : Cheminement` | fm_theme | `crumb_left_spacing`, `crumb_spacing`, `crumb_cut_border_active`, `crumb_cut_border_others`, `crumb_bg_color`, `crumb_border_enabled`, `crumb_corner_radius`, `crumb_active_bg_color`, `… (+4)` |
 | General | Barre de navigation > Cadre des modules | `Barre de navigation : Cadre des modules` | appli | `viewer_group_bg_color`, `viewer_group_border_enabled`, `viewer_group_corner_radius`, `viewer_group_label_enabled`, `viewer_group_label_font_family`, `viewer_group_padding`, `viewer_group_margin`, `viewer_group_btn_bg_color`, `… (+4)` |
 | General | Barre de navigation > Fenêtres additionnelles | `Barre de navigation : Fenetres additionnelles` | fm_theme | `extra_window_title_height`, `extra_window_title_bg`, `extra_window_title_text_font_family`, `extra_window_title_button_width`, `extra_window_title_button_radius`, `extra_window_title_line_enabled` |
@@ -210,6 +210,15 @@ Trouver en une recherche où vit un réglage : section affichée -> groupe du ca
 | PDF | Sécurité | `PDF : Sécurité` | appli | `pdf_confirm_links`, `pdf_warn_active_content` |
 | PDF | Commentaires | `PDF : Commentaires` | appli | `pdf_annot_color`, `pdf_annot_ink_color`, `pdf_annot_width` |
 | PDF | OCR et impression | `PDF : OCR et impression` | appli | `pdf_ocr_languages`, `pdf_print_dpi`, `pdf_print_annotations` |
+| FM Audio | Général | `Audio : Général` | appli | `audio_enabled`, `audio_open_double_click`, `audio_mixer_visible`, `audio_library_root` |
+| FM Audio | Nouveaux projets | `Audio : Nouveaux projets` | appli | `audio_new_sample_rate` |
+| FM Audio | Périphérique | `Audio : Périphérique` | appli | `audio_output_device`, `audio_input_device`, `audio_buffer`, `audio_exclusive` |
+| FM Audio | Enregistrement et export | `Audio : Enregistrement et export` | appli | `audio_precount_bars`, `audio_metronome_level`, `audio_tuner_reference`, `audio_export_format` |
+| FM Audio | Plugins VST3 | `Audio : Plugins VST3` | appli | `audio_plugin_dirs`, `audio_plugin_scan_timeout` |
+| FM Audio | Icônes du cadre | `Audio : Icônes du cadre` | appli | `ui_icon:sound_play`, `ui_icon:sound_record`, `ui_icon:sound_loop`, `ui_icon:sound_metronome`, `ui_icon:sound_mixer` |
+| FM Music | Général | `Music : Général` | appli | `music_open_double_click`, `music_snap` |
+| FM Music | Nouveaux morceaux | `Music : Nouveaux morceaux` | appli | `music_new_tempo`, `music_new_signature`, `music_new_demo` |
+| FM Music | Édition | `Music : Édition` | appli | `music_grid`, `music_swing_default` |
 | Agenda | Affichage | `Agenda : Affichage` | appli | `agenda_theme`, `agenda_accent`, `agenda_today_color`, `agenda_density`, `agenda_default_view`, `agenda_restore_state`, `agenda_first_weekday`, `agenda_time_format`, `… (+17)` |
 | Agenda | Comportement | `Agenda : Comportement` | appli | `agenda_default_duration`, `agenda_default_calendar`, `agenda_default_reminder`, `agenda_create_mode`, `agenda_week_click`, `agenda_month_click`, `agenda_recurring_move`, `agenda_confirm_delete`, `… (+2)` |
 | Agenda | Rappels | `Agenda : Rappels` | appli | `agenda_reminders_enabled`, `agenda_notify_mode`, `agenda_snooze_minutes`, `agenda_missed_minutes` |

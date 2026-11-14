@@ -201,6 +201,7 @@ from main_window.video_module import VideoModuleMixin
 from main_window.board_module import BoardModuleMixin
 from main_window.font_module import FontModuleMixin
 from main_window.pdf_module import PdfModuleMixin
+from main_window.audio_module import AudioModuleMixin
 from main_window.agenda_module import AgendaModuleMixin
 from main_window.tasks_module import TasksModuleMixin
 from main_window.module_targets import ModuleTargetsMixin
@@ -211,6 +212,7 @@ class PipelineBrowser(
     ColumnsMixin, CrumbsMixin, PreviewStackMixin, GroupColumnsMixin, SelectionMixin, ColumnsHiddenMixin, GalleryMixin,
     ViewerMixin, ViewerButtonsMixin, ViewerChromeMixin, CollapseMixin, SettingsLinkMixin, ChromeMixin, MdModuleMixin,
     VideoModuleMixin, BoardModuleMixin, FontModuleMixin, PdfModuleMixin, AgendaModuleMixin, TasksModuleMixin,
+    AudioModuleMixin,
     ModuleTargetsMixin,
     SideModuleMixin, QMainWindow,
 ):
@@ -529,6 +531,16 @@ class PipelineBrowser(
         self.btn_taches.clicked.connect(self._toggle_taches)
         self._taches = None
         self._taches_service = None
+        # FM Audio / FM Music (fm_audio/, fm_music/) : toujours actifs (projet vide sans sélection),
+        # main_window/audio_module.py.
+        self.btn_audio = IconButton("audio", role_color("buttons", "#c4cacf"), C["text"])
+        self.btn_audio.setToolTip("FM Audio : édition multipiste, enregistrement, mixage, effets et plugins "
+                                  "(un son ou un projet .fmaudio choisi s'ouvre ; sinon un projet vide)")
+        self.btn_audio.clicked.connect(self._toggle_audio)
+        self.btn_music = IconButton("music", role_color("buttons", "#c4cacf"), C["text"])
+        self.btn_music.setToolTip("FM Music : séquenceur MIDI, piano roll, instruments et patterns "
+                                  "(un .mid ou un projet .fmmusic choisi s'ouvre ; sinon un morceau de départ)")
+        self.btn_music.clicked.connect(self._toggle_music)
         self.btn_viewer.setToolTip("Visionneuse (sélection en cours)")
         self.btn_text_editor.setToolTip("Éditeur Markdown / code (sélectionner une note, un fichier texte ou de code)")
         self.btn_board.setToolTip("Board (sélectionner un fichier .brd — clic droit dans une colonne > Créer un board)")
@@ -543,7 +555,7 @@ class PipelineBrowser(
         self._board_buttons = []
         for btn in (self.btn_browse, self.btn_presets, self.btn_settings, self.btn_theme, self.btn_collapse,
                     self.btn_columns, self.btn_viewer, self.btn_text_editor, self.btn_board, self.btn_video, self.btn_font,
-                    self.btn_pdf, self.btn_agenda, self.btn_taches):
+                    self.btn_pdf, self.btn_agenda, self.btn_taches, self.btn_audio, self.btn_music):
             btn.setCursor(Qt.ArrowCursor)
             btn.setFlat(True)
             btn.setStyleSheet("QPushButton { background: transparent; border: none; }"
@@ -738,7 +750,7 @@ class PipelineBrowser(
                                 self.btn_viewer,
                                 self.btn_text_editor,
                                 self.btn_board, self.btn_video, self.btn_font, self.btn_pdf, self.btn_agenda,
-                                self.btn_taches)
+                                self.btn_taches, self.btn_audio, self.btn_music)
         self._refresh_navbar_icons()          # avant _sync_mode_buttons : couleur desactivee, pas de voile
         self._sync_mode_buttons()
         self.titlebar.refresh_sizes()
@@ -1035,6 +1047,9 @@ class PipelineBrowser(
             return
         if pdf_pane is not None:                                        # ferme AVANT la fin : moteur et images liberes
             self._close_pdf()
+        if not self._close_sound_panes_for_exit():                     # FM Audio / FM Music : projet modifié, prise finalisée
+            event.ignore()
+            return
         font_pane = getattr(self, "_font", None)
         if font_pane is not None and not font_pane.confirm_leave():     # typographie : projet modifie
             event.ignore()

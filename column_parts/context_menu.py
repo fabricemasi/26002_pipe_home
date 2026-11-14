@@ -28,6 +28,10 @@ class ColumnContextMenuMixin:
             act_new_board = menu.addAction("Créer un board") if self._show_files else None
             # Module typographique (paquet fm_font/) : source UFO 3 (dossier .ufo), ouverte au double-clic.
             act_new_font = menu.addAction("Créer un projet typographique") if self._show_files else None
+            # FM Audio / FM Music (fm_audio/, fm_music/) : projet .fmaudio / .fmmusic, ouvert au double-clic.
+            sound_on = self._show_files and (ui_state.APPLIED_SETTINGS or {}).get("audio_enabled", True)
+            act_new_audio = menu.addAction("Créer un projet FM Audio") if sound_on else None
+            act_new_music = menu.addAction("Créer un projet FM Music") if sound_on else None
             act_add_shortcut = menu.addAction("Ajouter un raccourci...")
             act_paste = None
             if QApplication.clipboard().mimeData().hasUrls():
@@ -53,6 +57,10 @@ class ColumnContextMenuMixin:
                 QTimer.singleShot(0, self._create_board_file)
             elif act_new_font is not None and chosen is act_new_font:
                 QTimer.singleShot(0, self._create_font_project)
+            elif act_new_audio is not None and chosen is act_new_audio:
+                QTimer.singleShot(0, lambda: self._create_sound_project("audio"))
+            elif act_new_music is not None and chosen is act_new_music:
+                QTimer.singleShot(0, lambda: self._create_sound_project("music"))
             elif chosen is act_add_shortcut:
                 # 150ms (PAS 0) : ce menu ouvre un QFileDialog (via
                 # _add_shortcut), pas seulement une QInputDialog — voir

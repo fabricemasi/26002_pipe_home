@@ -52,6 +52,8 @@ MODULES = {
     "fm_theme": ["test_theme_*.py", "test_button_theme.py", "test_icon_library.py"],
     "fm_font": ["test_fm_font*.py"],
     "fm_pdf": ["test_pdf_*.py"],
+    "fm_audio": ["test_audio_*.py", "test_fm_audio_*.py"],        # FM Audio, FM Music, moteur partagé, cartes du Board
+    "fm_music": ["test_fm_audio_module.py", "test_audio_midi.py", "test_audio_project.py", "test_audio_library.py"],
     "fm_agenda": ["test_agenda_*.py"],
     "fm_taches": ["test_taches_*.py"],
     "audio_music": ["test_audio_music_*.py"],

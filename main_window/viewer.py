@@ -557,6 +557,9 @@ class ViewerMixin:
             return
         if self._pdf_claims(path) and self._open_pdf(path):       # éditeur PDF (fm_pdf) : lu DANS l'appli
             return
+        sound = getattr(self, "_sound_claims", None)              # son / projet audio : FM Audio ou FM Music
+        if sound is not None and sound(path):
+            return
         import fm_board as board
         if board.is_board_file(path):                     # board facon Miro : ouvert DANS l'appli
             if self._open_board(path):
@@ -591,6 +594,9 @@ class ViewerMixin:
         if self._video_claims(path) and self._open_video(path):   # video / sequence EXR, TIFF… : module video
             return
         if self._pdf_claims(path) and self._open_pdf(path):       # .pdf : l'éditeur PDF, pas la visionneuse
+            return
+        sound = getattr(self, "_sound_claims", None)              # son / projet audio : FM Audio ou FM Music
+        if sound is not None and sound(path):
             return
 
         def go():

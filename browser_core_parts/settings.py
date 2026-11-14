@@ -359,6 +359,8 @@ MODULE_ICON_COLOR_KEYS = {
     "markdown": "navtool_icon_color_text_editor",
     "agenda": "navtool_icon_color_agenda",
     "font": "navtool_icon_color_font",
+    "audio": "navtool_icon_color_audio",                # FM Audio (emblème et outils du transport)
+    "music": "navtool_icon_color_music",                # FM Music
     "miro": "board_modulebar_color_miro",               # Board > Couleurs des modules (« Dominante »)
     "cad": "board_modulebar_color_cad",
     "design": "board_modulebar_color_design",

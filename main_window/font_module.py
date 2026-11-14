@@ -53,6 +53,9 @@ class FontModuleMixin:
         leave_pdf = getattr(self, "_leave_pdf", None)          # éditeur PDF ouvert : fermé d'abord (fm_pdf)
         if leave_pdf is not None and not leave_pdf():
             return False
+        leave_audio = getattr(self, "_leave_audio", None)      # FM Audio / FM Music : fermés d'abord (prise en cours : masqués)
+        if leave_audio is not None and not leave_audio():
+            return False
         leave_agenda = getattr(self, "_leave_agenda", None)    # agenda ouvert : rangé d'abord (fm_agenda)
         if leave_agenda is not None:
             leave_agenda()

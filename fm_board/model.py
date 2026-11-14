@@ -23,6 +23,7 @@ from fm_design import design_model
 from fm_illustrator import model as ill_model
 from fm_photoshop import board_model as ps_model
 from fm_pdf import board_model as pdf_model
+from fm_audio import board_model as audio_model  # cartes audio (FM Audio / FM Music) : lien, jamais copie
 from fm_tableur import board_model as tableur_model
 
 FORMAT = "pipeline-board"
@@ -111,6 +112,8 @@ DEFAULTS: dict[str, dict] = {
     **{kind: copy.deepcopy(values) for kind, values in ps_model.DEFAULTS.items()},
     # Module PDF (fm_pdf/board_model.py) : document PDF lié (chemin absolu + relatif au board, page montrée).
     **{kind: copy.deepcopy(values) for kind, values in pdf_model.DEFAULTS.items()},
+    # Cartes audio (fm_audio/board_model.py) : son, prise, sample, projet FM Audio, composition FM Music (lien).
+    **{kind: copy.deepcopy(values) for kind, values in audio_model.DEFAULTS.items()},
 }
 COMMON = {"x": 0.0, "y": 0.0, "z": 0.0, "rotation": 0.0, "locked": False, "link": ""}
 ROTATABLE = ("shape", "text", "image")
@@ -335,6 +338,8 @@ def normalize_item(raw) -> dict | None:
         ps_model.normalize_entity(item)
     if kind in pdf_model.PDF_TYPES:
         pdf_model.normalize_entity(item)
+    if kind in audio_model.AUDIO_TYPES:
+        audio_model.normalize_entity(item)
     if kind == "shape" and item["shape"] == "round" and "radius" not in raw:
         item["radius"] = round(min(item["w"], item["h"]) * 0.18, 2)        # anciens fichiers (version 1)
     if kind == "shape" and item["shape"] not in SHAPE_KINDS:
