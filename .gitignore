@@ -66,3 +66,9 @@ fm_audio_engine/bin/
 
 # SDK tiers (ASIO GPLv3 / VST3 MIT) : téléchargés localement, jamais versionnés
 fm_audio_engine/third_party/
+
+# Données de travail locales (références, recherches, sorties), jamais versionnées
+/.tmp_iconographie_*/
+/_FM/
+/in/
+/output/
