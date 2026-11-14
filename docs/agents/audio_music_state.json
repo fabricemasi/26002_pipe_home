@@ -1,0 +1,920 @@
+{
+ "schema_version": 1,
+ "mission_id": "pipe-fmz-audio-music",
+ "mission_doc": "docs/agents/mission_audio_music.md",
+ "phases": [
+  {
+   "id": "P0",
+   "title": "Pilotage et audit"
+  },
+  {
+   "id": "P1",
+   "title": "Faisabilité native"
+  },
+  {
+   "id": "P2",
+   "title": "Première tranche intégrée"
+  },
+  {
+   "id": "P3",
+   "title": "Enregistrement fiable"
+  },
+  {
+   "id": "P4",
+   "title": "Multipiste"
+  },
+  {
+   "id": "P5",
+   "title": "Bibliothèque et FM Music initial"
+  },
+  {
+   "id": "P6",
+   "title": "Composition"
+  },
+  {
+   "id": "P7",
+   "title": "Prises et guitares"
+  },
+  {
+   "id": "P8",
+   "title": "Plugins et mixage avancé"
+  },
+  {
+   "id": "P9",
+   "title": "Édition et DSP avancés"
+  },
+  {
+   "id": "P10",
+   "title": "Robustesse professionnelle"
+  }
+ ],
+ "baseline_requirements": [
+  "R-PILOT",
+  "R-AUDIT",
+  "R-LIC",
+  "R-ARCH",
+  "R-RT",
+  "R-IO",
+  "R-OFFLINE",
+  "R-PROJ",
+  "R-LIB",
+  "R-CAPT",
+  "R-AUD-EDIT",
+  "R-AUD-MIX",
+  "R-AUD-DSP",
+  "R-REC",
+  "R-GTR-E",
+  "R-GTR-A",
+  "R-MUS-COMP",
+  "R-MUS-INST",
+  "R-PLUG",
+  "R-BOARD",
+  "R-UI",
+  "R-ROBUST"
+ ],
+ "requirements": [
+  {
+   "id": "R-PILOT",
+   "title": "Pilotage : registre unique, vérificateur, contrôleur de poursuite testé, garde-fous conservés",
+   "phase": "P0",
+   "source": "mission_audio_music.md §10-11",
+   "validations": {
+    "automatic": true
+   }
+  },
+  {
+   "id": "R-AUDIT",
+   "title": "Carte ciblée des points d'intégration (Board, module_targets, sérialisation, vidéo) et décisions",
+   "phase": "P0",
+   "source": "mission_audio_music.md §1",
+   "validations": {
+    "automatic": true
+   },
+   "doc_only": true
+  },
+  {
+   "id": "R-LIC",
+   "title": "Dépendances, versions, licences, notices et chaîne de compilation native consignées et autorisées",
+   "phase": "P0",
+   "source": "mission_audio_music.md §3",
+   "validations": {
+    "automatic": true,
+    "human": true
+   },
+   "doc_only": true
+  },
+  {
+   "id": "R-ARCH",
+   "title": "Architecture commune : modèle sans Qt, service médias/révisions, moteur natif partagé (processus dédié, IPC versionné)",
+   "phase": "P1",
+   "source": "mission_audio_music.md §3",
+   "validations": {
+    "automatic": true
+   }
+  },
+  {
+   "id": "R-RT",
+   "title": "Contrat temps réel : callback natif sans allocation/verrou/GIL, files bornées, échange de graphe, horloge audio maître",
+   "phase": "P1",
+   "source": "mission_audio_music.md §4",
+   "validations": {
+    "automatic": true,
+    "performance": true
+   }
+  },
+  {
+   "id": "R-IO",
+   "title": "Backends ASIO et WASAPI réels : énumération, sélection persistante, fréquence, buffers, périphérique occupé/débranché",
+   "phase": "P1",
+   "source": "mission_audio_music.md §4",
+   "validations": {
+    "automatic": true,
+    "hardware": true
+   }
+  },
+  {
+   "id": "R-OFFLINE",
+   "title": "Rendu offline à la sémantique du graphe temps réel, exports vérifiés, annulables, sans écrasement silencieux",
+   "phase": "P1",
+   "source": "mission_audio_music.md §4",
+   "validations": {
+    "automatic": true
+   }
+  },
+  {
+   "id": "R-PROJ",
+   "title": "Projets : identités/révisions immuables, schéma versionné, migrations testées, sauvegarde transactionnelle, Undo cohérent",
+   "phase": "P2",
+   "source": "mission_audio_music.md §5",
+   "validations": {
+    "automatic": true
+   }
+  },
+  {
+   "id": "R-LIB",
+   "title": "Bibliothèque commune et workflow v1 -> FM Music -> v2 -> adoption/refus annulable, médias absents, reliaison",
+   "phase": "P5",
+   "source": "mission_audio_music.md §5",
+   "validations": {
+    "automatic": true
+   }
+  },
+  {
+   "id": "R-CAPT",
+   "title": "Capture fiable : workers, tampons bornés, overflow/disque plein, RF64/segments, récupération après panne",
+   "phase": "P3",
+   "source": "mission_audio_music.md §5",
+   "validations": {
+    "automatic": true,
+    "hardware": true
+   }
+  },
+  {
+   "id": "R-AUD-EDIT",
+   "title": "FM Audio édition : formats, waveform, zoom échantillon, édition non destructive, fondus, gain, pitch/time, Undo",
+   "phase": "P2",
+   "source": "mission_audio_music.md §6",
+   "validations": {
+    "automatic": true,
+    "human": true
+   }
+  },
+  {
+   "id": "R-AUD-MIX",
+   "title": "FM Audio mixage : pistes, clips, mixer, bus, sends/returns, sidechains, automation, PDC, export mix/stems",
+   "phase": "P4",
+   "source": "mission_audio_music.md §6",
+   "validations": {
+    "automatic": true,
+    "performance": true
+   }
+  },
+  {
+   "id": "R-AUD-DSP",
+   "title": "FM Audio traitement : EQ, dynamique, effets, analyse loudness/true peak, spectral éditable, restauration, mastering",
+   "phase": "P9",
+   "source": "mission_audio_music.md §6",
+   "validations": {
+    "automatic": true,
+    "human": true
+   }
+  },
+  {
+   "id": "R-REC",
+   "title": "Enregistrement commun : armement, monitoring, latence, métronome, overdub, loop, takes, comping, punch",
+   "phase": "P7",
+   "source": "mission_audio_music.md §6",
+   "validations": {
+    "automatic": true,
+    "hardware": true
+   }
+  },
+  {
+   "id": "R-GTR-E",
+   "title": "Guitare électrique : DI préservée, pédalier, simulation d'ampli non linéaire, cabinet/IR, reamping",
+   "phase": "P7",
+   "source": "mission_audio_music.md §6",
+   "validations": {
+    "automatic": true,
+    "hardware": true,
+    "human": true
+   }
+  },
+  {
+   "id": "R-GTR-A",
+   "title": "Guitare acoustique : micro + pickup, phase/alignement, accordeur, looper, sans boucle de retour",
+   "phase": "P7",
+   "source": "mission_audio_music.md §6",
+   "validations": {
+    "automatic": true,
+    "hardware": true
+   }
+  },
+  {
+   "id": "R-MUS-COMP",
+   "title": "FM Music composition : tempo/signatures, clips audio/MIDI, piano roll, patterns, quantification/groove réversibles, automation",
+   "phase": "P6",
+   "source": "mission_audio_music.md §6",
+   "validations": {
+    "automatic": true
+   }
+  },
+  {
+   "id": "R-MUS-INST",
+   "title": "FM Music instruments : MIDI E/S, sampler, drum machine, synthé sonore, presets, notes bloquées, export",
+   "phase": "P6",
+   "source": "mission_audio_music.md §6",
+   "validations": {
+    "automatic": true,
+    "hardware": true,
+    "human": true
+   }
+  },
+  {
+   "id": "R-PLUG",
+   "title": "Plugins VST3 effets/instruments : scan isolé, états, éditeurs, latence, panne et plugin absent",
+   "phase": "P8",
+   "source": "mission_audio_music.md §4,§6",
+   "validations": {
+    "automatic": true
+   }
+  },
+  {
+   "id": "R-BOARD",
+   "title": "Board : cartes audio/projets/compositions, miniature waveform, préécoute, versions, réparation des références",
+   "phase": "P2",
+   "source": "mission_audio_music.md §6",
+   "validations": {
+    "automatic": true
+   }
+  },
+  {
+   "id": "R-UI",
+   "title": "Interfaces spécialisées en briques fm_theme/réglages, fluidité (waveforms/spectres en fond, virtualisation)",
+   "phase": "P2",
+   "source": "mission_audio_music.md §7",
+   "validations": {
+    "automatic": true,
+    "performance": true,
+    "human": true
+   }
+  },
+  {
+   "id": "R-ROBUST",
+   "title": "Robustesse : parcours transmodules, portabilité, pannes, gros projets, build reproductible Windows x64, documentation",
+   "phase": "P10",
+   "source": "mission_audio_music.md §8-9",
+   "validations": {
+    "automatic": true,
+    "performance": true
+   }
+  }
+ ],
+ "tasks": [
+  {
+   "id": "T-P0-01",
+   "requirement": "R-PILOT",
+   "phase": "P0",
+   "title": "Contrôleur de poursuite, registre et vérificateur testés",
+   "kind": "code",
+   "status": "implemented",
+   "depends_on": [],
+   "criteria": [
+    "hooks context/stop/task/prompt testés sur registre fictif",
+    "garde_fous.py conservé"
+   ],
+   "paths": [
+    "tools/hooks/audio_music_guard.py",
+    "tools/hooks/audio_music_registry.py",
+    "tests/test_audio_music_guard.py"
+   ],
+   "blocker": null,
+   "next_action": "Prouver avec le runner : tests.test_audio_music_guard"
+  },
+  {
+   "id": "T-P0-02",
+   "requirement": "R-AUDIT",
+   "phase": "P0",
+   "title": "Carte courte des points d'intégration Board / fenêtre / vidéo (doc fm_audio)",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-01"
+   ],
+   "criteria": [
+    "Cartes de fm_board.md, fm_browser.md, fm_theme.md lues",
+    "main_window/module_targets.py, fm_board/model.py, serialization.py, view.py, ui.py, fm_pdf/board_model.py examinés",
+    "carte écrite dans docs/agents/fm_audio.md"
+   ],
+   "paths": [
+    "docs/agents/fm_audio.md"
+   ],
+   "blocker": null,
+   "next_action": "Lire les Cartes des docs Board/browser/theme puis écrire la carte d'intégration dans docs/agents/fm_audio.md"
+  },
+  {
+   "id": "T-P0-03",
+   "requirement": "R-LIC",
+   "phase": "P0",
+   "title": "Inventaire chaîne native (MSVC/CMake), dépendances candidates, versions et licences",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-01"
+   ],
+   "criteria": [
+    "outils natifs présents vérifiés sans installation",
+    "JUCE / ASIO / VST3 / time stretch / codecs : version, licence, coût",
+    "décisions qui exigent l'utilisateur listées comme blocages"
+   ],
+   "paths": [
+    "docs/agents/fm_audio.md"
+   ],
+   "blocker": null,
+   "next_action": "Vérifier les outils natifs installés et rédiger l'inventaire des licences dans docs/agents/fm_audio.md"
+  },
+  {
+   "id": "T-P0-04",
+   "requirement": "R-AUDIT",
+   "phase": "P0",
+   "title": "Profil de référence et mesures différées inscrites dans a_mesurer.md",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-02"
+   ],
+   "criteria": [
+    "profil CPU/RAM/Windows/interface/DPI noté",
+    "mesures lourdes inscrites avec leur commande"
+   ],
+   "paths": [
+    "docs/agents/a_mesurer.md"
+   ],
+   "blocker": null,
+   "next_action": "Noter le profil de référence et les mesures différées dans docs/agents/a_mesurer.md"
+  },
+  {
+   "id": "T-P0-05",
+   "requirement": "R-AUDIT",
+   "phase": "P0",
+   "title": "Décision d'architecture argumentée (processus natif vs extension), protocole IPC versionné",
+   "kind": "decision",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-02",
+    "T-P0-03"
+   ],
+   "criteria": [
+    "décision écrite une fois dans docs/agents/fm_audio.md",
+    "essai de faisabilité court prévu en P1"
+   ],
+   "paths": [
+    "docs/agents/fm_audio.md"
+   ],
+   "blocker": null,
+   "next_action": "Rédiger la décision d'architecture et le protocole IPC dans docs/agents/fm_audio.md"
+  },
+  {
+   "id": "T-P0-06",
+   "requirement": "R-PILOT",
+   "phase": "P0",
+   "title": "Décomposer chaque exigence en tâches petites aux critères observables (sans retrait)",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-05"
+   ],
+   "criteria": [
+    "chaque exigence a des tâches code/perf observables",
+    "check du registre sans problème"
+   ],
+   "paths": [
+    "docs/agents/audio_music_state.json"
+   ],
+   "blocker": null,
+   "next_action": "Décomposer les exigences R-* en tâches T-* dans le registre puis lancer check"
+  },
+  {
+   "id": "T-ARCH-00",
+   "requirement": "R-ARCH",
+   "phase": "P1",
+   "title": "Décomposer R-ARCH en tâches observables",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-06"
+   ],
+   "criteria": [
+    "tâches code/perf avec critères, chemins et dépendances"
+   ],
+   "paths": [
+    "docs/agents/audio_music_state.json"
+   ],
+   "blocker": null,
+   "next_action": "Décomposer R-ARCH en tâches code/perf dans le registre"
+  },
+  {
+   "id": "T-RT-00",
+   "requirement": "R-RT",
+   "phase": "P1",
+   "title": "Décomposer R-RT en tâches observables",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-06"
+   ],
+   "criteria": [
+    "tâches code/perf avec critères, chemins et dépendances"
+   ],
+   "paths": [
+    "docs/agents/audio_music_state.json"
+   ],
+   "blocker": null,
+   "next_action": "Décomposer R-RT en tâches code/perf dans le registre"
+  },
+  {
+   "id": "T-IO-00",
+   "requirement": "R-IO",
+   "phase": "P1",
+   "title": "Décomposer R-IO en tâches observables",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-06"
+   ],
+   "criteria": [
+    "tâches code/perf avec critères, chemins et dépendances"
+   ],
+   "paths": [
+    "docs/agents/audio_music_state.json"
+   ],
+   "blocker": null,
+   "next_action": "Décomposer R-IO en tâches code/perf dans le registre"
+  },
+  {
+   "id": "T-OFFLINE-00",
+   "requirement": "R-OFFLINE",
+   "phase": "P1",
+   "title": "Décomposer R-OFFLINE en tâches observables",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-06"
+   ],
+   "criteria": [
+    "tâches code/perf avec critères, chemins et dépendances"
+   ],
+   "paths": [
+    "docs/agents/audio_music_state.json"
+   ],
+   "blocker": null,
+   "next_action": "Décomposer R-OFFLINE en tâches code/perf dans le registre"
+  },
+  {
+   "id": "T-PROJ-00",
+   "requirement": "R-PROJ",
+   "phase": "P2",
+   "title": "Décomposer R-PROJ en tâches observables",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-06"
+   ],
+   "criteria": [
+    "tâches code/perf avec critères, chemins et dépendances"
+   ],
+   "paths": [
+    "docs/agents/audio_music_state.json"
+   ],
+   "blocker": null,
+   "next_action": "Décomposer R-PROJ en tâches code/perf dans le registre"
+  },
+  {
+   "id": "T-LIB-00",
+   "requirement": "R-LIB",
+   "phase": "P5",
+   "title": "Décomposer R-LIB en tâches observables",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-06"
+   ],
+   "criteria": [
+    "tâches code/perf avec critères, chemins et dépendances"
+   ],
+   "paths": [
+    "docs/agents/audio_music_state.json"
+   ],
+   "blocker": null,
+   "next_action": "Décomposer R-LIB en tâches code/perf dans le registre"
+  },
+  {
+   "id": "T-CAPT-00",
+   "requirement": "R-CAPT",
+   "phase": "P3",
+   "title": "Décomposer R-CAPT en tâches observables",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-06"
+   ],
+   "criteria": [
+    "tâches code/perf avec critères, chemins et dépendances"
+   ],
+   "paths": [
+    "docs/agents/audio_music_state.json"
+   ],
+   "blocker": null,
+   "next_action": "Décomposer R-CAPT en tâches code/perf dans le registre"
+  },
+  {
+   "id": "T-AUD-EDIT-00",
+   "requirement": "R-AUD-EDIT",
+   "phase": "P2",
+   "title": "Décomposer R-AUD-EDIT en tâches observables",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-06"
+   ],
+   "criteria": [
+    "tâches code/perf avec critères, chemins et dépendances"
+   ],
+   "paths": [
+    "docs/agents/audio_music_state.json"
+   ],
+   "blocker": null,
+   "next_action": "Décomposer R-AUD-EDIT en tâches code/perf dans le registre"
+  },
+  {
+   "id": "T-AUD-MIX-00",
+   "requirement": "R-AUD-MIX",
+   "phase": "P4",
+   "title": "Décomposer R-AUD-MIX en tâches observables",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-06"
+   ],
+   "criteria": [
+    "tâches code/perf avec critères, chemins et dépendances"
+   ],
+   "paths": [
+    "docs/agents/audio_music_state.json"
+   ],
+   "blocker": null,
+   "next_action": "Décomposer R-AUD-MIX en tâches code/perf dans le registre"
+  },
+  {
+   "id": "T-AUD-DSP-00",
+   "requirement": "R-AUD-DSP",
+   "phase": "P9",
+   "title": "Décomposer R-AUD-DSP en tâches observables",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-06"
+   ],
+   "criteria": [
+    "tâches code/perf avec critères, chemins et dépendances"
+   ],
+   "paths": [
+    "docs/agents/audio_music_state.json"
+   ],
+   "blocker": null,
+   "next_action": "Décomposer R-AUD-DSP en tâches code/perf dans le registre"
+  },
+  {
+   "id": "T-REC-00",
+   "requirement": "R-REC",
+   "phase": "P7",
+   "title": "Décomposer R-REC en tâches observables",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-06"
+   ],
+   "criteria": [
+    "tâches code/perf avec critères, chemins et dépendances"
+   ],
+   "paths": [
+    "docs/agents/audio_music_state.json"
+   ],
+   "blocker": null,
+   "next_action": "Décomposer R-REC en tâches code/perf dans le registre"
+  },
+  {
+   "id": "T-GTR-E-00",
+   "requirement": "R-GTR-E",
+   "phase": "P7",
+   "title": "Décomposer R-GTR-E en tâches observables",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-06"
+   ],
+   "criteria": [
+    "tâches code/perf avec critères, chemins et dépendances"
+   ],
+   "paths": [
+    "docs/agents/audio_music_state.json"
+   ],
+   "blocker": null,
+   "next_action": "Décomposer R-GTR-E en tâches code/perf dans le registre"
+  },
+  {
+   "id": "T-GTR-A-00",
+   "requirement": "R-GTR-A",
+   "phase": "P7",
+   "title": "Décomposer R-GTR-A en tâches observables",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-06"
+   ],
+   "criteria": [
+    "tâches code/perf avec critères, chemins et dépendances"
+   ],
+   "paths": [
+    "docs/agents/audio_music_state.json"
+   ],
+   "blocker": null,
+   "next_action": "Décomposer R-GTR-A en tâches code/perf dans le registre"
+  },
+  {
+   "id": "T-MUS-COMP-00",
+   "requirement": "R-MUS-COMP",
+   "phase": "P6",
+   "title": "Décomposer R-MUS-COMP en tâches observables",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-06"
+   ],
+   "criteria": [
+    "tâches code/perf avec critères, chemins et dépendances"
+   ],
+   "paths": [
+    "docs/agents/audio_music_state.json"
+   ],
+   "blocker": null,
+   "next_action": "Décomposer R-MUS-COMP en tâches code/perf dans le registre"
+  },
+  {
+   "id": "T-MUS-INST-00",
+   "requirement": "R-MUS-INST",
+   "phase": "P6",
+   "title": "Décomposer R-MUS-INST en tâches observables",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-06"
+   ],
+   "criteria": [
+    "tâches code/perf avec critères, chemins et dépendances"
+   ],
+   "paths": [
+    "docs/agents/audio_music_state.json"
+   ],
+   "blocker": null,
+   "next_action": "Décomposer R-MUS-INST en tâches code/perf dans le registre"
+  },
+  {
+   "id": "T-PLUG-00",
+   "requirement": "R-PLUG",
+   "phase": "P8",
+   "title": "Décomposer R-PLUG en tâches observables",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-06"
+   ],
+   "criteria": [
+    "tâches code/perf avec critères, chemins et dépendances"
+   ],
+   "paths": [
+    "docs/agents/audio_music_state.json"
+   ],
+   "blocker": null,
+   "next_action": "Décomposer R-PLUG en tâches code/perf dans le registre"
+  },
+  {
+   "id": "T-BOARD-00",
+   "requirement": "R-BOARD",
+   "phase": "P2",
+   "title": "Décomposer R-BOARD en tâches observables",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-06"
+   ],
+   "criteria": [
+    "tâches code/perf avec critères, chemins et dépendances"
+   ],
+   "paths": [
+    "docs/agents/audio_music_state.json"
+   ],
+   "blocker": null,
+   "next_action": "Décomposer R-BOARD en tâches code/perf dans le registre"
+  },
+  {
+   "id": "T-UI-00",
+   "requirement": "R-UI",
+   "phase": "P2",
+   "title": "Décomposer R-UI en tâches observables",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-06"
+   ],
+   "criteria": [
+    "tâches code/perf avec critères, chemins et dépendances"
+   ],
+   "paths": [
+    "docs/agents/audio_music_state.json"
+   ],
+   "blocker": null,
+   "next_action": "Décomposer R-UI en tâches code/perf dans le registre"
+  },
+  {
+   "id": "T-ROBUST-00",
+   "requirement": "R-ROBUST",
+   "phase": "P10",
+   "title": "Décomposer R-ROBUST en tâches observables",
+   "kind": "doc",
+   "status": "todo",
+   "depends_on": [
+    "T-P0-06"
+   ],
+   "criteria": [
+    "tâches code/perf avec critères, chemins et dépendances"
+   ],
+   "paths": [
+    "docs/agents/audio_music_state.json"
+   ],
+   "blocker": null,
+   "next_action": "Décomposer R-ROBUST en tâches code/perf dans le registre"
+  }
+ ],
+ "evidence": [
+  {
+   "id": "E-0001-1794638470",
+   "task": "T-P0-01",
+   "runner": true,
+   "command": ".venv/Scripts/python.exe -m unittest tests.test_audio_music_guard",
+   "returncode": 127,
+   "tests_run": null,
+   "summary": "[WinError 2] Le fichier spécifié est introuvable",
+   "duration_s": 0.0,
+   "at": "2026-11-14T01:41:10-0500",
+   "env": {
+    "python": "3.12.3",
+    "platform": "win32",
+    "run": null,
+    "session": "42883205-4bf6-4eb0-b6f3-3daa60ea9a0f"
+   },
+   "files": {
+    "tests/test_audio_music_guard.py": {
+     "size": 13557,
+     "mtime_ns": 1794638387030925900,
+     "sha256": "d6387659c94ecf7a71090a3556868d878157254ed74382b431546542234eee88"
+    },
+    "tools/hooks/audio_music_guard.py": {
+     "size": 25836,
+     "mtime_ns": 1794638267040539800,
+     "sha256": "dfd214f3789676237d01dd2e0fc6ed54ce7149fa764e001d92061f7624e0a88d"
+    },
+    "tools/hooks/audio_music_registry.py": {
+     "size": 14764,
+     "mtime_ns": 1794638386817079100,
+     "sha256": "7117f9f6d84d8692abfda860008a20f62a83a25cc04c5be18b17090f799c429a"
+    }
+   }
+  },
+  {
+   "id": "E-0002-1794638489",
+   "task": "T-P0-01",
+   "runner": true,
+   "command": "F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\.venv/Scripts/python.exe -m unittest tests.test_audio_music_guard",
+   "returncode": 0,
+   "tests_run": 14,
+   "summary": "Ran 14 tests in 11.360s\n\nOK",
+   "duration_s": 11.8,
+   "at": "2026-11-14T01:41:29-0500",
+   "env": {
+    "python": "3.12.3",
+    "platform": "win32",
+    "run": null,
+    "session": "42883205-4bf6-4eb0-b6f3-3daa60ea9a0f"
+   },
+   "files": {
+    "tests/test_audio_music_guard.py": {
+     "size": 13557,
+     "mtime_ns": 1794638387030925900,
+     "sha256": "d6387659c94ecf7a71090a3556868d878157254ed74382b431546542234eee88"
+    },
+    "tools/hooks/audio_music_guard.py": {
+     "size": 26066,
+     "mtime_ns": 1794638477333901600,
+     "sha256": "654ff2314a2ae185454425f6ff04b45af1aef0f1557d016ea3b5bd79eccfd727"
+    },
+    "tools/hooks/audio_music_registry.py": {
+     "size": 14764,
+     "mtime_ns": 1794638386817079100,
+     "sha256": "7117f9f6d84d8692abfda860008a20f62a83a25cc04c5be18b17090f799c429a"
+    }
+   }
+  },
+  {
+   "id": "E-0003-1794639788",
+   "task": "T-P0-01",
+   "runner": true,
+   "command": "F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\.venv/Scripts/python.exe -m unittest tests.test_audio_music_guard",
+   "returncode": 0,
+   "tests_run": 15,
+   "summary": "Ran 15 tests in 11.580s\n\nOK",
+   "duration_s": 12.01,
+   "at": "2026-11-14T02:03:08-0500",
+   "env": {
+    "python": "3.12.3",
+    "platform": "win32",
+    "run": null,
+    "session": "42883205-4bf6-4eb0-b6f3-3daa60ea9a0f"
+   },
+   "files": {
+    "tests/test_audio_music_guard.py": {
+     "size": 15045,
+     "mtime_ns": 1794639621030325900,
+     "sha256": "2f5744ae6bc4af3a411be24001771b10509a42d8d84c523cbbb6909fe6eaeaa1"
+    },
+    "tools/hooks/audio_music_guard.py": {
+     "size": 27590,
+     "mtime_ns": 1794639679977568100,
+     "sha256": "b6e2515be9555d24dce202d754ca8982b8bc7998176e502d8edbc26ee6c46c52"
+    },
+    "tools/hooks/audio_music_registry.py": {
+     "size": 14764,
+     "mtime_ns": 1794638386817079100,
+     "sha256": "7117f9f6d84d8692abfda860008a20f62a83a25cc04c5be18b17090f799c429a"
+    }
+   }
+  },
+  {
+   "id": "E-0004-1794640546",
+   "task": "T-P0-01",
+   "runner": true,
+   "command": "F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\.venv/Scripts/python.exe -m unittest tests.test_audio_music_guard",
+   "returncode": 0,
+   "tests_run": 15,
+   "summary": "Ran 15 tests in 11.871s\n\nOK",
+   "duration_s": 12.3,
+   "at": "2026-11-14T02:15:46-0500",
+   "env": {
+    "python": "3.12.3",
+    "platform": "win32",
+    "run": null,
+    "session": "42883205-4bf6-4eb0-b6f3-3daa60ea9a0f"
+   },
+   "files": {
+    "tests/test_audio_music_guard.py": {
+     "size": 15351,
+     "mtime_ns": 1794640519998512900,
+     "sha256": "f38800618ce7508fb17d813a8865f739d60ee235cc25cd3ce693cc7b37363794"
+    },
+    "tools/hooks/audio_music_guard.py": {
+     "size": 27753,
+     "mtime_ns": 1794640519899354000,
+     "sha256": "e99da558a1744e27f950aee9a32899ddc6d60bd0a5c77545200f51678b204948"
+    },
+    "tools/hooks/audio_music_registry.py": {
+     "size": 14764,
+     "mtime_ns": 1794638386817079100,
+     "sha256": "7117f9f6d84d8692abfda860008a20f62a83a25cc04c5be18b17090f799c429a"
+    }
+   }
+  }
+ ],
+ "blockers": [],
+ "decisions": [],
+ "next_action": "T-P0-02 : carte d'intégration dans docs/agents/fm_audio.md"
+}

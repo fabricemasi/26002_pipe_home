@@ -61,6 +61,7 @@ Réglages : `DEFAULT_SETTINGS` (`settings_store.py`) est la source de vérité, 
 | Board (`.brd`) / tableau blanc / CAD / Design / Tableur | `fm_board.md` / `fm_miro.md` / `fm_cad.md` / `fm_design.md` / `fm_tableur.md` |
 | Illustrator / Photoshop / Typographie | `fm_illustrator.md` / `fm_photoshop.md` / `fm_font.md` |
 | Markdown / Vidéo / PDF / Agenda / Tâches | `fm_markdown.md` / `fm_video.md` / `fm_pdf.md` / `fm_agenda.md` / `fm_taches.md` |
+| Mission FM Audio / FM Music (périmètre, registre `audio_music_state.json`, contrôleur de poursuite) | `mission_audio_music.md` (son Annexe d'abord) |
 | Iconographie (SVG flat monochrome / couleur, chartes, identités des modules, production d'une icône) : HORS dépôt | `F:/SYNC/Sync/IMAGES/ico/SVG/pipeline browser/documentation/ICONOGRAPHIE_START.md` (sa Carte, puis `PASSATION_CLAUDE_CODE.md`) |
 
 Suivis de mission à la racine : `PDF_MODULE_PROGRESS.md`, `FM_AGENDA_PROGRESS.md`, `FM_TACHES_PROGRESS.md`, `COLOR_ANALYSIS_PROGRESS.md`.

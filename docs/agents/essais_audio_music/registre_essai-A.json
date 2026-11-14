@@ -1,0 +1,166 @@
+{
+ "schema_version": 1,
+ "mission_id": "essai-essai-A",
+ "requirements": [
+  {
+   "id": "R-1",
+   "title": "essai",
+   "phase": "P0",
+   "validations": {
+    "automatic": true
+   }
+  }
+ ],
+ "tasks": [
+  {
+   "id": "T-1",
+   "requirement": "R-1",
+   "phase": "P0",
+   "title": "Créer f1.txt",
+   "kind": "code",
+   "status": "implemented",
+   "depends_on": [],
+   "criteria": [],
+   "paths": [
+    "f1.txt"
+   ],
+   "blocker": null,
+   "next_action": "Créer F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\.claude\\audio_music_runs\\essais\\essai-A\\f1.txt contenant 1 (outil Write) ; prouver avec la commande Bash : .venv/Scripts/python.exe -S tools/hooks/audio_music_guard.py run --run-id essai-A --task T-1 -- .venv/Scripts/python.exe -c \"assert open('f1.txt').read().strip() == '1'\" ; puis passer T-1 à implemented dans F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\.claude\\audio_music_runs\\essais\\essai-A\\state.json (outil Edit)"
+  },
+  {
+   "id": "T-2",
+   "requirement": "R-1",
+   "phase": "P0",
+   "title": "Créer f2.txt",
+   "kind": "code",
+   "status": "implemented",
+   "depends_on": [
+    "T-1"
+   ],
+   "criteria": [],
+   "paths": [
+    "f2.txt"
+   ],
+   "blocker": null,
+   "next_action": "Créer F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\.claude\\audio_music_runs\\essais\\essai-A\\f2.txt contenant 2 (outil Write) ; prouver avec la commande Bash : .venv/Scripts/python.exe -S tools/hooks/audio_music_guard.py run --run-id essai-A --task T-2 -- .venv/Scripts/python.exe -c \"assert open('f2.txt').read().strip() == '2'\" ; puis passer T-2 à implemented dans F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\.claude\\audio_music_runs\\essais\\essai-A\\state.json (outil Edit)"
+  },
+  {
+   "id": "T-3",
+   "requirement": "R-1",
+   "phase": "P0",
+   "title": "Créer f3.txt",
+   "kind": "code",
+   "status": "implemented",
+   "depends_on": [
+    "T-2"
+   ],
+   "criteria": [],
+   "paths": [
+    "f3.txt"
+   ],
+   "blocker": null,
+   "next_action": "Créer F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\.claude\\audio_music_runs\\essais\\essai-A\\f3.txt contenant 3 (outil Write) ; prouver avec la commande Bash : .venv/Scripts/python.exe -S tools/hooks/audio_music_guard.py run --run-id essai-A --task T-3 -- .venv/Scripts/python.exe -c \"assert open('f3.txt').read().strip() == '3'\" ; puis passer T-3 à implemented dans F:\\SYNC\\Sync\\PROG\\26002_pipe_home\\.claude\\audio_music_runs\\essais\\essai-A\\state.json (outil Edit)"
+  }
+ ],
+ "evidence": [
+  {
+   "id": "E-0001-1794640446",
+   "task": "T-1",
+   "runner": true,
+   "command": ".venv/Scripts/python.exe -c \"assert open('f1.txt').read().strip() == '1'\"",
+   "returncode": 127,
+   "tests_run": null,
+   "summary": "[WinError 2] Le fichier spécifié est introuvable",
+   "duration_s": 0.0,
+   "at": "2026-11-14T02:14:06-0500",
+   "env": {
+    "python": "3.12.3",
+    "platform": "win32",
+    "run": "essai-A",
+    "session": "b7743bcd-b9ac-45fe-a3aa-87a67f2ab5de"
+   },
+   "files": {
+    "f1.txt": {
+     "size": 2,
+     "mtime_ns": 1794640443892887300,
+     "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    }
+   }
+  },
+  {
+   "id": "E-0002-1794640461",
+   "task": "T-1",
+   "runner": true,
+   "command": "F:/SYNC/Sync/PROG/26002_pipe_home/.venv/Scripts/python.exe -c \"assert open('f1.txt').read().strip() == '1'\"",
+   "returncode": 0,
+   "tests_run": null,
+   "summary": "",
+   "duration_s": 0.06,
+   "at": "2026-11-14T02:14:21-0500",
+   "env": {
+    "python": "3.12.3",
+    "platform": "win32",
+    "run": "essai-A",
+    "session": "b7743bcd-b9ac-45fe-a3aa-87a67f2ab5de"
+   },
+   "files": {
+    "f1.txt": {
+     "size": 2,
+     "mtime_ns": 1794640443892887300,
+     "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    }
+   }
+  },
+  {
+   "id": "E-0003-1794640478",
+   "task": "T-2",
+   "runner": true,
+   "command": "F:/SYNC/Sync/PROG/26002_pipe_home/.venv/Scripts/python.exe -c \"assert open('f2.txt').read().strip() == '2'\"",
+   "returncode": 0,
+   "tests_run": null,
+   "summary": "",
+   "duration_s": 0.08,
+   "at": "2026-11-14T02:14:38-0500",
+   "env": {
+    "python": "3.12.3",
+    "platform": "win32",
+    "run": "essai-A",
+    "session": "b7743bcd-b9ac-45fe-a3aa-87a67f2ab5de"
+   },
+   "files": {
+    "f2.txt": {
+     "size": 2,
+     "mtime_ns": 1794640475793406900,
+     "sha256": "53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3"
+    }
+   }
+  },
+  {
+   "id": "E-0004-1794640490",
+   "task": "T-3",
+   "runner": true,
+   "command": "F:/SYNC/Sync/PROG/26002_pipe_home/.venv/Scripts/python.exe -c \"assert open('f3.txt').read().strip() == '3'\"",
+   "returncode": 0,
+   "tests_run": null,
+   "summary": "",
+   "duration_s": 0.08,
+   "at": "2026-11-14T02:14:50-0500",
+   "env": {
+    "python": "3.12.3",
+    "platform": "win32",
+    "run": "essai-A",
+    "session": "b7743bcd-b9ac-45fe-a3aa-87a67f2ab5de"
+   },
+   "files": {
+    "f3.txt": {
+     "size": 2,
+     "mtime_ns": 1794640488296675800,
+     "sha256": "1121cfccd5913f0a63fec40a6ffd44ea64f9dc135c66634ba001d10bcf4302a2"
+    }
+   }
+  }
+ ],
+ "blockers": [],
+ "decisions": [],
+ "next_action": ""
+}

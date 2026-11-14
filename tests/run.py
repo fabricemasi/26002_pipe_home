@@ -54,6 +54,7 @@ MODULES = {
     "fm_pdf": ["test_pdf_*.py"],
     "fm_agenda": ["test_agenda_*.py"],
     "fm_taches": ["test_taches_*.py"],
+    "audio_music": ["test_audio_music_*.py"],
 }
 # Noms des docs actuelles (docs/agents/<nom>.md) acceptés aussi.
 ALIAS = {"video": "fm_video", "markdown": "fm_markdown", "visionneuse": "fm_visionneuse",

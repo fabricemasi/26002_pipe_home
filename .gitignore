@@ -29,6 +29,7 @@ data/pipeline_settings_window_state.json
 # Claude Code (local)
 .claude/settings.local.json
 .claude/worktrees/
+.claude/audio_music_runs/
 
 # Anciens emplacements (avant data/)
 /.pipeline_preview_cache/

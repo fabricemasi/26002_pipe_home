@@ -1,0 +1,70 @@
+{
+  "_doc": "Copie de RÉFÉRENCE des hooks de la mission audio, à fusionner dans .claude/settings.local.json (non versionné) si ce fichier est perdu. Voir docs/agents/mission_audio_music.md, Annexe.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.venv/Scripts/python.exe",
+            "args": [
+              "-S",
+              "${CLAUDE_PROJECT_DIR}/tools/hooks/audio_music_guard.py",
+              "context"
+            ],
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.venv/Scripts/python.exe",
+            "args": [
+              "-S",
+              "${CLAUDE_PROJECT_DIR}/tools/hooks/audio_music_guard.py",
+              "prompt"
+            ],
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.venv/Scripts/python.exe",
+            "args": [
+              "-S",
+              "${CLAUDE_PROJECT_DIR}/tools/hooks/audio_music_guard.py",
+              "stop"
+            ],
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.venv/Scripts/python.exe",
+            "args": [
+              "-S",
+              "${CLAUDE_PROJECT_DIR}/tools/hooks/audio_music_guard.py",
+              "task"
+            ],
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
