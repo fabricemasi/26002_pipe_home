@@ -196,10 +196,13 @@ Le texte ci-dessus est le prompt maître d'Astra, copié sans modification. Cett
 
 ### Démarrer la mission (appli de bureau, recommandé)
 
-1. Armer le run (Claude peut le faire sur demande) : `.venv\Scripts\python.exe -S tools\hooks\audio_music_guard.py arm --run-id audio-music-01`.
+1. Poste : mise en veille désactivée, appli Claude ouverte, pas d'autre session qui écrit les mêmes fichiers.
 2. Ouvrir une NOUVELLE session Code dans le dépôt : modèle Opus 5.5, effort élevé, mode de permission Auto (sinon chaque commande attend une approbation).
-3. Premier message : « Lance `.venv/Scripts/python.exe -S tools/hooks/audio_music_guard.py bind --run-id audio-music-01` et réponds PRÊT. » (la session est liée par son `CLAUDE_CODE_SESSION_ID`).
-4. Deuxième message : la commande `/goal` de la section 4 du document de préparation d'Astra.
+3. UN SEUL message, la commande `/goal` ci-dessous. Elle arme et lie le run elle-même (`arm` puis `bind`, la session étant reconnue par son `CLAUDE_CODE_SESSION_ID`), puis démarre la mission. Ne pas armer dans un message séparé : le hook Stop forcerait le travail avant que `/goal` soit posé.
+
+```text
+/goal Commence par lancer `.venv/Scripts/python.exe -S tools/hooks/audio_music_guard.py arm --run-id audio-music-01` puis `... bind --run-id audio-music-01`. Exécute ensuite intégralement docs/agents/mission_audio_music.md et poursuis les tâches de docs/agents/audio_music_state.json. Après chaque incrément significatif, publie dans la conversation la sortie de `... status --run-id audio-music-01`, puis commence la prochaine tâche réalisable. La session ne se termine que si toutes les exigences et validations requises sont satisfaites (status publié : verdict=complete), OU si aucune tâche indépendante autorisée ne peut progresser et que tous les blocages, validations restantes et points de reprise sont enregistrés (status publié : verdict=blocked), OU si une limite ou ma demande explicite d'arrêt (STOP MISSION) l'impose. Les deux derniers cas laissent le produit INACHEVÉ. Ne retire aucune exigence, ne certifie aucun essai non exécuté et n'élargis aucune permission. Fin de phase, MVP et rapport intermédiaire ne sont pas fin de mission.
+```
 
 En terminal, le lancement par la CLI demande d'abord `claude /login` : la CLI autonome n'a pas de connexion valide sur ce poste (« OAuth session expired »). Le lancement passe alors par la variable `PIPE_AUDIO_MUSIC_RUN=audio-music-01`, qui lie automatiquement la session au premier hook (pas besoin de `bind`).
 
@@ -235,7 +238,7 @@ Preuves conservées dans `docs/agents/essais_audio_music/` : fichiers de run (co
 - **A, poursuite** : la consigne demandait UNE tâche. Le hook Stop a refusé l'arrêt 2 fois, la session a fait T-1, T-2 et T-3 (preuves E-0002 à E-0004), puis l'arrêt a été autorisé avec le verdict `complete`.
 - **B, vrai blocage** : T-1 a été faite et prouvée. T-2 (licence à fournir, absente) est passée en `blocked` avec son motif, sans contenu inventé. Le premier arrêt a été autorisé avec le verdict `blocked`, mission inachevée.
 - **Défaut révélé, puis corrigé** : le runner cherchait un exécutable relatif (`.venv/…`) dans le dossier du run. Il cherche maintenant aussi dans le dépôt (test `test_run_specific_registry_paths`). Les preuves E-0001 en échec (code 127) des deux essais en gardent la trace.
-- Essai de `/goal` : à faire par l'utilisateur, car l'agent ne peut pas taper une commande `/`.
+- **`/goal`, dans l'appli de bureau** : l'utilisateur a tapé un objectif. Claude a démarré seul : il a créé `goal.txt`, l'a relu et a affiché « OK ». L'évaluateur a rendu `goal_status met: true` (1 itération, environ 18 s), justifié UNIQUEMENT par la transcription (il ne lit pas les fichiers), puis a effacé l'objectif. D'où la règle de publier `status` dans la conversation.
 
 ### Limites connues
 
