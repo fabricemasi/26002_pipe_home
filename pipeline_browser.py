@@ -206,6 +206,7 @@ from main_window.agenda_module import AgendaModuleMixin
 from main_window.tasks_module import TasksModuleMixin
 from main_window.module_targets import ModuleTargetsMixin
 from main_window.side_module import SideModuleMixin
+from main_window.photo_module import PhotoModuleMixin
 
 
 class PipelineBrowser(
@@ -214,7 +215,7 @@ class PipelineBrowser(
     VideoModuleMixin, BoardModuleMixin, FontModuleMixin, PdfModuleMixin, AgendaModuleMixin, TasksModuleMixin,
     AudioModuleMixin,
     ModuleTargetsMixin,
-    SideModuleMixin, QMainWindow,
+    SideModuleMixin, PhotoModuleMixin, QMainWindow,
 ):
     _bulk_navigation = False        # _navigate_to en cours : niveaux intermediaires sans fondu ni animation
 
@@ -676,6 +677,7 @@ class PipelineBrowser(
         self._focus_origin_badge.hide()
         self._focus_images = FocusImageLoader(self)
         self._focus_images.ready.connect(self._on_focus_image_ready)
+        self._install_photo()
         self._viewer_sync = QTimer(self)
         self._viewer_sync.setSingleShot(True)
         self._viewer_sync.setInterval(self._VIEWER_SYNC_MS)

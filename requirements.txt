@@ -71,3 +71,7 @@ winrt-Windows.Foundation.Collections
 # Agenda (paquet fm_agenda/) : récurrences RFC 5545 (python-dateutil, Apache-2.0 / BSD) et base des fuseaux IANA pour Windows (tzdata, Apache-2.0). Requis par l'agenda (sans tzdata : fuseau de Windows seul).
 python-dateutil
 tzdata
+# Environnement photo (paquet fm_photo/) : moteur Rust fm_photo_moteur (PyO3, rayon ; MIT / Apache-2.0), construit sur la
+# machine par tools/build_moteur_photo.ps1 (chaine Rust : tools/install_rust.ps1). maturin (MIT / Apache-2.0) ne sert
+# qu'a cette construction. Sans le moteur, fm_photo calcule avec sa reference numpy (lente, memes resultats).
+maturin

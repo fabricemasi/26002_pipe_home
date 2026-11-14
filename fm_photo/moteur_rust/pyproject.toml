@@ -1,0 +1,12 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "fm_photo_moteur"
+version = "0.1.0"
+requires-python = ">=3.12"
+description = "Moteur photo de PIPE FMZ (Rust, PyO3)"
+
+[tool.maturin]
+module-name = "fm_photo_moteur"

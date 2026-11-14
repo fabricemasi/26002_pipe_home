@@ -1,0 +1,20 @@
+[package]
+name = "fm_photo_moteur"
+version = "0.1.0"
+edition = "2021"
+description = "Moteur photo de PIPE FMZ : execution parallele des operations de fm_photo (reference : fm_photo/operations.py)"
+publish = false
+
+[lib]
+name = "fm_photo_moteur"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = "0.30"
+rayon = "1.12"
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

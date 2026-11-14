@@ -31,6 +31,7 @@ vit dans `gallery_paint`, `_SCALE_DEADLINE` dans `film_cache`.
 
 Tests : `test_focus_viewer.py`, `test_filmstrip_cells.py`, `test_gallery_attributes.py`, `test_file_attributes.py`, `test_color_mark.py`, `test_pureref_viewer.py`, `test_viewer_*.py`, `test_folder_viewer_menu.py`.
 Règle d'isolation : le paquet n'importe que les briques des réglages et des services communs (`previews`, `browser_core`, `lightroom_bridge`), JAMAIS `pipeline_browser.py`.
+Rendus développés (2026-11-14, mission photo) : un résultat de traitement calculé ailleurs entre dans la visionneuse par `FocusImageLoader.set_rendition(path, full, fitted, natural, origin)` SEULEMENT (montré à la place de l'image décodée tant que la date du fichier ne change pas ; gardé par `invalidate` ; `clear_rendition` revient à l'image décodée ; budget à part `RENDITION_BUDGET`) ; `full` et `fitted` sont calculés hors du fil de l'interface par l'appelant (`fm_photo.rendu.ServiceRendu`, branché par `main_window/photo_module.py`). Pellicule et planche ne le montrent pas encore. Détail : `fm_photo.md` ; tests `test_photo_tranche.VisionneuseTest`.
 
 ## `focus.py` (aujourd'hui les sous-modules ci-dessus)
 

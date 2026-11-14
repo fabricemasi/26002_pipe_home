@@ -16,6 +16,8 @@ sont lancés à chaque passage, sans ligne ici (liste `BANCS` de `tools/fluidite
 
 ## File
 
+- [ ] 2026-11-14 — Moteur photo (`fm_photo`), exécutant de référence puis Rust : aperçu provisoire (budget 100 ms), définition écran, annulation (budget 50 ms), pleine définition 24 et 40 MP, mémoire des sources (`docs/agents/fm_photo.md`, « Fluidité ») — `python tools/bench_photo.py --mp 24 40`
+- [ ] 2026-11-14 — Visionneuse : coût par image prête du branchement photo (`main_window/photo_module._on_photo_image_ready` : une tâche lancée par image décodée, lecture de `.pipeline_photo.json` en fond) ; vérifier que le parcours reste sous ~10 ms bloquants par cran sur un vrai dossier — `python tests/_probe_viewer.py`
 - [ ] 2026-11-14 — FM Audio / FM Music dans la barre (`main_window/audio_module._layout_sound_buttons`, appelé à l'ouverture / fermeture et aux CHANGEMENTS du transport seulement, 9 boutons) : test lent `python -m unittest tests.test_fm_audio_module.NavbarAppTest` (avec `PIPELINE_TESTS_LENTS=1`, fenêtre entière) ; mesurer le clic sur le bouton FM Audio (construction du pane + cadre), cible < 100 ms de retour visuel.
 - [ ] 2026-11-14 — Moteur audio (fm_audio_engine) : coût DSP du graphe par bloc de 128 à 48 kHz, 32 pistes (clip + EQ + compresseur, send réverbe, limiteur). Profil de référence : i9-9900K, 64 Go, Windows 11 26100, Realtek HD Audio. Critère p99 ≤ 50 % de 2,67 ms, max < échéance (contrôle de 4 pistes à la main : p99 70 µs) — `python tools/bench_audio_engine.py 32 8000`
 - [ ] 2026-11-14 — Moteur audio, 64 pistes (même scène, même critère) — `python tools/bench_audio_engine.py 64 8000`

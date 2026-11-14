@@ -135,6 +135,7 @@ class FocusImageLoader(QObject):
 
     MAX_SIDE = 8192
     BUDGET = 700 * 1024 * 1024
+    RENDITION_BUDGET = 256 * 1024 * 1024
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -148,6 +149,9 @@ class FocusImageLoader(QObject):
         self._refresh_after_pending: set[str] = set()
         self._tasks: dict[str, _DecodeTask] = {}      # decodages en file (annulables, voir retain)
         self._failed: dict[str, float] = {}
+        # Rendus developpes (moteur photo) montres A LA PLACE de l'image decodee : voir set_rendition.
+        self._renditions: OrderedDict = OrderedDict()
+        self._rendition_bytes = 0
         self._naturals: dict[str, tuple[float, QSizeF]] = {}
         self._bytes = 0
         self._fit = QSize(1920, 1080)
@@ -182,10 +186,60 @@ class FocusImageLoader(QObject):
         """(pixmap ajuste, image pleine, taille reelle) si l'image est prete, sinon None."""
         key = str(path)
         entry = self._entries.get(key)
-        if entry is None or entry[0] != self._mtime(path):
+        rendition = self._renditions.get(key)
+        if entry is None and rendition is None:
+            return None
+        mtime = self._mtime(path)
+        if rendition is not None and rendition[0] == mtime:
+            self._renditions.move_to_end(key)
+            return rendition[1], rendition[2], rendition[3]
+        if entry is None or entry[0] != mtime:
             return None
         self._entries.move_to_end(key)
         return entry[1], entry[2], entry[3]
+
+    def set_rendition(self, path: Path, full: QImage, fitted: QImage | None, natural: QSizeF, origin: str):
+        """Resultat d'un traitement (moteur photo, `fm_photo`) montre A LA PLACE de l'image decodee de ce
+        fichier, tant que sa date ne change pas : c'est le SEUL point ou un rendu calcule ailleurs entre dans
+        la visionneuse (image au centre, ruban, zoom, visionneuse a cote). `full` et `fitted` sont calcules
+        HORS du fil de l'interface par l'appelant ; `natural` = taille reelle de la photo (le rendu peut etre
+        moins defini). Garde a part des images decodees : `invalidate` (nouvel apercu du pipeline) ne le
+        retire pas ; `clear_rendition` revient a l'image decodee. `ready(cle)` previent l'affichage."""
+        key = str(path)
+        mtime = self._mtime(path)
+        if mtime is None or full is None or full.isNull():
+            return
+        shown = fitted if fitted is not None and not fitted.isNull() else full
+        size = full.sizeInBytes() + (shown.sizeInBytes() if shown is not full else 0)
+        old = self._renditions.pop(key, None)
+        if old is not None:
+            self._rendition_bytes -= old[4]
+        self._renditions[key] = (mtime, QPixmap.fromImage(shown), full, natural, size, origin)
+        self._rendition_bytes += size
+        while self._rendition_bytes > self.RENDITION_BUDGET and len(self._renditions) > 1:
+            _key, dropped = self._renditions.popitem(last=False)
+            self._rendition_bytes -= dropped[4]
+        self.ready.emit(key)
+
+    def has_rendition(self, path: Path) -> bool:
+        """Vrai si un rendu developpe VALIDE (fichier inchange depuis) est montre pour ce fichier."""
+        rendition = self._renditions.get(str(path))
+        return rendition is not None and rendition[0] == self._mtime(path)
+
+    def fit(self) -> QSize:
+        return QSize(self._fit)
+
+    def clear_rendition(self, path: Path):
+        """Retire le rendu developpe : l'image decodee revient (redemandee si elle n'est plus en memoire)."""
+        key = str(path)
+        old = self._renditions.pop(key, None)
+        if old is None:
+            return
+        self._rendition_bytes -= old[4]
+        if key in self._entries:
+            self.ready.emit(key)
+        else:
+            self.request(Path(key), urgent=True)
 
     def request(self, path: Path, urgent: bool = False):
         if not self.supports(path):
@@ -271,9 +325,11 @@ class FocusImageLoader(QObject):
     def clear(self):
         self._entries.clear()
         self._bytes = 0
+        self._renditions.clear()
+        self._rendition_bytes = 0
 
     def origin(self, path: Path) -> str | None:
-        entry = self._entries.get(str(path))
+        entry = self._renditions.get(str(path)) or self._entries.get(str(path))
         return entry[5] if entry is not None else None
 
     def invalidate(self, path: Path):

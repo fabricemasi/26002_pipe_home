@@ -28,6 +28,7 @@ MODULES = {
     "fm_visionneuse": ["test_focus_viewer.py", "test_filmstrip_cells.py", "test_gallery_attributes.py",
                        "test_file_attributes.py", "test_color_mark.py", "test_pureref_viewer.py",
                        "test_viewer_*.py", "test_folder_viewer_menu.py"],
+    "fm_photo": ["test_photo_*.py", "test_lightroom_contract.py"],
     "fm_miro": ["test_board.py", "test_board_images.py"],
     "fm_cad": ["test_cad*.py"],
     "fm_board": ["test_board.py", "test_board_images.py", "test_cad*.py", "test_design*.py", "test_tableur*.py", "test_illustrator*.py",
